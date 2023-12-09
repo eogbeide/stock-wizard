@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import plotly
 import plotly.express as px
 from prophet import Prophet
 from plotly import graph_objs as go
