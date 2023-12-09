@@ -10,6 +10,10 @@ from datetime import date
 import yfinance as yf
 import os
 
+# Set up Streamlit configuration
+st.set_page_config(page_title="Stock Forecasting App")
+
+# Set up Yahoo Finance
 yf.pdr_override()
 
 # Tickers list
