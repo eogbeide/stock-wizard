@@ -1,5 +1,4 @@
 import pandas as pd
-import plotly.express
 
 from prophet import Prophet
 from plotly import graph_objs as go
