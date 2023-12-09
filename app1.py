@@ -1,6 +1,6 @@
 import pandas as pd
 import plotly.express
-import plotly.express as px
+
 from prophet import Prophet
 from plotly import graph_objs as go
 import glob
