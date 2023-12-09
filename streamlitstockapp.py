@@ -51,9 +51,8 @@ def select_files(files):
     for _ in range(2):
         while True:
             try:
-                choice = st.sidebar.selectbox("Select a file", range(1, num_files + 1), format_func=lambda x: files[x - 1].split('/')[-1].split('_')[0], key=f"selectbox_{_}")
-                selected_file = files[choice - 1]
-                selected_files.append(selected_file)
+                choice = st.sidebar.selectbox(f"Select file {_+1}", files, format_func=lambda x: x.split('/')[-1].split('_')[0], key=f"selectbox_{_}")
+                selected_files.append(choice)
                 break
             except IndexError:
                 st.sidebar.warning("Invalid choice. Please try again.")
