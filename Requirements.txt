@@ -12,7 +12,7 @@ patsy==0.5.3
 peewee==3.17.0
 pendulum==2.1.2
 Pillow==9.5.0
-plotly @ file:///opt/conda/envs/env/conda-bld/plotly_1698259245963/work/packages/python/plotly/dist/plotly-5.18.0.tar.gz
+plotly-5.18.0.tar.gz
 plotly-express==0.4.1
 prison==0.2.1
 prophet==1.1.5
