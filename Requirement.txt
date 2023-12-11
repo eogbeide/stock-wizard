@@ -3,4 +3,4 @@ plotly
 prophet
 pandas-datareader
 yfinance
-streamlit = 0.89
+streamlit
