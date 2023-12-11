@@ -151,6 +151,3 @@ for df, title, ticker in zip(dfs, titles, tickers):
 # Delete existing files
 for file in csvfiles:
     os.remove(file)
-
-if __name__ == "__main__":
-    main()
