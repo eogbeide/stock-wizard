@@ -1,13 +1,3 @@
-﻿matplotlib==3.7.2
-matplotlib-inline==0.1.6
-altair==5.0.1
-folium==0.14.0
-geopandas==0.13.2
-pandas==2.0.3
-plotly==5.18.0
-streamlit==1.24.1
-streamlit-folium==0.13.0
-
 import streamlit as st
 import pandas as pd
 import plotly.express as px
