@@ -1,3 +1,13 @@
+﻿matplotlib
+matplotlib-inline
+altair
+folium
+geopandas
+panda
+plotly
+streamlit
+streamlit-folium
+
 import streamlit as st
 import pandas as pd
 import plotly.express as px
