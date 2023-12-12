@@ -62,8 +62,7 @@ def select_files(files):
     return selected_files
 
 # the path to your csv file directory
-#mycsvdir = 'C:/Users/eogbeide/Documents/data'
-mycsvdir = 'C:/Users/eogbeide/Documents/'
+mycsvdir = os.path.expanduser('~/Documents/data')
 
 # get all the csv files in that directory (assuming they have the extension .csv)
 csvfiles = glob.glob(os.path.join(mycsvdir, '*.csv'))
