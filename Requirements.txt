@@ -1,5 +1,5 @@
 pandas==2.0.3
-plotly==5.18.0
+plotly==5.18.0-python-headless<4.3
 plotly.express==0.4.1
 streamlit==1.24.1
 streamlit-folium==0.13.0
