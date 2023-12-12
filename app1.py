@@ -96,9 +96,43 @@ def interactive_plot_forecasting(df, forecast, title):
 
     st.plotly_chart(fig)
 
-# Append today's date to the title
+# Append today's date to the titles
 today = date.today().strftime("%Y-%m-%d")
 
-st.title("Major US Stocks Forecast Wizard")
-st.write("")
-st.sub
+# Iterate over the selected files and their corresponding titles
+for df, title, ticker in zip(dfs, titles, tickers):
+    # Split the data into testing and training datasets
+    train = df[df['ds'] <= '10/31/2023']
+    test = df[df['ds'] >= '11/01/2023']
+
+    st.title("Major US Stocks Forecast Wizard")
+    st.write("")
+    st.subheader("The Smart Stock Trend Wiz: $$$")
+    st.write({ticker})
+    st.write("How to read chart: Below yhat_lower --> buy signal, above yhat_upper --> sell signal")
+    #st.write(f"Number of months in train data for {ticker}: {len(train)}")
+    #st.write(f"Number of months in test data for {ticker}: {len(test)}")
+    st.write(f"Number of days in train data: {len(train)}")
+    st.write(f"Number of days in test data: {len(test)}")
+
+    # Initialize Model
+    m = Prophet()
+
+    # Create and fit the prophet model to the training data
+    m.fit(train)
+
+    # Make predictions
+    future = m.make_future_dataframe(periods=93)
+    forecast = m.predict(future)
+    #st.write("Forecast for", ticker)
+    #   st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(30))
+
+    # Add predicted values to the original dataframe
+    df['predicted'] = forecast['trend']
+
+    # Plot the forecast and the original values for comparison
+    interactive_plot_forecasting(df, forecast, f'{title} ({today})')
+
+# Delete existing files
+for file in csvfiles:
+    os.remove(file.replace('\\', '/'))
