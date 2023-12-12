@@ -78,18 +78,9 @@ df.columns = ['ds', 'y']
 df['ds'] = pd.to_datetime(df['ds'])
 df.reset_index(inplace=True, drop=True)
 
-# Plot the selected files
-titles = []
-tickers = []
-for selected_file in selected_files:
-    ticker = selected_file.split('/')[-1].split('_')[0]
-    tickers.append(ticker)
-    selected_file = selected_file.replace(mycsvdir + '/', '')  # Remove the directory path
-    selected_file = selected_file.replace('.csv', '')  # Remove the ".csv" extension
-    #selected_file = selected_file.replace('data"\"', '')  # Remove the ".data" extension
-    ticker = ticker.replace('data"\"', '')  # Remove the ".data" extension
-    #titles.append(f'Original Vs Predicted ({ticker})')
-    titles.append(f'Chart of Original Vs Predicted for ({ticker})')
+# Plot the selected file
+title = f'Chart of Original Vs Predicted for ({selected_file.split("/")[-1].split("_")[0]})'
+ticker = selected_file.split("/")[-1].split("_")[0]
 
 def interactive_plot_forecasting(df, forecast, title):
     fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
