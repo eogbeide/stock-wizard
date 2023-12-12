@@ -67,20 +67,31 @@ mycsvdir = os.path.expanduser('~/Documents/data')
 # get all the csv files in that directory (assuming they have the extension .csv)
 csvfiles = glob.glob(os.path.join(mycsvdir, '*.csv'))
 
-# Prompt the user to select one file
+# Prompt the user to select two files
 selected_files = select_files(csvfiles)
 
-# Read the selected file using pandas
-selected_file = selected_files[0]
-df = pd.read_csv(selected_file)
-df = df[['Date', 'Close']]
-df.columns = ['ds', 'y']
-df['ds'] = pd.to_datetime(df['ds'])
-df.reset_index(inplace=True, drop=True)
+# Read the selected files using pandas
+dfs = []
+for selected_file in selected_files:
+    df = pd.read_csv(selected_file)
+    df = df[['Date', 'Close']]
+    df.columns = ['ds', 'y']
+    df['ds'] = pd.to_datetime(df['ds'])
+    df.reset_index(inplace=True, drop=True)
+    dfs.append(df)
 
-# Plot the selected file
-title = f'Chart of Original Vs Predicted for ({selected_file.split("/")[-1].split("_")[0]})'
-ticker = selected_file.split("/")[-1].split("_")[0]
+# Plot the selected files
+titles = []
+tickers = []
+for selected_file in selected_files:
+    ticker = selected_file.split('/')[-1].split('_')[0]
+    tickers.append(ticker)
+    selected_file = selected_file.replace(mycsvdir + '/', '')  # Remove the directory path
+    selected_file = selected_file.replace('.csv', '')  # Remove the ".csv" extension
+    #selected_file = selected_file.replace('data"\"', '')  # Remove the ".data" extension
+    ticker = ticker.replace('data"\"', '')  # Remove the ".data" extension
+    #titles.append(f'Original Vs Predicted ({ticker})')
+    titles.append(f'Chart of Original Vs Predicted for ({ticker})')
 
 def interactive_plot_forecasting(df, forecast, title):
     fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
@@ -105,7 +116,7 @@ def interactive_plot_forecasting(df, forecast, title):
 today = date.today().strftime("%Y-%m-%d")
 
 # Iterate over the selected files and their corresponding titles
-for df, title, ticker in zip(df, title, ticker):
+for df, title, ticker in zip(dfs, titles, tickers):
     # Split the data into testing and training datasets
     train = df[df['ds'] <= '10/31/2023']
     test = df[df['ds'] >= '11/01/2023']
