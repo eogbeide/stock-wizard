@@ -4,16 +4,16 @@ import pandas as pd
 # Streamlit app
 def main():
     st.title("Top 500 GRE Words")
-    st.write("Choose a word to get its meaning and an example sentence.")
+    st.write("Choose a word to get its meaning.")
 
     try:
         # Open the CSV file and read its contents
         with open('top_500_gre_words.csv', 'r', encoding='utf-16-le', errors='ignore') as file:
             words_df = pd.read_csv(file)
 
-        # Create a dictionary mapping words to meanings and example sentences
+        # Create a dictionary mapping words to meanings
         words_dict = {
-            row['Word']: {'Meaning': row['Meaning'], 'Example': row['Example']}
+            row['Word']: row['Meaning']
             for _, row in words_df.iterrows()
         }
 
@@ -21,9 +21,8 @@ def main():
         selected_word = st.selectbox("Select a word", list(words_dict.keys()))
 
         if selected_word:
-            # Display the meaning and example sentence
-            st.write(f"Meaning: {words_dict[selected_word]['Meaning']}")
-            st.write(f"Example: {words_dict[selected_word]['Example']}")
+            # Display the meaning of the selected word
+            st.write(f"Meaning: {words_dict[selected_word]}")
         else:
             st.write("Please select a word.")
 
