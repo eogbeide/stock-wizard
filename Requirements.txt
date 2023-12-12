@@ -1,13 +1,6 @@
-pandas==2.0.3
-plotly==5.18.0-python-headless<4.3
-plotly.express==0.4.1-python-headless<4.3
-streamlit==1.24.1
-streamlit-webrtc
-streamlit-folium==0.13.0
-streamlit_option_menu == 0.3.6
-Pillow==9.5.0
-prophet==1.1.5
-numpy=1.24.3
-functions==0.7.0
-libgl1
-libglib2.0-0
+pandas
+plotly
+streamlit
+yfinance
+pandas-datareader
+prophet
