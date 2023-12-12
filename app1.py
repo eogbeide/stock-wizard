@@ -101,10 +101,6 @@ forecast = m.predict(future)
 df['predicted'] = forecast['trend']
 
 # Plot the forecast and the original values for comparison
-fig = px.line(df, x='ds', y=['y', 'predictedApologies for the incomplete response. Here's the continuation of the code:
-
-```python
-# Plot the forecast and the original values for comparison
 fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
 fig.update_layout(xaxis_title="Date", yaxis_title="Price")
 st.plotly_chart(fig)
