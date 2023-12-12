@@ -47,8 +47,8 @@ def select_files(files):
         print(f"{i + 1}. {file}")
 
     selected_files = []
-    # Prompt the user to choose one files
-    for _ in range(1):
+    # Prompt the user to choose two files
+    for _ in range(2):
         while True:
             try:
                 choice = st.sidebar.selectbox("Select a file", range(1, num_files + 1), format_func=lambda x: files[x - 1].split('/')[-1].split('_')[0], key=f"selectbox_{_}")
