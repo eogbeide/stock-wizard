@@ -16,3 +16,4 @@ prophet==1.1.5
 numpy=1.24.3
 plotly==5.13.1
 pillow==9.5.0
+functions==0.7.0
