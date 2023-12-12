@@ -44,20 +44,19 @@ def select_files(files):
     num_files = len(files)
 
     selected_files = []
-    for _ in range(2):
-        while True:
-            try:
-                choice = st.sidebar.selectbox(
-                    "Select Company Ticker",
-                    range(1, num_files + 1),
-                    format_func=lambda x: files[x - 1].split('/')[-1].split('_')[0],
-                    key=f"selectbox_{_}"
-                )
-                selected_file = files[choice - 1]
-                selected_files.append(selected_file)
-                break
-            except IndexError:
-                st.sidebar.warning("Invalid choice. Please try again.")
+    while True:
+        try:
+            choice = st.sidebar.selectbox(
+                "Select Company Ticker",
+                range(1, num_files + 1),
+                format_func=lambda x: files[x - 1].split('/')[-1].split('_')[0],
+                key="selectbox"
+            )
+            selected_file = files[choice - 1]
+            selected_files.append(selected_file)
+            break
+        except IndexError:
+            st.sidebar.warning("Invalid choice. Please try again.")
 
     return selected_files
 
@@ -88,9 +87,7 @@ for selected_file in selected_files:
     tickers.append(ticker)
     selected_file = selected_file.replace(mycsvdir + '/', '')  # Remove the directory path
     selected_file = selected_file.replace('.csv', '')  # Remove the ".csv" extension
-    #selected_file = selected_file.replace('data"\"', '')  # Remove the ".data" extension
     ticker = ticker.replace('data"\"', '')  # Remove the ".data" extension
-    #titles.append(f'Original Vs Predicted ({ticker})')
     titles.append(f'Chart of Original Vs Predicted for ({ticker})')
 
 def interactive_plot_forecasting(df, forecast, title):
@@ -107,48 +104,29 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=min_points['ds'], y=min_points['y'], mode='markers', name='Minimum'))
 
     # Add yhat_lower and yhat_upper
-    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
-    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
+    fig.add_trace(goScatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='Lower Bound'))
+    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='Upper Bound'))
 
+    # Set x-axis label
+    fig.update_xaxes(title_text='Date')
+
+    # Set y-axis label
+    fig.update_yaxes(title_text='Price')
+
+    # Show the plot
     st.plotly_chart(fig)
 
-# Append today's date to the titles
-today = date.today().strftime("%Y-%m-%d")
+# Iterate through the selected files and plot the forecasting results
+for i, df in enumerate(dfs):
+    st.subheader(titles[i])
+    model = Prophet()
+    model.fit(df)
 
-# Iterate over the selected files and their corresponding titles
-for df, title, ticker in zip(dfs, titles, tickers):
-    # Split the data into testing and training datasets
-    train = df[df['ds'] <= '10/31/2023']
-    test = df[df['ds'] >= '11/01/2023']
+    future = model.make_future_dataframe(periods=30)  # Extend the dataframe by 30 days for forecasting
+    forecast = model.predict(future)
 
-    st.title("Major US Stocks Forecast Wizard")
-    st.write("")
-    st.subheader("The Smart Stock Trend Wiz: $$$")
-    st.write({ticker})
-    st.write("How to read chart: Below yhat_lower --> buy signal, above yhat_upper --> sell signal")
-    #st.write(f"Number of months in train data for {ticker}: {len(train)}")
-    #st.write(f"Number of months in test data for {ticker}: {len(test)}")
-    st.write(f"Number of days in train data: {len(train)}")
-    st.write(f"Number of days in test data: {len(test)}")
+    forecast_df = forecast[['ds', 'yhat']]
+    forecast_df.columns = ['ds', 'predicted']
+    forecast_df = forecast_df.merge(df, on='ds', how='left')
 
-    # Initialize Model
-    m = Prophet()
-
-    # Create and fit the prophet model to the training data
-    m.fit(train)
-
-    # Make predictions
-    future = m.make_future_dataframe(periods=93)
-    forecast = m.predict(future)
-    #st.write("Forecast for", ticker)
-    #   st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(30))
-
-    # Add predicted values to the original dataframe
-    df['predicted'] = forecast['trend']
-
-    # Plot the forecast and the original values for comparison
-    interactive_plot_forecasting(df, forecast, f'{title} ({today})')
-
-# Delete existing files
-for file in csvfiles:
-    os.remove(file.replace('\\', '/'))
+    interactive_plot_forecasting(forecast_df, forecast, titles[i])
