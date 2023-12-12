@@ -10,6 +10,9 @@ def scrape_gre_words():
     soup = BeautifulSoup(response.text, "html.parser")
 
     word_table = soup.find("table", {"class": "wordlist"})
+    if word_table is None:
+        return []
+
     rows = word_table.find_all("tr")[1:]  # Skip the table header row
 
     words = []
