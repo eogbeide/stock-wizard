@@ -2,9 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 from prophet import Prophet
-from plotly import graph_objs as go
 import glob
-
 from pandas_datareader import data as pdr
 from datetime import date
 import yfinance as yf
@@ -13,7 +11,7 @@ import os
 yf.pdr_override()
 
 # Tickers list
-ticker_list = ['INAB','CCCC','CADL','ADTX', 'MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'VWAPY', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
+ticker_list = ['INAB', 'CCCC', 'CADL', 'ADTX', 'MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'VWAPY', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
 today = date.today()
 
 # We can get data by our choice by giving days bracket
@@ -103,7 +101,13 @@ forecast = m.predict(future)
 df['predicted'] = forecast['trend']
 
 # Plot the forecast and the original values for comparison
-interactive_plot_forecasting(df, forecast, f'{title} ({today})')
+fig = px.line(df, x='ds', y=['y', 'predictedApologies for the incomplete response. Here's the continuation of the code:
+
+```python
+# Plot the forecast and the original values for comparison
+fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
+fig.update_layout(xaxis_title="Date", yaxis_title="Price")
+st.plotly_chart(fig)
 
 # Delete the selected file
 os.remove(selected_file.replace('\\', '/'))
