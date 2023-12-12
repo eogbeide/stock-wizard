@@ -20,9 +20,12 @@ def main():
         # Select a word from the dropdown
         selected_word = st.selectbox("Select a word", list(words_dict.keys()))
 
-        # Display the meaning and example sentence
-        st.write(f"Meaning: {words_dict[selected_word]['Meaning']}")
-        st.write(f"Example: {words_dict[selected_word]['Example']}")
+        if selected_word:
+            # Display the meaning and example sentence
+            st.write(f"Meaning: {words_dict[selected_word]['Meaning']}")
+            st.write(f"Example: {words_dict[selected_word]['Example']}")
+        else:
+            st.write("Please select a word.")
 
     except UnicodeDecodeError:
         st.error("Error: Unable to decode the CSV file. Please check the file's encoding.")
