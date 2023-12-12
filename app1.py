@@ -1,4 +1,4 @@
-python pip install -r requirements.txt
+streamlit run requirements.txt
 
 import streamlit as st
 import pandas as pd
