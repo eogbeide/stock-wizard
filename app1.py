@@ -31,8 +31,8 @@ def getData(ticker):
 
 # Create a data folder in your current dir.
 def SaveData(df, filename):
-    #save_path = os.path.expanduser('~/Documents/data/')
-    save_path = os.path.expanduser('~/Documents/')
+    save_path = os.path.expanduser('~/Documents/data/')
+    os.makedirs(save_path, exist_ok=True)  # Create the directory if it doesn't exist
     df.to_csv(os.path.join(save_path, filename + '.csv'))
 
 # This loop will iterate over ticker list, will pass one ticker to get data, and save that data as a file.
@@ -43,16 +43,16 @@ for tik in ticker_list:
 def select_files(files):
     num_files = len(files)
 
-    # Print the list of files
-    for i, file in enumerate(files):
-        print(f"{i + 1}. {file}")
-
     selected_files = []
-    # Prompt the user to choose two files
     for _ in range(2):
         while True:
             try:
-                choice = st.sidebar.selectbox("Select a file", range(1, num_files + 1), format_func=lambda x: files[x - 1].split('/')[-1].split('_')[0], key=f"selectbox_{_}")
+                choice = st.sidebar.selectbox(
+                    "Select a file",
+                    range(1, num_files + 1),
+                    format_func=lambda x: files[x - 1].split('/')[-1].split('_')[0],
+                    key=f"selectbox_{_}"
+                )
                 selected_file = files[choice - 1]
                 selected_files.append(selected_file)
                 break
@@ -152,4 +152,4 @@ for df, title, ticker in zip(dfs, titles, tickers):
 
 # Delete existing files
 for file in csvfiles:
-    os.remove(file)
+    os.remove(file.replace('\\', '/'))
