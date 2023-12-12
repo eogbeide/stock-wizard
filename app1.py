@@ -105,7 +105,7 @@ def interactive_plot_forecasting(df, forecast, title):
 today = date.today().strftime("%Y-%m-%d")
 
 # Iterate over the selected files and their corresponding titles
-for df, title, ticker in zip(df, title, tickers):
+for df, title, ticker in zip(df, title, ticker):
     # Split the data into testing and training datasets
     train = df[df['ds'] <= '10/31/2023']
     test = df[df['ds'] >= '11/01/2023']
