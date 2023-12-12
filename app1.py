@@ -13,7 +13,7 @@ import os
 yf.pdr_override()
 
 # Tickers list
-ticker_list = ['INAB','CCCC','CADL','ADTX', 'MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'VWAPY', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
+ticker_list = ['MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'VWAPY', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
 today = date.today()
 
 # We can get data by our choice by giving days bracket
@@ -32,7 +32,6 @@ def getData(ticker):
 # Create a data folder in your current dir.
 def SaveData(df, filename):
     save_path = os.path.expanduser('~/Documents/data/')
-    os.makedirs(save_path, exist_ok=True)  # Create the directory if it doesn't exist
     df.to_csv(os.path.join(save_path, filename + '.csv'))
 
 # This loop will iterate over ticker list, will pass one ticker to get data, and save that data as a file.
@@ -40,42 +39,58 @@ for tik in ticker_list:
     getData(tik)
 
 # Pull data, train model, and predict
-def select_file(files):
+def select_files(files):
     num_files = len(files)
 
-    while True:
-        try:
-            choice = st.sidebar.selectbox(
-                "Select Company Ticker",
-                range(1, num_files + 1),
-                format_func=lambda x: files[x - 1].split('/')[-1].split('_')[0],
-                key="selectbox"
-            )
-            selected_file = files[choice - 1]
-            break
-        except IndexError:
-            st.sidebar.warning("Invalid choice. Please try again.")
+    # Print the list of files
+    for i, file in enumerate(files):
+        print(f"{i + 1}. {file}")
 
-    return selected_file
+    selected_files = []
+    # Prompt the user to choose two files
+    for _ in range(2):
+        while True:
+            try:
+                choice = st.sidebar.selectbox("Select a file", range(1, num_files + 1), format_func=lambda x: files[x - 1].split('/')[-1].split('_')[0], key=f"selectbox_{_}")
+                selected_file = files[choice - 1]
+                selected_files.append(selected_file)
+                break
+            except IndexError:
+                st.sidebar.warning("Invalid choice. Please try again.")
+
+    return selected_files
 
 # the path to your csv file directory
-mycsvdir = os.path.expanduser('~/Documents/data')
+mycsvdir = 'C:/Users/eogbeide/Documents/data'
 
 # get all the csv files in that directory (assuming they have the extension .csv)
 csvfiles = glob.glob(os.path.join(mycsvdir, '*.csv'))
 
-# Prompt the user to select a file
-selected_file = select_file(csvfiles)
+# Prompt the user to select two files
+selected_files = select_files(csvfiles)
 
-# Read the selected file using pandas
-df = pd.read_csv(selected_file)
-df = df[['Date', 'Close']]
-df.columns = ['ds', 'y']
-df['ds'] = pd.to_datetime(df['ds'])
-df.reset_index(inplace=True, drop=True)
+# Read the selected files using pandas
+dfs = []
+for selected_file in selected_files:
+    df = pd.read_csv(selected_file)
+    df = df[['Date', 'Close']]
+    df.columns = ['ds', 'y']
+    df['ds'] = pd.to_datetime(df['ds'])
+    df.reset_index(inplace=True, drop=True)
+    dfs.append(df)
 
-# Plot the selected file
-title = f'Chart of Original Vs Predicted for ({selected_file.split("/")[-1].split("_")[0]})'
+# Plot the selected files
+titles = []
+tickers = []
+for selected_file in selected_files:
+    ticker = selected_file.split('/')[-1].split('_')[0]
+    tickers.append(ticker)
+    selected_file = selected_file.replace(mycsvdir + '/', '')  # Remove the directory path
+    selected_file = selected_file.replace('.csv', '')  # Remove the ".csv" extension
+    selected_file = selected_file.replace('data"\"', '')  # Remove the ".data" extension
+    ticker = ticker.replace('data"\"', '')  # Remove the ".data" extension
+    #titles.append(f'Original Vs Predicted ({ticker})')
+    titles.append(f'Chart of Original Vs Predicted for ({ticker})')
 
 def interactive_plot_forecasting(df, forecast, title):
     fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
@@ -135,4 +150,4 @@ for df, title, ticker in zip(dfs, titles, tickers):
 
 # Delete existing files
 for file in csvfiles:
-    os.remove(file.replace('\\', '/'))
+    os.remove(file)
