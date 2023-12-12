@@ -31,7 +31,8 @@ def getData(ticker):
 
 # Create a data folder in your current dir.
 def SaveData(df, filename):
-    save_path = os.path.expanduser('~/Documents/data/')
+    #save_path = os.path.expanduser('~/Documents/data/')
+    save_path = os.path.expanduser('~/Documents/')
     df.to_csv(os.path.join(save_path, filename + '.csv'))
 
 # This loop will iterate over ticker list, will pass one ticker to get data, and save that data as a file.
@@ -61,7 +62,8 @@ def select_files(files):
     return selected_files
 
 # the path to your csv file directory
-mycsvdir = 'C:/Users/eogbeide/Documents/data'
+#mycsvdir = 'C:/Users/eogbeide/Documents/data'
+mycsvdir = 'C:/Users/eogbeide/Documents/'
 
 # get all the csv files in that directory (assuming they have the extension .csv)
 csvfiles = glob.glob(os.path.join(mycsvdir, '*.csv'))
@@ -87,7 +89,7 @@ for selected_file in selected_files:
     tickers.append(ticker)
     selected_file = selected_file.replace(mycsvdir + '/', '')  # Remove the directory path
     selected_file = selected_file.replace('.csv', '')  # Remove the ".csv" extension
-    selected_file = selected_file.replace('data"\"', '')  # Remove the ".data" extension
+    #selected_file = selected_file.replace('data"\"', '')  # Remove the ".data" extension
     ticker = ticker.replace('data"\"', '')  # Remove the ".data" extension
     #titles.append(f'Original Vs Predicted ({ticker})')
     titles.append(f'Chart of Original Vs Predicted for ({ticker})')
