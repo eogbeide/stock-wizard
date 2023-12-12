@@ -38,19 +38,14 @@ def main():
 
     # Select a word from the dropdown
     selected_word = st.selectbox("Select a word", list(words_dict.keys()))
-    
+
     # Check if the selected word exists in the dictionary
     if selected_word in words_dict:
         # Display the meaning and example sentence
         st.write(f"Meaning: {words_dict[selected_word]['Meaning']}")
         st.write(f"Example: {words_dict[selected_word]['Example']}")
     else:
-        # Word not found in the dictionary
         st.write("Word not found.")
-
-    # Display the meaning and example sentence
-    st.write(f"Meaning: {words_dict[selected_word]['Meaning']}")
-    st.write(f"Example: {words_dict[selected_word]['Example']}")
 
 if __name__ == '__main__':
     main()
