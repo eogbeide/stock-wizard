@@ -13,7 +13,7 @@ def main():
 
         # Download the CSV file and read its contents
         csv_content = urllib.request.urlopen(raw_csv_url)
-        words_df = pd.read_csv(csv_content, encoding="utf-8")
+        words_df = pd.read_csv(csv_content, encoding="cp1252'")
 
         # Create a dictionary mapping words to meanings
         words_dict = {
