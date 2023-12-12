@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # Load the top 500 GRE words and their meanings from a CSV file
-words_df = pd.read_csv('top_500_gre_words.csv', encoding='utf-8-sig')
+words_df = pd.read_csv('top_500_gre_words.csv', encoding='utf-8-sig', errors='ignore')
 
 # Create a dictionary mapping words to meanings and example sentences
 words_dict = {
