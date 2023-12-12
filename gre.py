@@ -4,7 +4,7 @@ import urllib
 
 # Streamlit app
 def main():
-    st.title("Top GRE Words")
+    st.title("Top GRE Words by Engr. Manny")
     st.write("Choose a word to get its meaning.")
 
     try:
