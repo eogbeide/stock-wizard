@@ -48,7 +48,7 @@ def select_files(files):
         while True:
             try:
                 choice = st.sidebar.selectbox(
-                    "Select a file",
+                    "Select Company Ticker",
                     range(1, num_files + 1),
                     format_func=lambda x: files[x - 1].split('/')[-1].split('_')[0],
                     key=f"selectbox_{_}"
