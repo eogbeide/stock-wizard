@@ -8,7 +8,7 @@ def main():
 
     try:
         # Open the CSV file and read its contents
-        with open('top_500_gre_words.csv', 'r', encoding='utf-8-sig') as file:
+        with open('top_500_gre_words.csv', 'r', encoding='latin1') as file:
             words_df = pd.read_csv(file)
 
         # Create a dictionary mapping words to meanings and example sentences
