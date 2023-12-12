@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import urllib
 
 # Streamlit app
 def main():
@@ -7,9 +8,12 @@ def main():
     st.write("Choose a word to get its meaning.")
 
     try:
-        # Open the CSV file and read its contents
-        with open('top_500_gre_words.csv', 'r', encoding='utf-16-le', errors='ignore') as file:
-            words_df = pd.read_csv(file)
+        # Get the raw URL of the CSV file on GitHub
+        raw_csv_url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/top_500_gre_words.csv"
+
+        # Download the CSV file and read its contents
+        csv_content = urllib.request.urlopen(raw_csv_url)
+        words_df = pd.read_csv(csv_content)
 
         # Create a dictionary mapping words to meanings
         words_dict = {
