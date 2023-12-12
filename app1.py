@@ -67,18 +67,16 @@ mycsvdir = os.path.expanduser('~/Documents/data')
 # get all the csv files in that directory (assuming they have the extension .csv)
 csvfiles = glob.glob(os.path.join(mycsvdir, '*.csv'))
 
-# Prompt the user to select two files
+# Prompt the user to select one file
 selected_files = select_files(csvfiles)
 
-# Read the selected files using pandas
-dfs = []
-for selected_file in selected_files:
-    df = pd.read_csv(selected_file)
-    df = df[['Date', 'Close']]
-    df.columns = ['ds', 'y']
-    df['ds'] = pd.to_datetime(df['ds'])
-    df.reset_index(inplace=True, drop=True)
-    dfs.append(df)
+# Read the selected file using pandas
+selected_file = selected_files[0]
+df = pd.read_csv(selected_file)
+df = df[['Date', 'Close']]
+df.columns = ['ds', 'y']
+df['ds'] = pd.to_datetime(df['ds'])
+df.reset_index(inplace=True, drop=True)
 
 # Plot the selected files
 titles = []
