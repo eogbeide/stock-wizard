@@ -14,6 +14,14 @@ import csv
 
 yf.pdr_override()
 
+def read_ticker_company_names():
+    ticker_company_dict = {}
+    with open('company_ticker_name.csv', 'r') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            ticker_company_dict[row['Ticker']] = row['Company']
+    return ticker_company_dict
+
 # Tickers list
 ticker_list = ['SHOP','ULTA','FL','LULU','DPZ','SHAK','DPZ','SBUX','ETN','CMI','BAC','T','GE','MCD','GILD','PFE','LLY','MMM','ABT','BMY','SPOT','TWLO','PINS','SNAP','LCID','F','RIVN','ADBE','PATH','ORCL','COIN','ABNB','NIO','DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CCCC','CADL','ADTX', 'MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
 today = date.today()
@@ -27,14 +35,6 @@ yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
 
 files = []
 
-def read_ticker_company_names():
-    ticker_company_dict = {}
-    with open('company_ticker_name.csv', 'r') as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            ticker_company_dict[row['Ticker']] = row['Company']
-    return ticker_company_dict
-    
 def getData(ticker):
     ticker_company_dict = read_ticker_company_names()
     company = ticker_company_dict.get(ticker, 'Unknown Company')
