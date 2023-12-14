@@ -13,12 +13,6 @@ from datetime import timedelta
 
 yf.pdr_override()
 
-# Read the CSV file
-df_tickers = pd.read_csv('company_ticker_name.csv', encoding ='cp1252')
-
-# Create a dictionary of Ticker and Company
-ticker_company_dict = dict(zip(df_tickers['Ticker'], df_tickers['Company']))
-
 # Tickers list
 ticker_list = ['DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CCCC','CADL','ADTX', 'MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'VWAPY', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
 today = date.today()
@@ -184,11 +178,6 @@ for df, title, ticker in zip(dfs, titles, tickers):
     st.write("- yhat: ", today_yhat)
     st.write("- yhat_lower: ", today_yhat_lower)
     st.write("- yhat_upper: ", today_yhat_upper)
-
-# Print the company name of the selected ticker
-selected_ticker = st.sidebar.selectbox('Select Ticker', list(ticker_company_dict.keys()))
-selected_company = ticker_company_dict[selected_ticker]
-st.write('Selected Company:', selected_company)
     
 # Delete existing files
 for file in csvfiles:
