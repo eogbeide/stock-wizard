@@ -152,6 +152,9 @@ for df, title, ticker in zip(dfs, titles, tickers):
     # Extract today's forecast values
     today_forecast = forecast[forecast['ds'] == today]
     
+    # Get yesterday's actual price
+    yesterday_actual_price = None
+
     # Check if yesterday's actual price exists
     if yesterday in df['ds'].values:
         yesterday_actual_price = df[df['ds'] == yesterday]['y'].values[0]
@@ -169,6 +172,8 @@ for df, title, ticker in zip(dfs, titles, tickers):
         st.write("- Yesterday's Price: ", yesterday_actual_price)
     
     st.write("Today's Forecast Confidence Intervals:")
+    if yesterday_actual_price is not None:
+        st.write("- Yesterday's Price: ", yesterday_actual_price)
     st.write("- yhat: ", today_yhat)
     st.write("- yhat_lower: ", today_yhat_lower)
     st.write("- yhat_upper: ", today_yhat_upper)
