@@ -14,16 +14,7 @@ import csv
 
 yf.pdr_override()
 
-def get_ticker_country_mapping():
-    ticker_country_mapping = {}
-    with open('company_ticker_name.csv', 'r', encoding ='cp1252', errors="ignore") as file:
-        reader = csv.reader(file)
-        next(reader)  # Skip the header row
-        for row in reader:
-            ticker = row[0]
-            country = row[1]
-            ticker_country_mapping[ticker] = country
-    return ticker_country_mapping
+ticker_name_df = pd.read_csv('company_ticker_name.csv')
 
 # Tickers list
 ticker_list = ['DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CCCC','CADL','ADTX', 'MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'VWAPY', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
@@ -46,14 +37,20 @@ def getData(ticker):
     SaveData(data, dataname, ticker)  # Pass the ticker argument
     ticker_country_mapping = get_ticker_country_mapping()
     country = ticker_country_mapping.get(ticker)
+
+    # Get the company name from the ticker_name_df DataFrame
+    company_name = ticker_name_df[ticker_name_df['Ticker'] == ticker]['Company'].values[0]
+
     if country:
         data['Country'] = country
+        data['Company'] = company_name  # Add the company name to the DataFrame
 
 # Create a data folder in your current dir.
 def SaveData(df, filename, ticker):
     save_path = os.path.expanduser('~/Documents/data/')
     os.makedirs(save_path, exist_ok=True)  # Create the directory if it doesn't exist
-    df.to_csv(os.path.join(save_path, f'{filename}_{ticker}.csv'))
+    df.to_csv(os.path.join(save_path, filename + '.csv'))
+    ticker_name_mapping[ticker] = filename  # Store the mapping of ticker to filename
 
 # This loop will iterate over ticker list, will pass one ticker to get data, and save that data as a file.
 for tik in ticker_list:
