@@ -162,7 +162,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
     today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
 
     # Get yesterday's actual price
-    yesterday_actual_price = df[df['ds'] == yesterday]['y'].values[0]
+    yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
 
     # Check if yesterday's actual price exists
     if yesterday in df['ds'].values:
