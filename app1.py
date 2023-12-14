@@ -73,7 +73,7 @@ def select_files(files):
 
 
 # Read the company_ticker_name.csv file
-df_company = pd.read_csv('company_ticker_name.csv', encoding ='cp1252', errors="ignore")
+df_company = pd.read_csv('company_ticker_name.csv', encoding ='cp1252')
 
 
 # Function to get the company name based on the ticker
