@@ -10,8 +10,20 @@ from datetime import date
 import yfinance as yf
 import os
 from datetime import timedelta
+import csv
 
 yf.pdr_override()
+
+def get_ticker_country_mapping():
+    ticker_country_mapping = {}
+    with open('company_ticker_name.csv', 'r') as file:
+        reader = csv.reader(file)
+        next(reader)  # Skip the header row
+        for row in reader:
+            ticker = row[0]
+            country = row[1]
+            ticker_country_mapping[ticker] = country
+    return ticker_country_mapping
 
 # Tickers list
 ticker_list = ['DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CCCC','CADL','ADTX', 'MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'VWAPY', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
@@ -32,12 +44,16 @@ def getData(ticker):
     dataname = ticker + '_' + str(today)
     files.append(dataname)
     SaveData(data, dataname)
+    ticker_country_mapping = get_ticker_country_mapping()
+    country = ticker_country_mapping.get(ticker)
+    if country:
+        data['Country'] = country
 
 # Create a data folder in your current dir.
-def SaveData(df, filename):
+def SaveData(df, filename, ticker):
     save_path = os.path.expanduser('~/Documents/data/')
     os.makedirs(save_path, exist_ok=True)  # Create the directory if it doesn't exist
-    df.to_csv(os.path.join(save_path, filename + '.csv'))
+    df.to_csv(os.path.join(save_path, f'{filename}_{ticker}.csv'))
 
 # This loop will iterate over ticker list, will pass one ticker to get data, and save that data as a file.
 for tik in ticker_list:
