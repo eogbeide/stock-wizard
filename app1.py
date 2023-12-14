@@ -16,7 +16,7 @@ yf.pdr_override()
 
 def read_ticker_company_names():
     ticker_company_dict = {}
-    with open('company_ticker_name.csv', 'r', encoding ='cp1252') as csvfile:
+    with open('company_ticker_name.csv', 'r', encoding ='cp1252', errors="ignore") as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
             ticker_company_dict[row['Ticker']] = row['Company']
