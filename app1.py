@@ -171,9 +171,6 @@ for df, title, ticker in zip(dfs, titles, tickers):
     today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
     today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
 
-    # Display today's forecast values
-    st.write("- Current Price: ", today_actual_price)
-    
     st.write("Yesterday's Price:")
     if yesterday_actual_price is not None:
         st.write("- Yesterday's Price: ", yesterday_actual_price)
