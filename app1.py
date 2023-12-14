@@ -20,6 +20,11 @@ today = date.today()
 start_date = "2021-12-01"
 end_date = today.strftime("%Y-%m-%d")  # Use today's date as the end date
 
+# Define the current date and yesterday's date
+current_date = datetime.datetime.now(timezone('UTC'))
+yesterday = (current_date - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
+today = current_date.strftime('%Y-%m-%d')
+
 files = []
 
 def getData(ticker):
