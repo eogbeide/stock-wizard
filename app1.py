@@ -43,7 +43,7 @@ def getData(ticker):
     data = pdr.get_data_yahoo(ticker, start=start_date, end=today)
     dataname = ticker + '_' + str(today)
     files.append(dataname)
-    SaveData(data, dataname)
+    SaveData(data, dataname, ticker)  # Pass the ticker argument
     ticker_country_mapping = get_ticker_country_mapping()
     country = ticker_country_mapping.get(ticker)
     if country:
