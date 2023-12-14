@@ -9,7 +9,7 @@ from pandas_datareader import data as pdr
 from datetime import date
 import yfinance as yf
 import os
-import timedelta
+from datetime import timedelta
 
 yf.pdr_override()
 
