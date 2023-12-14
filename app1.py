@@ -48,6 +48,7 @@ def select_files(files):
     num_files = len(files)
 
     selected_files = []
+    selected_ticker_info = None
     
     while True:
         try:
@@ -59,11 +60,17 @@ def select_files(files):
             )
             selected_file = files[choice - 1]
             selected_files.append(selected_file)
+            
+            # Retrieve ticker information from yfinance
+            selected_ticker = selected_file.split('/')[-1].split('_')[0]
+            ticker_info = yf.Ticker(selected_ticker)
+            selected_ticker_info = ticker_info.info
+            
             break
         except IndexError:
             st.sidebar.warning("Invalid choice. Please try again.")
 
-    return selected_files
+    return selected_files, selected_ticker_info
 
 # the path to your csv file directory
 mycsvdir = os.path.expanduser('~/Documents/data')
@@ -72,7 +79,7 @@ mycsvdir = os.path.expanduser('~/Documents/data')
 csvfiles = glob.glob(os.path.join(mycsvdir, '*.csv'))
 
 # Prompt the user to select two files
-selected_files = select_files(csvfiles)
+selected_files, selected_ticker_info = select_files(csvfiles)
 
 # Read the selected files using pandas
 dfs = []
