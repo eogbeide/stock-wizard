@@ -158,6 +158,8 @@ for df, title, ticker in zip(dfs, titles, tickers):
     today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
 
     # Display today's forecast values
+    st.write("- Current Price: ", today_actual_price)
+    
     st.write("Today's Forecast Confidence Intervals:")
     st.write("- yhat: ", today_yhat)
     st.write("- yhat_lower: ", today_yhat_lower)
