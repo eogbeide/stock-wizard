@@ -14,7 +14,7 @@ from datetime import timedelta
 yf.pdr_override()
 
 # Read the CSV file
-df_tickers = pd.read_csv('company_ticker_name.csv', encoding='utf-8')
+df_tickers = pd.read_csv('company_ticker_name.csv', encoding ='cp1252')
 
 # Create a dictionary of Ticker and Company
 ticker_company_dict = dict(zip(df_tickers['Ticker'], df_tickers['Company']))
