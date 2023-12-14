@@ -135,7 +135,8 @@ for df, title, ticker in zip(dfs, titles, tickers):
     st.title("Major US Stocks Forecast Wizard")
     st.write("")
     st.subheader("The Smart Stock Trend Wiz by Engr. Manny: $$$")
-    st.write({ticker})
+    st.write("Company Name: ", selected_ticker_info['longName']),  st.write({ticker})
+    st.write(" - Location: ", selected_ticker_info['country'])
     st.subheader("How to read chart:")
     st.write(" - Below yhat_lower --> Buy Signal")
     st.write(" - Above yhat_upper --> Sell or Profit Taking Signal")
@@ -173,8 +174,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
     # Get yesterday's actual price
     yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
 
-    st.write("Company Name: ", selected_ticker_info['longName'])
-    st.write(" - Location: ", selected_ticker_info['country'])
+
     # Check if yesterday's actual price exists
     st.write("Yesterday's Actual Price:")
     if yesterday in df['ds'].values:
