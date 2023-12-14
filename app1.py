@@ -95,7 +95,7 @@ for selected_file in selected_files:
     #selected_file = selected_file.replace('data"\"', '')  # Remove the ".data" extension
     ticker = ticker.replace('data"\"', '')  # Remove the ".data" extension
     #titles.append(f'Original Vs Predicted ({ticker})')
-    titles.append(f'Chart of Original Price (y)   Vs   Predicted Price for ({ticker})')
+    titles.append(f'Chart of Actual Close Price (y)   Vs   Predicted Price for ({ticker})')
 
 def interactive_plot_forecasting(df, forecast, title):
     fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
