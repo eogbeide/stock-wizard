@@ -149,11 +149,20 @@ for df, title, ticker in zip(dfs, titles, tickers):
     # Plot the forecast and the original values for comparison
     interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 
+    # Extract today's forecast values
+    today_forecast = forecast[forecast['ds'] == today]
+
+    # Get today's yhat, yhat_lower, and yhat_upper values
+    today_yhat = today_forecast['yhat'].values[0]
+    today_yhat_lower = today_forecast['yhat_lower'].values[0]
+    today_yhat_upper = today_forecast['yhat_upper'].values[0]
+
     # Display today's forecast values
     st.write("Today's Forecast:")
     st.write(f"yhat: {today_yhat}")
     st.write(f"yhat_lower: {today_yhat_lower}")
     st.write(f"yhat_upper: {today_yhat_upper}")
+    
 # Delete existing files
 for file in csvfiles:
     os.remove(file.replace('\\', '/'))
