@@ -10,6 +10,7 @@ from datetime import date
 import yfinance as yf
 import os
 from datetime import timedelta
+import csv
 
 yf.pdr_override()
 
@@ -26,8 +27,18 @@ yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
 
 files = []
 
+def read_ticker_company_names():
+    ticker_company_dict = {}
+    with open('company_ticker_name.csv', 'r') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            ticker_company_dict[row['Ticker']] = row['Company']
+    return ticker_company_dict
+    
 def getData(ticker):
-    print(ticker)
+    ticker_company_dict = read_ticker_company_names()
+    company = ticker_company_dict.get(ticker, 'Unknown Company')
+    print(f"Getting data for {ticker} ({company})")
     data = pdr.get_data_yahoo(ticker, start=start_date, end=today)
     dataname = ticker + '_' + str(today)
     files.append(dataname)
