@@ -14,6 +14,7 @@ import csv
 
 yf.pdr_override()
 
+@st.cache
 def read_ticker_company_names():
     ticker_company_dict = {}
     with open('company_ticker_name.csv', 'r', encoding ='cp1252', errors="ignore") as csvfile:
@@ -178,7 +179,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
     yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
 
     # Check if yesterday's actual price exists
-    st.write("Yesterday's Actual Price for company:")
+    st.write("Yesterday's Actual Price:")
     if yesterday in df['ds'].values:
         yesterday_actual_price = df[df['ds'] == yesterday]['y'].values[0]
 
