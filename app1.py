@@ -20,6 +20,9 @@ today = date.today()
 start_date = "2021-12-01"
 end_date = today.strftime("%Y-%m-%d")  # Use today's date as the end date
 
+# Get yesterday's date
+yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+
 files = []
 
 def getData(ticker):
@@ -157,7 +160,16 @@ for df, title, ticker in zip(dfs, titles, tickers):
     today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
     today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
 
+    # Get yesterday's actual price
+    yesterday_actual_price = None
+
+    # Check if yesterday's actual price exists
+    if yesterday in df['ds'].values:
+        yesterday_actual_price = df[df['ds'] == yesterday]['y'].values[0]
+
     # Display today's forecast values
+    if yesterday_actual_price is not None:
+    st.write("- Yesterday's Price: ", yesterday_actual_price)
     st.write("Today's Forecast Confidence Intervals:")
     st.write("- yhat: ", today_yhat)
     st.write("- yhat_lower: ", today_yhat_lower)
