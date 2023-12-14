@@ -178,6 +178,8 @@ for df, title, ticker in zip(dfs, titles, tickers):
     if yesterday in df['ds'].values:
         yesterday_actual_price = df[df['ds'] == yesterday]['y'].values[0]
 
+    st.write("Company Name: ", selected_ticker_info['longName'])
+    st.write(" - Location: ", selected_ticker_info['country'])
     # Display today's forecast values
     if yesterday_actual_price is not None:
         st.write("- Yesterday's Price: ", yesterday_actual_price)
@@ -193,8 +195,7 @@ for file in csvfiles:
 # Display selected ticker information
 #st.write("Selected Ticker Information:")
 #st.write(selected_ticker_info)
-st.write("Company Name: ", selected_ticker_info['longName'])
-st.write(" - Location: ", selected_ticker_info['country'])
+st.write("Other Stats")
 st.write(" - fiftyDayAverage: ", selected_ticker_info['fiftyDayAverage'])
 st.write(" - twoHundredDayAverage: ", selected_ticker_info['twoHundredDayAverage'])
 st.write(" - beta: ", selected_ticker_info['beta'])
