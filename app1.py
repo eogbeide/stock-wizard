@@ -153,9 +153,9 @@ for df, title, ticker in zip(dfs, titles, tickers):
     today_forecast = forecast[forecast['ds'] == today]
 
     # Get today's yhat, yhat_lower, and yhat_upper values
-    today_yhat = today_forecast['yhat'].values[0]
-    today_yhat_lower = today_forecast['yhat_lower'].values[0]
-    today_yhat_upper = today_forecast['yhat_upper'].values[0]
+    today_yhat = round(today_forecast['yhat'].values[0],2)
+    today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
+    today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
 
     # Display today's forecast values
     st.write("Today's Forecast:")
