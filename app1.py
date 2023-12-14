@@ -58,6 +58,7 @@ def SaveData(df, filename, ticker):
 # This loop will iterate over ticker list, will pass one ticker to get data, and save that data as a file.
 for tik in ticker_list:
     getData(tik)
+    SaveData(data, dataname, tik)
 
 # Pull data, train model, and predict
 def select_files(files):
@@ -113,7 +114,7 @@ for selected_file in selected_files:
     #titles.append(f'Original Vs Predicted ({ticker})')
     titles.append(f'Chart of Original Price (y)   Vs   Predicted Price for ({ticker})')
 
-def interactive_plot_forecasting(df, forecast, title):
+def interactive_plot_forecasting(df, forecast, title, ticker):
     fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
 
     # Get maximum and minimum points
@@ -169,7 +170,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
     df['predicted'] = forecast['trend']
 
     # Plot the forecast and the original values for comparison
-    interactive_plot_forecasting(df, forecast, f'{title} ({today})')
+    interactive_plot_forecasting(df, forecast, f'{title} ({ticker})', ticker)
 
     # Extract today's forecast values
     today_forecast = forecast[forecast['ds'] == today]
