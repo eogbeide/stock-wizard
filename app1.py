@@ -16,7 +16,7 @@ yf.pdr_override()
 
 def get_ticker_country_mapping():
     ticker_country_mapping = {}
-    with open('company_ticker_name.csv', 'r') as file:
+    with open('company_ticker_name.csv', 'r', encoding ='cp1252') as file:
         reader = csv.reader(file)
         next(reader)  # Skip the header row
         for row in reader:
