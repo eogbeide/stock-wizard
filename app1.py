@@ -14,7 +14,7 @@ from datetime import timedelta
 yf.pdr_override()
 
 # Tickers list
-ticker_list = ['DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CCCC','CADL','ADTX', 'MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
+ticker_list = ['DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CCCC','CADL','ADTX', 'MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'VWAPY', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
 today = date.today()
 
 # We can get data by our choice by giving days bracket
@@ -48,10 +48,7 @@ def select_files(files):
     num_files = len(files)
 
     selected_files = []
-
-    # Read the company_ticker_name.csv file
-    ticker_names = pd.read_csv("company_ticker_name.csv")
-
+    
     while True:
         try:
             choice = st.sidebar.selectbox(
@@ -62,17 +59,6 @@ def select_files(files):
             )
             selected_file = files[choice - 1]
             selected_files.append(selected_file)
-
-            # Get the ticker for the selected file
-            ticker = selected_file.split('/')[-1].split('_')[0]
-
-            # Look up the company name for the ticker
-            company_name = ticker_names[ticker_names['Ticker'] == ticker]['Name'].values[0]
-
-            # Print the ticker and company name
-            st.write("Selected Ticker:", ticker)
-            st.write("Company Name:", company_name)
-
             break
         except IndexError:
             st.sidebar.warning("Invalid choice. Please try again.")
