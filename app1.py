@@ -9,8 +9,6 @@ from pandas_datareader import data as pdr
 from datetime import date
 import yfinance as yf
 import os
-import datetime
-from pytz import timezone
 
 yf.pdr_override()
 
@@ -21,11 +19,6 @@ today = date.today()
 # We can get data by our choice by giving days bracket
 start_date = "2021-12-01"
 end_date = today.strftime("%Y-%m-%d")  # Use today's date as the end date
-
-# Define the current date and yesterday's date
-current_date = datetime.datetime.now(timezone('UTC'))
-yesterday = (current_date - datetime.timedelta(days=1)).strftime('%Y-%m-%d')
-today = current_date.strftime('%Y-%m-%d')
 
 files = []
 
@@ -158,26 +151,14 @@ for df, title, ticker in zip(dfs, titles, tickers):
 
     # Extract today's forecast values
     today_forecast = forecast[forecast['ds'] == today]
-    
-    # Get yesterday's actual price
-    yesterday_actual_price = None
-
-    # Check if yesterday's actual price exists
-    if yesterday in df['ds'].values:
-        yesterday_actual_price = df[df['ds'] == yesterday]['y'].values[0]
 
     # Get today's yhat, yhat_lower, and yhat_upper values
     today_yhat = round(today_forecast['yhat'].values[0],2)
     today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
     today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
 
-    st.write("Yesterday's Price:")
-    if yesterday_actual_price is not None:
-        st.write("- Yesterday's Price: ", yesterday_actual_price)
-    
+    # Display today's forecast values
     st.write("Today's Forecast Confidence Intervals:")
-    if yesterday_actual_price is not None:
-        st.write("- Yesterday's Price: ", yesterday_actual_price)
     st.write("- yhat: ", today_yhat)
     st.write("- yhat_lower: ", today_yhat_lower)
     st.write("- yhat_upper: ", today_yhat_upper)
