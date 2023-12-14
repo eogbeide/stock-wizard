@@ -13,6 +13,8 @@ from datetime import timedelta
 
 yf.pdr_override()
 
+ticker_name_df = pd.read_csv('company_ticker_name.csv')
+
 # Tickers list
 ticker_list = ['DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CCCC','CADL','ADTX', 'MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'VWAPY', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
 today = date.today()
@@ -31,14 +33,31 @@ def getData(ticker):
     data = pdr.get_data_yahoo(ticker, start=start_date, end=today)
     dataname = ticker + '_' + str(today)
     files.append(dataname)
-    SaveData(data, dataname)
+    SaveData(data, dataname)  # Pass the ticker argument
+    ticker_name_mapping = get_ticker_name_mapping()
+    company_name = ticker_name_mapping.get(ticker)
+
+    if company_name:
+        print("Company:", company_name)
 
 # Create a data folder in your current dir.
 def SaveData(df, filename):
     save_path = os.path.expanduser('~/Documents/data/')
     os.makedirs(save_path, exist_ok=True)  # Create the directory if it doesn't exist
     df.to_csv(os.path.join(save_path, filename + '.csv'))
+    ticker_name_mapping[ticker] = filename  # Store the mapping of ticker to filename
 
+
+def get_ticker_name_mapping():
+    ticker_name_mapping = {}
+
+    # Load the ticker-to-company-name mapping from the DataFrame
+    for _, row in ticker_name_df.iterrows():
+        ticker = row['Ticker']
+        company_name = row['Company']
+        ticker_name_mapping[ticker] = company_name
+
+    return ticker_name_mapping
 # This loop will iterate over ticker list, will pass one ticker to get data, and save that data as a file.
 for tik in ticker_list:
     getData(tik)
