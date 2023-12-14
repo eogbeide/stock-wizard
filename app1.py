@@ -136,7 +136,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
     st.write("")
     st.subheader("The Smart Stock Trend Wiz by Engr. Manny: $$$")
     st.write("Company Name: ", selected_ticker_info['longName'])
-    st.write(" - Location: ", selected_ticker_info['country'])
+    #st.write(" - Location: ", selected_ticker_info['country'])
     st.subheader("How to read chart:")
     st.write(" - Below yhat_lower --> Buy Signal")
     st.write(" - Above yhat_upper --> Sell or Profit Taking Signal")
