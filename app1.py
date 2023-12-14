@@ -96,7 +96,7 @@ for selected_file in selected_files:
 titles = []
 tickers = []
 for selected_file in selected_files:
-    ticker = selected_file.split('/')[-1.split('_')[0]
+    ticker = selected_file.split('/')[-1].split('_')[0]  # Fixing missing closing parenthesis
     tickers.append(ticker)
     ticker_company_dict = read_ticker_company_names()
     company = ticker_company_dict.get(ticker, 'Unknown Company')
