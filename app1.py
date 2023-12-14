@@ -10,11 +10,8 @@ from datetime import date
 import yfinance as yf
 import os
 from datetime import timedelta
-import csv
 
 yf.pdr_override()
-
-ticker_name_df = pd.read_csv('company_ticker_name.csv')
 
 # Tickers list
 ticker_list = ['DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CCCC','CADL','ADTX', 'MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'VWAPY', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
@@ -34,28 +31,17 @@ def getData(ticker):
     data = pdr.get_data_yahoo(ticker, start=start_date, end=today)
     dataname = ticker + '_' + str(today)
     files.append(dataname)
-    SaveData(data, dataname, ticker)  # Pass the ticker argument
-    ticker_country_mapping = get_ticker_country_mapping()
-    country = ticker_country_mapping.get(ticker)
-
-    # Get the company name from the ticker_name_df DataFrame
-    company_name = ticker_name_df[ticker_name_df['Ticker'] == ticker]['Company'].values[0]
-
-    if country:
-        data['Country'] = country
-        data['Company'] = company_name  # Add the company name to the DataFrame
+    SaveData(data, dataname)
 
 # Create a data folder in your current dir.
-def SaveData(df, filename, ticker):
+def SaveData(df, filename):
     save_path = os.path.expanduser('~/Documents/data/')
     os.makedirs(save_path, exist_ok=True)  # Create the directory if it doesn't exist
     df.to_csv(os.path.join(save_path, filename + '.csv'))
-    ticker_name_mapping[ticker] = filename  # Store the mapping of ticker to filename
 
 # This loop will iterate over ticker list, will pass one ticker to get data, and save that data as a file.
 for tik in ticker_list:
     getData(tik)
-    SaveData(data, dataname, tik)
 
 # Pull data, train model, and predict
 def select_files(files):
@@ -111,7 +97,7 @@ for selected_file in selected_files:
     #titles.append(f'Original Vs Predicted ({ticker})')
     titles.append(f'Chart of Original Price (y)   Vs   Predicted Price for ({ticker})')
 
-def interactive_plot_forecasting(df, forecast, title, ticker):
+def interactive_plot_forecasting(df, forecast, title):
     fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
 
     # Get maximum and minimum points
@@ -143,13 +129,13 @@ for df, title, ticker in zip(dfs, titles, tickers):
     st.write("")
     st.subheader("The Smart Stock Trend Wiz by Engr. Manny: $$$")
     st.write({ticker})
-    st.subheader("How to read chart:")
-    st.write(" - Below yhat_lower --> Buy Signal")
-    st.write(" - Above yhat_upper --> Sell or Profit Taking Signal")
+    st.write("How to read chart:")
+    st.write("Below yhat_lower --> Buy Signal")
+    st.write("Above yhat_upper --> Sell or Profit Taking Signal")
     #st.write(f"Number of months in train data for {ticker}: {len(train)}")
     #st.write(f"Number of months in test data for {ticker}: {len(test)}")
-    st.write(f" - Number of days in train data: {len(train)}")
-    st.write(f" - Number of days in test data: {len(test)}")
+    st.write(f"Number of days in train data: {len(train)}")
+    st.write(f"Number of days in test data: {len(test)}")
 
     # Initialize Model
     m = Prophet()
@@ -167,7 +153,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
     df['predicted'] = forecast['trend']
 
     # Plot the forecast and the original values for comparison
-    interactive_plot_forecasting(df, forecast, f'{title} ({ticker})', ticker)
+    interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 
     # Extract today's forecast values
     today_forecast = forecast[forecast['ds'] == today]
