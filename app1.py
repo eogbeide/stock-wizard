@@ -151,6 +151,9 @@ for df, title, ticker in zip(dfs, titles, tickers):
 
     # Extract today's forecast values
     today_forecast = forecast[forecast['ds'] == today]
+    
+    # Get today's actual price
+    today_actual_price = df[df['ds'] == today]['y'].values[0]
 
     # Get today's yhat, yhat_lower, and yhat_upper values
     today_yhat = round(today_forecast['yhat'].values[0],2)
