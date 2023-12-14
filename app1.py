@@ -3,37 +3,18 @@ import pandas as pd
 import plotly.express as px
 from prophet import Prophet
 from plotly import graph_objs as go
+import glob
+
 from pandas_datareader import data as pdr
-from datetime import date, timedelta
+from datetime import date
 import yfinance as yf
 import os
-import csv
+from datetime import timedelta
 
 yf.pdr_override()
 
-def read_ticker_company_names():
-    ticker_company_dict = {}
-    with open('company_ticker_name.csv', 'r', encoding='cp1252', errors="ignore") as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            ticker_company_dict[row['Ticker']] = row['Company']
-    return ticker_company_dict
-
-@st.cache
-def get_data(ticker, start_date, end_date):
-    ticker_company_dict = read_ticker_company_names()
-    company = ticker_company_dict.get(ticker, 'Unknown Company')
-    st.write(f"Getting data for {ticker} ({company})")
-    data = pdr.get_data_yahoo(ticker, start=start_date, end=end_date)
-    return data
-
-def save_data(df, filename):
-    save_path = os.path.expanduser('~/Documents/data/')
-    os.makedirs(save_path, exist_ok=True)  # Create the directory if it doesn't exist
-    df.to_csv(os.path.join(save_path, filename + '.csv'))
-
 # Tickers list
-ticker_list = ['SHOP','ULTA','FL','LULU','DPZ','SHAK','DPZ','SBUX','ETN','CMI','BAC','T','GE','MCD','GILD','PFE','LLY','MMM','ABT','BMY','SPOT','TWLO','PINS','SNAP','LCID','F','RIVN','ADBE','PATH','ORCL','COIN','ABNB','NIO','DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CCCC','CADL','ADTX', 'MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
+ticker_list = ['DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CCCC','CADL','ADTX', 'MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'VWAPY', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
 today = date.today()
 
 # We can get data by our choice by giving days bracket
@@ -45,13 +26,24 @@ yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
 
 files = []
 
-# This loop will iterate over ticker list, will pass one ticker to get data, and save that data as a file.
-for ticker in ticker_list:
-    data = get_data(ticker, start_date, end_date)
+def getData(ticker):
+    print(ticker)
+    data = pdr.get_data_yahoo(ticker, start=start_date, end=today)
     dataname = ticker + '_' + str(today)
     files.append(dataname)
-    save_data(data, dataname)
+    SaveData(data, dataname)
 
+# Create a data folder in your current dir.
+def SaveData(df, filename):
+    save_path = os.path.expanduser('~/Documents/data/')
+    os.makedirs(save_path, exist_ok=True)  # Create the directory if it doesn't exist
+    df.to_csv(os.path.join(save_path, filename + '.csv'))
+
+# This loop will iterate over ticker list, will pass one ticker to get data, and save that data as a file.
+for tik in ticker_list:
+    getData(tik)
+
+# Pull data, train model, and predict
 def select_files(files):
     num_files = len(files)
 
@@ -96,53 +88,33 @@ for selected_file in selected_files:
 titles = []
 tickers = []
 for selected_file in selected_files:
-    ticker = selected_file.split('/')[-1.split('_')[0]
+    ticker = selected_file.split('/')[-1].split('_')[0]
     tickers.append(ticker)
-    ticker_company_dict = read_ticker_company_names()
-    company = ticker_company_dict.get(ticker, 'Unknown Company')
-    titles.append(f"{ticker} ({company})")
+    selected_file = selected_file.replace(mycsvdir + '/', '')  # Remove the directory path
+    selected_file = selected_file.replace('.csv', '')  # Remove the ".csv" extension
+    #selected_file = selected_file.replace('data"\"', '')  # Remove the ".data" extension
+    ticker = ticker.replace('data"\"', '')  # Remove the ".data" extension
+    #titles.append(f'Original Vs Predicted ({ticker})')
+    titles.append(f'Chart of Original Price (y)   Vs   Predicted Price for ({ticker})')
 
-fig = go.Figure()
-for i, df in enumerate(dfs):
-    fig.add_trace(go.Scatter(x=df['ds'], y=df['y'], name=titles[i]))
+def interactive_plot_forecasting(df, forecast, title):
+    fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
 
-fig.update_layout(
-    title="Stock Prices",
-    xaxis_title="Date",
-    yaxis_title="Closing Price",
-    legend_title="Tickers",
-    hovermode="x"
-)
+    # Get maximum and minimum points
+    max_points = df[df['y'] == df['y'].max()]
+    min_points = df[df['y'] == df['y'].min()]
 
-st.plotly_chart(fig)
+    # Add maximum points to the plot
+    fig.add_trace(go.Scatter(x=max_points['ds'], y=max_points['y'], mode='markers', name='Maximum'))
 
-# Perform forecasting using Prophet
-forecast_days = st.sidebar.slider("Select number of days for forecasting:", 1, 365, 30)
+    # Add minimum points to the plot
+    fig.add_trace(go.Scatter(x=min_points['ds'], y=min_points['y'], mode='markers', name='Minimum'))
 
-forecast_dates = pd.date_range(end=df['ds'].max(), periods=forecast_days + 1, closed='right')
-forecast_df = pd.DataFrame({'ds': forecast_dates[:-1]})
+    # Add yhat_lower and yhat_upper
+    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
+    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
-forecasted_dfs = []
-for df in dfs:
-    model = Prophet()
-    model.fit(df)
-    forecast = model.predict(forecast_df)
-    forecasted_dfs.append(forecast)
-
-# Plot the forecasted prices
-forecast_fig = go.Figure()
-for i, forecast in enumerate(forecasted_dfs):
-    forecast_fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], name=titles[i]))
-
-forecast_fig.update_layout(
-    title="Forecasted Stock Prices",
-    xaxis_title="Date",
-    yaxis_title="Closing Price",
-    legend_title="Tickers",
-    hovermode="x"
-)
-
-st.plotly_chart(forecast_fig)
+    st.plotly_chart(fig)
 
 # Append today's date to the titles
 today = date.today().strftime("%Y-%m-%d")
@@ -157,9 +129,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
     st.write("")
     st.subheader("The Smart Stock Trend Wiz by Engr. Manny: $$$")
     st.write({ticker})
-    st.write("How to read chart:")
-    st.write(" - Below yhat_lower --> buy signal")
-    st.write(" - Above yhat_upper --> sell or profit taking signal")
+    st.write("How to read chart: Below yhat_lower --> buy signal, above yhat_upper --> sell signal")
     #st.write(f"Number of months in train data for {ticker}: {len(train)}")
     #st.write(f"Number of months in test data for {ticker}: {len(test)}")
     st.write(f"Number of days in train data: {len(train)}")
