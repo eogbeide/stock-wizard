@@ -165,6 +165,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
     yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
 
     # Check if yesterday's actual price exists
+    st.write("Yesterday's Actual Price:")
     if yesterday in df['ds'].values:
         yesterday_actual_price = df[df['ds'] == yesterday]['y'].values[0]
 
