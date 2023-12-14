@@ -182,3 +182,9 @@ for df, title, ticker in zip(dfs, titles, tickers):
 # Delete existing files
 for file in csvfiles:
     os.remove(file.replace('\\', '/'))
+
+# Retrieve ticker information from yfinance
+selected_ticker = selected_files[choice - 1].split('/')[-1].split('_')[0]
+ticker_info = yf.Ticker(selected_ticker)
+st.write("Selected Ticker Information:")
+st.write(ticker_info.info)
