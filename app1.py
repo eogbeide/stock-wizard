@@ -48,7 +48,10 @@ def select_files(files):
     num_files = len(files)
 
     selected_files = []
-    
+
+    # Read the company_ticker_name.csv file
+    ticker_names = pd.read_csv("company_ticker_name.csv")
+
     while True:
         try:
             choice = st.sidebar.selectbox(
@@ -59,12 +62,23 @@ def select_files(files):
             )
             selected_file = files[choice - 1]
             selected_files.append(selected_file)
+
+            # Get the ticker for the selected file
+            ticker = selected_file.split('/')[-1].split('_')[0]
+
+            # Look up the company name for the ticker
+            company_name = ticker_names[ticker_names['Ticker'] == ticker]['Name'].values[0]
+
+            # Print the ticker and company name
+            st.write("Selected Ticker:", ticker)
+            st.write("Company Name:", company_name)
+
             break
         except IndexError:
             st.sidebar.warning("Invalid choice. Please try again.")
 
     return selected_files
-
+    
 # the path to your csv file directory
 mycsvdir = os.path.expanduser('~/Documents/data')
 
@@ -178,6 +192,11 @@ for df, title, ticker in zip(dfs, titles, tickers):
     st.write("- yhat: ", today_yhat)
     st.write("- yhat_lower: ", today_yhat_lower)
     st.write("- yhat_upper: ", today_yhat_upper)
+
+    # Print the ticker and company name
+    st.write("Selected Ticker:", ticker)
+    company_name = ticker_names[ticker_names['Ticker'] == ticker]['Name'].values[0]
+    st.write("Company Name:", company_name)
     
 # Delete existing files
 for file in csvfiles:
