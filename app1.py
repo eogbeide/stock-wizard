@@ -48,10 +48,7 @@ def select_files(files):
     num_files = len(files)
 
     selected_files = []
-
-    # Read the company_ticker_name.csv file
-    ticker_names = pd.read_csv(r'C:\Users\eogbeide\Documents\company_ticker_name.csv')
-
+    
     while True:
         try:
             choice = st.sidebar.selectbox(
@@ -62,19 +59,6 @@ def select_files(files):
             )
             selected_file = files[choice - 1]
             selected_files.append(selected_file)
-
-            # Get the ticker for the selected file
-            ticker = selected_file.split('/')[-1].split('_')[0]
-
-            # Look up the company name for the ticker
-            try:
-                company_name = ticker_names[ticker_names['Ticker'] == ticker]['Name'].values[0]
-                # Print the ticker and company name
-                st.write("Selected Ticker:", ticker)
-                st.write("Company Name:", company_name)
-            except IndexError:
-                st.warning(f"Company name not found for ticker: {ticker}")
-
             break
         except IndexError:
             st.sidebar.warning("Invalid choice. Please try again.")
@@ -194,25 +178,6 @@ for df, title, ticker in zip(dfs, titles, tickers):
     st.write("- yhat: ", today_yhat)
     st.write("- yhat_lower: ", today_yhat_lower)
     st.write("- yhat_upper: ", today_yhat_upper)
-
-
-    # URL to the raw CSV file on GitHub
-    url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/company_ticker_name.csv"
-
-    # Read the CSV file from the URL
-    df_company = pd.read_csv(url)
-
-    # Function to print the company name based on the selected choice
-    def print_company_name(choice):
-        selected_ticker = ticker_list[choice - 1]
-        company_name = df_company[df_company["Ticker"] == selected_ticker]["Company"].values[0]
-        print("Selected Company:", company_name)
-
-    # Prompt the user to select a choice
-    choice = int(input("Select a choice: "))
-
-# Print the company name based on the selected choice
-print_company_name(choice)
     
 # Delete existing files
 for file in csvfiles:
