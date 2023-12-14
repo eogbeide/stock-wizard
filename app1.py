@@ -159,9 +159,9 @@ for df, title, ticker in zip(dfs, titles, tickers):
 
     # Display today's forecast values
     st.write("Today's Forecast:")
-    st.bullet(f"yhat: {today_yhat}")
-    st.bullet(f"yhat_lower: {today_yhat_lower}")
-    st.bullet(f"yhat_upper: {today_yhat_upper}")
+    st.write("- yhat: ", today_yhat)
+    st.write("- yhat_lower: ", today_yhat_lower)
+    st.write("- yhat_upper: ", today_yhat_upper)
     
 # Delete existing files
 for file in csvfiles:
