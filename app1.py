@@ -10,21 +10,11 @@ from datetime import date
 import yfinance as yf
 import os
 from datetime import timedelta
-import csv
 
 yf.pdr_override()
 
-@st.cache
-def read_ticker_company_names():
-    ticker_company_dict = {}
-    with open('company_ticker_name.csv', 'r', encoding ='cp1252', errors="ignore") as csvfile:
-        reader = csv.DictReader(csvfile)
-        for row in reader:
-            ticker_company_dict[row['Ticker']] = row['Company']
-    return ticker_company_dict
-
 # Tickers list
-ticker_list = ['SHOP','ULTA','FL','LULU','DPZ','SHAK','DPZ','SBUX','ETN','CMI','BAC','T','GE','MCD','GILD','PFE','LLY','MMM','ABT','BMY','SPOT','TWLO','PINS','SNAP','LCID','F','RIVN','ADBE','PATH','ORCL','COIN','ABNB','NIO','DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CCCC','CADL','ADTX', 'MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
+ticker_list = ['DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CCCC','CADL','ADTX', 'MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'VWAPY', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
 today = date.today()
 
 # We can get data by our choice by giving days bracket
@@ -37,9 +27,7 @@ yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
 files = []
 
 def getData(ticker):
-    ticker_company_dict = read_ticker_company_names()
-    company = ticker_company_dict.get(ticker, 'Unknown Company')
-    print(f"Getting data for {ticker} ({company})")
+    print(ticker)
     data = pdr.get_data_yahoo(ticker, start=start_date, end=today)
     dataname = ticker + '_' + str(today)
     files.append(dataname)
@@ -107,7 +95,7 @@ for selected_file in selected_files:
     #selected_file = selected_file.replace('data"\"', '')  # Remove the ".data" extension
     ticker = ticker.replace('data"\"', '')  # Remove the ".data" extension
     #titles.append(f'Original Vs Predicted ({ticker})')
-    titles.append(f'Chart of Actual Close Price (y)   Vs   Predicted Price for ({ticker})')
+    titles.append(f'Chart of Original Price (y)   Vs   Predicted Price for ({ticker})')
 
 def interactive_plot_forecasting(df, forecast, title):
     fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
@@ -141,9 +129,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
     st.write("")
     st.subheader("The Smart Stock Trend Wiz by Engr. Manny: $$$")
     st.write({ticker})
-    st.write("How to read chart:")
-    st.write(" - Below yhat_lower --> buy signal")
-    st.write(" - Above yhat_upper --> sell or profit taking signal")
+    st.write("How to read chart: Below yhat_lower --> buy signal, above yhat_upper --> sell signal")
     #st.write(f"Number of months in train data for {ticker}: {len(train)}")
     #st.write(f"Number of months in test data for {ticker}: {len(test)}")
     st.write(f"Number of days in train data: {len(train)}")
