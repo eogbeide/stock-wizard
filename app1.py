@@ -4,17 +4,18 @@ import plotly.express as px
 from prophet import Prophet
 from plotly import graph_objs as go
 import glob
-
 from pandas_datareader import data as pdr
-from datetime import date
+from datetime import date, timedelta
 import yfinance as yf
 import os
-from datetime import timedelta
 
 yf.pdr_override()
 
 # Tickers list
-ticker_list = ['DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CCCC','CADL','ADTX', 'MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'VWAPY', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
+ticker_list = ['DLTR', 'DG', 'COST', 'KO', 'TGT', 'JNJ', 'HD', 'WMT', 'INAB', 'CCCC', 'CADL', 'ADTX', 'MTCH', 'EA',
+               'PYPL', 'INTC', 'PFE', 'MRNA', 'VWAPY', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA',
+               'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH',
+               'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
 today = date.today()
 
 # We can get data by our choice by giving days bracket
@@ -26,29 +27,32 @@ yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
 
 files = []
 
-def getData(ticker):
+
+def get_data(ticker):
     print(ticker)
     data = pdr.get_data_yahoo(ticker, start=start_date, end=today)
     dataname = ticker + '_' + str(today)
     files.append(dataname)
-    SaveData(data, dataname)
+    save_data(data, dataname)
+
 
 # Create a data folder in your current dir.
-def SaveData(df, filename):
+def save_data(df, filename):
     save_path = os.path.expanduser('~/Documents/data/')
     os.makedirs(save_path, exist_ok=True)  # Create the directory if it doesn't exist
     df.to_csv(os.path.join(save_path, filename + '.csv'))
 
+
 # This loop will iterate over ticker list, will pass one ticker to get data, and save that data as a file.
-for tik in ticker_list:
-    getData(tik)
+for ticker in ticker_list:
+    get_data(ticker)
 
 # Pull data, train model, and predict
 def select_files(files):
     num_files = len(files)
 
     selected_files = []
-    
+
     while True:
         try:
             choice = st.sidebar.selectbox(
@@ -64,6 +68,7 @@ def select_files(files):
             st.sidebar.warning("Invalid choice. Please try again.")
 
     return selected_files
+
 
 # the path to your csv file directory
 mycsvdir = os.path.expanduser('~/Documents/data')
@@ -92,91 +97,33 @@ for selected_file in selected_files:
     tickers.append(ticker)
     selected_file = selected_file.replace(mycsvdir + '/', '')  # Remove the directory path
     selected_file = selected_file.replace('.csv', '')  # Remove the ".csv" extension
-    #selected_file = selected_file.replace('data"\"', '')  # Remove the ".data" extension
-    ticker = ticker.replace('data"\"', '')  # Remove the ".data" extension
-    #titles.append(f'Original Vs Predicted ({ticker})')
+    ticker = ticker.replace('.data', '')  # Remove the ".data" extension
     titles.append(f'Chart of Original Price (y)   Vs   Predicted Price for ({ticker})')
-
-def interactive_plot_forecasting(df, forecast, title):
-    fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
-
-    # Get maximum and minimum points
-    max_points = df[df['y'] == df['y'].max()]
-    min_points = df[df['y'] == df['y'].min()]
-
-    # Add maximum points to the plot
-    fig.add_trace(go.Scatter(x=max_points['ds'], y=max_points['y'], mode='markers', name='Maximum'))
-
-    # Add minimum points to the plot
-    fig.add_trace(go.Scatter(x=min_points['ds'], y=min_points['y'], mode='markers', name='Minimum'))
-
-    # Add yhat_lower and yhat_upper
-    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
-    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
-
-    st.plotly_chart(fig)
 
 # Append today's date to the titles
 today = date.today().strftime("%Y-%m-%d")
 
-# Iterate over the selected files and their corresponding titles
-for df, title, ticker in zip(dfs, titles, tickers):
-    # Split the data into testing and training datasets
-    train = df[df['ds'] <= '10/31/2023']
-    test = df[df['ds'] >= '11/01/2023']
 
-    st.title("Major US Stocks Forecast Wizard")
-    st.write("")
-    st.subheader("The Smart Stock Trend Wiz by Engr. Manny: $$$")
-    st.write({ticker})
-    st.write("How to read chart: Below yhat_lower --> buy signal, above yhat_upper --> sell signal")
-    #st.write(f"Number of months in train data for {ticker}: {len(train)}")
-    #st.write(f"Number of months in test data for {ticker}: {len(test)}")
-    st.write(f"Number of days in train data: {len(train)}")
-    st.write(f"Number of days in test data: {len(test)}")
+def interactive_plot_forecasting(df, forecast, title):
+    fig = px.line(df, x='ds', y=['y', 'predictedy'], title=title)
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='Predicted'))
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], fill=None, mode='lines', name='Lower Bound'))
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], fill='tonexty', mode='lines', name='Upper Bound'))
+    fig.update_layout(xaxis_rangeslider_visible=False)
+    st.plotly_chart(fig)
 
-    # Initialize Model
-    m = Prophet()
 
-    # Create and fit the prophet model to the training data
-    m.fit(train)
-
-    # Make predictions
-    future = m.make_future_dataframe(periods=93)
+for i in range(len(dfs)):
+    m = Prophet(daily_seasonality=True)
+    m.fit(dfs[i])
+    future = m.make_future_dataframe(periods=30)
     forecast = m.predict(future)
-    #st.write("Forecast for", ticker)
-    #   st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(30))
+    forecast = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']]
+    title = titles[i]
+    interactive_plot_forecasting(dfs[i], forecast, title)
 
-    # Add predicted values to the original dataframe
-    df['predicted'] = forecast['trend']
-
-    # Plot the forecast and the original values for comparison
-    interactive_plot_forecasting(df, forecast, f'{title} ({today})')
-
-    # Extract today's forecast values
-    today_forecast = forecast[forecast['ds'] == today]
-
-    # Get today's yhat, yhat_lower, and yhat_upper values
-    today_yhat = round(today_forecast['yhat'].values[0],2)
-    today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
-    today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
-
-    # Get yesterday's actual price
-    yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
-
-    # Check if yesterday's actual price exists
-    st.write("Yesterday's Actual Price:")
-    if yesterday in df['ds'].values:
-        yesterday_actual_price = df[df['ds'] == yesterday]['y'].values[0]
-
-    # Display today's forecast values
-    if yesterday_actual_price is not None:
-        st.write("- Yesterday's Price: ", yesterday_actual_price)
-    st.write("Current Forecast Confidence Intervals:")
-    st.write("- yhat: ", today_yhat)
-    st.write("- yhat_lower: ", today_yhat_lower)
-    st.write("- yhat_upper: ", today_yhat_upper)
-    
-# Delete existing files
-for file in csvfiles:
-    os.remove(file.replace('\\', '/'))
+# Look up and print the company name from the company_ticker_name.csv file
+company_ticker_name = pd.read_csv('company_ticker_name.csv')
+for ticker in tickers:
+    company_name = company_ticker_name[company_ticker_name['Ticker'] == ticker]['Name'].values[0]
+    st.write(f"Company Name: {company_name}")
