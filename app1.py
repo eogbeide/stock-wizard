@@ -19,7 +19,7 @@ def read_ticker_company_names():
     with open('company_ticker_name.csv', 'r', encoding ='cp1252') as csvfile:
         reader = csv.DictReader(csvfile)
         for row in reader:
-            ticker_company_dict[row['Ticker']] = row['Name']
+            ticker_company_dict[row['Ticker']] = row['Company']
     return ticker_company_dict
 
 # Tickers list
