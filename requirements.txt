@@ -4,4 +4,4 @@ streamlit
 yfinance
 pandas-datareader
 prophet
-timedelta
+datetime
