@@ -129,7 +129,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
     st.write("")
     st.subheader("The Smart Stock Trend Wiz by Engr. Manny: $$$")
     st.write({ticker})
-    st.write("How to read chart:")
+    st.subheader("How to read chart:")
     st.write("Below yhat_lower --> Buy Signal")
     st.write("Above yhat_upper --> Sell or Profit Taking Signal")
     #st.write(f"Number of months in train data for {ticker}: {len(train)}")
