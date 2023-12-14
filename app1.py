@@ -194,6 +194,25 @@ for df, title, ticker in zip(dfs, titles, tickers):
     st.write("- yhat: ", today_yhat)
     st.write("- yhat_lower: ", today_yhat_lower)
     st.write("- yhat_upper: ", today_yhat_upper)
+
+
+    # URL to the raw CSV file on GitHub
+    url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/company_ticker_name.csv"
+
+    # Read the CSV file from the URL
+    df_company = pd.read_csv(url)
+
+    # Function to print the company name based on the selected choice
+    def print_company_name(choice):
+        selected_ticker = ticker_list[choice - 1]
+        company_name = df_company[df_company["Ticker"] == selected_ticker]["Company"].values[0]
+        print("Selected Company:", company_name)
+
+    # Prompt the user to select a choice
+    choice = int(input("Select a choice: "))
+
+# Print the company name based on the selected choice
+print_company_name(choice)
     
 # Delete existing files
 for file in csvfiles:
