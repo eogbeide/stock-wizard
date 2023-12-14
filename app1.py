@@ -48,10 +48,7 @@ def select_files(files):
     num_files = len(files)
 
     selected_files = []
-
-    # Read the company_ticker_name.csv file
-    ticker_names = pd.read_csv("company_ticker_name.csv")
-
+    
     while True:
         try:
             choice = st.sidebar.selectbox(
@@ -62,23 +59,12 @@ def select_files(files):
             )
             selected_file = files[choice - 1]
             selected_files.append(selected_file)
-
-            # Get the ticker for the selected file
-            ticker = selected_file.split('/')[-1].split('_')[0]
-
-            # Look up the company name for the ticker
-            company_name = ticker_names[ticker_names['Ticker'] == ticker]['Name'].values[0]
-
-            # Print the ticker and company name
-            st.write("Selected Ticker:", ticker)
-            st.write("Company Name:", company_name)
-
             break
         except IndexError:
             st.sidebar.warning("Invalid choice. Please try again.")
 
     return selected_files
-    
+
 # the path to your csv file directory
 mycsvdir = os.path.expanduser('~/Documents/data')
 
@@ -143,13 +129,13 @@ for df, title, ticker in zip(dfs, titles, tickers):
     st.write("")
     st.subheader("The Smart Stock Trend Wiz by Engr. Manny: $$$")
     st.write({ticker})
-    st.subheader("How to read chart:")
-    st.write("- Below yhat_lower --> Buy Signal")
-    st.write("- Above yhat_upper --> Sell or Profit Taking Signal")
+    st.write("How to read chart:")
+    st.write("Below yhat_lower --> Buy Signal")
+    st.write("Above yhat_upper --> Sell or Profit Taking Signal")
     #st.write(f"Number of months in train data for {ticker}: {len(train)}")
     #st.write(f"Number of months in test data for {ticker}: {len(test)}")
-    st.write(f"- Number of days in train data: {len(train)}")
-    st.write(f"- Number of days in test data: {len(test)}")
+    st.write(f"Number of days in train data: {len(train)}")
+    st.write(f"Number of days in test data: {len(test)}")
 
     # Initialize Model
     m = Prophet()
@@ -192,11 +178,6 @@ for df, title, ticker in zip(dfs, titles, tickers):
     st.write("- yhat: ", today_yhat)
     st.write("- yhat_lower: ", today_yhat_lower)
     st.write("- yhat_upper: ", today_yhat_upper)
-
-    # Print the ticker and company name
-    st.write("Selected Ticker:", ticker)
-    company_name = ticker_names[ticker_names['Ticker'] == ticker]['Name'].values[0]
-    st.write("Company Name:", company_name)
     
 # Delete existing files
 for file in csvfiles:
