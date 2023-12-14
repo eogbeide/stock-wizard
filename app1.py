@@ -172,7 +172,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
     # Display today's forecast values
     if yesterday_actual_price is not None:
         st.write("- Yesterday's Price: ", yesterday_actual_price)
-    st.write("Today's Forecast Confidence Intervals:")
+    st.write("Current Forecast Confidence Intervals:")
     st.write("- yhat: ", today_yhat)
     st.write("- yhat_lower: ", today_yhat_lower)
     st.write("- yhat_upper: ", today_yhat_upper)
