@@ -67,11 +67,13 @@ def select_files(files):
             ticker = selected_file.split('/')[-1].split('_')[0]
 
             # Look up the company name for the ticker
-            company_name = ticker_names[ticker_names['Ticker'] == ticker]['Name'].values[0]
-
-            # Print the ticker and company name
-            st.write("Selected Ticker:", ticker)
-            st.write("Company Name:", company_name)
+            try:
+                company_name = ticker_names[ticker_names['Ticker'] == ticker]['Name'].values[0]
+                # Print the ticker and company name
+                st.write("Selected Ticker:", ticker)
+                st.write("Company Name:", company_name)
+            except IndexError:
+                st.warning(f"Company name not found for ticker: {ticker}")
 
             break
         except IndexError:
