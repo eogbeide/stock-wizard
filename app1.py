@@ -130,12 +130,12 @@ for df, title, ticker in zip(dfs, titles, tickers):
     st.subheader("The Smart Stock Trend Wiz by Engr. Manny: $$$")
     st.write({ticker})
     st.subheader("How to read chart:")
-    st.write("Below yhat_lower --> Buy Signal")
-    st.write("Above yhat_upper --> Sell or Profit Taking Signal")
+    st.write(" - Below yhat_lower --> Buy Signal")
+    st.write(" - Above yhat_upper --> Sell or Profit Taking Signal")
     #st.write(f"Number of months in train data for {ticker}: {len(train)}")
     #st.write(f"Number of months in test data for {ticker}: {len(test)}")
-    st.write(f"Number of days in train data: {len(train)}")
-    st.write(f"Number of days in test data: {len(test)}")
+    st.write(f" - Number of days in train data: {len(train)}")
+    st.write(f" - Number of days in test data: {len(test)}")
 
     # Initialize Model
     m = Prophet()
