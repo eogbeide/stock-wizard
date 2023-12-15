@@ -1,11 +1,12 @@
 import streamlit as st
 import pandas as pd
 import urllib
+from PyDictionary import PyDictionary
 
 # Streamlit app
 def main():
     st.title("Top GRE Words by Engr. Manny")
-    st.write("Choose a word to get its meaning.")
+    st.write("Choose a word to get its meaning and an example usage.")
 
     try:
         # Get the raw URL of the CSV file on GitHub
@@ -27,6 +28,16 @@ def main():
         if selected_word:
             # Display the meaning of the selected word
             st.write(f"Meaning: {words_dict[selected_word]}")
+
+            # Get example usage from online dictionary
+            dictionary = PyDictionary()
+            example_usage = dictionary.meaning(selected_word)
+
+            if example_usage:
+                st.write(f"Example Usage: {example_usage[selected_word][0]}")
+            else:
+                st.write("Example usage not available.")
+
         else:
             st.write("Please select a word.")
 
