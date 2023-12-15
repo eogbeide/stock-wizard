@@ -197,9 +197,9 @@ st.write("Selected Ticker Information:")
 st.write("Other Stats")
 st.write(" - 50-Day Average: ", selected_ticker_info['fiftyDayAverage'])
 st.write(" - 200-Day Average: ", selected_ticker_info['twoHundredDayAverage'])
-st.write(" - beta: ")
+#st.write(" - beta: ")
 if 'beta' in selected_ticker_info:
-    st.write(selected_ticker_info['beta'])
+    st.write(" - beta:", selected_ticker_info['beta'])
 else:
     st.write("Not Available")
 st.subheader("About Company")
