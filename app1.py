@@ -192,11 +192,14 @@ for file in csvfiles:
     os.remove(file.replace('\\', '/'))
 
 # Display selected ticker information
-#st.write("Selected Ticker Information:")
-#st.write(selected_ticker_info)
+# st.write("Selected Ticker Information:")
+# st.write(selected_ticker_info)
 st.write("Other Stats")
 st.write(" - 50-Day Average: ", selected_ticker_info['fiftyDayAverage'])
 st.write(" - 200-Day Average: ", selected_ticker_info['twoHundredDayAverage'])
 st.write(" - beta: ", selected_ticker_info['beta'])
 st.subheader("About Company")
-st.write(selected_ticker_info['longBusinessSummary'])
+if 'longBusinessSummary' in selected_ticker_info:
+    st.write(selected_ticker_info['longBusinessSummary'])
+else:
+    st.write("Not Available")
