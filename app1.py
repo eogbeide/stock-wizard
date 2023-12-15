@@ -201,7 +201,7 @@ st.write(" - 200-Day Average: ", selected_ticker_info['twoHundredDayAverage'])
 if 'beta' in selected_ticker_info:
     st.write(" - beta:", selected_ticker_info['beta'])
 else:
-    st.write("Not Available")
+    st.write("Beta Not Available")
 st.subheader("About Company")
 if 'longBusinessSummary' in selected_ticker_info:
     st.write(selected_ticker_info['longBusinessSummary'])
