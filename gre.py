@@ -1,9 +1,6 @@
 import streamlit as st
 import pandas as pd
-import urllib3
-import nltk
-nltk.download('wordnet')
-from nltk.corpus import wordnet
+import urllib
 
 # Streamlit app
 def main():
@@ -30,21 +27,6 @@ def main():
         if selected_word:
             # Display the meaning of the selected word
             st.write(f"Meaning: {words_dict[selected_word]}")
-
-            # Get example sentences from WordNet
-            synsets = wordnet.synsets(selected_word)
-            example_sentences = []
-            for synset in synsets:
-                for example in synset.examples():
-                    example_sentences.append(example)
-
-            if example_sentences:
-                st.write("Example Sentences:")
-                for sentence in example_sentences[:5]:
-                    st.write(sentence)
-            else:
-                st.write("Example sentences not available.")
-
         else:
             st.write("Please select a word.")
 
