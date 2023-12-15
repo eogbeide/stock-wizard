@@ -3,6 +3,8 @@ import pandas as pd
 import urllib
 from PyDictionary import PyDictionary
 
+dictionary = PyDictionary()
+
 # Streamlit app
 def main():
     st.title("Top GRE Words by Engr. Manny")
