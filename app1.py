@@ -201,7 +201,7 @@ st.write(" - beta: ", selected_ticker_info['beta'])
 st.subheader("About Company")
 #if 'longBusinessSummary' in selected_ticker_info:
     #st.write(selected_ticker_info['longBusinessSummary'])
-if 'beta' in selected_ticker_info:
+if 'beta != 0' in selected_ticker_info:
     st.write(selected_ticker_info['beta'])
 else:
     st.write("Not Available")
