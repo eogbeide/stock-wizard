@@ -5,3 +5,4 @@ yfinance
 pandas-datareader
 prophet
 datetime
+PyDictionary
