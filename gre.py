@@ -1,7 +1,7 @@
 pip install nltk
 import streamlit as st
 import pandas as pd
-import urllib
+import urllib3
 import nltk
 nltk.download('wordnet')
 from nltk.corpus import wordnet
