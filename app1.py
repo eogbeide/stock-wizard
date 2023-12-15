@@ -192,7 +192,7 @@ for file in csvfiles:
     os.remove(file.replace('\\', '/'))
 
 # Display selected ticker information
-# st.write("Selected Ticker Information:")
+st.write("Selected Ticker Information:")
 # st.write(selected_ticker_info)
 st.write("Other Stats")
 st.write(" - 50-Day Average: ", selected_ticker_info['fiftyDayAverage'])
