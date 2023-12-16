@@ -186,8 +186,8 @@ for df, title, ticker in zip(dfs, titles, tickers):
     if yesterday_actual_price is not None:
         st.write("- Yesterday's Price: ", yesterday_actual_price)
     st.subheader("Current Forecast Price Confidence Intervals:")
-    st.write("- yhat: ", today_yhat)
     st.write("- yhat_lower: ", today_yhat_lower)
+    st.write("- yhat: ", today_yhat)
     st.write("- yhat_upper: ", today_yhat_upper)
     
 # Delete existing files
