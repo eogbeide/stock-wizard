@@ -5,7 +5,7 @@ import urllib
 # Streamlit app
 def main():
     st.title("Top GRE Words by Manny")
-    st.write("Choose a letter to filter the words.")
+    st.write("Choose a word to get its meaning.")
 
     try:
         # Get the raw URL of the CSV file on GitHub
@@ -13,7 +13,7 @@ def main():
 
         # Download the CSV file and read its contents
         csv_content = urllib.request.urlopen(raw_csv_url)
-        words_df = pd.read_csv(csv_content, encoding="cp1252")
+        words_df = pd.read_csv(csv_content, encoding="cp1252'")
 
         # Create a dictionary mapping words to meanings
         words_dict = {
@@ -21,26 +21,14 @@ def main():
             for _, row in words_df.iterrows()
         }
 
-        # Extract unique alphabets from the words
-        alphabets = sorted(set(word[0] for word in words_dict.keys()))
+        # Select a word from the dropdown
+        selected_word = st.selectbox("Select a word", list(words_dict.keys()))
 
-        # Select an alphabet from the dropdown
-        selected_alphabet = st.selectbox("Select an alphabet", alphabets)
-
-        # Filter the words based on the selected alphabet
-        filtered_words = {word: meaning for word, meaning in words_dict.items() if word.startswith(selected_alphabet)}
-
-        if filtered_words:
-            # Select a word from the filtered words
-            selected_word = st.selectbox("Select a word", list(filtered_words.keys()))
-
-            if selected_word:
-                # Display the meaning of the selected word
-                st.write(f"Meaning: {filtered_words[selected_word]}")
-            else:
-                st.write("Please select a word.")
+        if selected_word:
+            # Display the meaning of the selected word
+            st.write(f"Meaning: {words_dict[selected_word]}")
         else:
-            st.write("No words found for the selected alphabet.")
+            st.write("Please select a word.")
 
     except UnicodeDecodeError:
         st.error("Error: Unable to decode the CSV file. Please check the file's encoding.")
