@@ -13,7 +13,7 @@ def main():
 
         # Download the CSV file and read its contents
         csv_content = urllib.request.urlopen(raw_csv_url)
-        words_df = pd.read_csv(csv_content, encoding="cp1252'")
+        words_df = pd.read_csv(csv_content, encoding="cp1252")
 
         # Create a dictionary mapping words to meanings
         words_dict = {
@@ -21,14 +21,24 @@ def main():
             for _, row in words_df.iterrows()
         }
 
-        # Select a word from the dropdown
-        selected_word = st.selectbox("Select a word", list(words_dict.keys()))
+        # Create a sidebar for selecting alphabets
+        alphabets = sorted(set(word[0] for word in words_dict.keys()))
+        selected_alphabet = st.sidebar.selectbox("Select an alphabet", alphabets)
 
-        if selected_word:
-            # Display the meaning of the selected word
-            st.write(f"Meaning: {words_dict[selected_word]}")
+        # Filter the words based on the selected alphabet
+        filtered_words = {word: meaning for word, meaning in words_dict.items() if word.startswith(selected_alphabet)}
+
+        if filtered_words:
+            # Select a word from the filtered words
+            selected_word = st.selectbox("Select a word", list(filtered_words.keys()))
+
+            if selected_word:
+                # Display the meaning of the selected word
+                st.write(f"Meaning: {filtered_words[selected_word]}")
+            else:
+                st.write("Please select a word.")
         else:
-            st.write("Please select a word.")
+            st.write("No words found for the selected alphabet.")
 
     except UnicodeDecodeError:
         st.error("Error: Unable to decode the CSV file. Please check the file's encoding.")
