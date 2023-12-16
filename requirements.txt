@@ -8,3 +8,4 @@ datetime
 PyDictionary
 nltk
 urllib3
+PyPDF2
