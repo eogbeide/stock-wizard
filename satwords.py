@@ -45,7 +45,7 @@ def main():
         else:
             st.write("No words found for the selected alphabet bin.")
 
-    except PyPDF2.PdfReadError:
+    except PyPDF2.utils.PdfReadError:
         st.error("Error: Unable to read the PDF file.")
     except urllib.error.URLError:
         st.error("Error: Unable to fetch the PDF file. Please check the URL or your internet connection.")
