@@ -143,7 +143,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
     st.write(f" - **yhat_upper** is the highest price. Actual price above yhat_upper signals a selling or profit taking opportunity. Above yhat_upper --> Sell or Profit Taking Signal")
     #st.write(f"Number of months in train data for {ticker}: {len(train)}")
     #st.write(f" - Number of months in test data for {ticker}: {len(test)}")
-    st.subheader(f"Machine Learning Model Training Information")
+    st.subheader(f"Machine Learning Modeling Information")
     st.write(f" - Number of days in train data: {len(train)}")
     st.write(f" - Number of days in test data: {len(test)}")
 
