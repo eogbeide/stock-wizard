@@ -138,7 +138,6 @@ for df, title, ticker in zip(dfs, titles, tickers):
     st.write("Company Name: ", selected_ticker_info['longName'])
     #st.write(" - Location: ", selected_ticker_info['country'])
     st.subheader("How to read chart:")
-    st.write(" Here are a few definitions")
     st.write(" - yhat is the median price that shows price trend")
     st.write(" - yhat_lower is the lowest price. Actual price below yhat_lower signals a buying opportunity. Below yhat_lower --> Buy Signal")
     st.write(" - yhat_upper is the highest price. Actual price above yhat_upper signals a selling or profit taking opportunity. Above yhat_upper --> Sell or Profit Taking Signal")
