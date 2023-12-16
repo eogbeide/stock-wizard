@@ -26,7 +26,6 @@ yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
 
 files = []
 
-@st.cache
 def getData(ticker):
     print(ticker)
     data = pdr.get_data_yahoo(ticker, start=start_date, end=today)
