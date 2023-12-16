@@ -19,10 +19,14 @@ def main():
         # Clean the words and meanings
         words_df['Word'] = words_df['Word'].apply(clean_text)
         words_df['Meaning'] = words_df['Meaning'].apply(clean_text)
+        words_df['Example'] = words_df['Example'].apply(clean_text)
 
-        # Create a dictionary mapping words to meanings
+        # Create a dictionary mapping words to meanings and examples
         words_dict = {
-            row['Word']: row['Meaning']
+            row['Word']: {
+                'Meaning': row['Meaning'],
+                'Example': row['Example']
+            }
             for _, row in words_df.iterrows()
         }
 
@@ -46,8 +50,9 @@ def main():
             selected_word = st.selectbox("Select a word", list(filtered_words.keys()))
 
             if selected_word:
-                # Display the meaning of the selected word
-                st.write(f"Meaning: {filtered_words[selected_word]}")
+                # Display the meaning and example of the selected word
+                st.write(f"Meaning: {filtered_words[selected_word]['Meaning']}")
+                st.write(f"Example: {filtered_words[selected_word]['Example']}")
             else:
                 st.write("Please select a word.")
         else:
