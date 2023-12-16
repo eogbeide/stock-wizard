@@ -60,6 +60,7 @@ def clean_text(text):
     # Remove HTML tags and entities from the text
     cleaned_text = re.sub('<[^<]+?>', '', text)
     cleaned_text = re.sub('&\w+;', '', cleaned_text)
+    cleaned_text = cleaned_text.replace('", [', '')
     return cleaned_text.strip()
 
 if __name__ == '__main__':
