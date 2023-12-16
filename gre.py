@@ -36,7 +36,7 @@ def main():
                 alphabet_bins[letter] = [word]
 
         # Select an alphabet bin from the dropdown
-        selected_bin = st.selectbox("Select an alphabet to look up meaning from", sorted(alphabet_bins.keys()))
+        selected_bin = st.selectbox("Select an alphabet bin", sorted(alphabet_bins.keys()))
 
         # Filter the words based on the selected alphabet bin
         filtered_words = {word: words_dict[word] for word in alphabet_bins[selected_bin]}
