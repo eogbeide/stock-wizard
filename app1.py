@@ -134,7 +134,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
 
     st.title("Major US Stocks Forecast Wizard")
     st.write("")
-    st.subheader("The Smart Stock Trend Wiz by Manny: $$$")
+    st.subheader("The Smart AI Stock Trend Wiz by Manny: $$$")
     st.write("Company Name: ", selected_ticker_info['longName'])
     #st.write(" - Location: ", selected_ticker_info['country'])
     st.subheader("How to read chart:")
@@ -143,8 +143,8 @@ for df, title, ticker in zip(dfs, titles, tickers):
     st.write(" - yhat_upper is the highest price. Actual price above yhat_upper signals a selling or profit taking opportunity. Above yhat_upper --> Sell or Profit Taking Signal")
     #st.write(f"Number of months in train data for {ticker}: {len(train)}")
     #st.write(f" - Number of months in test data for {ticker}: {len(test)}")
-    st.write(f" - Number of days in train data: {len(train)}")
-    st.write(f" - Number of days in test data: {len(test)}")
+    #st.write(f" - Number of days in train data: {len(train)}")
+    #st.write(f" - Number of days in test data: {len(test)}")
 
     # Initialize Model
     m = Prophet()
