@@ -132,7 +132,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
     train = df[df['ds'] <= '10/31/2023']
     test = df[df['ds'] >= '11/01/2023']
 
-    st.title("Major US Stocks Forecast Wizard")
+    st.title("Major US Stocks AI Forecast Wizard")
     st.write("")
     st.subheader("The Smart AI Stock Trend Wiz by Manny: $$$")
     st.write("Company Name: ", selected_ticker_info['longName'])
