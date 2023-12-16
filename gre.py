@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import urllib
+import re
 
 # Streamlit app
 def main():
@@ -14,6 +15,10 @@ def main():
         # Download the CSV file and read its contents
         csv_content = urllib.request.urlopen(raw_csv_url)
         words_df = pd.read_csv(csv_content, encoding="cp1252")
+
+        # Clean the words and meanings
+        words_df['Word'] = words_df['Word'].apply(clean_text)
+        words_df['Meaning'] = words_df['Meaning'].apply(clean_text)
 
         # Create a dictionary mapping words to meanings
         words_dict = {
@@ -50,6 +55,12 @@ def main():
 
     except UnicodeDecodeError:
         st.error("Error: Unable to decode the CSV file. Please check the file's encoding.")
+
+def clean_text(text):
+    # Remove HTML tags and entities from the text
+    cleaned_text = re.sub('<[^<]+?>', '', text)
+    cleaned_text = re.sub('&\w+;', '', cleaned_text)
+    return cleaned_text.strip()
 
 if __name__ == '__main__':
     main()
