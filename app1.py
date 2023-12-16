@@ -198,7 +198,7 @@ for file in csvfiles:
 st.write("Selected Ticker Information:")
 # st.write(selected_ticker_info)
 st.subheader("Other Stats")
-st.write(" - 50-Day Average: ", selected_ticker_info['fiftyDayAverage']) st.write("200-Day Average: ", selected_ticker_info['twoHundredDayAverage'])
+st.write(" - 50-Day Average: ", selected_ticker_info['fiftyDayAverage']), st.write("200-Day Average: ", selected_ticker_info['twoHundredDayAverage'])
 #st.write(" - beta: ")
 if 'beta' in selected_ticker_info:
     st.write(" - beta:", selected_ticker_info['beta'])
