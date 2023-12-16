@@ -145,8 +145,8 @@ for df, title, ticker in zip(dfs, titles, tickers):
     #st.write(f"Number of months in train data for {ticker}: {len(train)}")
     #st.write(f" - Number of months in test data for {ticker}: {len(test)}")
     st.subheader(f"Machine Learning Modeling Information")
-    st.write(f" - Number of days in train data: {len(train)}")
-    st.write(f" - Number of days in test data: {len(test)}")
+    st.write(f" - Number of days in training data: {len(train)}")
+    st.write(f" - Number of days in testing data: {len(test)}")
 
     # Initialize Model
     m = Prophet()
