@@ -21,11 +21,11 @@ def main():
             for _, row in words_df.iterrows()
         }
 
-        # Select a range of alphabets
-        alphabet_range = st.selectbox("Select a range of alphabets", list('A-Z'))
+        # Select an alphabet from the dropdown
+        selected_alphabet = st.selectbox("Select an alphabet", list('ABCDEFGHIJKLMNOPQRSTUVWXYZ'))
 
-        # Filter the words based on the selected alphabet range
-        filtered_words = {word: meaning for word, meaning in words_dict.items() if word.startswith(alphabet_range)}
+        # Filter the words based on the selected alphabet
+        filtered_words = {word: meaning for word, meaning in words_dict.items() if word.startswith(selected_alphabet)}
 
         if filtered_words:
             # Select a word from the filtered words
@@ -37,7 +37,7 @@ def main():
             else:
                 st.write("Please select a word.")
         else:
-            st.write("No words found for the selected alphabet range.")
+            st.write("No words found for the selected alphabet.")
 
     except UnicodeDecodeError:
         st.error("Error: Unable to decode the CSV file. Please check the file's encoding.")
