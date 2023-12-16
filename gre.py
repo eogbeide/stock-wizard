@@ -5,7 +5,7 @@ import urllib
 # Streamlit app
 def main():
     st.title("Top GRE Words by Manny")
-    st.write("Choose a word to get its meaning.")
+    st.write("Choose a letter to filter the words.")
 
     try:
         # Get the raw URL of the CSV file on GitHub
@@ -21,11 +21,11 @@ def main():
             for _, row in words_df.iterrows()
         }
 
-        # Select an alphabet from the dropdown
-        selected_alphabet = st.selectbox("Select an alphabet", list('ABCDEFGHIJKLMNOPQRSTUVWXYZ'))
+        # Select a letter from the dropdown
+        selected_letter = st.selectbox("Select a letter", list('ABCDEFGHIJKLMNOPQRSTUVWXYZ'))
 
-        # Filter the words based on the selected alphabet
-        filtered_words = {word: meaning for word, meaning in words_dict.items() if word.startswith(selected_alphabet)}
+        # Filter the words based on the selected letter
+        filtered_words = {word: meaning for word, meaning in words_dict.items() if word.startswith(selected_letter)}
 
         if filtered_words:
             # Select a word from the filtered words
@@ -37,7 +37,7 @@ def main():
             else:
                 st.write("Please select a word.")
         else:
-            st.write("No words found for the selected alphabet.")
+            st.write("No words found for the selected letter.")
 
     except UnicodeDecodeError:
         st.error("Error: Unable to decode the CSV file. Please check the file's encoding.")
