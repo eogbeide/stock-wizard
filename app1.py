@@ -177,13 +177,13 @@ for df, title, ticker in zip(dfs, titles, tickers):
 
 
     # Check if yesterday's actual price exists
-    st.write("Yesterday's Actual Price:")
+    st.subheader("Yesterday's Actual Price:")
     if yesterday in df['ds'].values:
         yesterday_actual_price = df[df['ds'] == yesterday]['y'].values[0]
     # Display today's forecast values
     if yesterday_actual_price is not None:
         st.write("- Yesterday's Price: ", yesterday_actual_price)
-    st.write("Current Forecast Confidence Intervals:")
+    st.subheader("Current Forecast Confidence Intervals:")
     st.write("- yhat: ", today_yhat)
     st.write("- yhat_lower: ", today_yhat_lower)
     st.write("- yhat_upper: ", today_yhat_upper)
@@ -195,7 +195,7 @@ for file in csvfiles:
 # Display selected ticker information
 st.write("Selected Ticker Information:")
 # st.write(selected_ticker_info)
-st.write("Other Stats")
+st.subheader("Other Stats")
 st.write(" - 50-Day Average: ", selected_ticker_info['fiftyDayAverage'])
 st.write(" - 200-Day Average: ", selected_ticker_info['twoHundredDayAverage'])
 #st.write(" - beta: ")
