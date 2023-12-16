@@ -13,7 +13,7 @@ def main():
 
         # Download the CSV file and read its contents
         csv_content = urllib.request.urlopen(raw_csv_url)
-        words_df = pd.read_csv(csv_content, encoding="cp1252'")
+        words_df = pd.read_csv(csv_content, encoding="cp1252")
 
         # Create a dictionary mapping words to meanings
         words_dict = {
@@ -21,14 +21,23 @@ def main():
             for _, row in words_df.iterrows()
         }
 
-        # Select a word from the dropdown
-        selected_word = st.selectbox("Select a word", list(words_dict.keys()))
+        # Select a range of alphabets
+        alphabet_range = st.selectbox("Select a range of alphabets", list('A-Z'))
 
-        if selected_word:
-            # Display the meaning of the selected word
-            st.write(f"Meaning: {words_dict[selected_word]}")
+        # Filter the words based on the selected alphabet range
+        filtered_words = {word: meaning for word, meaning in words_dict.items() if word.startswith(alphabet_range)}
+
+        if filtered_words:
+            # Select a word from the filtered words
+            selected_word = st.selectbox("Select a word", list(filtered_words.keys()))
+
+            if selected_word:
+                # Display the meaning of the selected word
+                st.write(f"Meaning: {filtered_words[selected_word]}")
+            else:
+                st.write("Please select a word.")
         else:
-            st.write("Please select a word.")
+            st.write("No words found for the selected alphabet range.")
 
     except UnicodeDecodeError:
         st.error("Error: Unable to decode the CSV file. Please check the file's encoding.")
