@@ -86,6 +86,9 @@ selected_files, selected_ticker_info = select_files(csvfiles)
 dfs = []
 for selected_file in selected_files:
     df = pd.read_csv(selected_file)
+    if df.empty:
+        st.error(f"The file {selected_file} is empty. Please select a different file.")
+        continue
     df = df[['Date', 'Close']]
     df.columns = ['ds', 'y']
     df['ds'] = pd.to_datetime(df['ds'])
