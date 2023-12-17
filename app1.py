@@ -200,9 +200,8 @@ for df, title, ticker in zip(dfs, titles, tickers):
     else:
         # Continue with the rest of your code
         print("Yesterday's actual price is available")
-
-    # Get yesterday's actual price
-    yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
+        # Get yesterday's actual price
+        yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
 
     # Check if yesterday's actual price exists
     st.subheader("Yesterday's Closing Price:")
