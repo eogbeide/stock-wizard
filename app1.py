@@ -4,7 +4,6 @@ import plotly.express as px
 from prophet import Prophet
 from plotly import graph_objs as go
 import glob
-
 from pandas_datareader import data as pdr
 from datetime import date
 import yfinance as yf
@@ -24,7 +23,8 @@ files = []
 
 def getData(ticker):
     print(ticker)
-    data = pdr.get_data_yahoo(ticker, start=start_date, end=today)
+    data = pdr.get_data_yahoo(ticker, start=start_date, end=end_date)
+    data = data[data.index.dayofweek < 5]  # Exclude weekends
     dataname = ticker + '_' + str(today)
     files.append(dataname)
     SaveData(data, dataname)
@@ -76,6 +76,7 @@ for selected_file in selected_files:
     df = df[['Date', 'Close']]
     df.columns = ['ds', 'y']
     df['ds'] = pd.to_datetime(df['ds'])
+    df = df[df['ds'].dt.dayofweek < 5]  # Exclude weekends
     df.reset_index(inplace=True, drop=True)
     dfs.append(df)
 
@@ -97,57 +98,27 @@ def interactive_plot_forecasting(df, forecast, title):
 
     # Get maximum and minimum points
     max_points = df[df['y'] == df['y'].max()]
-    min_points = df[df['y'] == df['y'].min()]
+    min_points = df[df['y'].min()]
 
-    # Add maximum points to the plot
-    fig.add_trace(go.Scatter(x=max_points['ds'], y=max_points['y'], mode='markers', name='Maximum'))
+    # Add annotations for maximum and minimum points
+    fig.add_annotation(x=max_points['ds'].values[0], y=max_points['y'].values[0],
+                       text=f"Max ({max_points['y'].values[0]:.2f})", showarrow=True, arrowhead=1)
+    fig.add_annotation(x=min_points['ds'].values[0], y=min_points['y'].values[0],
+                       text=f"Min ({min_points['y'].values[0]:.2f})", showarrow=True, arrowhead=1)
 
-    # Add minimum points to the plot
-    fig.add_trace(go.Scatter(x=min_points['ds'], y=min_points['y'], mode='markers', name='Minimum'))
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'],
+                             mode='lines', line=dict(color='green'), name='Predicted'))
 
-    # Add yhat_lower and yhat_upper
-    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
-    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
-
+    fig.update_layout(xaxis_rangeslider_visible=True)
     st.plotly_chart(fig)
 
-# Append today's date to the titles
-today = date.today().strftime("%Y-%m-%d")
-
-# Iterate over the selected files and their corresponding titles
-for df, title, ticker in zip(dfs, titles, tickers):
-    # Split the data into testing and training datasets
-    train = df[df['ds'] <= '10/31/2023']
-    test = df[df['ds'] >= '11/01/2023']
-
-    st.title("Major US Stocks Forecast Wizard")
-    st.write("")
-    st.subheader("The Smart Stock Trend Wiz: $$$")
-    st.write({ticker})
-    st.write("How to read chart: Below yhat_lower --> buy signal, above yhat_upper --> sell signal")
-    #st.write(f"Number of months in train data for {ticker}: {len(train)}")
-    #st.write(f"Number of months in test data for {ticker}: {len(test)}")
-    st.write(f"Number of days in train data: {len(train)}")
-    st.write(f"Number of days in test data: {len(test)}")
-
-    # Initialize Model
+# Train and predict using Prophet for each selected file
+for i, df in enumerate(dfs):
+    st.subheader(f"{titles[i]}")
     m = Prophet()
-
-    # Create and fit the prophet model to the training data
-    m.fit(train)
-
-    # Make predictions
-    future = m.make_future_dataframe(periods=93)
+    m.fit(df)
+    future = m.make_future_dataframe(periods=30)
     forecast = m.predict(future)
-    #st.write("Forecast for", ticker)
-    #   st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(30))
-
-    # Add predicted values to the original dataframe
-    df['predicted'] = forecast['trend']
-
-    # Plot the forecast and the original values for comparison
-    interactive_plot_forecasting(df, forecast, f'{title} ({today})')
-
-# Delete existing files
-for file in csvfiles:
-    os.remove(file)
+    forecast = forecast[['ds', 'yhat']]
+    dfs[i]['predicted'] = forecast['yhat'][-len(df):].values
+    interactive_plot_forecasting(dfs[i], forecast, titles[i])
