@@ -182,9 +182,11 @@ for df, title, ticker in zip(dfs, titles, tickers):
 
 
     # Check if yesterday's actual price exists
-    st.subheader("Yesterday's Closing Price:")
+    # Check if yesterday's price is available
     if yesterday in df['ds'].values:
-        yesterday_actual_price = df[df['ds'] == yesterday]['y'].values[0]
+        yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0], 2)
+    else:
+        yesterday_actual_price = "Price not available"
     # Display today's forecast values
     if yesterday_actual_price is not None:
         st.write("- Yesterday's Price: ", yesterday_actual_price)
