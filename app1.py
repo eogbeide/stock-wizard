@@ -9,24 +9,19 @@ from pandas_datareader import data as pdr
 from datetime import date
 import yfinance as yf
 import os
-from datetime import timedelta
 
 yf.pdr_override()
 
 # Tickers list
-ticker_list = ['LLY','V','MA','ABBV','WBA','BMY','HUM','CI','UNH','CVS','DOCU','ZM','ABNB','SNOW','LYFT','UBER','DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CADL','ADTX', 'MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
+ticker_list = ['MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'VWAPY', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
 today = date.today()
 
 # We can get data by our choice by giving days bracket
 start_date = "2021-12-01"
 end_date = today.strftime("%Y-%m-%d")  # Use today's date as the end date
 
-# Get yesterday's date
-yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
-
 files = []
 
-#@st.cache
 def getData(ticker):
     print(ticker)
     data = pdr.get_data_yahoo(ticker, start=start_date, end=today)
@@ -37,7 +32,6 @@ def getData(ticker):
 # Create a data folder in your current dir.
 def SaveData(df, filename):
     save_path = os.path.expanduser('~/Documents/data/')
-    os.makedirs(save_path, exist_ok=True)  # Create the directory if it doesn't exist
     df.to_csv(os.path.join(save_path, filename + '.csv'))
 
 # This loop will iterate over ticker list, will pass one ticker to get data, and save that data as a file.
@@ -48,39 +42,32 @@ for tik in ticker_list:
 def select_files(files):
     num_files = len(files)
 
-    selected_files = []
-    selected_ticker_info = None
-    
-    while True:
-        try:
-            choice = st.sidebar.selectbox(
-                "Select Company Ticker",
-                range(1, num_files + 1),
-                format_func=lambda x: files[x - 1].split('/')[-1].split('_')[0],
-                key="selectbox"
-            )
-            selected_file = files[choice - 1]
-            selected_files.append(selected_file)
-            
-            # Retrieve ticker information from yfinance
-            selected_ticker = selected_file.split('/')[-1].split('_')[0]
-            ticker_info = yf.Ticker(selected_ticker)
-            selected_ticker_info = ticker_info.info
-            
-            break
-        except IndexError:
-            st.sidebar.warning("Invalid choice. Please try again.")
+    # Print the list of files
+    for i, file in enumerate(files):
+        print(f"{i + 1}. {file}")
 
-    return selected_files, selected_ticker_info
+    selected_files = []
+    # Prompt the user to choose two files
+    for _ in range(2):
+        while True:
+            try:
+                choice = st.sidebar.selectbox("Select a file", range(1, num_files + 1), format_func=lambda x: files[x - 1].split('/')[-1].split('_')[0], key=f"selectbox_{_}")
+                selected_file = files[choice - 1]
+                selected_files.append(selected_file)
+                break
+            except IndexError:
+                st.sidebar.warning("Invalid choice. Please try again.")
+
+    return selected_files
 
 # the path to your csv file directory
-mycsvdir = os.path.expanduser('~/Documents/data')
+mycsvdir = 'C:/Users/eogbeide/Documents/data'
 
 # get all the csv files in that directory (assuming they have the extension .csv)
 csvfiles = glob.glob(os.path.join(mycsvdir, '*.csv'))
 
 # Prompt the user to select two files
-selected_files, selected_ticker_info = select_files(csvfiles)
+selected_files = select_files(csvfiles)
 
 # Read the selected files using pandas
 dfs = []
@@ -100,10 +87,10 @@ for selected_file in selected_files:
     tickers.append(ticker)
     selected_file = selected_file.replace(mycsvdir + '/', '')  # Remove the directory path
     selected_file = selected_file.replace('.csv', '')  # Remove the ".csv" extension
-    #selected_file = selected_file.replace('data"\"', '')  # Remove the ".data" extension
+    selected_file = selected_file.replace('data"\"', '')  # Remove the ".data" extension
     ticker = ticker.replace('data"\"', '')  # Remove the ".data" extension
     #titles.append(f'Original Vs Predicted ({ticker})')
-    titles.append(f'Chart of Original Price (y)   Vs   Predicted Price for ({ticker})')
+    titles.append(f'Chart of Original Vs Predicted for ({ticker})')
 
 def interactive_plot_forecasting(df, forecast, title):
     fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
@@ -133,20 +120,15 @@ for df, title, ticker in zip(dfs, titles, tickers):
     train = df[df['ds'] <= '10/31/2023']
     test = df[df['ds'] >= '11/01/2023']
 
-    st.title("Major US Stocks AI Forecast Wizard")
+    st.title("Major US Stocks Forecast Wizard")
     st.write("")
-    st.write("The Smart AI Stock Trend Wiz by Manny: $$$")
-    st.write(f" - **Company Name:** ", selected_ticker_info['longName'])
-    #st.write(" - Location: ", selected_ticker_info['country'])
-    st.subheader("How to read chart:")
-    st.write(f" - **yhat** is the median price that shows price trend")
-    st.write(f" - **yhat_lower** is the lowest price. Actual price below yhat_lower signals a buying opportunity. Below yhat_lower --> Buy Signal")
-    st.write(f" - **yhat_upper** is the highest price. Actual price above yhat_upper signals a selling or profit taking opportunity. Above yhat_upper --> Sell or Profit Taking Signal")
+    st.subheader("The Smart Stock Trend Wiz: $$$")
+    st.write({ticker})
+    st.write("How to read chart: Below yhat_lower --> buy signal, above yhat_upper --> sell signal")
     #st.write(f"Number of months in train data for {ticker}: {len(train)}")
-    #st.write(f" - Number of months in test data for {ticker}: {len(test)}")
-    st.subheader(f"Machine Learning Modeling Information")
-    st.write(f" - Number of days in training data: {len(train)}")
-    st.write(f" - Number of days in testing data: {len(test)}")
+    #st.write(f"Number of months in test data for {ticker}: {len(test)}")
+    st.write(f"Number of days in train data: {len(train)}")
+    st.write(f"Number of days in test data: {len(test)}")
 
     # Initialize Model
     m = Prophet()
@@ -166,47 +148,6 @@ for df, title, ticker in zip(dfs, titles, tickers):
     # Plot the forecast and the original values for comparison
     interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 
-    # Extract today's forecast values
-    today_forecast = forecast[forecast['ds'] == today]
-
-    # Get today's yhat, yhat_lower, and yhat_upper values
-    today_yhat = round(today_forecast['yhat'].values[0],2)
-    today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
-    today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
-
-    # Get yesterday's actual price
-    yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
-
-
-    # Check if yesterday's actual price exists
-    st.subheader("Yesterday's Closing Price:")
-    if yesterday in df['ds'].values:
-        yesterday_actual_price = df[df['ds'] == yesterday]['y'].values[0]
-    # Display today's forecast values
-    if yesterday_actual_price is not None:
-        st.write("- Yesterday's Price: ", yesterday_actual_price)
-    st.subheader("Current Forecast Price Confidence Intervals:")
-    st.write("- yhat_lower: ", today_yhat_lower)
-    st.write("- yhat: ", today_yhat)
-    st.write("- yhat_upper: ", today_yhat_upper)
-    
 # Delete existing files
 for file in csvfiles:
-    os.remove(file.replace('\\', '/'))
-
-# Display selected ticker information
-st.write("Selected Ticker Information:")
-# st.write(selected_ticker_info)
-st.subheader("Other Stats")
-st.write(" - 50-Day Average: ", selected_ticker_info['fiftyDayAverage'])
-st.write(" - 200-Day Average: ", selected_ticker_info['twoHundredDayAverage'])
-#st.write(" - beta: ")
-if 'beta' in selected_ticker_info:
-    st.write(" - beta:", selected_ticker_info['beta'])
-else:
-    st.write(" - Beta Not Available")
-st.subheader("About Company")
-if 'longBusinessSummary' in selected_ticker_info:
-    st.write(selected_ticker_info['longBusinessSummary'])
-else:
-    st.write("Not Available")
+    os.remove(file)
