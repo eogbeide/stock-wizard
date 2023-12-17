@@ -18,12 +18,12 @@ yf.pdr_override()
 ticker_list = ['LLY','V','MA','ABBV','WBA','BMY','HUM','CI','UNH','CVS','DOCU','ZM','ABNB','SNOW','LYFT','UBER','DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CADL','ADTX', 'MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
 today = date.today()
 # Check if today is a weekend (Saturday or Sunday)
-if today.weekday() >= 5:
+#if today.weekday() >= 5:
     # Display error message
-    error_message = "It is weekend; Check back on Monday"
-    print(error_message)
-    st.subheader("It is weekend, check back on Monday")
-    sys.exit()
+    #error_message = "It is weekend; Check back on Monday"
+    #print(error_message)
+    #st.subheader("It is weekend, check back on Monday")
+    #sys.exit()
 
 # We can get data by our choice by giving days bracket
 start_date = "2021-12-01"
