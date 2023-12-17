@@ -186,6 +186,9 @@ for df, title, ticker in zip(dfs, titles, tickers):
     today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
     today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
 
+    # Get today's date as a datetime.date object
+    today = datetime.date.today()
+
     # Get yesterday's date
     yesterday = today - datetime.timedelta(days=1)
 
