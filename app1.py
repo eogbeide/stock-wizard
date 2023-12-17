@@ -192,7 +192,6 @@ for df, title, ticker in zip(dfs, titles, tickers):
     # Get yesterday's date
     yesterday = today - datetime.timedelta(days=1)
 
-    st.write("- Yesterday's Price: ", yesterday_actual_price)
     # Check if yesterday's date falls on a weekend
     if yesterday.weekday() >= 5:
         # Display message for weekend
@@ -204,6 +203,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
         # Get yesterday's actual price
         yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
         st.write("- Yesterday's Price: ", yesterday_actual_price)
+        
 
     # Check if yesterday's actual price exists
     #st.subheader("Yesterday's Closing Price:")
