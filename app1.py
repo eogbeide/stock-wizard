@@ -182,18 +182,17 @@ for df, title, ticker in zip(dfs, titles, tickers):
     today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
     today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
 
-    # Get yesterday's actual price
-    yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
-
-
-    # Check if yesterday's actual price exists
+       # Check if yesterday's actual price exists
     st.subheader("Yesterday's Closing Price:")
-    if yesterday in df['ds'].values:
-        yesterday_actual_price = df[df['ds'] == yesterday]['y'].values[0]
+    #if yesterday in df['ds'].values:
+        #yesterday_actual_price = df[df['ds'] == yesterday]['y'].values[0]
     else:
         friday = yesterday - datetime.timedelta(days=3)
         yesterday_actual_price = get_yesterday_actual_price(friday)
         
+     # Get yesterday's actual price
+    yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
+
     # Display today's forecast values
     if yesterday_actual_price is not None:
         st.write("- Yesterday's Price: ", yesterday_actual_price)
