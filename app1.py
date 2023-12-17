@@ -10,6 +10,7 @@ from datetime import date
 import yfinance as yf
 import os
 from datetime import timedelta
+import sys
 
 yf.pdr_override()
 
