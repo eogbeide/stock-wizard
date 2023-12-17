@@ -192,6 +192,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
     # Get yesterday's date
     yesterday = today - datetime.timedelta(days=1)
 
+    st.write("- Yesterday's Price: ", yesterday_actual_price)
     # Check if yesterday's date falls on a weekend
     if yesterday.weekday() >= 5:
         # Display message for weekend
@@ -202,17 +203,18 @@ for df, title, ticker in zip(dfs, titles, tickers):
         print("Yesterday's actual price is available")
         # Get yesterday's actual price
         yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
+        st.write("- Yesterday's Price: ", yesterday_actual_price)
 
     # Check if yesterday's actual price exists
-    st.subheader("Yesterday's Closing Price:")
+    #st.subheader("Yesterday's Closing Price:")
     #if yesterday in df['ds'].values:
         #yesterday_actual_price = df[df['ds'] == yesterday]['y'].values[0]
 
     # Display today's forecast values
-    if yesterday_actual_price is not None:
-        st.write("- Yesterday's Price: ", yesterday_actual_price)
-    else:
-        st.write("- Yesterday's Price is not available")
+    #if yesterday_actual_price is not None:
+        #st.write("- Yesterday's Price: ", yesterday_actual_price)
+    #else:
+        #st.write("- Yesterday's Price is not available")
     st.subheader("Current Forecast Price Confidence Intervals:")
     st.write("- yhat_lower: ", today_yhat_lower)
     st.write("- yhat: ", today_yhat)
