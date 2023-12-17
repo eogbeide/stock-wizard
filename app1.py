@@ -197,6 +197,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
         # Display message for weekend
         error_message = "Yesterday's actual price is unavailable on weekends"
         print(error_message)
+        st.write("- Yesterday's actual price is unavailable on weekends")
     else:
         # Continue with the rest of your code
         print("Yesterday's actual price is available")
