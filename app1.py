@@ -60,7 +60,7 @@ for tik in ticker_list:
     getData(tik)
 
 # Pull data, train model, and predict
-@st.cache_data
+@st.cache_data(experimental_allow_widgets=True)
 def select_files(files):
     num_files = len(files)
 
