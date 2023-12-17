@@ -186,35 +186,25 @@ for df, title, ticker in zip(dfs, titles, tickers):
     today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
     today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
 
-    # Check if yesterday's actual price exists
-    st.subheader("Yesterday's Closing Price:")
-    # Check if yesterday's actual price is available
-    if yesterday.weekday() == 0:  # If yesterday is a Monday
-        # Display message for Monday
-        error_message = "Yesterday's actual price is unavailable on Mondays"
+    # Get yesterday's actual price
+    yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
+
+    # Get yesterday's date
+    yesterday = today - datetime.timedelta(days=1)
+
+    # Check if yesterday's date falls on a weekend
+    if yesterday.weekday() >= 5:
+        # Display message for weekend
+        error_message = "Yesterday's actual price is unavailable on weekends"
         print(error_message)
     else:
-        # Convert yesterday's date to a datetime object
-        yesterday = datetime.datetime.combine(yesterday, datetime.datetime.min.time())
-    
-        # Use yesterday's actual price
-        yesterday_actual_price = get_yesterday_actual_price(yesterday)
-        
-        if yesterday_actual_price is None:
-            # Use Friday's price as yesterday's actual price
-            friday = yesterday - datetime.timedelta(days=3)
-            friday_actual_price = get_yesterday_actual_price(friday)
-            
-            if friday_actual_price is None:
-                # Display message if yesterday's actual price is still unavailable
-                error_message = "Yesterday's actual price is unavailable"
-                print(error_message)
-            else:
-                # Use Friday's price as yesterday's actual price
-                yesterday_actual_price = friday_actual_price
-        
-     # Get yesterday's actual price
-    yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
+        # Continue with the rest of your code
+        print("Yesterday's actual price is available")
+
+    # Check if yesterday's actual price exists
+    st.subheader("Yesterday's Closing Price:")
+    if yesterday in df['ds'].values:
+        yesterday_actual_price = df[df['ds'] == yesterday]['y'].values[0]
 
     # Display today's forecast values
     if yesterday_actual_price is not None:
