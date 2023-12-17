@@ -40,7 +40,7 @@ yesterday = today - datetime.timedelta(days=1)
 
 files = []
 
-#@st.cache
+@st.cache_data
 def getData(ticker):
     print(ticker)
     data = pdr.get_data_yahoo(ticker, start=start_date, end=today)
@@ -49,6 +49,7 @@ def getData(ticker):
     SaveData(data, dataname)
 
 # Create a data folder in your current dir.
+@st.cache_data
 def SaveData(df, filename):
     save_path = os.path.expanduser('~/Documents/data/')
     os.makedirs(save_path, exist_ok=True)  # Create the directory if it doesn't exist
@@ -59,6 +60,7 @@ for tik in ticker_list:
     getData(tik)
 
 # Pull data, train model, and predict
+@st.cache_data
 def select_files(files):
     num_files = len(files)
 
@@ -119,6 +121,7 @@ for selected_file in selected_files:
     #titles.append(f'Original Vs Predicted ({ticker})')
     titles.append(f'Chart of Original Price (y)   Vs   Predicted Price for ({ticker})')
 
+@st.cache_data
 def interactive_plot_forecasting(df, forecast, title):
     fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
 
