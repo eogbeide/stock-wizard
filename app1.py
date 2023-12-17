@@ -40,7 +40,7 @@ yesterday = today - datetime.timedelta(days=1)
 
 files = []
 
-@st.cache_data
+@st.cache_data(experimental_allow_widgets=True)
 def getData(ticker):
     print(ticker)
     data = pdr.get_data_yahoo(ticker, start=start_date, end=today)
@@ -49,7 +49,7 @@ def getData(ticker):
     SaveData(data, dataname)
 
 # Create a data folder in your current dir.
-@st.cache_data
+@st.cache_data(experimental_allow_widgets=True)
 def SaveData(df, filename):
     save_path = os.path.expanduser('~/Documents/data/')
     os.makedirs(save_path, exist_ok=True)  # Create the directory if it doesn't exist
@@ -121,7 +121,7 @@ for selected_file in selected_files:
     #titles.append(f'Original Vs Predicted ({ticker})')
     titles.append(f'Chart of Original Price (y)   Vs   Predicted Price for ({ticker})')
 
-@st.cache_data
+@st.cache_data(experimental_allow_widgets=True)
 def interactive_plot_forecasting(df, forecast, title):
     fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
 
