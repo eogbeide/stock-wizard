@@ -28,6 +28,7 @@ if today.weekday() >= 5:
     # Display error message
     error_message = "It is weekend; Check back on Monday"
     print(error_message)
+    st.subheader("It is weekend, check back on Monday")
     sys.exit()
 
 # Continue with the rest of your code
