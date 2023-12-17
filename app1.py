@@ -25,6 +25,7 @@ files = []
 def getData(ticker):
     print(ticker)
     data = pdr.get_data_yahoo(ticker, start=start_date, end=today)
+    data = data[data.index.dayofweek < 5]  # Exclude weekends
     dataname = ticker + '_' + str(today)
     files.append(dataname)
     SaveData(data, dataname)
@@ -51,7 +52,12 @@ def select_files(files):
     for _ in range(2):
         while True:
             try:
-                choice = st.sidebar.selectbox("Select a file", range(1, num_files + 1), format_func=lambda x: files[x - 1].split('/')[-1].split('_')[0], key=f"selectbox_{_}")
+                choice = st.sidebar.selectbox(
+                    "Select a file",
+                    range(1, num_files + 1),
+                    format_func=lambda x: files[x - 1].split('/')[-1].split('_')[0],
+                    key=f"selectbox_{_}"
+                )
                 selected_file = files[choice - 1]
                 selected_files.append(selected_file)
                 break
@@ -76,9 +82,10 @@ for selected_file in selected_files:
     df = df[['Date', 'Close']]
     df.columns = ['ds', 'y']
     df['ds'] = pd.to_datetime(df['ds'])
+    df = df[df['ds'].dt.dayofweek < 5]  # Exclude weekends
     df.reset_index(inplace=True, drop=True)
     dfs.append(df)
-
+    
 # Plot the selected files
 titles = []
 tickers = []
@@ -137,10 +144,10 @@ for df, title, ticker in zip(dfs, titles, tickers):
     m.fit(train)
 
     # Make predictions
-    future = m.make_future_dataframe(periods=93)
-    forecast = m.predict(future)
-    #st.write("Forecast for", ticker)
-    #   st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(30))
+    # Make predictions
+future = m.make_future_dataframe(periods=93)
+future = future[future['ds'].dt.dayofweek < 5]  # Exclude weekends
+forecast = m.predict(future)
 
     # Add predicted values to the original dataframe
     df['predicted'] = forecast['trend']
