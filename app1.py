@@ -40,7 +40,7 @@ yesterday = today - datetime.timedelta(days=1)
 
 files = []
 
-@st.cache_data(experimental_allow_widgets=True)
+#@st.cache_data(experimental_allow_widgets=True)
 def getData(ticker):
     print(ticker)
     data = pdr.get_data_yahoo(ticker, start=start_date, end=today)
