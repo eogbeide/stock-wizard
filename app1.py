@@ -190,6 +190,10 @@ for df, title, ticker in zip(dfs, titles, tickers):
     st.subheader("Yesterday's Closing Price:")
     if yesterday in df['ds'].values:
         yesterday_actual_price = df[df['ds'] == yesterday]['y'].values[0]
+    else:
+        friday = yesterday - datetime.timedelta(days=3)
+        yesterday_actual_price = get_yesterday_actual_price(friday)
+        
     # Display today's forecast values
     if yesterday_actual_price is not None:
         st.write("- Yesterday's Price: ", yesterday_actual_price)
