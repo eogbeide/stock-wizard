@@ -19,6 +19,16 @@ today = date.today()
 
 # We can get data by our choice by giving days bracket
 start_date = "2021-12-01"
+# Get today's date
+today = date.today()
+
+# Check if today is Saturday or Sunday
+if today.weekday() == 5:  # Saturday
+    today -= timedelta(days=1)
+elif today.weekday() == 6:  # Sunday
+    today -= timedelta(days=2)
+
+# Format today's date as a string
 end_date = today.strftime("%Y-%m-%d")  # Use today's date as the end date
 
 # Get yesterday's date
