@@ -55,6 +55,9 @@ for tik in ticker_list:
 
 # Pull data, train model, and predict
 def select_files(files):
+    if not files:
+        return []
+
     num_files = len(files)
 
     # Print the list of files
