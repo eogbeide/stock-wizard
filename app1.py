@@ -26,8 +26,9 @@ if today.weekday() >= 5:
     st.write("It is the weekend, check back on Monday when prices are updated")
     #sys.exit()
 else:
-    st.write("Welcome to the Stock Trend Prediction Wizard App")
-
+    #st.write("Welcome to the Stock Trend Prediction Wizard App") 
+    st.write("Welcome to the Smart AI Stock Trend Prediction Wizard by Manny: $$$")
+    
 # We can get data by our choice by giving days bracket
 start_date = "2021-12-01"
 end_date = today.strftime("%Y-%m-%d")  # Use today's date as the end date
@@ -152,7 +153,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
 
     st.title("Major US Stocks AI Forecast Wizard")
     st.write("")
-    st.write("The Smart AI Stock Trend Wiz by Manny: $$$")
+    #st.write("The Smart AI Stock Trend Wiz by Manny: $$$")
     st.write(f" - **Company Name:** ", selected_ticker_info['longName'])
     #st.write(" - Location: ", selected_ticker_info['country'])
     st.subheader("How to read chart:")
