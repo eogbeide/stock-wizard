@@ -22,10 +22,10 @@ ticker_list = sorted (['LLY','V','MA','ABBV','WBA','BMY','HUM','CI','UNH','CVS',
 #ticker_list_sorted = sorted(ticker_list)
 #ticker_list = ticker_list_sorted
 
-def load_data():
-    tickers = ticker_list
-    return pd.DataFrame({"Ticker": tickers})
-df = load_data()
+#def load_data():
+    #tickers = ticker_list
+   # return pd.DataFrame({"Ticker": tickers})
+#df = load_data()
 
 today = date.today()
 # Check if today is a weekend (Saturday or Sunday)
