@@ -23,10 +23,10 @@ if today.weekday() >= 5:
     # Display error message
     #error_message = "It is weekend; Check back on Monday"
     #print(error_message)
-    st.write("It is weekend, check back on Monday when prices are updated")
+    st.write("It is the weekend, check back on Monday when prices are updated")
     #sys.exit()
 else:
-    st.write("It is a week day, prices have been updated")
+    st.write("Welcome to the Stock Trend Prediction Wizard App")
 
 # We can get data by our choice by giving days bracket
 start_date = "2021-12-01"
