@@ -213,6 +213,6 @@ for df, title, ticker in zip(dfs, titles, tickers):
     st.write("- yhat_upper: ", today_yhat_upper)
     
 # Delete existing files
-#for file in csvfiles:
-    #os.remove(file.replace('\\', '/'))
+for file in csvfiles:
+    os.remove(file.replace('\\', '/'))
 
