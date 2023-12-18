@@ -22,10 +22,10 @@ ticker_list = sorted (['LLY','V','MA','ABBV','WBA','BMY','HUM','CI','UNH','CVS',
 #ticker_list_sorted = sorted(ticker_list)
 #ticker_list = ticker_list_sorted
 
-#def load_data():
-    #tickers = ticker_list
-    #return pd.DataFrame({"Ticker": tickers})
-#df = load_data()
+def load_data():
+    tickers = ticker_list
+    return pd.DataFrame({"Ticker": tickers})
+df = load_data()
 
 today = date.today()
 # Check if today is a weekend (Saturday or Sunday)
@@ -90,6 +90,7 @@ def select_files(files):
             # Display the sorted ticker list in Streamlit
             choice = st.sidebar.selectbox(
                 "Select Company Ticker", 
+                "Filter by sorted company ticker:", options=df.sort_values(by="Ticker").Ticker.unique()
                 range(1, num_files + 1), 
                 format_func=lambda x: files[x - 1].split('/')[-1].split('_')[0],
                 key="selectbox"
