@@ -27,7 +27,7 @@ def load_data():
     return pd.DataFrame({"Ticker": tickers})
 df = load_data()
 tickers = st.multiselect(
-    "Filter the company ticker:", options=df.sort_values(by="Ticker").Ticker.unique()
+    "Filter by sorted company ticker:", options=df.sort_values(by="Ticker").Ticker.unique()
 )
 
 today = date.today()
