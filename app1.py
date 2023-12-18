@@ -13,6 +13,7 @@ import os
 from datetime import timedelta
 import sys
 
+st.set_page_config(page_title="Stock Price Prediction Wizard App")
 yf.pdr_override()
 
 # Tickers list
