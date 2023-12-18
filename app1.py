@@ -220,9 +220,9 @@ for df, title, ticker in zip(dfs, titles, tickers):
     # Check if yesterday's date falls on a weekend
     if yesterday.weekday() >= 5:
         # Display message for weekend
-        error_message = "Yesterday's actual price is unavailable on weekends"
+        error_message = "Yesterday's actual price is unavailable on weekends and Mondays"
         print(error_message)
-        st.write("- Yesterday's actual price is unavailable on weekends")
+        st.write("- Yesterday's actual price is unavailable on weekends and Mondays")
     else:
         # Continue with the rest of your code
         print("Yesterday's actual price is available")
