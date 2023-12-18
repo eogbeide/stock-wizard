@@ -30,8 +30,21 @@ if today.weekday() >= 5:
 start_date = "2021-12-01"
 end_date = today.strftime("%Y-%m-%d")  # Use today's date as the end date
 
+# Check if today is a weekend (Saturday or Sunday)
+if today.weekday() >= 5:
+    # Display error message
+    #error_message = "It is weekend; Check back on Monday"
+    #print(error_message)
+    st.write("It is the weekend, check back on Monday when prices are updated")
+    #sys.exit()
+else:
+    #st.write("Welcome to the Stock Trend Prediction Wizard App") 
+    st.write("Welcome to the Smart AI Stock Trend Prediction Wizard by Manny: $$$")
+    
 files = []
 
+# Get yesterday's date
+yesterday = today - datetime.timedelta(days=1)
 
 def getData(ticker):
     print(ticker)
@@ -166,6 +179,66 @@ for df, title, ticker in zip(dfs, titles, tickers):
     # Plot the forecast and the original values for comparison
     interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 
+# Extract today's forecast values
+    today_forecast = forecast[forecast['ds'] == today]
+
+    # Get today's yhat, yhat_lower, and yhat_upper values
+    today_yhat = round(today_forecast['yhat'].values[0],2)
+    today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
+    today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
+
+    # Get today's date as a datetime.date object
+    today = datetime.date.today()
+
+    # Get yesterday's date
+    yesterday = today - datetime.timedelta(days=1)
+
+    # Check if yesterday's date falls on a weekend
+    if yesterday.weekday() >= 5:
+        # Display message for weekend
+        error_message = "Yesterday's actual price is unavailable on weekends"
+        print(error_message)
+        st.write("- Yesterday's actual price is unavailable on weekends")
+    else:
+        # Continue with the rest of your code
+        print("Yesterday's actual price is available")
+        # Get yesterday's actual price
+        yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
+        st.write("- Yesterday's Price: ", yesterday_actual_price)
+        
+
+    # Check if yesterday's actual price exists
+    #st.subheader("Yesterday's Closing Price:")
+    #if yesterday in df['ds'].values:
+        #yesterday_actual_price = df[df['ds'] == yesterday]['y'].values[0]
+
+    # Display today's forecast values
+    #if yesterday_actual_price is not None:
+        #st.write("- Yesterday's Price: ", yesterday_actual_price)
+    #else:
+        #st.write("- Yesterday's Price is not available")
+    st.subheader("Current Forecast Price Confidence Intervals:")
+    st.write("- yhat_lower: ", today_yhat_lower)
+    st.write("- yhat: ", today_yhat)
+    st.write("- yhat_upper: ", today_yhat_upper)
+    
 # Delete existing files
 for file in csvfiles:
-    os.remove(file)
+    os.remove(file.replace('\\', '/'))
+
+# Display selected ticker information
+#st.write("Selected Ticker Information:")
+# st.write(selected_ticker_info)
+st.subheader("Other Stats")
+st.write(" - 50-Day Average: ", selected_ticker_info['fiftyDayAverage'])
+st.write(" - 200-Day Average: ", selected_ticker_info['twoHundredDayAverage'])
+#st.write(" - beta: ")
+if 'beta' in selected_ticker_info:
+    st.write(" - beta:", selected_ticker_info['beta'])
+else:
+    st.write(" - Beta Not Available")
+st.subheader("About Company")
+if 'longBusinessSummary' in selected_ticker_info:
+    st.write(selected_ticker_info['longBusinessSummary'])
+else:
+    st.write("Not Available")
