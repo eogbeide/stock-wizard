@@ -44,6 +44,7 @@ def getData(ticker):
 # Create a data folder in your current dir.
 def SaveData(df, filename):
     save_path = os.path.expanduser('~/Documents/data/')
+    os.makedirs(save_path, exist_ok=True)
     df.to_csv(os.path.join(save_path, filename + '.csv'))
 
 
