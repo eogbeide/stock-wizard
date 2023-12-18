@@ -175,7 +175,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
     #st.write("The Smart AI Stock Trend Wiz by Manny: $$$")
     st.write(f" - **Company Name:** ", selected_ticker_info['longName'])
     #st.write(" - Location: ", selected_ticker_info['country'])
-    st.subheader("How to read chart:")
+    st.header("How to read chart:")
     st.write(f" - **yhat** is the median price that shows price trend")
     st.write(f" - **yhat_lower** is the lowest price. Actual price below yhat_lower signals a buying opportunity. Below yhat_lower --> Buy Signal")
     st.write(f" - **yhat_upper** is the highest price. Actual price above yhat_upper signals a selling or profit taking opportunity. Above yhat_upper --> Sell or Profit Taking Signal")
@@ -201,7 +201,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
     df['predicted'] = forecast['trend']
 
     # Plot the forecast and the original values for comparison
-    st.subheader("Interactive Plot")
+    st.header("Interactive Plot")
     interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 
     # Extract today's forecast values
