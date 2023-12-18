@@ -20,6 +20,7 @@ ticker_list = ['LLY','V','MA','ABBV','WBA','BMY','HUM','CI','UNH','CVS','DOCU','
 
 # Sort the ticker list alphabetically
 ticker_list_sorted = sorted(ticker_list)
+ticker_list = ticker_list_sorted
 
 today = date.today()
 # Check if today is a weekend (Saturday or Sunday)
