@@ -99,10 +99,6 @@ def select_files(files):
 
     return selected_files, selected_ticker_info
 
-companies = st.multiselect(
-    "Filter the company:", options=ticker_list.sort_values(by="ticker_list").ticker_list.unique()
-)
-
 # the path to your csv file directory
 mycsvdir = os.path.expanduser('~/Documents/data')
 
