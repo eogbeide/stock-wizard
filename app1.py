@@ -26,9 +26,6 @@ def load_data():
     tickers = ['LLY','V','MA','ABBV','WBA','BMY','HUM','CI','UNH','CVS','DOCU','ZM','ABNB','SNOW','LYFT','UBER','DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CADL','MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC']
     return pd.DataFrame({"Ticker": tickers})
 df = load_data()
-tickers = st.multiselect(
-    "Filter by sorted company ticker:", options=df.sort_values(by="Ticker").Ticker.unique()
-)
 
 today = date.today()
 # Check if today is a weekend (Saturday or Sunday)
@@ -83,6 +80,10 @@ def select_files(files):
     
     while True:
         try:
+            tickers = st.multiselect(
+                "Filter by sorted company ticker:", options=df.sort_values(by="Ticker").Ticker.unique()
+            )
+            
             # Sort the ticker list alphabetically
             ticker_list_sorted = sorted(ticker_list)
             
