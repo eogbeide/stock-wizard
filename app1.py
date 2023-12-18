@@ -143,7 +143,6 @@ for selected_file in selected_files:
 
 #@st.cache_data(experimental_allow_widgets=True)
 def interactive_plot_forecasting(df, forecast, title):
-    st.subheading("Interactive Plot")
     fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
 
     # Get maximum and minimum points
@@ -202,6 +201,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
     df['predicted'] = forecast['trend']
 
     # Plot the forecast and the original values for comparison
+    st.subheader("Interactive Plot")
     interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 
     # Extract today's forecast values
