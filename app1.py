@@ -61,7 +61,7 @@ def SaveData(df, filename):
     df.to_csv(os.path.join(save_path, filename + '.csv'))
 
 # This loop will iterate over ticker list, will pass one ticker to get data, and save that data as a file.
-for tik in ticker_list_sorted:
+for tik in ticker_list:
     getData(tik)
 
 # Pull data, train model, and predict
@@ -80,7 +80,7 @@ def select_files(files):
             # Display the sorted ticker list in Streamlit
             choice = st.sidebar.selectbox(
                 "Select Company Ticker", 
-                range(1, num_files + 1), 
+                range(1, num_files + 1), ticker_list_sorted, 
                 format_func=lambda x: files[x - 1].split('/')[-1].split('_')[0],
                 key="selectbox"
             )
