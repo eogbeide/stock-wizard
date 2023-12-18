@@ -74,6 +74,10 @@ def select_files(files):
     
     while True:
         try:
+            # Sort the ticker list alphabetically
+            ticker_list_sorted = sorted(ticker_list)
+
+            # Display the sorted ticker list in Streamlit
             choice = st.sidebar.selectbox(
                 "Select Company Ticker",
                 range(1, num_files + 1),
