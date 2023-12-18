@@ -156,63 +156,63 @@ for df, title, ticker in zip(dfs, titles, tickers):
     train = df[df['ds'] <= '10/31/2023']
     test = df[df['ds'] >= '11/01/2023']
 
-    st.title("Major FX Pairs Forecast Wizard")
-    st.write("")
-    st.subheader("The Smart Forex Trend Wiz: $$$")
-    st.write(ticker)
-    st.write("How to read the chart: Below yhat_lower --> buy signal, above yhat_upper --> sell signal")
-    st.write(f"Number of days in train data: {len(train)}")
-    st.write(f"Number of days in test data: {len(test)}")
+st.title("Major FX Pairs Forecast Wizard")
+st.write("")
+st.subheader("The Smart Forex Trend Wiz: $$$")
+st.write(ticker)
+st.write("How to read the chart: Below yhat_lower --> buy signal, above yhat_upper --> sell signal")
+st.write(f"Number of days in train data: {len(train)}")
+st.write(f"Number of days in test data: {len(test)}")
 
-    # Initialize Model
-    m = Prophet()
+# Initialize Model
+m = Prophet()
 
-    # Create and fit the prophet model to the training data
-    m.fit(train)
+# Create and fit the prophet model to the training data
+m.fit(train)
 
-    # Make predictions
-    future = m.make_future_dataframe(periods=93)
-    forecast = m.predict(future)
+# Make predictions
+future = m.make_future_dataframe(periods=93)
+forecast = m.predict(future)
 
-    # Add predicted values to the original dataframe
-    df['predicted'] = forecast['trend']
+# Add predicted values to the original dataframe
+df['predicted'] = forecast['trend']
 
-    # Plot the forecast and the original values for comparison
-    interactive_plot_forecasting(df, forecast, f'{title} ({today})')
+# Plot the forecast and the original values for comparison
+interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 
 # Extract today's forecast values
-    today_forecast = forecast[forecast['ds'] == today]
+today_forecast = forecast[forecast['ds'] == today]
 
-    # Get today's yhat, yhat_lower, and yhat_upper values
-    today_yhat = round(today_forecast['yhat'].values[0],2)
-    today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
-    today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
+# Get today's yhat, yhat_lower, and yhat_upper values
+today_yhat = round(today_forecast['yhat'].values[0],2)
+today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
+today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
 
-    # Get today's date as a datetime.date object
-    today = datetime.date.today()
+# Get today's date as a datetime.date object
+today = datetime.date.today()
 
-    # Get yesterday's date
-    yesterday = today - datetime.timedelta(days=1)
+# Get yesterday's date
+yesterday = today - datetime.timedelta(days=1)
 
-    # Check if yesterday's date falls on a weekend
-    if yesterday.weekday() >= 5:
-        # Display message for weekend
-        error_message = "Yesterday's actual price is unavailable on weekends"
-        print(error_message)
-        st.write("- Yesterday's actual price is unavailable on weekends")
-    else:
-        # Continue with the rest of your code
-        print("Yesterday's actual price is available")
-        # Get yesterday's actual price
-        yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
-        st.write("- Yesterday's Price: ", yesterday_actual_price)
-        
-    st.subheader("Current Forecast Price Confidence Intervals:")
-    st.write("- yhat_lower: ", today_yhat_lower)
-    st.write("- yhat: ", today_yhat)
-    st.write("- yhat_upper: ", today_yhat_upper)
+# Check if yesterday's date falls on a weekend
+if yesterday.weekday() >= 5:
+    # Display message for weekend
+    error_message = "Yesterday's actual price is unavailable on weekends"
+    print(error_message)
+    st.write("- Yesterday's actual price is unavailable on weekends")
+else:
+    # Continue with the rest of your code
+    print("Yesterday's actual price is available")
+    # Get yesterday's actual price
+    yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
+    st.write("- Yesterday's Price: ", yesterday_actual_price)
     
+st.subheader("Current Forecast Price Confidence Intervals:")
+st.write("- yhat_lower: ", today_yhat_lower)
+st.write("- yhat: ", today_yhat)
+st.write("- yhat_upper: ", today_yhat_upper)
+
 # Delete existing files
 for file in csvfiles:
-    os.remove(file.replace('\\', '/'))
+os.remove(file.replace('\\', '/'))
 
