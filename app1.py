@@ -81,7 +81,7 @@ def select_files(files):
             choice = st.sidebar.selectbox(
                 "Select Company Ticker", 
                 ticker_list_sorted),
-            range(1, num_files + 1),
+                range(1, num_files + 1),
                 format_func=lambda x: files[x - 1].split('/')[-1].split('_')[0],
                 key="selectbox"
             )
