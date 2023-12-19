@@ -250,7 +250,7 @@ except IndexError:
     #st.write(" - Yesterday's Closing Price Not Available")
 
 # Get yesterday's actual price
-yesterday_actual_price = None  # Initialize with None in case the price is not found
+#yesterday_actual_price = None  # Initialize with None in case the price is not found
 
 filtered_df = df[df['ds'] == yesterday]  # Filter the DataFrame based on the desired date    
 if not filtered_df.empty:  # Check if the filtered DataFrame is not empty
@@ -260,7 +260,7 @@ st.write("- Yesterday's Price: ", yesterday_actual_price)
 
 # Display today's forecast values
 #if yesterday_actual_price is not None:
-    #st.write("- Yesterday's Price: ", yesterday_actual_price)
+    #st.write("- Yesterday's Closing Price: ", yesterday_actual_price)
 #else:
     #st.write("- Yesterday's Price is not available")
 
