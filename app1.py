@@ -200,6 +200,7 @@ future = m.make_future_dataframe(periods=93)
 forecast = m.predict(future)
 #st.write("Forecast for", ticker)
 #st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(30))
+st.write((df).tail(5))
 
 # Add predicted values to the original dataframe
 df['predicted'] = forecast['trend']
