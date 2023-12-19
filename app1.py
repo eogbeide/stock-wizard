@@ -201,7 +201,7 @@ forecast = m.predict(future)
 #st.write("Forecast for", ticker)
 #st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(30))
 
-st.subheader("Last Three Days Closing Prices))
+st.subheader("Last Three Days Closing Prices")
 st.write((df).tail(3))
 
 # Add predicted values to the original dataframe
