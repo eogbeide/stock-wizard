@@ -46,7 +46,7 @@ start_date = "2021-12-01"
 end_date = today.strftime("%Y-%m-%d")  # Use today's date as the end date
 
 # Get yesterday's date
-yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+#yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
 
 # Get yesterday's date
 yesterday = today - datetime.timedelta(days=1)
@@ -219,51 +219,7 @@ today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
 # Get today's date as a datetime.date object
 today = datetime.date.today()
 
-# Get yesterday's date
-yesterday = today - datetime.timedelta(days=1)
-
-# Check if yesterday's date falls on a weekend
-#if yesterday.weekday() >= 5:
-    #Display message for weekend
-    #error_message = "Yesterday's actual close price is unavailable on weekends and Mondays"
-    #print(error_message)
-    #st.write("- Yesterday's actual close price is unavailable on weekends and Mondays")
-#else:
-    #Continue with the rest of your code
-    #print("Yesterday's actual price is available")
-    #Get yesterday's actual price
-    #yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
-    #st.write("- Yesterday's Closing Price: ", yesterday_actual_price)
-
-# Assuming yesterday is a datetime object representing the desired date
-try:
-    #yesterday_closing_price = df.loc[df['ds'] == yesterday, 'y'].values[0]
-    yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
-    print("Yesterday's actual price:", yesterday_actual_price)
-except IndexError:
-    print("Closing price not found for yesterday.")
-    
-#st.write(" - Yesterday's Closing Price: ")
-#if 'yesterday' in df['ds']:
-    #st.write(" - Yesterday's Closing Price:", df['y'].values[0])
-#else:
-    #st.write(" - Yesterday's Closing Price Not Available")
-
-# Get yesterday's actual price
-yesterday_actual_price = None  # Initialize with None in case the price is not found
-
-filtered_df = df[df['ds'] == yesterday]  # Filter the DataFrame based on the desired date    
-if not filtered_df.empty:  # Check if the filtered DataFrame is not empty
-    yesterday_actual_price = round(filtered_df['y'].values[0], 2)  # Retrieve the actual price
-    
-st.write("- Yesterday's Price: ", yesterday_actual_price)
-
 # Display today's forecast values
-#if yesterday_actual_price is not None:
-    #st.write("- Yesterday's Closing Price: ", yesterday_actual_price)
-#else:
-    #st.write("- Yesterday's Price is not available")
-
 st.subheader("Current Forecast Price Confidence Intervals:")
 st.write("- yhat_lower: ", today_yhat_lower)
 st.write("- yhat: ", today_yhat)
