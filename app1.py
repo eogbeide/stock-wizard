@@ -104,14 +104,14 @@ def select_files(files):
             selected_ticker = selected_file.split('/')[-1].split('_')[0]
             ticker_info = yf.Ticker(selected_ticker)
             selected_ticker_info = ticker_info.info
-
-            st.sidebar(f" - **Company Name:** ", selected_ticker_info['longName'])
-            
+                   
             break
         except IndexError:
             st.sidebar.warning("Invalid choice. Please try again.")
 
     return selected_files, selected_ticker_info
+
+ st.sidebar(f" - **Company Name:** ", selected_ticker_info['longName'])
 
 # the path to your csv file directory
 mycsvdir = os.path.expanduser('~/Documents/data')
