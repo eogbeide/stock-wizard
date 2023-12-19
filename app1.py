@@ -220,7 +220,7 @@ today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
 today = datetime.date.today()
 
 # Get yesterday's date
-#yesterday = today - datetime.timedelta(days=1)
+yesterday = today - datetime.timedelta(days=1)
 
 # Check if yesterday's date falls on a weekend
 #if yesterday.weekday() >= 5:
