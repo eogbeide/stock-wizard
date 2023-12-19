@@ -46,10 +46,10 @@ start_date = "2021-12-01"
 end_date = today.strftime("%Y-%m-%d")  # Use today's date as the end date
 
 # Get yesterday's date
-yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+#yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
 
 # Get yesterday's date
-yesterday = today - datetime.timedelta(days=1)
+#yesterday = today - datetime.timedelta(days=1)
 
 files = []
 
@@ -199,7 +199,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
     future = m.make_future_dataframe(periods=93)
     forecast = m.predict(future)
     #st.write("Forecast for", ticker)
-    #   st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(30))
+    #st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(30))
 
     # Add predicted values to the original dataframe
     df['predicted'] = forecast['trend']
