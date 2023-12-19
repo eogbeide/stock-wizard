@@ -242,6 +242,12 @@ try:
     print("Yesterday's closing price:", yesterday_closing_price)
 except IndexError:
     print("Closing price not found for yesterday.")
+    
+#st.write(" - Yesterday's Closing Price: ")
+if 'yesterday' in df[ds]:
+    st.write(" - Yesterday's Closing Price:", yesterday]['y'].values[0])
+else:
+    st.write(" - Beta Not Available")
 
 # Get yesterday's actual price
 yesterday_actual_price = None  # Initialize with None in case the price is not found
