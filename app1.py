@@ -249,7 +249,8 @@ yesterday_actual_price = None  # Initialize with None in case the price is not f
 filtered_df = df[df['ds'] == yesterday]  # Filter the DataFrame based on the desired date    
 if not filtered_df.empty:  # Check if the filtered DataFrame is not empty
     yesterday_actual_price = round(filtered_df['y'].values[0], 2)  # Retrieve the actual price
-    st.write("- Yesterday's Price: ", yesterday_actual_price)
+
+st.write("- Yesterday's Price: ", yesterday_actual_price)
 
 # Display today's forecast values
 #if yesterday_actual_price is not None:
