@@ -209,6 +209,7 @@ st.header("Interactive Plot")
 interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 
 st.subheader("Last Three Days Closing Prices")
+df['ds'] = pd.to_datetime(df['ds']).dt.date
 st.write(df[['ds', 'y']].tail(3).reset_index(drop=True))
 
 # Extract today's forecast values
