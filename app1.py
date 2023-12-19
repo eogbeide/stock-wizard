@@ -110,9 +110,7 @@ def select_files(files):
             st.sidebar.warning("Invalid choice. Please try again.")
 
     return selected_files, selected_ticker_info
-
- st.sidebar(f" - **Company Name:** ", selected_ticker_info['longName'])
-
+    
 # the path to your csv file directory
 mycsvdir = os.path.expanduser('~/Documents/data')
 
@@ -164,6 +162,8 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
     st.plotly_chart(fig)
+
+st.sidebar(f" - **Company Name:** ", selected_ticker_info['longName'])
 
 # Append today's date to the titles
 today = date.today().strftime("%Y-%m-%d")
