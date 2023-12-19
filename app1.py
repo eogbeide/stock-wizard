@@ -224,12 +224,12 @@ for df, title, ticker in zip(dfs, titles, tickers):
 
     # Check if yesterday's date falls on a weekend
     if yesterday.weekday() >= 5:
-        Display message for weekend
+        #Display message for weekend
         error_message = "Yesterday's actual close price is unavailable on weekends and Mondays"
         print(error_message)
         st.write("- Yesterday's actual close price is unavailable on weekends and Mondays")
     else:
-        Continue with the rest of your code
+        #Continue with the rest of your code
         print("Yesterday's actual price is available")
         #Get yesterday's actual price
         yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
