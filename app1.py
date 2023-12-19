@@ -46,7 +46,7 @@ start_date = "2021-12-01"
 end_date = today.strftime("%Y-%m-%d")  # Use today's date as the end date
 
 # Get yesterday's date
-#yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
 
 # Get yesterday's date
 yesterday = today - datetime.timedelta(days=1)
