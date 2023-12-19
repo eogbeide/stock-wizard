@@ -201,15 +201,15 @@ forecast = m.predict(future)
 #st.write("Forecast for", ticker)
 #st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(30))
 
-st.subheader("Last Three Days Closing Prices")
-st.write((df).tail(3))
-
 # Add predicted values to the original dataframe
 df['predicted'] = forecast['trend']
 
 # Plot the forecast and the original values for comparison
 st.header("Interactive Plot")
 interactive_plot_forecasting(df, forecast, f'{title} ({today})')
+
+st.subheader("Last Three Days Closing Prices")
+st.write((df).tail(3))
 
 # Extract today's forecast values
 today_forecast = forecast[forecast['ds'] == today]
