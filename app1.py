@@ -164,7 +164,7 @@ def interactive_plot_forecasting(df, forecast, title):
     st.plotly_chart(fig)
 
 option = st.sidebar.selectbox(f" - **Company Name:** ", selected_ticker_info['longName'])
-st.write('You selected:', option)
+st.sidebar.selectbox('You selected:', option)
 
 # Append today's date to the titles
 today = date.today().strftime("%Y-%m-%d")
