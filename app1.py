@@ -228,17 +228,15 @@ today = datetime.date.today()
 #st.write("- yhat: ", today_yhat)
 #st.write("- yhat_upper: ", today_yhat_upper)
 
-# Convert 'ds' column to date format with day and month spelled out
-df['ds'] = pd.to_datetime(df['ds'])
-df['ds'] = df['ds'].apply(lambda x: x.strftime("%A, %B %d, %Y"))
-
-# Create a new DataFrame with the modified 'ds' column
+# Create a DataFrame with the forecast values
 data = {
     "Confidence Intervals": ["yhat_lower", "yhat", "yhat_upper"],
-    "Values": [today_yhat_lower, today_yhat, today_yhat_upper],
-    "Date": df['ds']
+    "Values": [today_yhat_lower, today_yhat, today_yhat_upper]
 }
-modified_df = pd.DataFrame(data)
+df = pd.DataFrame(data)
+# Display the DataFrame as a three-column table
+st.subheader("Current Forecast Price Confidence Intervals:")
+st.write(df)
 
 # Display the modified DataFrame as a three-column table
 st.subheader("Current Forecast Price Confidence Intervals:")
