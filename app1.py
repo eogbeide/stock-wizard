@@ -238,10 +238,6 @@ df = pd.DataFrame(data)
 st.subheader("Current Forecast Price Confidence Intervals:")
 st.write(df)
 
-# Display the modified DataFrame as a three-column table
-st.subheader("Current Forecast Price Confidence Intervals:")
-st.write(modified_df)
-    
 # Delete existing files
 for file in csvfiles:
     os.remove(file.replace('\\', '/'))
