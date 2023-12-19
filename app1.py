@@ -239,7 +239,7 @@ yesterday = today - datetime.timedelta(days=1)
 try:
     #yesterday_closing_price = df.loc[df['ds'] == yesterday, 'y'].values[0]
     yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
-    print("Yesterday's closing price:", yesterday_closing_price)
+    print("Yesterday's actual price:", yesterday_actual_price)
 except IndexError:
     print("Closing price not found for yesterday.")
     
@@ -250,13 +250,12 @@ except IndexError:
     #st.write(" - Yesterday's Closing Price Not Available")
 
 # Get yesterday's actual price
-#yesterday_actual_price = None  # Initialize with None in case the price is not found
+yesterday_actual_price = None  # Initialize with None in case the price is not found
 
 filtered_df = df[df['ds'] == yesterday]  # Filter the DataFrame based on the desired date    
 if not filtered_df.empty:  # Check if the filtered DataFrame is not empty
     yesterday_actual_price = round(filtered_df['y'].values[0], 2)  # Retrieve the actual price
-
-st.write("- Yesterday's Price: ", yesterday_actual_price)
+    st.write("- Yesterday's Price: ", yesterday_actual_price)
 
 # Display today's forecast values
 #if yesterday_actual_price is not None:
