@@ -230,14 +230,14 @@ for df, title, ticker in zip(dfs, titles, tickers):
         # Continue with the rest of your code
         print("Yesterday's actual price is available")
         # Get yesterday's actual price
-        #yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
-        #st.write("- Yesterday's Closing Price: ", yesterday_actual_price)
+        yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
+        st.write("- Yesterday's Closing Price: ", yesterday_actual_price)
         
 
     # Check if yesterday's actual price exists
-    #st.subheader("Yesterday's Closing Price:")
-    #if yesterday in df['ds'].values:
-        #yesterday_actual_price = df[df['ds'] == yesterday]['y'].values[0]
+    st.subheader("Yesterday's Closing Price:")
+    if yesterday in df['ds'].values:
+        yesterday_actual_price = df[df['ds'] == yesterday]['y'].values[0]
 
     # Display today's forecast values
     #if yesterday_actual_price is not None:
