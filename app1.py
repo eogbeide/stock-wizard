@@ -237,7 +237,8 @@ today = datetime.date.today()
 
 # Assuming yesterday is a datetime object representing the desired date
 try:
-    yesterday_closing_price = df.loc[df['ds'] == yesterday, 'y'].values[0]
+    #yesterday_closing_price = df.loc[df['ds'] == yesterday, 'y'].values[0]
+    yesterday_actual_price = round(df[df['ds'] == yesterday]['y'].values[0],2)
     print("Yesterday's closing price:", yesterday_closing_price)
 except IndexError:
     print("Closing price not found for yesterday.")
