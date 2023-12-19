@@ -231,7 +231,7 @@ today = datetime.date.today()
 
 # Create a DataFrame with the forecast values
 data = {
-    "Confidence Intervals": ["yhat_lower", "yhat", "yhat_upper"],
+    "Confidence Intervals": ["yhat_lower or buying area", "yhat or trend indicator", "yhat_upper or selling and profit area"],
     "Values": [today_yhat_lower, today_yhat, today_yhat_upper]
 }
 df = pd.DataFrame(data)
