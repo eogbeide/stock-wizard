@@ -236,8 +236,11 @@ today = datetime.date.today()
     #st.write("- Yesterday's Closing Price: ", yesterday_actual_price)
 
 # Assuming yesterday is a datetime object representing the desired date
-yesterday_closing_price = df[df['ds'] == yesterday]['closing_price'].values[0]
-print("Yesterday's closing price:", yesterday_closing_price)
+try:
+    yesterday_closing_price = df.loc[df['ds'] == yesterday, 'y'].values[0]
+    print("Yesterday's closing price:", yesterday_closing_price)
+except IndexError:
+    print("Closing price not found for yesterday.")
 
 # Get yesterday's actual price
 yesterday_actual_price = None  # Initialize with None in case the price is not found
