@@ -247,7 +247,7 @@ except IndexError:
 if 'yesterday' in df['ds']:
     st.write(" - Yesterday's Closing Price:", df['y'].values[0])
 else:
-    st.write(" - Beta Not Available")
+    st.write(" - Yesterday's Closing Price Not Available")
 
 # Get yesterday's actual price
 yesterday_actual_price = None  # Initialize with None in case the price is not found
