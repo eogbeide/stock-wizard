@@ -250,10 +250,10 @@ if not filtered_df.empty:  # Check if the filtered DataFrame is not empty
     yesterday_actual_price = round(filtered_df['y'].values[0], 2)  # Retrieve the actual price
 
 # Display today's forecast values
-#if yesterday_actual_price is not None:
-    #st.write("- Yesterday's Price: ", yesterday_actual_price)
-# else:
-    #st.write("- Yesterday's Price is not available")
+if yesterday_actual_price is not None:
+    st.write("- Yesterday's Price: ", yesterday_actual_price)
+ else:
+    st.write("- Yesterday's Price is not available")
 
 st.subheader("Current Forecast Price Confidence Intervals:")
 st.write("- yhat_lower: ", today_yhat_lower)
