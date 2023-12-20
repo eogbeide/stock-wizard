@@ -259,3 +259,22 @@ if 'longBusinessSummary' in selected_ticker_info:
     st.write(selected_ticker_info['longBusinessSummary'])
 else:
     st.write("Not Available")
+
+def interactive_plot_forecasting(df, forecast, title):
+    fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
+
+    # Get maximum and minimum points
+    max_points = df[df['y'] == df['y'].max()]
+    min_points = df[df['y'] == df['y'].min()]
+
+    # Add maximum points to the plot
+    fig.add_trace(go.Scatter(x=max_points['ds'], y=max_points['y'], mode='markers', name='Maximum'))
+
+    # Add minimum points to the plot
+    fig.add_trace(go.Scatter(x=min_points['ds'], y=min_points['y'], mode='markers', name='Minimum'))
+
+    # Add yhat_lower and yhat_upper
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
+
+    st.plotly_chart(fig)
