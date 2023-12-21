@@ -167,13 +167,13 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
-    # Calculate higher high and lower low
-    higher_high = df[df['y'] > df['y'].shift(1)]
-    lower_low = df[df['y'] < df['y'].shift(1)]
+    # Calculate monthly higher high and lower low
+    monthly_higher_high = df[df['y'] > df.groupby('month')['y'].shift(1)]
+    monthly_lower_low = df[df['y'] < df.groupby('month')['y'].shift(1)]
 
-    # Add higher high and lower low points to the plot
-    fig.add_trace(go.Scatter(x=higher_high['ds'], y=higher_high['y'], mode='markers', name='Higher High'))
-    fig.add_trace(go.Scatter(x=lower_low['ds'], y=lower_low['y'], mode='markers', name='Lower Low'))
+    # Add monthly higher high and lower low points to the plot
+    fig.add_trace(go.Scatter(x=monthly_higher_high['ds'], y=monthly_higher_high['y'], mode='markers', name='Monthly Higher High'))
+    fig.add_trace(go.Scatter(x=monthly_lower_low['ds'], y=monthly_lower_low['y'], mode='markers', name='Monthly Lower Low'))
     
     st.plotly_chart(fig)
 
