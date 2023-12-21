@@ -189,6 +189,11 @@ forecast = m.predict(future)
 # Add predicted values to the original dataframe
 df['predicted'] = forecast['trend']
 
+st.title("Major US Stocks AI Forecast Wizard")
+st.write("")
+#st.write("The Smart AI Stock Trend Wiz by Manny: $$$")
+st.write(f" - **Company Name:** ", selected_ticker_info['longName'])
+
 # Plot the forecast and the original values for comparison
 st.header("Interactive Plot")
 interactive_plot_forecasting(df, forecast, f'{title} ({today})')
@@ -197,10 +202,6 @@ st.subheader("Last Three Days Closing Prices")
 df['ds'] = pd.to_datetime(df['ds']).dt.date
 st.write(df[['ds', 'y']].tail(3).reset_index(drop=True))
 
-st.title("Major US Stocks AI Forecast Wizard")
-st.write("")
-#st.write("The Smart AI Stock Trend Wiz by Manny: $$$")
-st.write(f" - **Company Name:** ", selected_ticker_info['longName'])
 #st.write(" - Location: ", selected_ticker_info['country'])
 st.header("How to read chart:")
 st.write(f" - **yhat** is the median price that shows price trend")
