@@ -166,6 +166,14 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
+    # Calculate and add slope line
+    x = np.array(df['ds'])
+    y = np.array(df['y'])
+    slope = (y[-1] - y[0]) / (x[-1] - x[0])
+    intercept = y[0] - slope * x[0]
+    slope_line = go.Scatter(x=x, y=slope * x + intercept, mode='lines', name='Slope')
+    fig.add_trace(slope_line)
+
     st.plotly_chart(fig)
 
 option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
@@ -269,31 +277,4 @@ if 'longBusinessSummary' in selected_ticker_info:
     st.write(selected_ticker_info['longBusinessSummary'])
 else:
     st.write("Not Available")
-
-
-# Function to plot the forecast and original values
-def plot_forecast(df, forecast, title):
-    plt.figure(figsize=(10, 6))
-    plt.plot(df.index, df['y'], label='Original Values')
-    plt.plot(forecast.index, forecast['Forecast'], label='Forecast')
-    
-    # Add slope line
-    x = np.arange(min(df.index), max(df.index) + 1, dtype=np.datetime64)
-    slope = (df['y'].iloc[-1] - df['y'].iloc[0]) / len(x)
-    plt.plot(x, df['y'].iloc[0] + slope * np.arange(len(x)), linestyle='dashed', color='gray', label='Slope')
-    
-    plt.xlabel('Date')
-    plt.ylabel('Value')
-    plt.title(title)
-    plt.legend()
-    plt.xticks(rotation=45)
-    plt.tight_layout()
-    
-    # Display the plot
-    st.pyplot()
-
-# Usage
-st.header("Interactive Plot")
-plot_forecast(df, forecast, f'{title} ({today})')
-
 
