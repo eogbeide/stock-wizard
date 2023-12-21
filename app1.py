@@ -160,7 +160,7 @@ def add_moving_average(df, window=7):
 def interactive_plot_forecasting(df, forecast, title):
     # Add moving average to the DataFrame
     df = add_moving_average(df, window=7)
-    fig = px.line(df, x='ds', y=['y', 'predicted', 'moving_avg], title=title)
+    fig = px.line(df, x='ds', y=['y', 'predicted', 'moving_avg'], title=title)
 
     # Get maximum and minimum points
     max_points = df[df['y'] == df['y'].max()]
