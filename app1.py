@@ -311,3 +311,4 @@ data = {'ds': pd.date_range(start='2023-12-01', periods=60),
 df = pd.DataFrame(data)
 forecast = create_forecast(df)
 interactive_plot_forecasting(df, forecast, 'Forecast with Moving Average')
+df.tail(60)
