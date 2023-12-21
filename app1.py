@@ -167,14 +167,6 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
-    # Identify buying and selling opportunities
-    buy_points = df[(df['y'].shift(1) > df['y']) & (forecast['yhat_lower'] > df['y'])]
-    sell_points = df[(df['y'].shift(1) < df['y']) & (forecast['yhat_upper'] < df['y'])]
-
-    # Add buying and selling points to the plot
-    fig.add_trace(go.Scatter(x=buy_points['ds'], y=buy_points['y'], mode='markers', name='Buy', marker=dict(color='green', size=10)))
-    fig.add_trace(go.Scatter(x=sell_points['ds'], y=sell_points['y'], mode='markers', name='Sell', marker=dict(color='red', size=10)))
-
     st.plotly_chart(fig)
 
 option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
