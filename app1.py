@@ -235,10 +235,10 @@ data = {
     "Confidence Intervals": ["yhat_lower", "yhat", "yhat_upper"],
     "Values": [today_yhat_lower, today_yhat, today_yhat_upper]
 }
-df = pd.DataFrame(data, hide_index=True)
+df = pd.DataFrame(data)
 # Display the DataFrame as a three-column table
 st.subheader("Current Forecast Price Confidence Intervals:")
-st.write(df)
+st.write(df, use_container_width=st.session_state.use_container_width)
 
 # Delete existing files
 for file in csvfiles:
