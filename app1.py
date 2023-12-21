@@ -235,7 +235,8 @@ data = {
     "Confidence Intervals": ["yhat_lower", "yhat", "yhat_upper"],
     "Values": [today_yhat_lower, today_yhat, today_yhat_upper]
 }
-df = pd.DataFrame(data.iloc[1:4])
+df = pd.DataFrame(data)
+df.reset_index(drop=True)
 # Display the DataFrame as a three-column table
 st.subheader("Current Forecast Price Confidence Intervals:")
 st.write(df)
