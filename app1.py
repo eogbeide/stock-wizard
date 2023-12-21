@@ -279,8 +279,8 @@ def plot_forecast(df, forecast, title):
     
     # Add slope line
     x = np.arange(min(df.index), max(df.index) + 1, dtype=np.datetime64)
-    slope = (df['Original Values'].iloc[-1] - df['Original Values'].iloc[0]) / len(x)
-    plt.plot(x, df['Original Values'].iloc[0] + slope * np.arange(len(x)), linestyle='dashed', color='gray', label='Slope')
+    slope = (df['y'].iloc[-1] - df['y'].iloc[0]) / len(x)
+    plt.plot(x, df['y'].iloc[0] + slope * np.arange(len(x)), linestyle='dashed', color='gray', label='Slope')
     
     plt.xlabel('Date')
     plt.ylabel('Value')
