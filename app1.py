@@ -201,27 +201,6 @@ st.write(f" - **Company Name:** ", selected_ticker_info['longName'])
 st.header("Interactive Plot")
 interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 
-# Extract today's forecast values
-today_forecast = forecast[forecast['ds'] == today]
-
-# Get today's yhat, yhat_lower, and yhat_upper values
-today_yhat = round(today_forecast['yhat'].values[0],2)
-today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
-today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
-
-# Create a DataFrame with the forecast values
-data = {
-    "Confidence Intervals": ["yhat_lower", "yhat", "yhat_upper"],
-    "Values": [today_yhat_lower, today_yhat, today_yhat_upper]
-}
-
-df = pd.DataFrame(data)
-
-# Display the DataFrame as a three-column table
-st.subheader("Current Forecast Price Confidence Intervals:")
-#st.write(df)
-st.write(df.set_index(df.columns[0]))
-
 st.subheader("Last Three Days Closing Prices")
 df['ds'] = pd.to_datetime(df['ds']).dt.date
 #st.write(df[['ds', 'y']].tail(3).reset_index(drop=True))
@@ -238,6 +217,14 @@ st.subheader(f"Machine Learning Modeling Information")
 st.write(f" - Number of days in training data: {len(train)}")
 st.write(f" - Number of days in testing data: {len(test)}")
 
+# Extract today's forecast values
+today_forecast = forecast[forecast['ds'] == today]
+
+# Get today's yhat, yhat_lower, and yhat_upper values
+today_yhat = round(today_forecast['yhat'].values[0],2)
+today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
+today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
+
 # Get today's date as a datetime.date object
 today = datetime.date.today()
 
@@ -247,7 +234,18 @@ today = datetime.date.today()
 #st.write("- yhat: ", today_yhat)
 #st.write("- yhat_upper: ", today_yhat_upper)
 
+# Create a DataFrame with the forecast values
+data = {
+    "Confidence Intervals": ["yhat_lower", "yhat", "yhat_upper"],
+    "Values": [today_yhat_lower, today_yhat, today_yhat_upper]
+}
 
+df = pd.DataFrame(data)
+
+# Display the DataFrame as a three-column table
+st.subheader("Current Forecast Price Confidence Intervals:")
+#st.write(df)
+st.write(df.set_index(df.columns[0]))
 
 # Delete existing files
 for file in csvfiles:
