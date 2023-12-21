@@ -9,3 +9,4 @@ PyDictionary
 nltk
 urllib3
 PyPDF2
+numpy
