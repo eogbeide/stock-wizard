@@ -158,7 +158,9 @@ def add_moving_average(df, window=7):
 
 #@st.cache_data(experimental_allow_widgets=True)
 def interactive_plot_forecasting(df, forecast, title):
-    fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
+    # Add moving average to the DataFrame
+    df = add_moving_average(df, window=7)
+    fig = px.line(df, x='ds', y=['y', 'predicted', 'moving_avg], title=title)
 
     # Get maximum and minimum points
     max_points = df[df['y'] == df['y'].max()]
@@ -173,12 +175,7 @@ def interactive_plot_forecasting(df, forecast, title):
     # Add yhat_lower and yhat_upper
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
-
-    # Add moving average to the DataFrame
-    df = add_moving_average(df, window=7)
-
-    px.line(df, x='ds', y=['y', 'predicted', 'moving_avg'], title=title)
-    
+   
     st.plotly_chart(fig)
 
 option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
