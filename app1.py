@@ -305,8 +305,8 @@ def interactive_plot_forecasting(df, forecast, title):
     st.plotly_chart(fig)
 
 # Example usage
-data = {'ds': pd.date_range(start='2022-01-01', periods=365),
-        'y': np.random.randn(365).cumsum()}
+data = {'ds': pd.date_range(start='2023-12-01', periods=60),
+        'y': np.random.randn(60).cumsum()}
 
 df = pd.DataFrame(data)
 forecast = create_forecast(df)
