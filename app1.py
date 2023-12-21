@@ -12,6 +12,7 @@ import yfinance as yf
 import os
 from datetime import timedelta
 import sys
+import matplotlib.pyplot as plt
 
 st.set_page_config(page_title="Stock Price Prediction Wizard App")
 
