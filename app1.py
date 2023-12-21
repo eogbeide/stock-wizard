@@ -149,18 +149,9 @@ for selected_file in selected_files:
     #titles.append(f'Original Vs Predicted ({ticker})')
     titles.append(f'Chart of Original Price (y)   Vs   Predicted Price for ({ticker})')
 
-
-#Define moving average
-def add_moving_average(df, window=7):
-    # Calculate moving average
-    df['moving_avg'] = df['y'].rolling(window=window, min_periods=1).mean()
-    return df
-
 #@st.cache_data(experimental_allow_widgets=True)
 def interactive_plot_forecasting(df, forecast, title):
-    # Add moving average to the DataFrame
-    df = add_moving_average(df, window=7)
-    fig = px.line(df, x='ds', y=['y', 'predicted', 'moving_avg'], title=title)
+    fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
 
     # Get maximum and minimum points
     max_points = df[df['y'] == df['y'].max()]
@@ -280,3 +271,43 @@ if 'longBusinessSummary' in selected_ticker_info:
 else:
     st.write("Not Available")
 
+
+
+def create_forecast(df):
+    # Prepare data for Prophet
+    data = df[['ds', 'y']].rename(columns={'ds': 'ds', 'y': 'y'})
+    
+    # Create a Prophet model and fit the data
+    model = Prophet()
+    model.fit(data)
+    
+    # Make predictions for future dates
+    future = model.make_future_dataframe(periods=365)
+    forecast = model.predict(future)
+    
+    return forecast
+
+def add_moving_average(df, window=7):
+    # Calculate moving average
+    df['moving_avg'] = df['y'].rolling(window=window, min_periods=1).mean()
+    return df
+
+def interactive_plot_forecasting(df, forecast, title):
+    # Add moving average to the DataFrame
+    df = add_moving_average(df, window=7)
+
+    fig = px.line(df, x='ds', y=['y', 'moving_avg'], title=title)
+
+    # Add yhat_lower and yhat_upper
+    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
+    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
+
+    st.plotly_chart(fig)
+
+# Example usage
+data = {'ds': pd.date_range(start='2022-01-01', periods=365),
+        'y': np.random.randn(365).cumsum()}
+
+df = pd.DataFrame(data)
+forecast = create_forecast(df)
+interactive_plot_forecasting(df, forecast, 'Forecast with Moving Average')
