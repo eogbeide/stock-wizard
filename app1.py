@@ -149,6 +149,17 @@ for selected_file in selected_files:
     #titles.append(f'Original Vs Predicted ({ticker})')
     titles.append(f'Chart of Original Price (y)   Vs   Predicted Price for ({ticker})')
 
+
+def find_inflection_points(y):
+    # Calculate second derivative
+    second_derivative = np.gradient(np.gradient(y))
+    
+    # Find inflection points where the sign of the second derivative changes
+    inflection_points = np.where(np.diff(np.sign(second_derivative)))[0] + 1
+    
+    return inflection_points
+
+
 #@st.cache_data(experimental_allow_widgets=True)
 def interactive_plot_forecasting(df, forecast, title):
     fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
@@ -167,6 +178,13 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
+    # Find inflection points
+    inflection_points = find_inflection_points(df['y'])
+    
+    # Add inflection points to the plot
+    inflection_df = df.iloc[inflection_points]
+    fig.add_trace(go.Scatter(x=inflection_df['ds'], y=inflection_df['y'], mode='markers', name='Inflection', marker=dict(color='orange', size=10)))
+    
     st.plotly_chart(fig)
 
 option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
