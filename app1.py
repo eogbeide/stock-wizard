@@ -304,14 +304,31 @@ def interactive_plot_forecasting(df, forecast, title):
 
     st.plotly_chart(fig)
 
-# Use the last 30 days of data to forecast the next 30 days
-forecast_data = df.tail(30).copy()
+# Example usage
+# Read the selected files using pandas
+dfs = []
+for selected_file in selected_files:
+    df = pd.read_csv(selected_file)
+    df = df[['Date', 'Close']]
+    df.columns = ['ds', 'y']
+    df['ds'] = pd.to_datetime(df['ds'])
+    df.reset_index(inplace=True, drop=True)
+    dfs.append(df)
+    
+ticker_data = df
 
-# Perform forecasting
-forecast = create_forecast(df)
+# Check if 'ds' and 'y' columns exist in the DataFrame
+if 'ds' not in ticker_data.columns or 'y' not in ticker_data.columns:
+    st.error("Error: 'ds' and 'y' columns not found in the DataFrame.")
+else:
+    # Use the last 30 days of data to forecast the next 30 days
+    forecast_data = ticker_data.tail(30).copy()
 
-# Plot interactive forecasting
-interactive_plot_forecasting(df, forecast, 'Forecast with Moving Average')
+    # Perform forecasting
+    forecast = create_forecast(forecast_data)
 
-# Display the DataFrame table
-st.write(forecast_data)
+    # Plot interactive forecasting
+    interactive_plot_forecasting(ticker_data, forecast, 'Forecast with Moving Average')
+
+    # Display the DataFrame table
+    st.write(forecast_data)
