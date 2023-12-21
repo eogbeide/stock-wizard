@@ -273,6 +273,13 @@ else:
 
 
 
+import streamlit as st
+import plotly.express as px
+import plotly.graph_objects as go
+import pandas as pd
+import numpy as np
+from fbprophet import Prophet
+
 def create_forecast(df):
     # Prepare data for Prophet
     data = df[['ds', 'y']].rename(columns={'ds': 'ds', 'y': 'y'})
@@ -282,7 +289,7 @@ def create_forecast(df):
     model.fit(data)
     
     # Make predictions for future dates
-    future = model.make_future_dataframe(periods=365)
+    future = model.make_future_dataframe(periods=30)
     forecast = model.predict(future)
     
     return forecast
@@ -299,16 +306,22 @@ def interactive_plot_forecasting(df, forecast, title):
     fig = px.line(df, x='ds', y=['y', 'moving_avg'], title=title)
 
     # Add yhat_lower and yhat_upper
-    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
-    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
     st.plotly_chart(fig)
 
 # Example usage
-data = {'ds': pd.date_range(start='2023-12-01', periods=60),
-        'y': np.random.randn(60).cumsum()}
+ticker_data = pd.read_csv('ticker_data.csv')  # Replace 'ticker_data.csv' with your actual data file
 
-df = pd.DataFrame(data)
-forecast = create_forecast(df)
-interactive_plot_forecasting(df, forecast, 'Forecast with Moving Average')
-df.tail(60)
+# Use the last 30 days of data to forecast the next 30 days
+forecast_data = ticker_data.tail(30).copy()
+
+# Perform forecasting
+forecast = create_forecast(forecast_data)
+
+# Plot interactive forecasting
+interactive_plot_forecasting(ticker_data, forecast, 'Forecast with Moving Average')
+
+# Display the DataFrame table
+st.write(forecast_data)
