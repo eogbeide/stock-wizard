@@ -168,8 +168,8 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
     # Identify buying and selling opportunities
-    buy_points = df[(df['y'] < df['y'].shift(1)) & (forecast['yhat_lower'] > df['y'])]
-    sell_points = df[(df['y'] > df['y'].shift(1)) & (forecast['yhat_upper'] < df['y'])]
+    buy_points = df.loc[(df['y'] < df['y'].shift(1)) & (forecast['yhat_lower'] > df['y']), :]
+    sell_points = df.loc[(df['y'] > df['y'].shift(1)) & (forecast['yhat_upper'] < df['y']), :]
 
     # Add buying and selling points to the plot
     fig.add_trace(go.Scatter(x=buy_points['ds'], y=buy_points['y'], mode='markers', name='Buy', marker=dict(color='green', size=10)))
