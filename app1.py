@@ -170,16 +170,16 @@ def interactive_plot_forecasting(df, forecast, title):
     # Convert 'ds' column to datetime type
     df['ds'] = pd.to_datetime(df['ds'])
 
-    # Create 'quarter' column
-    df['quarter'] = df['ds'].dt.to_period('Q')
+    # Create 'year' column
+    df['year'] = df['ds'].dt.year
 
-    # Calculate quarterly higher high and lower low
-    quarterly_higher_high = df[df['y'] > df.groupby('quarter')['y'].shift(1)]
-    quarterly_lower_low = df[df['y'] < df.groupby('quarter')['y'].shift(1)]
+    # Calculate annual higher high and lower low
+    annual_higher_high = df[df['y'] > df.groupby('year')['y'].shift(1)]
+    annual_lower_low = df[df['y'] < df.groupby('year')['y'].shift(1)]
 
-    # Add quarterly higher high and lower low points to the plot
-    fig.add_trace(go.Scatter(x=quarterly_higher_high['ds'], y=quarterly_higher_high['y'], mode='markers', name='Quarterly Higher High'))
-    fig.add_trace(go.Scatter(x=quarterly_lower_low['ds'], y=quarterly_lower_low['y'], mode='markers', name='Quarterly Lower Low'))
+    # Add annual higher high and lower low points to the plot
+    fig.add_trace(go.Scatter(x=annual_higher_high['ds'], y=annual_higher_high['y'], mode='markers', name='Annual Higher High'))
+    fig.add_trace(go.Scatter(x=annual_lower_low['ds'], y=annual_lower_low['y'], mode='markers', name='Annual Lower Low'))
     
     st.plotly_chart(fig)
 
