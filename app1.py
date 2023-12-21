@@ -274,7 +274,7 @@ else:
 # Function to plot the forecast and original values
 def plot_forecast(df, forecast, title):
     plt.figure(figsize=(10, 6))
-    plt.plot(df.index, df['Original Values'], label='Original Values')
+    plt.plot(df.index, df['y'], label='Original Values')
     plt.plot(forecast.index, forecast['Forecast'], label='Forecast')
     
     # Add slope line
