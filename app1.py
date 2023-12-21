@@ -273,13 +273,6 @@ else:
 
 
 
-import streamlit as st
-import plotly.express as px
-import plotly.graph_objects as go
-import pandas as pd
-import numpy as np
-from fbprophet import Prophet
-
 def create_forecast(df):
     # Prepare data for Prophet
     data = df[['ds', 'y']].rename(columns={'ds': 'ds', 'y': 'y'})
