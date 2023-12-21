@@ -204,10 +204,14 @@ st.write(f" - **Company Name:** ", selected_ticker_info['longName'])
 st.header("Interactive Plot")
 interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 
-st.subheader("Last Three Days Closing Prices")
-df['ds'] = pd.to_datetime(df['ds']).dt.date
-#st.write(df[['ds', 'y']].tail(3).reset_index(drop=True))
-st.write(df[['ds', 'y']].tail(3).set_index(df.columns[0]))
+
+# Extract today's forecast values
+today_forecast = forecast[forecast['ds'] == today]
+
+# Get today's yhat, yhat_lower, and yhat_upper values
+today_yhat = round(today_forecast['yhat'].values[0],2)
+today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
+today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
 
 # Create a DataFrame with the forecast values
 data = {
@@ -222,6 +226,11 @@ st.subheader("Current Forecast Price Confidence Intervals:")
 #st.write(df)
 st.write(df.set_index(df.columns[0]))
 
+st.subheader("Last Three Days Closing Prices")
+df['ds'] = pd.to_datetime(df['ds']).dt.date
+#st.write(df[['ds', 'y']].tail(3).reset_index(drop=True))
+st.write(df[['ds', 'y']].tail(3).set_index(df.columns[0]))
+
 #st.write(" - Location: ", selected_ticker_info['country'])
 st.header("How to read chart:")
 st.write(f" - **yhat** is the median price that shows price trend")
@@ -232,14 +241,6 @@ st.write(f" - **yhat_upper** is the highest price. Actual price above yhat_upper
 st.subheader(f"Machine Learning Modeling Information")
 st.write(f" - Number of days in training data: {len(train)}")
 st.write(f" - Number of days in testing data: {len(test)}")
-
-# Extract today's forecast values
-today_forecast = forecast[forecast['ds'] == today]
-
-# Get today's yhat, yhat_lower, and yhat_upper values
-today_yhat = round(today_forecast['yhat'].values[0],2)
-today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
-today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
 
 # Get today's date as a datetime.date object
 today = datetime.date.today()
