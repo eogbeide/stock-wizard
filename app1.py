@@ -150,6 +150,12 @@ for selected_file in selected_files:
     titles.append(f'Chart of Original Price (y)   Vs   Predicted Price for ({ticker})')
 
 
+#Define moving average
+def add_moving_average(df, window=7):
+    # Calculate moving average
+    df['moving_avg'] = df['y'].rolling(window=window, min_periods=1).mean()
+    return df
+
 #@st.cache_data(experimental_allow_widgets=True)
 def interactive_plot_forecasting(df, forecast, title):
     fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
@@ -167,6 +173,11 @@ def interactive_plot_forecasting(df, forecast, title):
     # Add yhat_lower and yhat_upper
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
+
+    # Add moving average to the DataFrame
+    df = add_moving_average(df, window=7)
+
+    fig = px.line(df, x='ds', y=['y', 'predicted', 'moving_avg'], title=title)
     
     st.plotly_chart(fig)
 
