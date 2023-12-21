@@ -13,6 +13,9 @@ import os
 from datetime import timedelta
 import sys
 
+# Set the desired width for DataFrame display
+pd.set_option('display.width', 20)
+
 st.set_page_config(page_title="Stock Price Prediction Wizard App")
 yf.pdr_override()
 
