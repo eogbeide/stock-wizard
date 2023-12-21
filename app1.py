@@ -304,17 +304,14 @@ def interactive_plot_forecasting(df, forecast, title):
 
     st.plotly_chart(fig)
 
-# Example usage
-ticker_data = pd.read_csv('ticker_data.csv')  # Replace 'ticker_data.csv' with your actual data file
-
 # Use the last 30 days of data to forecast the next 30 days
-forecast_data = ticker_data.tail(30).copy()
+forecast_data = df.tail(30).copy()
 
 # Perform forecasting
-forecast = create_forecast(forecast_data)
+forecast = create_forecast(df)
 
 # Plot interactive forecasting
-interactive_plot_forecasting(ticker_data, forecast, 'Forecast with Moving Average')
+interactive_plot_forecasting(df, forecast, 'Forecast with Moving Average')
 
 # Display the DataFrame table
 st.write(forecast_data)
