@@ -15,28 +15,8 @@ import sys
 
 st.set_page_config(page_title="Stock Price Prediction Wizard App")
 
-# Add custom CSS styles
-st.write("""
-<style>
-    body {
-        background-color: #f1f1f1;
-        font-family: Arial, sans-serif;
-    }
-    
-    h1 {
-        color: #333333;
-        text-align: center;
-    }
-    
-    .my-class {
-        color: red;
-        font-weight: bold;
-    }
-</style>
-""", unsafe_allow_html=True)
-
 # Set the desired width for DataFrame display
-pd.set_option('display.width', 40)
+pd.set_option('display.width', 50)
 
 yf.pdr_override()
 
@@ -64,8 +44,6 @@ if today.weekday() >= 5:
 else:
     #st.write("Welcome to the Stock Trend Prediction Wizard App") 
     st.write("Welcome to the Smart AI Stock Trend Prediction Wizard by Manny: $$$")
-    st.write('<div class="my-class">This is a styled text.</div>', unsafe_allow_html=True)
-    st.button("Click me!")
     
 # We can get data by our choice by giving days bracket
 start_date = "2021-12-01"
