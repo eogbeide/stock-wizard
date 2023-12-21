@@ -167,6 +167,12 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
+    # Convert 'ds' column to datetime type
+    df['ds'] = pd.to_datetime(df['ds'])
+
+    # Create 'month' column
+    df['month'] = df['ds'].dt.month
+    
     # Calculate monthly higher high and lower low
     monthly_higher_high = df[df['y'] > df.groupby('month')['y'].shift(1)]
     monthly_lower_low = df[df['y'] < df.groupby('month')['y'].shift(1)]
