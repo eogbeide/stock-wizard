@@ -197,14 +197,17 @@ st.write("")
 #st.write("The Smart AI Stock Trend Wiz by Manny: $$$")
 st.write(f" - **Company Name:** ", selected_ticker_info['longName'])
 
-# Plot the forecast and the original values for comparison
-st.header("Interactive Plot")
+st.subheader(f"Machine Learning Modeling Information")
+st.write(f" - Number of days in training data: {len(train)}")
+st.write(f" - Number of days in testing data: {len(test)}")
 
 st.subheader("Last Three Days Closing Prices")
 df['ds'] = pd.to_datetime(df['ds']).dt.date
 #st.write(df[['ds', 'y']].tail(3).reset_index(drop=True))
 st.write(df[['ds', 'y']].tail(3).set_index(df.columns[0]))
 
+# Plot the forecast and the original values for comparison
+st.header("Interactive Plot")
 interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 
 #st.write(" - Location: ", selected_ticker_info['country'])
@@ -214,9 +217,7 @@ st.write(f" - **yhat_lower** is the lowest price. Actual price below yhat_lower 
 st.write(f" - **yhat_upper** is the highest price. Actual price above yhat_upper signals a selling or profit taking opportunity. Above yhat_upper --> Sell or Profit Taking Signal")
 #st.write(f"Number of months in train data for {ticker}: {len(train)}")
 #st.write(f" - Number of months in test data for {ticker}: {len(test)}")
-st.subheader(f"Machine Learning Modeling Information")
-st.write(f" - Number of days in training data: {len(train)}")
-st.write(f" - Number of days in testing data: {len(test)}")
+
 
 # Extract today's forecast values
 today_forecast = forecast[forecast['ds'] == today]
