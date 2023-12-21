@@ -167,14 +167,14 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
-    # Calculate and add slope line
-    x = pd.to_numeric(df['ds']).values
-    y = np.array(df['y'])
-    slope = (y[-1] - y[0]) / (x[-1] - x[0])
-    intercept = y[0] - slope * x[0]
-    slope_line = go.Scatter(x=df['ds'], y=slope * x + intercept, mode='lines', name='Slope')
-    fig.add_trace(slope_line)
+    # Calculate higher high and lower low
+    higher_high = df[df['y'] > df['y'].shift(1)]
+    lower_low = df[df['y'] < df['y'].shift(1)]
 
+    # Add higher high and lower low points to the plot
+    fig.add_trace(go.Scatter(x=higher_high['ds'], y=higher_high['y'], mode='markers', name='Higher High'))
+    fig.add_trace(go.Scatter(x=lower_low['ds'], y=lower_low['y'], mode='markers', name='Lower Low'))
+    
     st.plotly_chart(fig)
 
 option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
