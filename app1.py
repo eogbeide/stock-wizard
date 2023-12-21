@@ -167,20 +167,14 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
-    # Convert 'ds' column to datetime type
-    df['ds'] = pd.to_datetime(df['ds'])
+    # Identify buying and selling opportunities
+    buy_points = df[(df['y'] < df['y'].shift(1)) & (forecast['yhat_lower'] > df['y'])]
+    sell_points = df[(df['y'] > df['y'].shift(1)) & (forecast['yhat_upper'] < df['y'])]
 
-    # Create 'year' column
-    df['year'] = df['ds'].dt.year
+    # Add buying and selling points to the plot
+    fig.add_trace(go.Scatter(x=buy_points['ds'], y=buy_points['y'], mode='markers', name='Buy', marker=dict(color='green', size=10)))
+    fig.add_trace(go.Scatter(x=sell_points['ds'], y=sell_points['y'], mode='markers', name='Sell', marker=dict(color='red', size=10)))
 
-    # Calculate annual higher high and lower low
-    annual_higher_high = df[df['y'] > df.groupby('year')['y'].shift(1)]
-    annual_lower_low = df[df['y'] < df.groupby('year')['y'].shift(1)]
-
-    # Add annual higher high and lower low points to the plot
-    fig.add_trace(go.Scatter(x=annual_higher_high['ds'], y=annual_higher_high['y'], mode='markers', name='Annual Higher High'))
-    fig.add_trace(go.Scatter(x=annual_lower_low['ds'], y=annual_lower_low['y'], mode='markers', name='Annual Lower Low'))
-    
     st.plotly_chart(fig)
 
 option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
