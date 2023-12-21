@@ -14,7 +14,7 @@ from datetime import timedelta
 import sys
 
 # Set the desired width for DataFrame display
-pd.set_option('display.width', 20)
+pd.set_option('display.width', 40)
 
 st.set_page_config(page_title="Stock Price Prediction Wizard App")
 yf.pdr_override()
@@ -204,7 +204,7 @@ interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 st.subheader("Last Three Days Closing Prices")
 df['ds'] = pd.to_datetime(df['ds']).dt.date
 #st.write(df[['ds', 'y']].tail(3).reset_index(drop=True))
-st.write(df.set_index(df.columns[0]))
+st.write(df.tail(3).set_index(df.columns[0]))
 
 #st.write(" - Location: ", selected_ticker_info['country'])
 st.header("How to read chart:")
