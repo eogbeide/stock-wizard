@@ -13,6 +13,7 @@ import os
 from datetime import timedelta
 import sys
 import matplotlib.pyplot as plt
+import numpy as np
 
 st.set_page_config(page_title="Stock Price Prediction Wizard App")
 
