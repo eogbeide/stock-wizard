@@ -270,5 +270,29 @@ else:
     st.write("Not Available")
 
 
+# Function to plot the forecast and original values
+def plot_forecast(df, forecast, title):
+    plt.figure(figsize=(10, 6))
+    plt.plot(df.index, df['Original Values'], label='Original Values')
+    plt.plot(forecast.index, forecast['Forecast'], label='Forecast')
+    
+    # Add slope line
+    x = np.arange(min(df.index), max(df.index) + 1, dtype=np.datetime64)
+    slope = (df['Original Values'].iloc[-1] - df['Original Values'].iloc[0]) / len(x)
+    plt.plot(x, df['Original Values'].iloc[0] + slope * np.arange(len(x)), linestyle='dashed', color='gray', label='Slope')
+    
+    plt.xlabel('Date')
+    plt.ylabel('Value')
+    plt.title(title)
+    plt.legend()
+    plt.xticks(rotation=45)
+    plt.tight_layout()
+    
+    # Display the plot
+    st.pyplot()
+
+# Usage
+st.header("Interactive Plot")
+plot_forecast(df, forecast, f'{title} ({today})')
 
 
