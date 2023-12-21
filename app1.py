@@ -235,7 +235,7 @@ data = {
     "Confidence Intervals": ["yhat_lower", "yhat", "yhat_upper"],
     "Values": [today_yhat_lower, today_yhat, today_yhat_upper]
 }
-df.reset_index(inplace=False)
+df.reset_index(inplace=True)
 df = pd.DataFrame(data)
 
 # Display the DataFrame as a three-column table
