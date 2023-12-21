@@ -168,11 +168,11 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
     # Calculate and add slope line
-    x = np.array(df['ds'])
+    x = pd.to_numeric(df['ds']).values
     y = np.array(df['y'])
     slope = (y[-1] - y[0]) / (x[-1] - x[0])
     intercept = y[0] - slope * x[0]
-    slope_line = go.Scatter(x=x, y=slope * x + intercept, mode='lines', name='Slope')
+    slope_line = go.Scatter(x=df['ds'], y=slope * x + intercept, mode='lines', name='Slope')
     fig.add_trace(slope_line)
 
     st.plotly_chart(fig)
