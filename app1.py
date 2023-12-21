@@ -238,7 +238,9 @@ data = {
 df = pd.DataFrame(data)
 # Display the DataFrame as a three-column table
 st.subheader("Current Forecast Price Confidence Intervals:")
-st.write(df, use_container_width=st.session_state.use_container_width)
+#st.write(df)
+style = df.style.hide_index()
+st.write(styler.to_html(), unsafe_allow_html=True)
 
 # Delete existing files
 for file in csvfiles:
