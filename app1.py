@@ -66,6 +66,16 @@ def SaveData(df, filename):
 for tik in ticker_list:
     getData(tik)
 
+
+def load_data():
+    tickers =  ticker_list_sorted
+    return pd.DataFrame({"Ticker": tickers})
+    
+df = load_data()
+tickers = st.multiselect(
+    "Filter the ticker:", options=df.sort_values(by="Ticker").tickers.unique()
+)
+
 # Pull data, train model, and predict
 #@st.cache_data(experimental_allow_widgets=True)
 def select_files(files):
@@ -76,21 +86,18 @@ def select_files(files):
     
     while True:
         try:
-            #tickers = st.multiselect(
-                #"Filter by sorted company ticker:", options=df.sort_values(by="Ticker").Ticker.unique()
-            #)
-            
-            # Sort the ticker list alphabetically
+           # Sort the ticker list alphabetically
             ticker_list_sorted = sorted(ticker_list)
             
             # Display the sorted ticker list in Streamlit
             choice = st.sidebar.selectbox(
-                "Select Company Ticker", 
+                "Select Company Ticker",
+                options=df.sort_values(by="Ticker").tickers.unique()
                 range(1, num_files + 1), 
                 format_func=lambda x: files[x - 1].split('/')[-1].split('_')[0],
                 key="selectbox"
             )
-            
+               
             selected_file = files[choice - 1]
             selected_files.append(selected_file)
             
@@ -104,15 +111,6 @@ def select_files(files):
             st.sidebar.warning("Invalid choice. Please try again.")
 
     return selected_files, selected_ticker_info
-
-def load_data():
-    tickers =  ticker_list_sorted
-    return pd.DataFrame({"Ticker": tickers})
-    
-df = load_data()
-tickers = st.multiselect(
-    "Filter the ticker:", options=df.sort_values(by="Ticker").tickers.unique()
-)
 
 # the path to your csv file directory
 mycsvdir = os.path.expanduser('~/Documents/data')
