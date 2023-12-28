@@ -115,6 +115,8 @@ def select_files(files):
 
     return selected_files, selected_ticker_info
     
+ticker = st.selectbox(‘Select ticker’, selected_ticker[‘ticker’].unique().tolist())
+
 # the path to your csv file directory
 mycsvdir = os.path.expanduser('~/Documents/data')
 
