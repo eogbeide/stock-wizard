@@ -115,6 +115,15 @@ def select_files(files):
 
     return selected_files, selected_ticker_info
 
+def load_data():
+    tickers = selected_files
+    return pd.DataFrame({"Ticker": tickers})
+df = load_data()
+
+tickers = st.multiselect(
+    "Filter the ticker:", options=df.sort_values(by="Ticker").Ticker.unique()
+)
+
 # the path to your csv file directory
 mycsvdir = os.path.expanduser('~/Documents/data')
 
