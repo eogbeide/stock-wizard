@@ -114,7 +114,13 @@ def select_files(files):
             st.sidebar.warning("Invalid choice. Please try again.")
 
     return selected_files, selected_ticker_info
-    
+
+#Multi-select
+df = selected_file
+ticker = st.multiselect(
+    "Filter the ticker:", options=df.sort_values(by="Ticker").Ticker.unique()
+)
+
 # the path to your csv file directory
 mycsvdir = os.path.expanduser('~/Documents/data')
 
