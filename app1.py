@@ -115,7 +115,7 @@ def select_files(files):
 
     return selected_files, selected_ticker_info
     
-ticker = st.sidebar.selectbox("Select Ticker", choice['ticker'].unique().tolist())
+ticker = st.sidebar.selectbox("Select Ticker", ticker_list['ticker'].unique().tolist())
 
 # the path to your csv file directory
 mycsvdir = os.path.expanduser('~/Documents/data')
