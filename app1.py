@@ -27,10 +27,17 @@ ticker_list = sorted (['ARM', 'NIO','AMC','CTLT','ECL','EFX','NKE','C', 'WFC', '
 #ticker_list_sorted = sorted(ticker_list)
 #ticker_list = ticker_list_sorted
 
-#def load_data():
-    #tickers = ticker_list
-   # return pd.DataFrame({"Ticker": tickers})
-#df = load_data()
+def load_data():
+    tickers = ticker_list
+    return pd.DataFrame({"Ticker": tickers})
+    
+df = load_data()
+st.subheader("Sorted unique ticker")
+st.dataframe(df.sort_values(by="Ticker").Ticker.unique())
+
+tickers = st.multiselect(
+    "Filter the ticker:", options=df.sort_values(by="Ticker").Ticker.unique()
+)
 
 today = date.today()
 # Check if today is a weekend (Saturday or Sunday)
