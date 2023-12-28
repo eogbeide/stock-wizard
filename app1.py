@@ -92,7 +92,7 @@ def select_files(files):
             # Display the sorted ticker list in Streamlit
             choice = st.sidebar.selectbox(
                 "Select Company Ticker",
-                options=df.sort_values(by="Ticker").tickers.unique()
+                options=df.sort_values(by="Ticker").tickers.unique(),
                 range(1, num_files + 1), 
                 format_func=lambda x: files[x - 1].split('/')[-1].split('_')[0],
                 key="selectbox"
