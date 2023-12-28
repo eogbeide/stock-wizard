@@ -116,7 +116,7 @@ def select_files(files):
     return selected_files, selected_ticker_info
 
 #Multi-select
-df = selected_file
+df = selected_files
 ticker = st.multiselect(
     "Filter the ticker:", options=df.sort_values(by="Ticker").Ticker.unique()
 )
