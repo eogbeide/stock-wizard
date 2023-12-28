@@ -23,15 +23,6 @@ yf.pdr_override()
 #ticker_list = sorted (['LLY','V','MA','WBA','BMY','HUM','CI','UNH','CVS','DOCU','ZM','ABNB','SNOW','LYFT','UBER','DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CADL','MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC'])
 ticker_list = sorted (['ARM', 'NIO','AMC','CTLT','ECL','EFX','NKE','C', 'WFC', 'GS', 'RIVN', 'LCID', 'CL', 'MRK', 'JPM', 'T', 'TMUS', 'CMCSA', 'VOD', 'LOW', 'FND', 'PEP', 'PG', 'MRM', 'KMB','UL', 'EL', 'VZ', 'LLY','V','MA','ABBV','WBA','BMY','HUM','CI','UNH','CVS','DOCU','ZM','ABNB','SNOW','LYFT','UBER','DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CADL','MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC'])
 
-def load_data():
-    tickers = ticker_list
-    return pd.DataFrame({"Ticker": tickers})
-    
-df = load_data()
-tickers = st.multiselect(
-    "Filter the ticker:", options=df.sort_values(by="Ticker").Ticker.unique()
-)
-
 today = date.today()
 # Check if today is a weekend (Saturday or Sunday)
 if today.weekday() >= 5:
@@ -113,7 +104,16 @@ def select_files(files):
             st.sidebar.warning("Invalid choice. Please try again.")
 
     return selected_files, selected_ticker_info
+
+def load_data():
+    tickers = selected_ticker_info
+    return pd.DataFrame({"Ticker": tickers})
     
+df = load_data()
+tickers = st.multiselect(
+    "Filter the ticker:", options=df.sort_values(by="Ticker").selected_ticker_info.unique()
+)
+
 # the path to your csv file directory
 mycsvdir = os.path.expanduser('~/Documents/data')
 
