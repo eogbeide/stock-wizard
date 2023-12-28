@@ -115,10 +115,6 @@ def select_files(files):
 
     return selected_files, selected_ticker_info
 
-tickers = st.multiselect(
-    "Filter the ticker:", options=df.sort_values(by="Ticker").Ticker.unique()
-)
-
 # the path to your csv file directory
 mycsvdir = os.path.expanduser('~/Documents/data')
 
