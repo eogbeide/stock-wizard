@@ -113,9 +113,8 @@ def select_files(files):
         except IndexError:
             st.sidebar.warning("Invalid choice. Please try again.")
 
-    return selected_files, selected_ticker_info
-    
-ticker = st.sidebar.selectbox("Select Ticker", ticker_list['ticker'].unique().tolist())
+    return selected_files.unique().tolist()), selected_ticker_info
+
 
 # the path to your csv file directory
 mycsvdir = os.path.expanduser('~/Documents/data')
