@@ -198,6 +198,9 @@ st.title("Major US Stocks AI Forecast Wizard")
 st.write("")
 #st.write("The Smart AI Stock Trend Wiz by Manny: $$$")
 st.write(f" - **Company Name:** ", selected_ticker_info['longName'])
+st.subheader(f"Machine Learning Modeling Information")
+st.write(f" - Number of days in training data: {len(train)}")
+st.write(f" - Number of days in testing data: {len(test)}")
 
 # Plot the forecast and the original values for comparison
 st.header("Interactive Plot")
@@ -215,9 +218,6 @@ st.write(f" - **yhat_lower** is the lowest price. Actual price below yhat_lower 
 st.write(f" - **yhat_upper** is the highest price. Actual price above yhat_upper signals a selling or profit taking opportunity. Above yhat_upper --> Sell or Profit Taking Signal")
 #st.write(f"Number of months in train data for {ticker}: {len(train)}")
 #st.write(f" - Number of months in test data for {ticker}: {len(test)}")
-st.subheader(f"Machine Learning Modeling Information")
-st.write(f" - Number of days in training data: {len(train)}")
-st.write(f" - Number of days in testing data: {len(test)}")
 
 # Extract today's forecast values
 today_forecast = forecast[forecast['ds'] == today]
