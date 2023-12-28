@@ -106,7 +106,7 @@ def select_files(files):
     return selected_files, selected_ticker_info
 
 def load_data():
-    tickers = selected_ticker_info
+    tickers = choice
     return pd.DataFrame({"Ticker": tickers})
     
 df = load_data()
