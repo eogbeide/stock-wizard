@@ -113,7 +113,7 @@ def select_files(files):
         except IndexError:
             st.sidebar.warning("Invalid choice. Please try again.")
 
-    return selected_files.unique().tolist()), selected_ticker_info
+    return selected_files.unique().tolist(), selected_ticker_info
 
 
 # the path to your csv file directory
