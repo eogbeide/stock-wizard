@@ -111,7 +111,7 @@ def load_data():
     
 df = load_data()
 tickers = st.multiselect(
-    "Filter the ticker:", options=df.sort_values(by="Ticker").selected_ticker_info.unique()
+    "Filter the ticker:", options=df.sort_values(by="Ticker").choice.unique()
 )
 
 # the path to your csv file directory
