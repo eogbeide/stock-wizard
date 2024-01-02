@@ -132,6 +132,51 @@ for selected_file in selected_files:
     df.columns = ['ds', 'y']
     df['ds'] = pd.to_datetime(df['ds'])
     df.set_index('ds', inplace=True)
+    #weekly_df = df.resample('W').mean()
+   # weekly_df.reset_index(inplace=True)
+    dfs.append(weekly_df)
+
+# Plot the selected files
+titles = []
+tickers = []
+for selected_file in selected_files:
+    ticker = selected_file.split('/')[-1].split('_')[0]
+    tickers.append(ticker)
+    selected_file = selected_file.replace(mycsvdir + '/', '')  # Remove the directory path
+    selected_file = selected_file.replace('.csv', '')  # Remove the ".csv" extension
+    #selected_file = selected_file.replace('data"\"', '')  # Remove the ".data" extension
+    ticker = ticker.replace('data"\"', '')  # Remove the ".data" extension
+    #titles.append(f'Original Vs Predicted ({ticker})')
+    titles.append(f'Chart of Original Price (y)   Vs   Predicted Price for ({ticker})')
+
+#@st.cache_data(experimental_allow_widgets=True)
+def interactive_plot_forecasting(df, forecast, title):
+    fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
+
+    # Get maximum and minimum points
+    max_points = df[df['y'] == df['y'].max()]
+    min_points = df[df['y'] == df['y'].min()]
+
+    # Add maximum points to the plot
+    fig.add_trace(go.Scatter(x=max_points['ds'], y=max_points['y'], mode='markers', name='Maximum'))
+
+    # Add minimum points to the plot
+    fig.add_trace(go.Scatter(x=min_points['ds'], y=min_points['y'], mode='markers', name='Minimum'))
+
+    # Add yhat_lower and yhat_upper
+    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
+    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
+
+    st.plotly_chart(fig)
+
+# Read the selected files using pandas
+dfs = []
+for selected_file in selected_files:
+    df = pd.read_csv(selected_file)
+    df = df[['Date', 'Close']]
+    df.columns = ['ds', 'y']
+    df['ds'] = pd.to_datetime(df['ds'])
+    df.set_index('ds', inplace=True)
     weekly_df = df.resample('W').mean()
     weekly_df.reset_index(inplace=True)
     dfs.append(weekly_df)
