@@ -179,6 +179,31 @@ for df, title, ticker in zip(dfs, titles, tickers):
     train = df[df['ds'] <= '10/31/2023']
     test = df[df['ds'] >= '11/01/2023']
 
+# Convert the 'date' column to datetime if it's not already
+df['date'] = pd.to_datetime(df['ds'])
+
+# Set the 'date' column as the index of the DataFrame
+df.set_index('ds', inplace=True)
+
+# Resample the data to weekly frequency and calculate the mean price for each week
+weekly_df = df.resample('W', on='ds').mean()
+
+# Reset the index to convert the DatetimeIndex back to a column
+weekly_df = weekly_df.reset_index()
+
+# Create an interactive line plot using plotly express
+fig = px.line(weekly_df, x='ds', y='y')
+
+# Add title and axis labels
+fig.update_layout(
+    title='Weekly Prices',
+    xaxis_title='Date',
+    yaxis_title='Price'
+)
+
+# Display the plot
+#fig.show()
+
 # Initialize Model
 m = Prophet()
 
@@ -226,31 +251,6 @@ today_forecast = forecast[forecast['ds'] == today]
 today_yhat = round(today_forecast['yhat'].values[0],2)
 today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
 today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
-
-# Convert the 'date' column to datetime if it's not already
-df['date'] = pd.to_datetime(df['ds'])
-
-# Set the 'date' column as the index of the DataFrame
-df.set_index('ds', inplace=True)
-
-# Resample the data to weekly frequency and calculate the mean price for each week
-weekly_df = df.resample('W', on='ds').mean()
-
-# Reset the index to convert the DatetimeIndex back to a column
-weekly_df = weekly_df.reset_index()
-
-# Create an interactive line plot using plotly express
-fig = px.line(weekly_df, x='ds', y='y')
-
-# Add title and axis labels
-fig.update_layout(
-    title='Weekly Prices',
-    xaxis_title='Date',
-    yaxis_title='Price'
-)
-
-# Display the plot
-fig.show()
 
 # Get today's date as a datetime.date object
 today = datetime.date.today()
