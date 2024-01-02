@@ -131,8 +131,10 @@ for selected_file in selected_files:
     df = df[['Date', 'Close']]
     df.columns = ['ds', 'y']
     df['ds'] = pd.to_datetime(df['ds'])
-    df.reset_index(inplace=True, drop=True)
-    dfs.append(df)
+    df.set_index('ds', inplace=True)
+    weekly_df = df.resample('W').mean()
+    weekly_df.reset_index(inplace=True)
+    dfs.append(weekly_df)
 
 # Plot the selected files
 titles = []
