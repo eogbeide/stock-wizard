@@ -228,7 +228,7 @@ today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
 today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
 
 # Convert the 'date' column to datetime if it's not already
-df['date'] = pd.to_datetime(df['ds'])
+#df['date'] = pd.to_datetime(df['ds'])
 
 # Resample the data to weekly frequency and calculate the mean price for each week
 weekly_df = df.resample('W', on='ds').mean()
