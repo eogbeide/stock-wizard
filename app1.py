@@ -170,22 +170,6 @@ def interactive_plot_forecasting(df, forecast, title):
 
 option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
 
-# Convert the 'date' column to datetime if it's not already
-df['date'] = pd.to_datetime(df['ds'])
-forecast['date'] = pd.to_datetime(forecast['ds'])
-
-# Set the 'date' column as the index of the DataFrame
-df.set_index('ds', inplace=True)
-forecast.set_index('ds', inplace=True)
-
-# Resample the data to weekly frequency and calculate the mean price for each week
-weekly_df = df.resample('W').mean()
-weekly_forecast = forecast.resample('W').mean()
-
-# Plot the forecast and the original values for comparison
-st.header("Interactive Plot")
-interactive_plot_forecasting(weekly_df, weekly_forecast, "Weekly Prices")
-
 # Append today's date to the titles
 today = date.today().strftime("%Y-%m-%d")
 
