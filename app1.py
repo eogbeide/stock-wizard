@@ -132,6 +132,7 @@ for selected_file in selected_files:
     df.columns = ['ds', 'y']
     df['ds'] = pd.to_datetime(df['ds'])
     df.reset_index(inplace=True, drop=True)
+    df = df.resample('W').mean()
     dfs.append(df)
 
 # Plot the selected files
