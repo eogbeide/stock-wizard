@@ -174,8 +174,11 @@ today = date.today().strftime("%Y-%m-%d")
 
 # Iterate over the selected files and their corresponding titles and tickers
 for df, title, ticker in zip(dfs, titles, tickers):
+    # Rename the columns to "ds" and "y"
+    df = df.rename(columns={'Date': 'ds', 'Close': 'y'})
+
     # Convert the 'ds' column to datetime if it's not already
-    #df['ds'] = pd.to_datetime(df['ds'])
+    df['ds'] = pd.to_datetime(df['ds'])
 
     # Set the 'ds' column as the index of the DataFrame
     df.set_index('ds', inplace=True)
