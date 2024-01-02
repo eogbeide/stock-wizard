@@ -269,3 +269,20 @@ if 'longBusinessSummary' in selected_ticker_info:
     st.write(selected_ticker_info['longBusinessSummary'])
 else:
     st.write("Not Available")
+
+
+# Resample the data to weekly frequency and calculate the mean price for each week
+weekly_df = df.resample('W', on='date').mean()
+
+# Create an interactive line plot using plotly express
+fig = px.line(weekly_df, x='date', y='price')
+
+# Add title and axis labels
+fig.update_layout(
+    title='Weekly Prices',
+    xaxis_title='Date',
+    yaxis_title='Price'
+)
+
+# Display the plot
+fig.show()
