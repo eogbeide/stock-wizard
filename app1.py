@@ -180,7 +180,7 @@ for df, title, ticker in zip(dfs, titles, tickers):
     test = df[df['ds'] >= '11/01/2023']
 
 # Convert the 'date' column to datetime if it's not already
-df['date'] = pd.to_datetime(df['ds'])
+df['ds'] = pd.to_datetime(df['ds'])
 
 # Set the 'date' column as the index of the DataFrame
 df.set_index('ds', inplace=True)
