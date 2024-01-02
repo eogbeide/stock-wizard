@@ -172,11 +172,20 @@ option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
 # Append today's date to the titles
 today = date.today().strftime("%Y-%m-%d")
 
-# Iterate over the selected files and their corresponding titles
+# Iterate over the selected files and their corresponding titles and tickers
 for df, title, ticker in zip(dfs, titles, tickers):
+    # Convert the 'ds' column to datetime if it's not already
+    df['ds'] = pd.to_datetime(df['ds'])
+
+    # Set the 'ds' column as the index of the DataFrame
+    df.set_index('ds', inplace=True)
+
+    # Resample the data to weekly frequency and calculate the mean for each week
+    weekly_df = df.resample('W').mean()
+
     # Split the data into testing and training datasets
-    train = df[df['ds'] <= '10/31/2023']
-    test = df[df['ds'] >= '11/01/2023']
+    train = weekly_df[weekly_df.index <= '2023-10-31']
+    test = weekly_df[weekly_df.index >= '2023-11-01']
 
 # Initialize Model
 m = Prophet()
