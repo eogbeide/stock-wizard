@@ -249,6 +249,22 @@ st.subheader("Current Forecast Price Confidence Intervals:")
 #st.write(df)
 st.write(df.set_index(df.columns[0]))
 
+# Resample the data to weekly frequency and calculate the mean price for each week
+weekly_df = df.resample('W', on='ds').mean()
+
+# Create an interactive line plot using plotly express
+fig = px.line(weekly_df, x='ds', y='y')
+
+# Add title and axis labels
+fig.update_layout(
+    title='Weekly Prices',
+    xaxis_title='Date',
+    yaxis_title='Price'
+)
+
+# Display the plot
+fig.show()
+
 # Delete existing files
 for file in csvfiles:
     os.remove(file.replace('\\', '/'))
@@ -271,18 +287,4 @@ else:
     st.write("Not Available")
 
 
-# Resample the data to weekly frequency and calculate the mean price for each week
-weekly_df = df.resample('W', on='Date').mean()
 
-# Create an interactive line plot using plotly express
-fig = px.line(weekly_df, x='Date', y='Close')
-
-# Add title and axis labels
-fig.update_layout(
-    title='Weekly Prices',
-    xaxis_title='Date',
-    yaxis_title='Price'
-)
-
-# Display the plot
-fig.show()
