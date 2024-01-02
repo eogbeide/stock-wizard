@@ -170,6 +170,22 @@ def interactive_plot_forecasting(df, forecast, title):
 
 option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
 
+# Convert the 'date' column to datetime if it's not already
+df['date'] = pd.to_datetime(df['ds'])
+forecast['date'] = pd.to_datetime(forecast['ds'])
+
+# Set the 'date' column as the index of the DataFrame
+df.set_index('ds', inplace=True)
+forecast.set_index('ds', inplace=True)
+
+# Resample the data to weekly frequency and calculate the mean price for each week
+weekly_df = df.resample('W').mean()
+weekly_forecast = forecast.resample('W').mean()
+
+# Plot the forecast and the original values for comparison
+st.header("Interactive Plot")
+interactive_plot_forecasting(weekly_df, weekly_forecast, "Weekly Prices")
+
 # Append today's date to the titles
 today = date.today().strftime("%Y-%m-%d")
 
@@ -178,31 +194,6 @@ for df, title, ticker in zip(dfs, titles, tickers):
     # Split the data into testing and training datasets
     train = df[df['ds'] <= '10/31/2023']
     test = df[df['ds'] >= '11/01/2023']
-
-# Convert the 'date' column to datetime if it's not already
-df['ds'] = pd.to_datetime(df['ds'])
-
-# Set the 'date' column as the index of the DataFrame
-df.set_index('ds', inplace=True)
-
-# Resample the data to weekly frequency and calculate the mean price for each week
-weekly_df = df.resample('W', on='ds').mean()
-
-# Reset the index to convert the DatetimeIndex back to a column
-weekly_df = weekly_df.reset_index()
-
-# Create an interactive line plot using plotly express
-fig = px.line(weekly_df, x='ds', y='y')
-
-# Add title and axis labels
-fig.update_layout(
-    title='Weekly Prices',
-    xaxis_title='Date',
-    yaxis_title='Price'
-)
-
-# Display the plot
-#fig.show()
 
 # Initialize Model
 m = Prophet()
