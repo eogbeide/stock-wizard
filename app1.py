@@ -272,10 +272,10 @@ else:
 
 
 # Resample the data to weekly frequency and calculate the mean price for each week
-weekly_df = df.resample('W', on='ds').mean()
+weekly_df = df.resample('W', on='Date').mean()
 
 # Create an interactive line plot using plotly express
-fig = px.line(weekly_df, x='ds', y='y')
+fig = px.line(weekly_df, x='Date', y='Close')
 
 # Add title and axis labels
 fig.update_layout(
