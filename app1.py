@@ -268,6 +268,3 @@ if 'longBusinessSummary' in selected_ticker_info:
     st.write(selected_ticker_info['longBusinessSummary'])
 else:
     st.write("Not Available")
-
-st.header("DISCLAIMER")
-st.write("The information shown on this app is provided 'as is' and solely for informational purposes and NOT FOR TRADING PURPOSE OR ADVICE. Please consult your licensed financial advisor or broker for trading advise")
