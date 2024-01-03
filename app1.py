@@ -27,7 +27,7 @@ if today.weekday() >= 5:
 
 # Continue with the rest of your code
 # We can get data by our choice by giving days bracket
-start_date = "2021-12-01"
+start_date = "2012-12-01"
 end_date = today.strftime("%Y-%m-%d")  # Use today's date as the end date
 
 files = []
