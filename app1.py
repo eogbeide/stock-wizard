@@ -269,4 +269,4 @@ if 'longBusinessSummary' in selected_ticker_info:
 else:
     st.write("Not Available")
 
-#st.write("The information on this app is provided "as is" and solely for informational purposes, not for trading purposses or advise. Consult your licensed financial advisor or broker for trading advise")
+st.write("The information on this app is provided "as is" and solely for informational purposes, not for trading purposses or advise. Please consult your licensed financial advisor or broker for trading advise")
