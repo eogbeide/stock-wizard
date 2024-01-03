@@ -154,7 +154,7 @@ def interactive_plot_forecasting(df, forecast, title):
     # Calculate the five-day moving average
     df['five_day_avg'] = df['y'].rolling(window=5).mean()
 
-    # Add the five-day average line to the plot
+    # Add the five-day average line to the plots
     fig.add_trace(go.Scatter(x=df['ds'], y=df['five_day_avg'], mode='lines', name='Five-Day Average'))
 
     # Get maximum and minimum points
