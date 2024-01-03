@@ -165,12 +165,6 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
-    # Calculate the five-day moving average
-    df['five_day_avg'] = df['y'].rolling(window=5).mean()
-
-    # Add the five-day average line to the plots
-    fig.add_trace(go.Scatter(x=df['ds'], y=df['five_day_avg'], mode='lines', name='Five-Day Average'))
-
     st.plotly_chart(fig)
 
 option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
