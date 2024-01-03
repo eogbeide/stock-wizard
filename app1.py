@@ -151,12 +151,6 @@ for selected_file in selected_files:
 def interactive_plot_forecasting(df, forecast, title):
     fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
 
-    # Calculate the five-day moving average
-    df['five_day_avg'] = df['y'].rolling(window=5).mean()
-
-    # Add the five-day average line to the plots
-    fig.add_trace(go.Scatter(x=df['ds'], y=df['five_day_avg'], mode='lines', name='Five-Day Average'))
-
     # Get maximum and minimum points
     max_points = df[df['y'] == df['y'].max()]
     min_points = df[df['y'] == df['y'].min()]
@@ -170,6 +164,12 @@ def interactive_plot_forecasting(df, forecast, title):
     # Add yhat_lower and yhat_upper
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
+
+    # Calculate the five-day moving average
+    df['five_day_avg'] = df['y'].rolling(window=5).mean()
+
+    # Add the five-day average line to the plots
+    fig.add_trace(go.Scatter(x=df['ds'], y=df['five_day_avg'], mode='lines', name='Five-Day Average'))
 
     st.plotly_chart(fig)
 
