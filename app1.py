@@ -149,7 +149,7 @@ for selected_file in selected_files:
 
 #@st.cache_data(experimental_allow_widgets=True)
 def interactive_plot_forecasting(df, forecast, title):
-    fig = px.line(df, x='ds', y=['Closing_Price', 'predicted'], title=title)
+    fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
 
     # Get maximum and minimum points
     max_points = df[df['y'] == df['y'].max()]
