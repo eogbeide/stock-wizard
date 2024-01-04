@@ -167,6 +167,8 @@ def interactive_plot_forecasting(df, forecast, title):
 
     # Add forecasted values
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='forecast'))
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='forecast'))
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='forecast'))
  
     st.plotly_chart(fig)
 
