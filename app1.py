@@ -240,7 +240,7 @@ data = {
 }
 
 st.write("Forecast for", ticker)
-forecast['ds'] = forecast['ds'].dt.time
+forecast['ds'] = forecast['ds'].dt.times
 forecast.reset_index(drop=True, inplace=True)
 st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10))
 
