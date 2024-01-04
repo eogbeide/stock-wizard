@@ -187,8 +187,6 @@ m.fit(train)
 # Make predictions
 future = m.make_future_dataframe(periods=93)
 forecast = m.predict(future)
-st.write("Forecast for", ticker)
-st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(5))
 
 # Add predicted values to the original dataframe
 df['predicted'] = forecast['trend']
@@ -240,6 +238,10 @@ data = {
     "Confidence Intervals": ["yhat_lower", "yhat", "yhat_upper"],
     "Values": [today_yhat_lower, today_yhat, today_yhat_upper]
 }
+
+st.write("Forecast for", ticker)
+st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(5)).set_index(df.columns[0]))
+
 
 df = pd.DataFrame(data)
 
