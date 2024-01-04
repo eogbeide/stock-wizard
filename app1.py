@@ -240,7 +240,9 @@ data = {
 }
 
 st.write("Forecast for", ticker)
-st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(5))
+forecast['ds'] = forecast['ds'].dt.time
+forecast.reset_index(drop=True, inplace=True)
+st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10))
 
 
 df = pd.DataFrame(data)
