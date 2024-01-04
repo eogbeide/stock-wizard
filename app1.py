@@ -250,7 +250,7 @@ data = {
 #st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10)).set_index(df.columns[0])
 #forecast = forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10).set_index(forecast.columns[0])
 
-st.write(forecast)
+#st.write(forecast)
 
 
 df = pd.DataFrame(data)
