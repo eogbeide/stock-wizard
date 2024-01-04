@@ -283,4 +283,4 @@ else:
 
 
 st.title("DISCLAIMER")
-st.write("Current Forecast Price Confidence Intervals:")Please note that the information provided in this app does not replace professional advice from licensed finance professionals and brokers. Due to the inherent risks in stock trading, it is advised that users consult with professionals before making any financial decisions")
+st.write("Please note that the information provided in this app does not replace professional advice from licensed finance professionals and brokers. Due to the inherent risks in stock trading, it is advised that users consult with professionals before making any financial decisions.")
