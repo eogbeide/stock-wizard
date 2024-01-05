@@ -170,10 +170,10 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
-    # Calculate and add the vertex
-    vertex = forecast.loc[forecast['yhat'].idxmax()]
-    fig.add_trace(go.Scatter(x=[vertex['ds']], y=[vertex['yhat']], mode='markers', name='Vertex'))
-     
+    # Add correction line
+    correction_line = go.Scatter(x=[forecast['ds'].iloc[0], forecast['ds'].iloc[-1]], y=[df['y'].iloc[-1], forecast['yhat'].iloc[-1]], mode='lines', name='Correction Line')
+    fig.add_trace(correction_line)
+   
     st.plotly_chart(fig)
 
 option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
