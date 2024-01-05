@@ -244,11 +244,11 @@ data = {
     "Values": [today_yhat_lower, today_yhat, today_yhat_upper]
 }
 
-#st.write("Forecast for", ticker)
-#forecast['ds'] = forecast['ds'].dt.date
-#forecast.reset_index(drop=True, inplace=True)
-#st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10)).set_index(df.columns[0])
-#forecast = forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10).set_index(forecast.columns[0])
+st.write("Forecast for", ticker)
+forecast['ds'] = forecast['ds'].dt.date
+forecast.reset_index(drop=True, inplace=True)
+st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10)).set_index(df.columns[0])
+forecast = forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10).set_index(forecast.columns[0])
 
 #st.write(forecast)
 
