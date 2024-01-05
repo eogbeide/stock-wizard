@@ -171,7 +171,7 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
     # Calculate and add the median
-    median = (forecast['yhat_lower'] + forecast['yhat_upper']) / 2.5
+    median = (forecast['yhat_lower'] + forecast['yhat_upper']) / 1.5
     fig.add_trace(go.Scatter(x=forecast['ds'], y=median, mode='lines', name='Median'))
      
     st.plotly_chart(fig)
