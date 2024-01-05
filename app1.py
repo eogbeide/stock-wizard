@@ -150,7 +150,8 @@ for selected_file in selected_files:
 
 #@st.cache_data(experimental_allow_widgets=True)
 def interactive_plot_forecasting(df, forecast, title):
-    fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
+    #fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
+    fig = go.Figure()
 
     # Get maximum and minimum points
     max_points = df[df['y'] == df['y'].max()]
@@ -171,10 +172,14 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
-    # Calculate and add inertia points
-    inertia_points = forecast[forecast['yhat_lower'] == forecast['yhat_lower'].shift(2)]
-    fig.add_trace(go.Scatter(x=inertia_points['ds'], y=inertia_points['yhat_lower'], mode='markers', name='Inertia Points'))
+    # Add weekly averages lines
+    weekly_avg = df.groupby(df['ds'].dt.week)['y'].mean()
+    fig.add_trace(go.Scatter(x=weekly_avg.index, y=weekly_avg, mode='lines', name='Weekly Average'))
 
+    fig.update_layout(title=title)
+    fig.update_xaxes(title='Date')
+    fig.update_yaxes(title='Value')
+    
     st.plotly_chart(fig)
 
 option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
