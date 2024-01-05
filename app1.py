@@ -172,7 +172,7 @@ def interactive_plot_forecasting(df, forecast, title):
 
     # Add correction line
     correction_line = go.Scatter(x=[forecast['ds'].iloc[0], forecast['ds'].iloc[-1]], y=[df['y'].iloc[-1], forecast['yhat'].iloc[-1]], mode='lines', name='Correction Line')
-    fig.add_trace(correction_line)s
+    fig.add_trace(correction_line)
    
     st.plotly_chart(fig)
 
