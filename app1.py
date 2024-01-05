@@ -171,14 +171,10 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
-    # Calculate and add equilibrium points
-    equilibrium_points = forecast[forecast['yhat'] == forecast['yhat'].shift()]
-    fig.add_trace(go.Scatter(x=equilibrium_points['ds'], y=equilibrium_points['yhat'], mode='markers', name='Equilibrium Points'))
-
     # Calculate and add inertia points
-    inertia_points = forecast[forecast['yhat'] == forecast['yhat'].shift(2)]
-    fig.add_trace(go.Scatter(x=inertia_points['ds'], y=inertia_points['yhat'], mode='markers', name='Inertia Points'))
-  
+    inertia_points = forecast[forecast['y'] == forecast['yhat'].shift(2)]
+    fig.add_trace(go.Scatter(x=inertia_points['ds'], y=inertia_points['y'], mode='markers', name='Inertia Points'))
+
     st.plotly_chart(fig)
 
 option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
