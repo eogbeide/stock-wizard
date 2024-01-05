@@ -5,6 +5,7 @@ from prophet import Prophet
 from plotly import graph_objs as go
 import glob
 import datetime
+import numpy as np
 
 from pandas_datareader import data as pdr
 from datetime import date
