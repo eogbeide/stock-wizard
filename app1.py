@@ -171,9 +171,11 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
-    # Add steepest curve points
-    steepest_points = df[df['y'].diff().abs() == df['y'].diff().abs().max()]
-    fig.add_trace(go.Scatter(x=steepest_points['ds'], y=steepest_points['y'], mode='markers', name='Steepest Curve Points'))
+    # Add monthly steepest curve points
+    df['month'] = df['ds'].dt.month
+    steepest_points = df.groupby('month')['y'].apply(lambda x: x.diff().abs().idxmax())
+    steepest_points = df.loc[steepest_points]
+    fig.add_trace(go.Scatter(x=steepest_points['ds'], y=steepest_points['y'], mode='markers', name='Monthly Steepest Curve Points'))
    
     st.plotly_chart(fig)
 
