@@ -169,10 +169,13 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='yhat future prediction'))
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
-    
-    # Calculate and add the vertex
-    vertex = forecast.loc[forecast['yhat'].idxmax()]
-    fig.add_trace(go.Scatter(x=[vertex['ds']], y=[vertex['yhat']], mode='markers', name='Vertex')) 
+
+    # Add line of best fit
+    x = np.concatenate([df['ds'].values, forecast['ds'].values])
+    y = np.concatenate([df['y'].values, forecast['yhat'].values])
+    coef = np.polyfit(x, y, 1)
+    best_fit_line = go.Scatter(x=x, y=np.polyval(coef, x), mode='lines', name='Line of Best Fit')
+    fig.add_trace(best_fit_line)    
     
     st.plotly_chart(fig)
 
