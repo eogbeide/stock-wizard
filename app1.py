@@ -167,8 +167,8 @@ def interactive_plot_forecasting(df, forecast, title):
 
     # Add forecasted values
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='yhat future prediction'))
-    #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
-    #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
      
     st.plotly_chart(fig)
 
@@ -244,12 +244,12 @@ data = {
 #st.write(df)
 #st.write(df.set_index(df.columns[0]))
 
-st.write("Forecast for", ticker)
-forecast['ds'] = forecast['ds'].dt.date
-forecast.reset_index(drop=True)
+#st.write("Forecast for", ticker)
+#forecast['ds'] = forecast['ds'].dt.date
+#forecast.reset_index(drop=True)
 #forecast.reset_index(drop=True, inplace=True)
 #st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(30))
-st.write(forecast[['ds', 'yhat_lower', 'yhat_upper']].tail(30))
+#st.write(forecast[['ds', 'yhat_lower', 'yhat_upper']].tail(30))
 #forecast = forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10).set_index(forecast.columns[0])
 
 #st.write(forecast)
