@@ -46,7 +46,7 @@ else:
     st.write("Welcome to the Smart AI Stock Trend Prediction Wizard by Manny: $$$")
     
 # We can get data by our choice by giving days bracket
-start_date = "2022-12-01"
+start_date = "2020-12-01"
 end_date = today.strftime("%Y-%m-%d")  # Use today's date as the end date
 
 # Get yesterday's date
@@ -205,7 +205,7 @@ st.write(f" - **Company Name:** ", selected_ticker_info['longName'])
 st.header("Interactive Plot")
 interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 
-st.subheader("Last Day's Closing Prices")
+st.subheader("Last Day's Closing Price")
 df['ds'] = pd.to_datetime(df['ds']).dt.date
 #st.write(df[['ds', 'y']].tail(3).reset_index(drop=True))
 st.write(df[['ds', 'y']].tail(1).set_index(df.columns[0]))
