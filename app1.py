@@ -239,10 +239,15 @@ data = {
     "Values": [today_yhat_lower, today_yhat, today_yhat_upper]
 }
 
+# Display the DataFrame as a three-column table
+st.subheader("Current Forecast Price Confidence Intervals:")
+#st.write(df)
+st.write(df.set_index(df.columns[0]))
+
 st.write("Forecast for", ticker)
 forecast['ds'] = forecast['ds'].dt.date
 forecast.reset_index(drop=True, inplace=True)
-st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10))
+st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(30))
 #forecast = forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10).set_index(forecast.columns[0])
 
 #st.write(forecast)
@@ -250,10 +255,7 @@ st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10))
 
 df = pd.DataFrame(data)
 
-# Display the DataFrame as a three-column table
-st.subheader("Current Forecast Price Confidence Intervals:")
-#st.write(df)
-st.write(df.set_index(df.columns[0]))
+
 
 #st.write(" - Location: ", selected_ticker_info['country'])
 st.header("How to read chart:")
