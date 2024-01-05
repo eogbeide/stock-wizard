@@ -169,11 +169,11 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='yhat future prediction'))
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
-
-    # Add differential line
-    differential_line = go.Scatter(x=forecast['ds'], y=forecast['yhat'] - df['y'].iloc[-1], mode='lines', name='Differential Line')
-    fig.add_trace(differential_line)
-   
+    
+    # Calculate and add the vertex
+    vertex = forecast.loc[forecast['yhat'].idxmax()]
+    fig.add_trace(go.Scatter(x=[vertex['ds']], y=[vertex['yhat']], mode='markers', name='Vertex')) 
+    
     st.plotly_chart(fig)
 
 option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
