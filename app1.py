@@ -211,7 +211,7 @@ st.write(f" - Number of days in testing data: {len(test)}")
 st.header("Interactive Plot")
 interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 
-st.subheader("Yesterday's Closing Price")
+st.subheader("The latest Closing Price")
 df['ds'] = pd.to_datetime(df['ds']).dt.date
 #st.write(df[['ds', 'y']].tail(3).reset_index(drop=True))
 st.write(df[['ds', 'y']].tail(1).set_index(df.columns[0]))
@@ -248,7 +248,7 @@ st.write("Forecast for", ticker)
 forecast['ds'] = forecast['ds'].dt.date
 forecast.reset_index(drop=True, inplace=True)
 #st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(30))
-st.write(forecast[['ds', 'yhat_lower', 'yhat_upper']].tail(30))
+st.write(forecast[['ds', 'yhat_lower', 'yhat_upper']].tail(30)).reset_index(drop=True))
 #forecast = forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10).set_index(forecast.columns[0])
 
 #st.write(forecast)
