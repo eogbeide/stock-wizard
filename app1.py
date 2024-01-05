@@ -171,14 +171,6 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
-    # Add quarterly maximum and minimum
-    df['quarter'] = df['ds'].dt.quarter
-    quarterly_max_points = df.groupby('quarter')['y'].idxmax().apply(lambda x: df.loc[x])
-    quarterly_min_points = df.groupby('quarter')['y'].idxmin().apply(lambda x: df.loc[x])
-    fig.add_trace(go.Scatter(x=quarterly_max_points['ds'], y=quarterly_max_points['y'], mode='markers', name='Quarterly Maximum'))
-    fig.add_trace(go.Scatter(x=quarterly_min_points['ds'], y=quarterly_min_points['y'], mode='markers', name='Quarterly Minimum'))
-
-
     st.plotly_chart(fig)
 
 option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
