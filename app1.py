@@ -53,7 +53,7 @@ end_date = today.strftime("%Y-%m-%d")  # Use today's date as the end date
 #yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
 
 # Get yesterday's date
-yesterday = today - datetime.timedelta(days=1)s
+yesterday = today - datetime.timedelta(days=1)
 
 files = []
 
