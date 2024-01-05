@@ -169,6 +169,10 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='yhat future prediction'))
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
+
+    # Calculate and add the median
+    median = (forecast['yhat_lower'] + forecast['yhat_upper']) / 2
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=median, mode='lines', name='Median'))
      
     st.plotly_chart(fig)
 
