@@ -241,9 +241,9 @@ data = {
 }
 
 # Display the DataFrame as a three-column table
-#st.subheader("Current Forecast Price Confidence Intervals:")
-#st.write(df)
-#st.write(df.set_index(df.columns[0]))
+st.subheader("Current Forecast Price Confidence Intervals:")
+st.write(df)
+st.write(df.set_index(df.columns[0]))
 
 #st.write("Forecast for", ticker)
 #forecast['ds'] = forecast['ds'].dt.date
