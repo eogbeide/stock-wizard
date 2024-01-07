@@ -150,7 +150,7 @@ for selected_file in selected_files:
 
 
 def calculate_trend_break(df):
-    df['trend'] = np.where(df['y'].diff() > 0, 'up', 'down')
+    df['trend'] = np.where(df['y'].diff() > 5, 'up', 'down')
     df['trend_break'] = np.where(df['trend'].shift() != df['trend'], 1, 0)
     return df
 
@@ -175,7 +175,7 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
     # Add trend break points
-    trend_break_points = df[df['trend_break'] == 10]
+    trend_break_points = df[df['trend_break'] == 1]
     fig.add_trace(go.Scatter(x=trend_break_points['ds'], y=trend_break_points['y'], mode='markers', name='Trend Break'))
 
     # Add forecasted values
