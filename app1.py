@@ -166,6 +166,10 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
+    # Add trend break points
+    trend_break_points = df[df['trend_break'] == 1]
+    fig.add_trace(go.Scatter(x=trend_break_points['ds'], y=trend_break_points['y'], mode='markers', name='Trend Break'))
+
     # Add forecasted values
     #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='yhat future prediction'))
     #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
