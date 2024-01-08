@@ -155,7 +155,7 @@ def calculate_trend_break(df):
     return df
 
 def calculate_trend_direction(df):
-    df['trend_direction'] = df['y'].diff().fillna(0).apply(lambda x: 1 if x >= 0 else -1)
+    df['trend_direction'] = df['y'].diff().fillna(0).apply(lambda x: 1 if x >= 10 else -1)
     return df
 
 
