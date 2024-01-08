@@ -182,6 +182,16 @@ def interactive_plot_forecasting(df, forecast, title):
     #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
+    # Find the points where yhat crosses yhat_lower and yhat_upper
+    crossings_lower = forecast[(forecast['yhat'] < forecast['yhat_lower']) & (forecast['yhat'].shift() > forecast['yhat_lower'].shift())]
+    crossings_upper = forecast[(forecast['yhat'] > forecast['yhat_upper']) & (forecast['yhat'].shift() < forecast['yhat_upper'].shift())]
+
+    # Add markers for yhat crossing yhat_lower
+    fig.add_trace(go.Scatter(x=crossings_lower['ds'], y=crossings_lower['yhat'], mode='markers', name='Crossing Lower Bound'))
+
+    # Add markers for yhat crossing yhat_upper
+    fig.add_trace(go.Scatter(x=crossings_upper['ds'], y=crossings_upper['yhat'], mode='markers', name='Crossing Upper Bound'))
+
     st.plotly_chart(fig)
 
 option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
