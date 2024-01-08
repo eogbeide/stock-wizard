@@ -154,15 +154,16 @@ def calculate_trend_break(df):
     df['trend_break'] = np.where(df['trend'].shift() != df['trend'], 1, 0)
     return df
 
-def calculate_monthly_trend(df):
-    df['monthly_trend'] = df['y'].diff(1)
+def calculate_moving_average(df, window=5):
+    df['moving_average'] = df['y'].rolling(window=window).mean()
     return df
-    
+
 #@st.cache_data(experimental_allow_widgets=True)
 def interactive_plot_forecasting(df, forecast, title):
     df = calculate_trend_break(df)
-    df = calculate_monthly_trend(df)
-    fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
+    df = calculate_moving_average(df)
+    #fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
+    fig = px.line(df, x='ds', y=['y', 'predicted', 'moving_average'], title=title)
     
     # Get maximum and minimum points
     max_points = df[df['y'] == df['y'].max()]
@@ -186,12 +187,6 @@ def interactive_plot_forecasting(df, forecast, title):
     #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='yhat future prediction'))
     #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
-
-    # Add points for month over month trend
-    monthly_trend_up_points = df[df['monthly_trend'] >= 0]
-    fig.add_trace(go.Scatter(x=monthly_trend_up_points['ds'], y=monthly_trend_up_points['y'], mode='markers', name='Monthly Trend Up', marker=dict(color='green')))
-    monthly_trend_down_points = df[df['monthly_trend'] < 0]
-    fig.add_trace(go.Scatter(x=monthly_trend_down_points['ds'], y=monthly_trend_down_points['y'], mode='markers', name='Monthly Trend Down', marker=dict(color='red')))
 
     st.plotly_chart(fig)
 
