@@ -183,8 +183,9 @@ def interactive_plot_forecasting(df, forecast, title):
     #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
-    # Add forecasted values
-    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='Forecasted End of Trend'))
+    # Add markers for trend stops
+    trend_stop_points = df[df['trend_stop'] == 1]
+    fig.add_trace(go.Scatter(x=trend_stop_points['ds'], y=trend_stop_points['y'], mode='markers', name='Trend Stop'))
 
     st.plotly_chart(fig)
 
