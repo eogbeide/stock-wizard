@@ -164,12 +164,6 @@ def interactive_plot_forecasting(df, forecast, title):
     df = calculate_moving_average(df)
     #fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
     fig = px.line(df, x='ds', y=['y', 'predicted', 'moving_average'], title=title)
-
-    # Forecast using moving average
-    last_date = df['ds'].max()
-    future_dates = pd.date_range(start=last_date + pd.DateOffset(1), periods=93, freq='D')
-    future_df = pd.DataFrame({'ds': future_dates})
-    future_df['moving_average'] = df['moving_average'].mean()  # Use the average of moving averages as the forecast value
     
     # Get maximum and minimum points
     max_points = df[df['y'] == df['y'].max()]
@@ -193,9 +187,6 @@ def interactive_plot_forecasting(df, forecast, title):
     #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='yhat future prediction'))
     #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
-
-    # Add forecasted values
-    fig.add_trace(go.Scatter(x=future_df['ds'], y=future_df['moving_average'], mode='lines', name='Moving Average Forecast'))
 
     st.plotly_chart(fig)
 
