@@ -154,16 +154,10 @@ def calculate_trend_break(df):
     df['trend_break'] = np.where(df['trend'].shift() != df['trend'], 1, 0)
     return df
 
-def calculate_moving_average(df, window=5):
-    df['moving_average'] = df['y'].rolling(window=window).mean()
-    return df
-
 #@st.cache_data(experimental_allow_widgets=True)
 def interactive_plot_forecasting(df, forecast, title):
     df = calculate_trend_break(df)
-    df = calculate_moving_average(df)
-    #fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
-    fig = px.line(df, x='ds', y=['y', 'predicted', 'moving_average'], title=title)
+    fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
     
     # Get maximum and minimum points
     max_points = df[df['y'] == df['y'].max()]
