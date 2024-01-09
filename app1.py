@@ -178,17 +178,9 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=trend_break_points['ds'], y=trend_break_points['y'], mode='markers', name='Trend Break'))
 
     # Add forecasted values
-    #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='yhat future prediction'))
-    #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
-    #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
-
-    # Find crossings of yhat and yhat_lower
-    crossings_lower = forecast[forecast['yhat'].lt(forecast['yhat_lower'].shift()) & forecast['yhat'].gt(forecast['yhat_lower'])]
-    fig.add_trace(go.Scatter(x=crossings_lower['ds'], y=crossings_lower['yhat'], mode='markers', name='Crossing Lower'))
-
-    # Find crossings of yhat and yhat_upper
-    crossings_upper = forecast[forecast['yhat'].gt(forecast['yhat_upper'].shift()) & forecast['yhat'].lt(forecast['yhat_upper'])]
-    fig.add_trace(go.Scatter(x=crossings_upper['ds'], y=crossings_upper['yhat'], mode='markers', name='Crossing Upper'))
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='yhat future prediction'))
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
+    fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
     st.plotly_chart(fig)
 
