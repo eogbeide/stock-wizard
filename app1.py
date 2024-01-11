@@ -301,6 +301,11 @@ if 'longBusinessSummary' in selected_ticker_info:
 else:
     st.write("Not Available")
 
+if 'longName' in selected_ticker_info:
+    st.write(selected_ticker_info['longName'])
+else:
+    st.write("Not Available")
+
 
 st.title("DISCLAIMER")
 st.write("Please note that the information provided in this app does not replace professional advice from licensed finance professionals and brokers. Due to the inherent risks in stock trading, it is advised that users consult with professionals before making any financial decisions.")
