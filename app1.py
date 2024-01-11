@@ -156,7 +156,7 @@ def calculate_trend_break(df):
     return df
 
 def calculate_trend_reversal(df):
-    df['trend_reversal'] = (df['y'].diff() > 0) & (df['y'].diff().shift(-5) < 0)
+    df['trend_reversal'] = (df['y'].diff() > 5) & (df['y'].diff().shift(-5) < 0)
     return df
 
 #@st.cache_data(experimental_allow_widgets=True)
