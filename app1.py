@@ -188,9 +188,9 @@ def interactive_plot_forecasting(df, forecast, title):
     #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
-    # Add trend reversal points
-    trend_reversal_points = df[df['trend_reversal'] == True]
-    fig.add_trace(go.Scatter(x=trend_reversal_points['ds'], y=trend_reversal_points['y'], mode='markers', name='Trend Reversal'))
+    # Add trend reversal points above yhat_upper
+    trend_reversal_above_upper = df[(df['trend_reversal'] == True) & (df['y'] > forecast['yhat_upper'])]
+    fig.add_trace(go.Scatter(x=trend_reversal_above_upper['ds'], y=trend_reversal_above_upper['y'], mode='markers', name='Reversal Above Upper'))
 
     st.plotly_chart(fig)
 
