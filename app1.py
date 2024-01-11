@@ -155,9 +155,14 @@ def calculate_trend_break(df):
     df['trend_break'] = np.where(df['trend'].shift() != df['trend'], 1, 0)
     return df
 
+def calculate_trend_reversal(df):
+    df['trend_reversal'] = (df['y'].diff() > 0) & (df['y'].diff().shift(-1) < 0)
+    return df
+
 #@st.cache_data(experimental_allow_widgets=True)
 def interactive_plot_forecasting(df, forecast, title):
     df = calculate_trend_break(df)
+    df = calculate_trend_reversal(df)
     fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
     
     # Get maximum and minimum points
@@ -182,6 +187,10 @@ def interactive_plot_forecasting(df, forecast, title):
     #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='yhat future prediction'))
     #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
+
+    # Add trend reversal points
+    trend_reversal_points = df[df['trend_reversal'] == True]
+    fig.add_trace(go.Scatter(x=trend_reversal_points['ds'], y=trend_reversal_points['y'], mode='markers', name='Trend Reversal'))
 
     st.plotly_chart(fig)
 
