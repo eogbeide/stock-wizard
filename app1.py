@@ -191,6 +191,7 @@ def interactive_plot_forecasting(df, forecast, title):
     # Add trend reversal points
     trend_reversal_points = df[df['trend_reversal'] == True]
     fig.add_trace(go.Scatter(x=trend_reversal_points['ds'], y=trend_reversal_points['y'], mode='markers', name='Trend Reversal'))
+    
     st.plotly_chart(fig)
 
 option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
