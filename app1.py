@@ -188,6 +188,10 @@ def interactive_plot_forecasting(df, forecast, title):
     #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
+    # Add trend reversal points below yhat_lower
+    trend_reversal_below_lower = df[(df['trend_reversal'] == True) & (df['y'] < forecast['yhat_lower'])]
+    fig.add_trace(go.Scatter(x=trend_reversal_below_lower['ds'], y=trend_reversal_below_lower['y'], mode='markers', name='Reversal Below Lower'))
+
     # Add trend reversal points above yhat_upper
     trend_reversal_above_upper = df[(df['trend_reversal'] == True) & (df['y'] > forecast['yhat_upper'])]
     fig.add_trace(go.Scatter(x=trend_reversal_above_upper['ds'], y=trend_reversal_above_upper['y'], mode='markers', name='Reversal Above Upper'))
