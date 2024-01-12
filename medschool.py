@@ -49,7 +49,7 @@ def main():
     st.write("Select a medical school to view its prerequisites.")
 
     # List of medical schools (example)
-    schools = ["School A", "School B", "School C"]
+    schools = ["University of Alabama School of Medicine", "University of South Alabama College of Medicine", "University of Arizona College of Medicine"]
 
     # Selectbox to choose a medical school
     selected_school = st.selectbox("Select a school", schools)
@@ -57,7 +57,7 @@ def main():
     if st.button("Show Prerequisites"):
         # Scrape prerequisites for the selected school
         prerequisites = scrape_prerequisites(selected_school)
-        
+
         # Display prerequisites
         if prerequisites:
             st.subheader(f"Prerequisites for {selected_school}")
