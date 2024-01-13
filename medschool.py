@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # First page: Medical schools with filter options
-st.title("Prerequisites")
+st.title("Selected Medical School Prerequisites")
 
 # Load the CSV file
 df = pd.read_csv("Medical_School_Requirements2.csv")
@@ -39,7 +39,7 @@ else:
     st.write("No 'Credit Hours' column found in the filtered DataFrame.")
 
 # Second page: Medical schools with filter options
-st.title("Filter Medical Schools by Required or Recommended Courses")
+st.title("Filtered Medical Schools by Required or Recommended Courses")
 
 # Define the filter options
 course_options = df['Course'].unique().tolist()
