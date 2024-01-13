@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # Load the CSV file
-df = pd.read_csv("Medical_School_Requirements.csv")
+df = pd.read_csv("Medical_School_Requirements2.csv")
 
 # Create a list of distinct medical school names
 school_options = df['Medical School'].unique().tolist()
