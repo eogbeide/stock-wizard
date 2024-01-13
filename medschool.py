@@ -4,6 +4,9 @@ import pandas as pd
 # Load the CSV file
 df = pd.read_csv("Medical_School_Requirements.csv")
 
+# Remove leading and trailing spaces from all string columns
+df = df.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
+
 # Create a list of distinct medical school names
 school_options = df['Medical School'].unique().tolist()
 
