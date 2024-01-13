@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # Load the CSV file
-df = pd.read_csv("Medical_School_Requirements.csv")
+df = pd.read_csv("Medical_School_Requirements2.csv")
 
 # Remove leading and trailing spaces from all string columns
 df = df.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
