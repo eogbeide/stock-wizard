@@ -10,7 +10,7 @@ st.write(" - Always cross-validate with the school website")
 st.header("Selected Medical School Prerequisites")
 
 # Load the CSV file
-df = pd.read_csv("Medical_School_Requirements3.csv")
+df = pd.read_csv("Medical_School_Requirements3.csv", encoding='unicode_escape')
 
 # Remove leading and trailing spaces from all string columns
 df = df.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
