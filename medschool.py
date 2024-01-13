@@ -3,7 +3,7 @@ import pandas as pd
 
 # Welcome Page
 st.title("Welcome to US Medical Schools Prerequisite AI Wiz")
-st.write("Welcome to Medical School Artificial Intelligence Prerequiste Wizard based on AAMC data")
+st.write(" - This Prerequiste Wizard based on AAMC data")
 
 # First page: Medical schools with filter options
 st.header("Selected Medical School Prerequisites")
