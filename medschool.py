@@ -4,10 +4,6 @@ import pandas as pd
 # First page: Medical schools with filter options
 st.title("Selected Medical School Prerequisites")
 
-# Display the selected medical school and state
-st.write(f"Selected Medical School: {selected_school}")
-st.write(f"Selected State: {selected_state}")
-
 # Load the CSV file
 df = pd.read_csv("Medical_School_Requirements2.csv")
 
@@ -25,6 +21,12 @@ state_filtered_df = df[df['State'] == selected_state]
 
 # Create a selectbox to choose a medical school within the selected state
 selected_school = st.sidebar.selectbox("Select a Medical School", state_filtered_df['Medical School'].unique())
+
+
+# Display the selected medical school and state
+st.write(f"Selected Medical School: {selected_school}")
+st.write(f"Selected State: {selected_state}")
+
 
 # Filter the DataFrame based on the selected school and exclude State and Medical School columns
 filtered_df = state_filtered_df[state_filtered_df['Medical School'] == selected_school].drop(columns=['State', 'Medical School'])
