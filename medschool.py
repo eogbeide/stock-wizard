@@ -14,13 +14,13 @@ df = df.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
 school_options = df['Medical School'].unique().tolist()
 
 # Create a selectbox to choose a state
-selected_state = st.sidebar.selectbox("Select a State", df['State'].unique())
+selected_state = st.sidebar.selectbox("Select State", df['State'].unique())
 
 # Filter the DataFrame based on the selected state
 state_filtered_df = df[df['State'] == selected_state]
 
 # Create a selectbox to choose a medical school within the selected state
-selected_school = st.sidebar.selectbox("Select a Medical School", state_filtered_df['Medical School'].unique())
+selected_school = st.sidebar.selectbox("Select Medical School", state_filtered_df['Medical School'].unique())
 
 
 # Display the selected medical school and state
