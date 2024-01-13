@@ -4,6 +4,10 @@ import pandas as pd
 # First page: Medical schools with filter options
 st.title("Selected Medical School Prerequisites")
 
+# Display the selected medical school and state
+st.write(f"Selected Medical School: {selected_school}")
+st.write(f"Selected State: {selected_state}")
+
 # Load the CSV file
 df = pd.read_csv("Medical_School_Requirements2.csv")
 
