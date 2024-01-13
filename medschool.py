@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import openpyxl
 
 # Load the Excel file
 df = pd.read_csv("Medical_School_Requirements.csv")
