@@ -20,7 +20,7 @@ selected_school = st.sidebar.selectbox("Select a Medical School", state_filtered
 filtered_df = state_filtered_df[state_filtered_df['Medical School'] == selected_school].drop(columns=['State', 'Medical School'])
 
 # Round the 'Credit Hours' column to one significant figure
-filtered_df['Credit Hours'] = filtered_df['Credit Hours'].round(1)
+filtered_df['Credit Hours'] = round(filtered_df['Credit Hours'],1)
 
 # Display the filtered DataFrame without the index column, with wrapped text in the 'Additional Info' column
 st.dataframe(filtered_df.reset_index(drop=True).style.set_properties(**{'white-space': 'pre-wrap'}))
