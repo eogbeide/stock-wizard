@@ -13,5 +13,5 @@ selected_school = st.sidebar.selectbox("Select a Medical School", school_options
 # Filter the DataFrame based on the selected school and exclude State and Medical School columns
 filtered_df = df[df['Medical School'] == selected_school].drop(columns=['State', 'Medical School'])
 
-# Display the filtered DataFrame
-st.dataframe(filtered_df)
+# Display the filtered DataFrame without the index column
+st.dataframe(filtered_df.reset_index(drop=True))
