@@ -6,7 +6,7 @@ st.title("Welcome to US Medical Schools Prerequisite AI Wiz")
 st.write("Welcome to Medical School Artificial Intelligence Prerequiste Wizard based on AAMC data")
 
 # First page: Medical schools with filter options
-st.subtitle("Selected Medical School Prerequisites")
+st.header("Selected Medical School Prerequisites")
 
 # Load the CSV file
 df = pd.read_csv("Medical_School_Requirements2.csv")
@@ -49,7 +49,7 @@ else:
     st.write("No 'Credit Hours' column found in the filtered DataFrame.")
 
 # Second page: Medical schools with filter options
-st.subtitle("Filtered Medical Schools by Required or Recommended Courses")
+st.subheader("Filtered Medical Schools by Required or Recommended Courses")
 
 # Define the filter options
 course_options = df['Course'].unique().tolist()
