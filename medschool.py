@@ -38,14 +38,16 @@ else:
 # Second page: Medical schools with filter options
 st.title("Page 2: Medical Schools with Filter Options")
 
-# Select the filter option from the sidebar
-filter_option = st.sidebar.selectbox("Choose Filter", ['Required', 'Recommended', 'All'])
+# Define the filter options
+course_options = df['Course'].unique().tolist()
+required_or_recommended_options = ['Required', 'Recommended']
 
-# Filter the DataFrame based on the selected option
-if filter_option == 'All':
-    filtered_schools_df = df
-else:
-    filtered_schools_df = df[df['Required or Recommended'] == filter_option]
+# Select the filter options from the sidebar
+selected_course = st.sidebar.selectbox("Choose Course", course_options)
+selected_required_or_recommended = st.sidebar.selectbox("Required or Recommended", required_or_recommended_options)
+
+# Filter the DataFrame based on the selected options
+filtered_schools_df = df[(df['Course'] == selected_course) & (df['Required or Recommended'] == selected_required_or_recommended)]
 
 # Select the columns to display
 columns_to_display = ['Medical School', 'Credit Hours', 'Additional Info']
