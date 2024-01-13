@@ -40,5 +40,5 @@ else:
 
 # Page 2: Display filtered data with specific columns
 st.title("Page 2: Filtered Data")
-columns_to_display = ['Medical School', 'Credit Hours', 'Lab?', 'Additional Info']
+columns_to_display = ['Course', 'Credit Hours', 'Lab?', 'Additional Info']
 st.dataframe(filtered_df[columns_to_display])
