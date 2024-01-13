@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # Load the CSV file
-df = pd.read_csv("Medical_School_Requirements2.csv")
+df = pd.read_csv("Medical_School_Requirements.csv")
 
 # Create a list of distinct medical school names
 school_options = df['Medical School'].unique().tolist()
@@ -21,8 +21,11 @@ filtered_df = state_filtered_df[state_filtered_df['Medical School'] == selected_
 
 # Check if 'Credit Hours' column exists in the filtered DataFrame
 if 'Credit Hours' in filtered_df.columns:
+    # Convert 'Credit Hours' column to numeric values
+    filtered_df['Credit Hours'] = pd.to_numeric(filtered_df['Credit Hours'], errors='coerce')
+
     # Format the 'Credit Hours' column to display one significant figure
-    filtered_df['Credit Hours'] = filtered_df['Credit Hours'].apply(lambda x: format(x, ".1g"))
+    filtered_df['Credit Hours'] = filtered_df['Credit Hours'].apply(lambda x: format(x, ".1f") if pd.notnull(x) else "")
 
     # Display the filtered DataFrame without the index column, with wrapped text in the 'Additional Info' column
     st.dataframe(filtered_df.reset_index(drop=True).style.set_properties(**{'white-space': 'pre-wrap'}))
