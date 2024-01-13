@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
 
+# First page: Medical schools with filter options
+st.title("Prerequisites")
+
 # Load the CSV file
 df = pd.read_csv("Medical_School_Requirements2.csv")
 
@@ -36,7 +39,7 @@ else:
     st.write("No 'Credit Hours' column found in the filtered DataFrame.")
 
 # Second page: Medical schools with filter options
-st.title("Page 2: Medical Schools with Filter Options")
+st.title("Filter Medical Schools by Required or Recommended Courses")
 
 # Define the filter options
 course_options = df['Course'].unique().tolist()
@@ -44,13 +47,13 @@ required_or_recommended_options = ['Required', 'Recommended']
 
 # Select the filter options from the sidebar
 selected_course = st.sidebar.selectbox("Choose Course", course_options)
-selected_required_or_recommended = st.sidebar.selectbox("Required or Recommended", required_or_recommended_options)
+selected_required_or_recommended = st.sidebar.selectbox("Required or Recommended?", required_or_recommended_options)
 
 # Filter the DataFrame based on the selected options
-filtered_schools_df = df[(df['Course'] == selected_course) & (df['Required or Recommended'] == selected_required_or_recommended)]
+filtered_schools_df = df[(df['Course'] == selected_course) & (df['Required or Recommended?'] == selected_required_or_recommended)]
 
 # Select the columns to display
-columns_to_display = ['Medical School', 'Credit Hours', 'Additional Info']
+columns_to_display = ['Medical School', 'Lab?', 'Credit Hours', 'Additional Info']
 
 # Display the filtered DataFrame with the selected columns
 st.dataframe(filtered_schools_df[columns_to_display])
