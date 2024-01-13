@@ -19,5 +19,5 @@ selected_school = st.sidebar.selectbox("Select a Medical School", state_filtered
 # Filter the DataFrame based on the selected school and exclude State and Medical School columns
 filtered_df = state_filtered_df[state_filtered_df['Medical School'] == selected_school].drop(columns=['State', 'Medical School'])
 
-# Display the filtered DataFrame without the index column
-st.dataframe(filtered_df.reset_index(drop=True))
+# Display the filtered DataFrame without the index column, with wrapped text in the 'Additional Info' column
+st.dataframe(filtered_df.reset_index(drop=True).style.set_properties(**{'white-space': 'pre-wrap'}))
