@@ -14,13 +14,13 @@ df = df.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
 school_options = df['Medical School'].unique().tolist()
 
 # Create a selectbox to choose a state
-selected_state = st.sidebar.selectbox("Select a State", df['State'].unique())
+selected_state = st.sidebar.selectbox("Select State", df['State'].unique())
 
 # Filter the DataFrame based on the selected state
 state_filtered_df = df[df['State'] == selected_state]
 
 # Create a selectbox to choose a medical school within the selected state
-selected_school = st.sidebar.selectbox("Select a Medical School", state_filtered_df['Medical School'].unique())
+selected_school = st.sidebar.selectbox("Select Medical School", state_filtered_df['Medical School'].unique())
 
 
 # Display the selected medical school and state
@@ -40,7 +40,7 @@ if 'Credit Hours' in filtered_df.columns:
     filtered_df['Credit Hours'] = filtered_df['Credit Hours'].apply(lambda x: format(x, ".1f") if pd.notnull(x) else "")
 
     # Display the filtered DataFrame without the index column, with wrapped text in the 'Additional Info' column
-    st.dataframe(filtered_df.reset_index(drop=True).style.set_properties(**{'white-space': 'pre-wrap'}))
+    st.dataframe(filtered_df.reset_index(drop=True).style.set_properties(**{'white-space': 'pre-wrap'}), index=False)
 else:
     st.write("No 'Credit Hours' column found in the filtered DataFrame.")
 
@@ -62,4 +62,4 @@ filtered_schools_df = df[(df['Course'] == selected_course) & (df['Required or Re
 columns_to_display = ['Medical School', 'Lab?', 'Credit Hours', 'Additional Info']
 
 # Display the filtered DataFrame with the selected columns
-st.dataframe(filtered_schools_df[columns_to_display])
+st.dataframe(filtered_schools_df[columns_to_display], index=False)
