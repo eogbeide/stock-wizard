@@ -3,7 +3,7 @@ import pandas as pd
 import openpyxl
 
 # Load the Excel file
-df = pd.read_excel("Medical_School_Requirements.xlsx")
+df = pd.read_csv("Medical_School_Requirements.csv")
 
 # Create a list of medical school options
 school_options = df['Medical School'].tolist()
