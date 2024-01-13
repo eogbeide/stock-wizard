@@ -35,14 +35,17 @@ if 'Credit Hours' in filtered_df.columns:
 else:
     st.write("No 'Credit Hours' column found in the filtered DataFrame.")
 
-# Page 2: Medical schools with required or recommended courses
-st.title("Page 2: Medical Schools with Required or Recommended Courses")
+# Second page: Medical schools with filter options
+st.title("Page 2: Medical Schools with Filter Options")
 
-# Select the 'Required or Recommended' option from the sidebar
-required_or_recommended = st.sidebar.selectbox("Select Required or Recommended", ['Required', 'Recommended'])
+# Select the filter option from the sidebar
+filter_option = st.sidebar.selectbox("Choose Filter", ['Required', 'Recommended', 'All'])
 
 # Filter the DataFrame based on the selected option
-filtered_schools_df = df[df['Required or Recommended'] == required_or_recommended]
+if filter_option == 'All':
+    filtered_schools_df = df
+else:
+    filtered_schools_df = df[df['Required or Recommended'] == filter_option]
 
 # Select the columns to display
 columns_to_display = ['Medical School', 'Credit Hours', 'Additional Info']
