@@ -3,7 +3,7 @@ import pandas as pd
 
 # Load the CSV file
 df = pd.read_csv("Medical_School_Requirements.csv")
-df['Credit Hours'] = round(df["Credit Hours],1)
+df['Credit Hours'] = round(df["Credit Hours"],1)
 
 # Create a list of distinct medical school names
 school_options = df['Medical School'].unique().tolist()
