@@ -5,7 +5,7 @@ import pandas as pd
 df = pd.read_csv("Medical_School_Requirements.csv")
 
 # Create a list of distinct medical school names
-school_options = df['Medical School'].unique().tolist()t
+school_options = df['Medical School'].unique().tolist()
 
 # Create a selectbox to choose a state
 selected_state = st.sidebar.selectbox("Select a State", df['State'].unique())
