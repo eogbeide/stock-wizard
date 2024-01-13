@@ -38,12 +38,11 @@ else:
 # Page 2: Medical schools with required or recommended courses
 st.title("Page 2: Medical Schools with Required or Recommended Courses")
 
-# Select the 'Required or Recommended' option
-required_or_recommended = st.selectbox("Select Required or Recommended", ['Required', 'Recommended'])
+# Select the 'Required or Recommended' option from the sidebar
+required_or_recommended = st.sidebar.selectbox("Select Required or Recommended", ['Required', 'Recommended'])
 
 # Filter the DataFrame based on the selected option
-filtered_schools_df = df[(df['Medical School'] != selected_school) &
-                         (df['Required or Recommended'] == required_or_recommended)]
+filtered_schools_df = df[df['Required or Recommended'] == required_or_recommended]
 
 # Select the columns to display
 columns_to_display = ['Medical School', 'Credit Hours', 'Additional Info']
