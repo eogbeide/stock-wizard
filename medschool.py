@@ -40,7 +40,7 @@ if 'Credit Hours' in filtered_df.columns:
     filtered_df['Credit Hours'] = filtered_df['Credit Hours'].apply(lambda x: format(x, ".1f") if pd.notnull(x) else "")
 
     # Display the filtered DataFrame without the index column, with wrapped text in the 'Additional Info' column
-    st.dataframe(filtered_df.reset_index(drop=True).style.set_properties(**{'white-space': 'pre-wrap'}), index=False)
+    st.dataframe(filtered_df.reset_index(drop=True).style.set_properties(**{'white-space': 'pre-wrap'}))
 else:
     st.write("No 'Credit Hours' column found in the filtered DataFrame.")
 
@@ -62,4 +62,4 @@ filtered_schools_df = df[(df['Course'] == selected_course) & (df['Required or Re
 columns_to_display = ['Medical School', 'Lab?', 'Credit Hours', 'Additional Info']
 
 # Display the filtered DataFrame with the selected columns
-st.dataframe(filtered_schools_df[columns_to_display], index=False)
+st.dataframe(filtered_schools_df[columns_to_display])
