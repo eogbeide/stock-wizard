@@ -33,6 +33,9 @@ selected_school = st.sidebar.selectbox("Select Medical School", state_filtered_d
 st.write(f"Selected Medical School: {selected_school}")
 st.write(f"Selected State: {selected_state}")
 
+link_df = state_filtered_df[state_filtered_df['Medical School'] == selected_school][['Medical School', 'Additional Info']]
+school_link = link_df.iloc[0]['Additional Info']
+
 
 # Filter the DataFrame based on the selected school and exclude State and Medical School columns
 filtered_df = state_filtered_df[state_filtered_df['Medical School'] == selected_school].drop(columns=['State', 'Medical School'])
