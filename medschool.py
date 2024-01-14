@@ -123,7 +123,7 @@ columns_to_display = ['Medical School', 'Lab?', 'Credit Hours', 'Additional Info
 table_html = filtered_schools_df[columns_to_display].sort_values(by="Medical School").to_html(escape=False, index=False)
 
 # Add S/N column to filtered_schools_df at the beginning
-table_html.insert(0, 'S/N', range(1, len(filtered_schools_df) + 1))
+table_html.insert(0, 'S/N', range(1, len(table_html) + 1))
 
 #st.markdown(filtered_schools_df[columns_to_display].sort_values(by="Medical School").to_html(escape=False), unsafe_allow_html=True)
 st.markdown(table_html, unsafe_allow_html=True)
