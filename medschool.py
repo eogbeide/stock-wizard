@@ -42,6 +42,7 @@ school_wikipedia_link = "https://members.aamc.org/eweb/DynamicPage.aspx?site=AAM
 
 # Display the link to the medical school's Wikipedia page
 st.write(f"Click: {school_wikipedia_link} for more details about {search_query}")
+st.link_button("Go to gallery", "https://members.aamc.org/eweb/DynamicPage.aspx?site=AAMC&webcode=AAMCOrgSearchResult&orgtype=Medical%20School")
 
 
 # Filter the DataFrame based on the selected school and exclude State and Medical School columns
