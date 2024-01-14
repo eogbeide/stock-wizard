@@ -62,8 +62,9 @@ if 'Credit Hours' in filtered_df.columns:
     #st.dataframe(filtered_df.reset_index(drop=True).style.set_properties(**{'white-space': 'pre-wrap'}))
 
     st.markdown(filtered_df.to_html(escape=False), unsafe_allow_html=True)
-    # Replace NaN values with "N/A" in filtered_df
     filtered_df = filtered_df.fillna("N/A")
+    # Replace NaN values with "N/A" in filtered_df
+    
 else:
     st.write("No 'Credit Hours' column found in the filtered DataFrame.")
 
