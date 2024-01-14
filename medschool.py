@@ -34,15 +34,15 @@ st.write(f"Selected Medical School: {selected_school}")
 st.write(f"Selected State: {selected_state}")
 
 # Search for the selected school on Wikipedia
-#search_query = "List of medical schools in the United States to view website for"
-#search_query += " " + selected_school.replace(" ", "_")
+search_query = "List of medical schools in the United States to view website for"
+search_query += " " + selected_school.replace(" ", "_")
 
 # Create the Wikipedia link
 #school_wikipedia_link = "https://members.aamc.org/eweb/DynamicPage.aspx?site=AAMC&webcode=AAMCOrgSearchResult&orgtype=Medical%20School"
 
 # Display the link to the medical school's Wikipedia page
 #st.write(f"Click: {school_wikipedia_link} for more details about {search_query}")
-st.link_button("Go to AAMC's website for {selected_school}", "https://members.aamc.org/eweb/DynamicPage.aspx?site=AAMC&webcode=AAMCOrgSearchResult&orgtype=Medical%20School")
+st.link_button("Go to AAMC's website for {search_query}", "https://members.aamc.org/eweb/DynamicPage.aspx?site=AAMC&webcode=AAMCOrgSearchResult&orgtype=Medical%20School")
 
 
 # Filter the DataFrame based on the selected school and exclude State and Medical School columns
