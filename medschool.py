@@ -87,5 +87,6 @@ filtered_schools_df = df[(df['Course'] == selected_course) & (df['Required or Re
 columns_to_display = ['Medical School', 'Lab?', 'Credit Hours', 'Additional Info']
 
 # Display the filtered DataFrame with the selected columns, sorted by "Medical School"
-st.dataframe(filtered_schools_df[columns_to_display].sort_values(by="Medical School").reset_index(drop=True))
+x = st.dataframe(filtered_schools_df[columns_to_display].sort_values(by="Medical School").reset_index(drop=True))
+st.markdown(x.to_html(escape=False), unsafe_allow_html=True)
 
