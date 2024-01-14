@@ -61,7 +61,7 @@ if 'Credit Hours' in filtered_df.columns:
     # Display the filtered DataFrame without the index column, with wrapped text in the 'Additional Info' column
     filtered_df = filtered_df.fillna("N/A")
     #st.dataframe(filtered_df.reset_index(drop=True).style.set_properties(**{'white-space': 'pre-wrap'}))
-    st.markdown(filtered_df.to_html(escape=False), unsafe_allow_html=True).style.set_properties(**{'white-space': 'pre-wrap'}))
+    st.markdown(filtered_df.to_html(escape=False), unsafe_allow_html=True).style.set_properties(**{'white-space': 'pre-wrap'})
 
     #st.markdown(filtered_df.to_html(escape=False), unsafe_allow_html=True)
     # Replace NaN values with "N/A" in filtered_df
