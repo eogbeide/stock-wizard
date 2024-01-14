@@ -78,8 +78,8 @@ if 'Credit Hours' in filtered_df.columns:
 
     # Display the filtered DataFrame without the index column, with wrapped text in the 'Additional Info' column
     filtered_df = filtered_df.fillna("N/A")
-    # Add S/N column to filtered_df
-    filtered_df['S/N'] = filtered_df.reset_index(drop=True).index + 1
+    # Add S/N column to filtered_df at the beginning
+    filtered_df.insert(0, 'S/N', range(1, len(filtered_df) + 1))
     #st.dataframe(filtered_df.reset_index(drop=True).style.set_properties(**{'white-space': 'pre-wrap'}))
     table_html = filtered_df.to_html(escape=False, index=False)
     #st.markdown(filtered_df.to_html(escape=False), unsafe_allow_html=True)
@@ -110,8 +110,8 @@ selected_required_or_recommended = st.sidebar.selectbox("Required or Recommended
 # Filter the DataFrame based on the selected options
 filtered_schools_df = df[(df['Course'] == selected_course) & (df['Required or Recommended?'] == selected_required_or_recommended)]
 filtered_schools_df  = filtered_schools_df.fillna("N/A")
-# Add S/N column to filtered_schools_df
-filtered_schools_df['S/N'] = filtered_schools_df.reset_index(drop=True).index + 1
+# Add S/N column to filtered_schools_df at the beginning
+filtered_schools_df.insert(0, 'S/N', range(1, len(filtered_schools_df) + 1))
 # Clean the 'Additional Info' column in filtered_schools_df
 filtered_schools_df['Additional Info'] = filtered_schools_df['Additional Info'].apply(clean_text)
 
