@@ -59,10 +59,11 @@ if 'Credit Hours' in filtered_df.columns:
     filtered_df['Credit Hours'] = filtered_df['Credit Hours'].apply(lambda x: format(x, ".1f") if pd.notnull(x) else "")
 
     # Display the filtered DataFrame without the index column, with wrapped text in the 'Additional Info' column
-    #st.dataframe(filtered_df.reset_index(drop=True).style.set_properties(**{'white-space': 'pre-wrap'}))
-
-    st.markdown(filtered_df.to_html(escape=False), unsafe_allow_html=True)
     filtered_df = filtered_df.fillna("N/A")
+    x = st.dataframe(filtered_df.reset_index(drop=True).style.set_properties(**{'white-space': 'pre-wrap'}))
+    st.markdown(x.to_html(escape=False), unsafe_allow_html=True)
+
+    #st.markdown(filtered_df.to_html(escape=False), unsafe_allow_html=True)
     # Replace NaN values with "N/A" in filtered_df
     
 else:
