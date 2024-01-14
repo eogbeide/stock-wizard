@@ -82,6 +82,7 @@ selected_required_or_recommended = st.sidebar.selectbox("Required or Recommended
 
 # Filter the DataFrame based on the selected options
 filtered_schools_df = df[(df['Course'] == selected_course) & (df['Required or Recommended?'] == selected_required_or_recommended)]
+filtered_schools_df  = filtered_df.fillna("N/A")
 
 # Select the columns to display
 columns_to_display = ['Medical School', 'Lab?', 'Credit Hours', 'Additional Info']
