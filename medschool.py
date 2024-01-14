@@ -48,9 +48,7 @@ st.link_button(f"Go to AAMC website for {search_query}", "https://members.aamc.o
 
 # Filter the DataFrame based on the selected school and exclude State and Medical School columns
 filtered_df = state_filtered_df[state_filtered_df['Medical School'] == selected_school].drop(columns=['State', 'Medical School'])
-st.markdown(filtered_df.to_html(escape=False), unsafe_allow_html=True)
-# Replace NaN values with "N/A" in filtered_df
-filtered_df = filtered_df.fillna("N/A")
+
 
 # Check if 'Credit Hours' column exists in the filtered DataFrame
 if 'Credit Hours' in filtered_df.columns:
@@ -61,7 +59,11 @@ if 'Credit Hours' in filtered_df.columns:
     filtered_df['Credit Hours'] = filtered_df['Credit Hours'].apply(lambda x: format(x, ".1f") if pd.notnull(x) else "")
 
     # Display the filtered DataFrame without the index column, with wrapped text in the 'Additional Info' column
-    st.dataframe(filtered_df.reset_index(drop=True).style.set_properties(**{'white-space': 'pre-wrap'}))
+    #st.dataframe(filtered_df.reset_index(drop=True).style.set_properties(**{'white-space': 'pre-wrap'}))
+
+    st.markdown(filtered_df.to_html(escape=False), unsafe_allow_html=True)
+    # Replace NaN values with "N/A" in filtered_df
+    filtered_df = filtered_df.fillna("N/A")
 else:
     st.write("No 'Credit Hours' column found in the filtered DataFrame.")
 
