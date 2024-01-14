@@ -1,6 +1,16 @@
 import streamlit as st
 import pandas as pd
 
+st.set_page_config(layout="wide")
+st.markdown("""
+<style>
+.big-font {
+    font-size:30px !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
 # Define a cleaning function to remove line breaks and separators
 def clean_text(text):
     if isinstance(text, str):
