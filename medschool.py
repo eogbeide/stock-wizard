@@ -42,7 +42,7 @@ search_query += " " + selected_school.replace(" ", "_")
 
 # Display the link to the medical school's Wikipedia page
 #st.write(f"Click: {school_wikipedia_link} for more details about {search_query}")
-exact_school = st.write(f"{search_query}")
+#exact_school = st.write(f"{search_query}")
 st.link_button(f"Go to AAMC website for {search_query}", "https://members.aamc.org/eweb/DynamicPage.aspx?site=AAMC&webcode=AAMCOrgSearchResult&orgtype=Medical%20School")
 
 
