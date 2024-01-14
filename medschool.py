@@ -116,8 +116,9 @@ columns_to_display = ['Medical School', 'Lab?', 'Credit Hours', 'Additional Info
 
 # Display the filtered DataFrame with the selected columns, sorted by "Medical School"
 #st.dataframe(filtered_schools_df[columns_to_display].sort_values(by="Medical School").reset_index(drop=True))
-st.markdown(filtered_schools_df[columns_to_display].sort_values(by="Medical School").to_html(escape=False), unsafe_allow_html=True)
-
+table_html = filtered_schools_df[columns_to_display].sort_values(by="Medical School").to_html(escape=False, index=False)
+#st.markdown(filtered_schools_df[columns_to_display].sort_values(by="Medical School").to_html(escape=False), unsafe_allow_html=True)
+st.markdown(table_html, unsafe_allow_html=True)
 
 
 
