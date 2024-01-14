@@ -49,6 +49,8 @@ st.link_button(f"Go to AAMC website for {search_query}", "https://members.aamc.o
 # Filter the DataFrame based on the selected school and exclude State and Medical School columns
 filtered_df = state_filtered_df[state_filtered_df['Medical School'] == selected_school].drop(columns=['State', 'Medical School'])
 st.markdown(filtered_df.to_html(escape=False), unsafe_allow_html=True)
+# Replace NaN values with "N/A" in filtered_df
+filtered_df = filtered_df.fillna("N/A")
 
 # Check if 'Credit Hours' column exists in the filtered DataFrame
 if 'Credit Hours' in filtered_df.columns:
