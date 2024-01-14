@@ -3,7 +3,9 @@ import pandas as pd
 
 # Welcome Page
 st.title("Welcome to US Medical Schools Prerequisite AI Wiz")
-st.write(" - This Prerequiste Wizard is based on AAMC data obatined from https://students-residents.aamc.org/media/7041/download")
+link = st.link_button(f"Go to AAMC website for {search_query}", "https://students-residents.aamc.org/media/7041/download")
+st.write(" - This Prerequiste Wizard is based on AAMC data obtained from {link}")
+#st.write(" - This Prerequiste Wizard is based on AAMC data obtained from https://students-residents.aamc.org/media/7041/download")
 st.write(" - Always cross-validate with the school's website")
 
 # First page: Medical schools with filter options
