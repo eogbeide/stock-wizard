@@ -113,6 +113,7 @@ filtered_schools_df  = filtered_schools_df.fillna("N/A")
 
 # Clean the 'Additional Info' column in filtered_schools_df
 filtered_schools_df['Additional Info'] = filtered_schools_df['Additional Info'].apply(clean_text)
+filtered_schools_df['Medical School'] = filtered_schools_df['Medical School'].apply(clean_text)
 
 # Select the columns to display
 columns_to_display = ['Medical School', 'Lab?', 'Credit Hours', 'Additional Info']
