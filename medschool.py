@@ -109,8 +109,6 @@ selected_required_or_recommended = st.sidebar.selectbox("Required or Recommended
 
 # Filter the DataFrame based on the selected options
 filtered_schools_df = df[(df['Course'] == selected_course) & (df['Required or Recommended?'] == selected_required_or_recommended)]
-# Add S/N column to filtered_schools_df at the beginning
-filtered_schools_df.insert(0, 'S/N', range(1, len(filtered_schools_df) + 1))
 filtered_schools_df  = filtered_schools_df.fillna("N/A")
 
 # Clean the 'Additional Info' column in filtered_schools_df
@@ -121,6 +119,8 @@ columns_to_display = ['Medical School', 'Lab?', 'Credit Hours', 'Additional Info
 
 # Display the filtered DataFrame with the selected columns, sorted by "Medical School"
 #st.dataframe(filtered_schools_df[columns_to_display].sort_values(by="Medical School").reset_index(drop=True))
+# Add S/N column to filtered_schools_df at the beginning
+filtered_schools_df.insert(0, 'S/N', range(1, len(filtered_schools_df) + 1))
 table_html = filtered_schools_df[columns_to_display].sort_values(by="Medical School").to_html(escape=False, index=False)
 #st.markdown(filtered_schools_df[columns_to_display].sort_values(by="Medical School").to_html(escape=False), unsafe_allow_html=True)
 st.markdown(table_html, unsafe_allow_html=True)
