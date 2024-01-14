@@ -69,6 +69,10 @@ if 'Credit Hours' in filtered_df.columns:
 else:
     st.write("No 'Credit Hours' column found in the filtered DataFrame.")
 
+
+
+
+
 # Second page: Medical schools with filter options
 st.subheader("Filtered Medical Schools by Required or Recommended Courses")
 
