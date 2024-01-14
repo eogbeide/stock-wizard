@@ -1,6 +1,10 @@
 import streamlit as st
 import pandas as pd
 
+# Define a cleaning function to remove line breaks and separators
+def clean_text(text):
+    return text.replace("\n", "").replace("\r", "")
+
 # Welcome Page
 st.title("Welcome to US Medical Schools Prerequisite AI Wiz")
 st.write(" - This Prerequiste Wizard is based on AAMC data obtained from https://students-residents.aamc.org/media/7041/download")
@@ -48,7 +52,8 @@ st.link_button(f"Go to AAMC website for {search_query}", "https://members.aamc.o
 
 # Filter the DataFrame based on the selected school and exclude State and Medical School columns
 filtered_df = state_filtered_df[state_filtered_df['Medical School'] == selected_school].drop(columns=['State', 'Medical School'])
-
+# Clean the 'Additional Info' column in filtered_df
+filtered_df['Additional Info'] = filtered_df['Additional Info'].apply(clean_text)
 
 # Check if 'Credit Hours' column exists in the filtered DataFrame
 if 'Credit Hours' in filtered_df.columns:
@@ -87,6 +92,8 @@ selected_required_or_recommended = st.sidebar.selectbox("Required or Recommended
 # Filter the DataFrame based on the selected options
 filtered_schools_df = df[(df['Course'] == selected_course) & (df['Required or Recommended?'] == selected_required_or_recommended)]
 filtered_schools_df  = filtered_schools_df.fillna("N/A")
+# Clean the 'Additional Info' column in filtered_schools_df
+filtered_schools_df['Additional Info'] = filtered_schools_df['Additional Info'].apply(clean_text)
 
 # Select the columns to display
 columns_to_display = ['Medical School', 'Lab?', 'Credit Hours', 'Additional Info']
@@ -95,13 +102,9 @@ columns_to_display = ['Medical School', 'Lab?', 'Credit Hours', 'Additional Info
 #st.dataframe(filtered_schools_df[columns_to_display].sort_values(by="Medical School").reset_index(drop=True))
 st.markdown(filtered_schools_df[columns_to_display].sort_values(by="Medical School").to_html(escape=False), unsafe_allow_html=True)
 
-# Define a cleaning function to remove line breaks and separators
-def clean_text(text):
-    return text.replace("\n", "").replace("\r", "")
 
-# Clean the 'Additional Info' column in filtered_df
-filtered_df['Additional Info'] = filtered_df['Additional Info'].apply(clean_text)
 
-# Clean the 'Additional Info' column in filtered_schools_df
-filtered_schools_df['Additional Info'] = filtered_schools_df['Additional Info'].apply(clean_text)
+
+
+
 
