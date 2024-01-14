@@ -35,20 +35,13 @@ st.write(f"Selected State: {selected_state}")
 
 # Search for the selected school on Wikipedia
 search_query = "List of medical schools in the United States"
-search_query += " " + selected_school
+search_query += " " + selected_school.replace(" ", "_")
 
-# Retrieve the search results from Wikipedia
-search_results = st.search(search_query, "https://en.wikipedia.org/wiki/")
+# Create the Wikipedia link
+school_wikipedia_link = "https://en.wikipedia.org/wiki/" + search_query
 
-# Check if any search results were found
-if len(search_results) > 0:
-    # Get the Wikipedia link for the first search result
-    school_wikipedia_link = search_results[0].url
-
-    # Display the link to the medical school's Wikipedia page
-    st.write(f"Wikipedia Link: {school_wikipedia_link}")
-else:
-    st.write("No Wikipedia link found for the selected medical school.")
+# Display the link to the medical school's Wikipedia page
+st.write(f"Wikipedia Link: {school_wikipedia_link}")
 
 
 # Filter the DataFrame based on the selected school and exclude State and Medical School columns
