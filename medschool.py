@@ -95,3 +95,13 @@ columns_to_display = ['Medical School', 'Lab?', 'Credit Hours', 'Additional Info
 #st.dataframe(filtered_schools_df[columns_to_display].sort_values(by="Medical School").reset_index(drop=True))
 st.markdown(filtered_schools_df[columns_to_display].sort_values(by="Medical School").to_html(escape=False), unsafe_allow_html=True)
 
+# Define a cleaning function to remove line breaks and separators
+def clean_text(text):
+    return text.replace("\n", "").replace("\r", "")
+
+# Clean the 'Additional Info' column in filtered_df
+filtered_df['Additional Info'] = filtered_df['Additional Info'].apply(clean_text)
+
+# Clean the 'Additional Info' column in filtered_schools_df
+filtered_schools_df['Additional Info'] = filtered_schools_df['Additional Info'].apply(clean_text)
+
