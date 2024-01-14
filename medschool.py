@@ -77,7 +77,8 @@ if 'Credit Hours' in filtered_df.columns:
 else:
     st.write("No 'Credit Hours' column found in the filtered DataFrame.")
 
-
+st.markdown('##')
+st.markdown('##')
 
 
 
