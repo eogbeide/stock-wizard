@@ -81,7 +81,7 @@ if 'Credit Hours' in filtered_df.columns:
     # Add S/N column to filtered_df at the beginning
     filtered_df.insert(0, 'S/N', range(1, len(filtered_df) + 1))
     #st.dataframe(filtered_df.reset_index(drop=True).style.set_properties(**{'white-space': 'pre-wrap'}))
-    table_html = filtered_df.to_html(escape=False, index=False).set_table_styles([{'selector': 'th', 'props': [('text-align', 'left')]}])
+    table_html = filtered_df.to_html(escape=False, index=False)
     #st.markdown(filtered_df.to_html(escape=False), unsafe_allow_html=True)
     st.markdown(table_html, unsafe_allow_html=True)
 
