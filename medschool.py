@@ -3,7 +3,10 @@ import pandas as pd
 
 # Define a cleaning function to remove line breaks and separators
 def clean_text(text):
-    return text.replace("\n", "").replace("\r", "")
+    if isinstance(text, str):
+        return text.replace("\n", "").replace("\r", "")
+    else:
+        return text
 
 # Welcome Page
 st.title("Welcome to US Medical Schools Prerequisite AI Wiz")
