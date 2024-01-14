@@ -33,9 +33,22 @@ selected_school = st.sidebar.selectbox("Select Medical School", state_filtered_d
 st.write(f"Selected Medical School: {selected_school}")
 st.write(f"Selected State: {selected_state}")
 
-link_df = state_filtered_df[state_filtered_df['Medical School'] == selected_school][['Medical School', 'Additional Info']]
-school_link = link_df.iloc[0]['Additional Info']
-st.write(f"Selected School Website: {school_link}")
+# Search for the selected school on Wikipedia
+search_query = "List of medical schools in the United States"
+search_query += " " + selected_school
+
+# Retrieve the search results from Wikipedia
+search_results = st.search(search_query, "https://en.wikipedia.org/wiki/")
+
+# Check if any search results were found
+if len(search_results) > 0:
+    # Get the Wikipedia link for the first search result
+    school_wikipedia_link = search_results[0].url
+
+    # Display the link to the medical school's Wikipedia page
+    st.write(f"Wikipedia Link: {school_wikipedia_link}")
+else:
+    st.write("No Wikipedia link found for the selected medical school.")
 
 
 # Filter the DataFrame based on the selected school and exclude State and Medical School columns
