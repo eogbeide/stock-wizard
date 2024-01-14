@@ -83,14 +83,10 @@ if 'Credit Hours' in filtered_df.columns:
     #st.dataframe(filtered_df.reset_index(drop=True).style.set_properties(**{'white-space': 'pre-wrap'}))
     table_html = filtered_df.to_html(escape=False, index=False)
     #st.markdown(filtered_df.to_html(escape=False), unsafe_allow_html=True)
-    st.markdown(table_html, unsafe_allow_html=True)
+    st.markdown(table_html, unsafe_allow_html=True).set_table_styles([{'selector': 'th', 'props': [('text-align', 'left')]}])
 
     #st.markdown(filtered_df.to_html(escape=False), unsafe_allow_html=True)
     # Replace NaN values with "N/A" in filtered_df
-
-    styled_df = filtered_df.style.set_properties(**{'white-space': 'pre-wrap'})
-    styled_df.set_table_styles([{'selector': 'th', 'props': [('text-align', 'left')]}])
-    st.dataframe(styled_df)
     
 else:
     st.write("No 'Credit Hours' column found in the filtered DataFrame.")
@@ -127,11 +123,8 @@ columns_to_display = ['Medical School', 'Lab?', 'Credit Hours', 'Additional Info
 table_html = filtered_schools_df[columns_to_display].sort_values(by="Medical School").to_html(escape=False, index=False)
 
 #st.markdown(filtered_schools_df[columns_to_display].sort_values(by="Medical School").to_html(escape=False), unsafe_allow_html=True)
-st.markdown(table_html, unsafe_allow_html=True)
+st.markdown(table_html, unsafe_allow_html=True).set_table_styles([{'selector': 'th', 'props': [('text-align', 'left')]}])
 
-styled_schools_df = filtered_schools_df[columns_to_display].sort_values(by="Medical School").reset_index(drop=True).style.set_properties(**{'white-space': 'pre-wrap'})
-styled_schools_df.set_table_styles([{'selector': 'th', 'props': [('text-align', 'left')]}])
-st.dataframe(styled_schools_df)
 
 
 
