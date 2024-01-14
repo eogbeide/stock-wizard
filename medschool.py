@@ -38,10 +38,10 @@ search_query = "List of medical schools in the United States"
 search_query += " " + selected_school.replace(" ", "_")
 
 # Create the Wikipedia link
-school_wikipedia_link = "https://en.wikipedia.org/wiki/" + search_query
+school_wikipedia_link = "https://en.wikipedia.org/wiki/List_of_medical_schools_in_the_United_States"
 
 # Display the link to the medical school's Wikipedia page
-st.write(f"Wikipedia Link: {school_wikipedia_link}")
+st.write(f"Click: {school_wikipedia_link}")
 
 
 # Filter the DataFrame based on the selected school and exclude State and Medical School columns
