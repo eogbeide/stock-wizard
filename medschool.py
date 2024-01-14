@@ -51,7 +51,7 @@ st.write(f"Selected Medical School: {selected_school}")
 st.write(f"Selected State: {selected_state}")
 
 # Search for the selected school on Wikipedia
-search_query = "List of medical schools in the United States to view website for"
+search_query = "List of medical schools in the United States and"
 search_query += " " + selected_school.replace(" ", "_")
 
 # Create the Wikipedia link
