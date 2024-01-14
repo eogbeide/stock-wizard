@@ -35,6 +35,7 @@ st.write(f"Selected State: {selected_state}")
 
 link_df = state_filtered_df[state_filtered_df['Medical School'] == selected_school][['Medical School', 'Additional Info']]
 school_link = link_df.iloc[0]['Additional Info']
+st.write(f"Selected School Website: {school_link}")
 
 
 # Filter the DataFrame based on the selected school and exclude State and Medical School columns
