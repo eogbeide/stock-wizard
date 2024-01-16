@@ -106,9 +106,11 @@ required_or_recommended_options = ['Required', 'Recommended']
 # Select the filter options from the sidebar
 selected_course = st.sidebar.selectbox("Choose Course", course_options)
 selected_required_or_recommended = st.sidebar.selectbox("Required or Recommended?", required_or_recommended_options)
+selected_lab = st.sidebar.selectbox("Lab?", lab_options)
 
 # Filter the DataFrame based on the selected options
-filtered_schools_df = df[(df['Course'] == selected_course) & (df['Required or Recommended?'] == selected_required_or_recommended)]
+#filtered_schools_df = df[(df['Course'] == selected_course) & (df['Required or Recommended?'] == selected_required_or_recommended)]
+filtered_schools_df = df[(df['Course'] == selected_course) & (df['Required or Recommended?'] == selected_required_or_recommended) & (df['Lab?'] == selected_lab)]
 filtered_schools_df  = filtered_schools_df.fillna("N/A")
 
 # Clean the 'Additional Info' column in filtered_schools_df
