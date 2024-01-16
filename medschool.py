@@ -121,12 +121,6 @@ columns_to_display = ['Medical School', 'Lab?', 'Credit Hours', 'Additional Info
 # Display the filtered DataFrame with the selected columns, sorted by "Medical School"
 #st.dataframe(filtered_schools_df[columns_to_display].sort_values(by="Medical School").reset_index(drop=True))
 
-# Add a sidebar with a dropdown menu to select the column where "Lab?" is 'Y'
-selected_column = st.sidebar.selectbox("Select Column", options=filtered_schools_df.columns)
-
-# Filter the DataFrame to show rows where Lab? is Yes first
-filtered_schools_df_sorted = pd.concat([filtered_schools_df[filtered_schools_df['Lab?'] == 'Yes'], filtered_schools_df[filtered_schools_df['Lab?'] == 'No']])
-
 # Generate the HTML table with selected columns, sorted by "Medical School" and Lab? is Yes rows first
 table_html = filtered_schools_df[columns_to_display].sort_values(by="Medical School").to_html(escape=False, index=False)
 
