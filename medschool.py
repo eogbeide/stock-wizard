@@ -14,7 +14,7 @@ st.markdown("""
 # Define a cleaning function to remove line breaks and separators
 def clean_text(text):
     if isinstance(text, str):
-        return text.replace("\n", "").replace("\r", "")o
+        return text.replace("\n", "").replace("\r", "")
     else:
         return text
 
