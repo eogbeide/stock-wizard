@@ -28,7 +28,7 @@ st.header("Selected Medical School Prerequisites")
 #st.write(" - Double click on Additional Info Column to see details")
 
 # Load the CSV file
-df = pd.read_csv("Medical_School_Requirements4.csv", encoding='unicode_escape')
+df = pd.read_csv("Medical_School_Requirements4.csv", encoding='unicode_escape')o
 
 # Remove leading and trailing spaces from all string columns
 df = df.apply(lambda x: x.str.strip() if x.dtype == "object" else x)
