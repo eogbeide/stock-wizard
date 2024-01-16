@@ -102,6 +102,7 @@ st.subheader("Filtered Medical Schools by Required or Recommended Courses")
 # Define the filter options
 course_options = df['Course'].unique().tolist()
 required_or_recommended_options = ['Required', 'Recommended']
+lab_options = ['Y', 'N', 'N/A']
 
 # Select the filter options from the sidebar
 selected_course = st.sidebar.selectbox("Choose Course", course_options)
