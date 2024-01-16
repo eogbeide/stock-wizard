@@ -11,6 +11,13 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+st.set_page_config(
+    page_title="Home",
+    page_icon="👋",
+)
+st.w
+
+
 # Define a cleaning function to remove line breaks and separators
 def clean_text(text):
     if isinstance(text, str):
@@ -96,7 +103,7 @@ st.markdown('##')
 
 
 
-
+st.set_page_config(page_title="Filter Schools by Required or Recommended Courses and Labs", page_icon="🌍")
 # Second page: Medical schools with filter options
 st.subheader("Filtered Medical Schools by Required or Recommended Courses")
 
