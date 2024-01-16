@@ -1,12 +1,6 @@
 import streamlit as st
 import pandas as pd
 
-st.set_page_config(
-    page_title="Home",
-    page_icon="👋",
-)
-
-
 st.set_page_config(layout="wide")
 st.markdown("""
 <style>
@@ -101,7 +95,7 @@ st.markdown('##')
 
 
 
-st.set_page_config(page_title="Filter Schools by Required or Recommended Courses and Labs", page_icon="🌍")
+
 # Second page: Medical schools with filter options
 st.subheader("Filtered Medical Schools by Required or Recommended Courses")
 
