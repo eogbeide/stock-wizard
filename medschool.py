@@ -96,6 +96,7 @@ st.markdown('##')
 
 
 
+st.set_page_config(layout='wide', page_title='Best Chocolate', page_icon='🤗')
 # Second page: Medical schools with filter options
 st.subheader("Filtered Medical Schools by Required or Recommended Courses")
 
