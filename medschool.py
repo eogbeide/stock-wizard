@@ -25,7 +25,7 @@ st.write(" - Always cross-validate with the school's website")
 
 # First page: Medical schools with filter options
 st.header("Selected Medical School Prerequisites")
-#st.write(" - Double click on Additional Info Column to see details")
+st.write(" - Y means Yes, N means No and C means Case-by-Case Basis")
 
 # Load the CSV file
 df = pd.read_csv("Medical_School_Requirements4.csv", encoding='unicode_escape')
