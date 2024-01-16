@@ -66,6 +66,8 @@ st.link_button(f"Click here to visit AAMC website for {search_query}", "https://
 filtered_df = state_filtered_df[state_filtered_df['Medical School'] == selected_school].drop(columns=['State', 'Medical School'])
 # Clean the 'Additional Info' column in filtered_df
 filtered_df['Additional Info'] = filtered_df['Additional Info'].apply(clean_text)
+filtered_df['Course'] = filtered_df['Course'].apply(clean_text)
+filtered_df['Medical School'] = filtered_df['Medical School'].apply(clean_text)
 
 # Check if 'Credit Hours' column exists in the filtered DataFrame
 if 'Credit Hours' in filtered_df.columns:
