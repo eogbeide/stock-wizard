@@ -121,6 +121,10 @@ columns_to_display = ['Medical School', 'Lab?', 'Credit Hours', 'Additional Info
 # Display the filtered DataFrame with the selected columns, sorted by "Medical School"
 #st.dataframe(filtered_schools_df[columns_to_display].sort_values(by="Medical School").reset_index(drop=True))
 
+# Filter the DataFrame to show rows where Lab? is Yes first
+filtered_schools_df_sorted = filtered_schools_df[filtered_schools_df['Lab?'] == 'Yes'].append(filtered_schools_df[filtered_schools_df['Lab?'] == 'No'])
+
+# Generate the HTML table with selected columns, sorted by "Medical School" and Lab? is Yes rows first
 table_html = filtered_schools_df[columns_to_display].sort_values(by="Medical School").to_html(escape=False, index=False)
 
 #st.markdown(filtered_schools_df[columns_to_display].sort_values(by="Medical School").to_html(escape=False), unsafe_allow_html=True)
