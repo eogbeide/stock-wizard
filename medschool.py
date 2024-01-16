@@ -122,7 +122,7 @@ columns_to_display = ['Medical School', 'Lab?', 'Credit Hours', 'Additional Info
 #st.dataframe(filtered_schools_df[columns_to_display].sort_values(by="Medical School").reset_index(drop=True))
 
 # Filter the DataFrame to show rows where Lab? is Yes first
-filtered_schools_df_sorted = pd.concat([filtered_schools_df[filtered_schools_df['Lab?'] == 'Y'], filtered_schools_df[filtered_schools_df['Lab?'] == 'N']], , filtered_schools_df[filtered_schools_df['Lab?'] == 'N/A'])
+filtered_schools_df_sorted = pd.concat([filtered_schools_df[filtered_schools_df['Lab?'] == 'Y'], filtered_schools_df[filtered_schools_df['Lab?'] == 'N']], filtered_schools_df[filtered_schools_df['Lab?'] == 'N/A'])
 
 # Generate the HTML table with selected columns, sorted by "Medical School" and Lab? is Yes rows first
 table_html = filtered_schools_df[columns_to_display].sort_values(by="Medical School").to_html(escape=False, index=False)
