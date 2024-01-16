@@ -25,7 +25,7 @@ st.write(" - Always cross-validate with the school's website")
 
 # First page: Medical schools with filter options
 st.header("Selected Medical School Prerequisites")
-st.write(" - Y means Yes, N means No and C means Case-by-Case Basis")
+st.write(" - Y = Yes, N = No and C = Case-by-Case Basis")
 
 # Load the CSV file
 df = pd.read_csv("Medical_School_Requirements5.csv", encoding='unicode_escape')
@@ -118,6 +118,7 @@ filtered_schools_df  = filtered_schools_df.fillna("N/A")
 # Clean the 'Additional Info' column in filtered_schools_df
 filtered_schools_df['Additional Info'] = filtered_schools_df['Additional Info'].apply(clean_text)
 filtered_schools_df['Medical School'] = filtered_schools_df['Medical School'].apply(clean_text)
+filtered_schools_df['Course'] = filtered_schools_df['MedCourse'].apply(clean_text)
 
 # Select the columns to display
 columns_to_display = ['Medical School', 'Lab?', 'Credit Hours', 'Additional Info']
