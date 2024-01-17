@@ -174,6 +174,9 @@ def interactive_plot_forecasting(df, forecast, title):
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
+    # Add yhat_lower divided by 2
+    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'] / 2, mode='lines', name='yhat_lower divided by 2'))
+
     # Add trend break points
     #trend_break_points = df[df['trend_break'] == 1]
     #fig.add_trace(go.Scatter(x=trend_break_points['ds'], y=trend_break_points['y'], mode='markers', name='Trend Break'))
