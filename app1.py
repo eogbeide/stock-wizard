@@ -48,7 +48,7 @@ else:
     st.write("Welcome to the Smart AI Stock Trend Prediction Wizard by Manny: $$$")
     
 # We can get data by our choice by giving days bracket
-start_date = "2021-11-01"
+start_date = "2012-11-01"
 end_date = today.strftime("%Y-%m-%d")  # Use today's date as the end date
 
 # Get yesterday's date
@@ -172,7 +172,7 @@ def interactive_plot_forecasting(df, forecast, title):
 
     # Add yhat_lower and yhat_upper
     fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
-    #fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
+    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
 
     # Add trend break points
     trend_break_points = df[df['trend_break'] == 1]
