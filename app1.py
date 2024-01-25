@@ -49,7 +49,7 @@ else:
     st.write("Welcome to the Smart AI Stock Trend Prediction Wizard by Manny: $$$")
     
 # We can get data by our choice by giving days bracket
-start_date = "2001-01-01"
+start_date = "2012-01-01"
 end_date = today.strftime("%Y-%m-%d")  # Use today's date as the end date
 
 # Get yesterday's date
@@ -227,8 +227,7 @@ forecast_last_24_months = forecast.tail(720)
 
 # Plot the forecast and the original values for comparison
 st.header("Interactive Plot")
-#interactive_plot_forecasting(df, forecast, f'{title} ({today})')
-interactive_plot_forecasting(df, predicted, f'{title} ({today})')
+interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 #interactive_plot_forecasting(df_last_24_months, forecast_last_24_months, f'{title} ({today})')
 
 st.subheader("Last Three Days Closing Prices")
