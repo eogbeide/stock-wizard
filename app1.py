@@ -222,7 +222,20 @@ st.write(f" - Number of days in testing data: {len(test)}")
 
 # Plot the forecast and the original values for comparison
 st.header("Interactive Plot")
-interactive_plot_forecasting(df, forecast, f'{title} ({today})')
+#interactive_plot_forecasting(df, forecast, f'{title} ({today})')
+
+# Select the last 24 months of data
+df_last_24_months = df.tail(24)
+forecast_last_24_months = forecast.tail(24)
+
+# Plotting code
+plt.plot(df_last_24_months.index, df_last_24_months['original_values'], label='Original Values')
+plt.plot(forecast_last_24_months.index, forecast_last_24_months['forecast'], label='Forecast')
+plt.xlabel('Time')
+plt.ylabel('Values')
+plt.title(f'{title} ({today})')
+plt.legend()
+plt.show()
 
 st.subheader("Last Three Days Closing Prices")
 df['ds'] = pd.to_datetime(df['ds']).dt.date
