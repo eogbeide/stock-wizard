@@ -231,6 +231,7 @@ interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 
 def interactive_plot_forecastings(df, forecast, title):
     fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
+    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
     st.plotly_chart(fig)
 interactive_plot_forecastings(df_last_24_months, forecast_last_24_months, f'{title} ({today})')
 
