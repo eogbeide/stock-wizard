@@ -228,7 +228,11 @@ forecast_last_24_months = forecast.tail(720)
 # Plot the forecast and the original values for comparison
 st.header("Interactive Plot")
 interactive_plot_forecasting(df, forecast, f'{title} ({today})')
-interactive_plot_forecasting(df_last_24_months, forecast_last_24_months, f'{title} ({today})')
+
+def interactive_plot_forecastings(df, forecast, title):
+    fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
+    st.plotly_chart(fig)
+interactive_plot_forecastings(df_last_24_months, forecast_last_24_months, f'{title} ({today})')
 
 st.subheader("Last Three Days Closing Prices")
 df['ds'] = pd.to_datetime(df['ds']).dt.date
