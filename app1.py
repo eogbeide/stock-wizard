@@ -252,7 +252,7 @@ def interactive_plot_forecastings(df, forecast, title):
 
     # Add logistic moving average line for y
     def logistic_moving_avg(x):
-    return np.log(np.mean(np.exp(x)))
+        return np.log(np.mean(np.exp(x)))
 
     moving_avg = df['y'].rolling(window=7).apply(logistic_moving_avg)
     fig.add_trace(go.Scatter(x=df['ds'], y=moving_avg, mode='lines', name='Logistic Moving Average'))
