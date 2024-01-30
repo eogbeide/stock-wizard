@@ -226,7 +226,7 @@ st.write(f" - Number of days in training data: {len(train)}")
 st.write(f" - Number of days in testing data: {len(test)}")
 
 # Select the last 24 months of data
-df_last_24_months = df.tail(360)
+df_last_24_months = df.tail(180)
 forecast_last_24_months = forecast.tail(720)
 
 # Plot the forecast and the original values for comparison
