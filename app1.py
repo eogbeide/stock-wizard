@@ -235,11 +235,20 @@ interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 
 def interactive_plot_forecastings(df, forecast, title):
     fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
-    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
+    #fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
 
     # Add moving average line for y
     moving_avg = df['y'].rolling(window=7).mean()
     fig.add_trace(go.Scatter(x=df['ds'], y=moving_avg, mode='lines', name='Moving Average'))
+
+    max_points = df[df['y'] == df['y'].max()]
+    min_points = df[df['y'] == df['y'].min()]
+
+    # Add maximum points to the plot
+    fig.add_trace(go.Scatter(x=max_points['ds'], y=max_points['y'], mode='markers', name='Maximum'))
+
+    # Add minimum points to the plot
+    fig.add_trace(go.Scatter(x=min_points['ds'], y=min_points['y'], mode='markers', name='Minimum'))
     
     st.plotly_chart(fig)
     
