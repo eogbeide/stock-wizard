@@ -238,8 +238,8 @@ def interactive_plot_forecastings(df, forecast, title):
     #fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
 
     # Add moving average line for y
-    moving_avg = df['y'].rolling(window=7).mean()
-    fig.add_trace(go.Scatter(x=df['ds'], y=moving_avg, mode='lines', name='Moving Average'))
+    #moving_avg = df['y'].rolling(window=7).mean()
+    #fig.add_trace(go.Scatter(x=df['ds'], y=moving_avg, mode='lines', name='Moving Average'))
 
     max_points = df[df['y'] == df['y'].max()]
     min_points = df[df['y'] == df['y'].min()]
