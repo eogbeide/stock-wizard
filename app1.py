@@ -249,6 +249,11 @@ def interactive_plot_forecastings(df, forecast, title):
 
     # Add minimum points to the plot
     fig.add_trace(go.Scatter(x=min_points['ds'], y=min_points['y'], mode='markers', name='Minimum'))
+
+    # Add geometric proportion moving average line for y
+    moving_avg = df['y'].rolling(window=7).apply(lambda x: np.prod(x)**(1/len(x)) if len(x) > 0 else np.nan)
+    fig.add_trace(go.Scatter(x=df['ds'], y=moving_avg, mode='lines', name='Geometric Moving Average'))
+
     
     st.plotly_chart(fig)
     
