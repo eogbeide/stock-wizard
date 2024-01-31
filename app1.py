@@ -231,8 +231,7 @@ forecast_last_24_months = forecast.tail(90)
 
 # Plot the forecast and the original values for comparison
 st.header("Interactive Plot")
-#interactive_plot_forecasting(df, forecast, f'{title} ({today})')
-interactive_plot_forecasting(df, predicted, f'{title} ({today})')
+interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 
 def interactive_plot_forecastings(df, forecast, title):
     fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
