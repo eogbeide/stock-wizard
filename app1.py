@@ -303,7 +303,7 @@ today = datetime.date.today()
 #data = {
     #"Confidence Intervals": ["yhat_lower", "yhat", "yhat_upper"],
     #"Values": [today_yhat_lower, today_yhat, today_yhat_upper]
-}
+#}
 
 #df = pd.DataFrame(data)
 
