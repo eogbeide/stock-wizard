@@ -10,7 +10,7 @@ import numpy as np
 import math
 
 
-from pandas_datareader import data as pdr
+from pandas_datareader import data as pdrm
 from datetime import date
 import yfinance as yf
 import os
