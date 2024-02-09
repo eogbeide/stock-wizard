@@ -195,7 +195,7 @@ def interactive_plot_forecasting(df, forecast, title):
 
     # Add circumference calculation
     circumference = math.pi * df['y'].sum()
-    fig.add_annotation(x=df['ds'].iloc[0], y=df['y'].max(), text=f"Circumference: {round(circumference, 2)}", showarrow=False)
+    fig.add_annotation(x=df['ds'].iloc[0], y=df['y'].max(), text=f"Circumference: {round(circumference, 2)}", showarrow=False)f
    
     st.plotly_chart(fig)
 
