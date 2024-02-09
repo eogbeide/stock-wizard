@@ -7,6 +7,8 @@ from matplotlib import pyplot as plt
 import glob
 import datetime
 import numpy as np
+import math
+
 
 from pandas_datareader import data as pdr
 from datetime import date
