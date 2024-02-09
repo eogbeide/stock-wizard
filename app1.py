@@ -195,14 +195,7 @@ def interactive_plot_forecasting(df, forecast, title):
 
     # Calculate circumference
     circumference = math.pi * df['y'].sum()
-
-    # Add circumference line
-    fig.add_shape(type="line",
-                  x0=df['ds'].iloc[0], y0=df['y'].min(),
-                  x1=df['ds'].iloc[-1], y1=df['y'].min() + circumference,
-                  line=dict(color='red', width=2, dash='dash'),
-                  name='Circumference')
-   
+  
     st.plotly_chart(fig)
 
 option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
