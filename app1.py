@@ -301,7 +301,7 @@ today = datetime.date.today()
 
 # Create a DataFrame with the forecast values
 #data = {
-    "Confidence Intervals": ["yhat_lower", "yhat", "yhat_upper"],
+    #"Confidence Intervals": ["yhat_lower", "yhat", "yhat_upper"],
     #"Values": [today_yhat_lower, today_yhat, today_yhat_upper]
 }
 
