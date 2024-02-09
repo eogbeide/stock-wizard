@@ -300,10 +300,10 @@ today = datetime.date.today()
 #st.write("- yhat_upper: ", today_yhat_upper)
 
 # Create a DataFrame with the forecast values
-data = {
-    "Confidence Intervals": ["yhat_lower", "yhat", "yhat_upper"],
-    "Values": [today_yhat_lower, today_yhat, today_yhat_upper]
-}
+#data = {
+    #"Confidence Intervals": ["yhat_lower", "yhat", "yhat_upper"],
+    #"Values": [today_yhat_lower, today_yhat, today_yhat_upper]
+#}
 
 df = pd.DataFrame(data)
 
