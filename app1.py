@@ -323,7 +323,7 @@ st.write(df.set_index(df.columns[0]))
 #st.write(forecast)
 
 
-df = pd.DataFrame(data)
+#df = pd.DataFrame(data)
 
 
 
