@@ -190,6 +190,10 @@ def interactive_plot_forecasting(df, forecast, title):
     # Add moving average line for y
     moving_avg = df['y'].rolling(window=7).mean()
     #fig.add_trace(go.Scatter(x=df['ds'], y=moving_avg, mode='lines', name='Moving Average'))
+
+    # Add circumference calculation
+    circumference = math.pi * df['y'].sum()
+    fig.add_annotation(x=df['ds'].iloc[0], y=df['y'].max(), text=f"Circumference: {round(circumference, 2)}", showarrow=False)
    
     st.plotly_chart(fig)
 
