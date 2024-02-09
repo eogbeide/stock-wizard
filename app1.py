@@ -262,9 +262,9 @@ def interactive_plot_forecastings(df, forecast, title):
     #def logistic_moving_avg(x):
         #return np.log(np.mean(np.exp(x)))
 
-    moving_avg = df['y'].rolling(window=7).apply(logistic_moving_avg)
-    fig.add_trace(go.Scatter(x=df['ds'], y=moving_avg, mode='lines', name='Logistic Moving Average'))
-    st.plotly_chart(fig)
+    #moving_avg = df['y'].rolling(window=7).apply(logistic_moving_avg)
+    #fig.add_trace(go.Scatter(x=df['ds'], y=moving_avg, mode='lines', name='Logistic Moving Average'))
+    #st.plotly_chart(fig)
     
 interactive_plot_forecastings(df_last_24_months, forecast_last_24_months, f'{title} ({today})')
 
