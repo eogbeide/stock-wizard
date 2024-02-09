@@ -193,9 +193,15 @@ def interactive_plot_forecasting(df, forecast, title):
     moving_avg = df['y'].rolling(window=7).mean()
     #fig.add_trace(go.Scatter(x=df['ds'], y=moving_avg, mode='lines', name='Moving Average'))
 
-    # Add circumference calculation
+    # Calculate circumference
     circumference = math.pi * df['y'].sum()
-    fig.add_annotation(x=df['ds'].iloc[0], y=df['y'].max(), text=f"Circumference: {round(circumference, 2)}", showarrow=True)
+
+    # Add circumference line
+    fig.add_shape(type="line",
+                  x0=df['ds'].iloc[0], y0=df['y'].min(),
+                  x1=df['ds'].iloc[-1], y1=df['y'].min() + circumference,
+                  line=dict(color='red', width=2, dash='dash'),
+                  name='Circumference')
    
     st.plotly_chart(fig)
 
