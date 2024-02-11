@@ -197,8 +197,8 @@ def interactive_plot_forecasting(df, forecast, title):
     circumference = math.pi * df['y'].sum()
 
     # Calculate quarterly average line
-    quarterly_avg = df.groupby(df['ds'].dt.quarter)['y'].mean()
-    quarters = df['ds'].dt.quarter.unique()
+    quarterly_avg = df.groupby(df['ds'].dt.month)['y'].mean()
+    quarters = df['ds'].dt.month.unique()
 
     # Add quarterly average line
     fig.add_trace(go.Scatter(x=df['ds'], y=df['ds'].map(lambda x: quarterly_avg[x.quarter]), mode='lines', name='Quarterly Average'))
