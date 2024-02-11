@@ -271,6 +271,8 @@ def interactive_plot_forecastings(df, forecast, title):
 
     #moving_avg = df['y'].rolling(window=7).apply(logistic_moving_avg)
     #fig.add_trace(go.Scatter(x=df['ds'], y=moving_avg, mode='lines', name='Logistic Moving Average'))
+
+    fig.add_trace(go.Scatter(x=df['ds'], y=df['ds'].map(lambda x: quarterly_avg[x.quarter]), mode='lines', name='Quarterly Average'))
     st.plotly_chart(fig)
     
 interactive_plot_forecastings(df_last_24_months, forecast_last_24_months, f'{title} ({today})')
