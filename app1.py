@@ -196,12 +196,12 @@ def interactive_plot_forecasting(df, forecast, title):
     # Calculate circumference
     circumference = math.pi * df['y'].sum()
 
-    # Calculate quarterly average line
-    quarterly_avg = df.groupby(df['ds'].dt.month)['y'].mean()
-    quarters = df['ds'].dt.month.unique()
+    # Calculate monthly average line
+    monthly_avg = df.groupby(df['ds'].dt.month)['y'].mean()
+    month = df['ds'].dt.month.unique()
 
-    # Add quarterly average line
-    fig.add_trace(go.Scatter(x=df['ds'], y=df['ds'].map(lambda x: quarterly_avg[x.quarter]), mode='lines', name='Quarterly Average'))
+    # Add monthly average line
+    fig.add_trace(go.Scatter(x=df['ds'], y=df['ds'].map(lambda x: monthly_avg[x.month]), mode='lines', name='Monthly Average'))
   
     st.plotly_chart(fig)
 
@@ -271,13 +271,13 @@ def interactive_plot_forecastings(df, forecast, title):
 
     #moving_avg = df['y'].rolling(window=7).apply(logistic_moving_avg)
     #fig.add_trace(go.Scatter(x=df['ds'], y=moving_avg, mode='lines', name='Logistic Moving Average'))
+    
+    # Calculate monthly average line
+    monthly_avg = df.groupby(df['ds'].dt.month)['y'].mean()
+    month = df['ds'].dt.month.unique()
 
-    # Calculate quarterly average line
-    quarterly_avg = df.groupby(df['ds'].dt.quarter)['y'].mean()
-    quarters = df['ds'].dt.quarter.unique()
-
-    # Add quarterly average line
-    fig.add_trace(go.Scatter(x=df['ds'], y=df['ds'].map(lambda x: quarterly_avg[x.quarter]), mode='lines', name='Quarterly Average'))
+    # Add monthly average line
+    fig.add_trace(go.Scatter(x=df['ds'], y=df['ds'].map(lambda x: monthly_avg[x.month]), mode='lines', name='Monthly Average'))
 
     st.plotly_chart(fig)
     
