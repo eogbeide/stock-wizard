@@ -292,9 +292,9 @@ st.write(df[['ds', 'y']].tail(3).set_index(df.columns[0]))
 today_forecast = forecast[forecast['ds'] == today]
 
 # Get today's yhat, yhat_lower, and yhat_upper values
-#today_yhat = round(today_forecast['yhat'].values[0],2)
-#today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
-#today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
+today_yhat = round(today_forecast['yhat'].values[0],2)
+today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
+today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
 
 if len(today_forecast) > 0:
     today_yhat = round(today_forecast['yhat'].values[0], 2)
@@ -309,10 +309,10 @@ else:
 today = datetime.date.today()
 
 # Display today's forecast values
-#st.subheader("Current Forecast Price Confidence Intervals:")
-#st.write("- yhat_lower: ", today_yhat_lower)
-#st.write("- yhat: ", today_yhat)
-#st.write("- yhat_upper: ", today_yhat_upper)
+st.subheader("Current Forecast Price Confidence Intervals:")
+st.write("- yhat_lower: ", today_yhat_lower)
+st.write("- yhat: ", today_yhat)
+st.write("- yhat_upper: ", today_yhat_upper)
 
 # Create a DataFrame with the forecast values
 #data = {
