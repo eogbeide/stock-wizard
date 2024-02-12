@@ -292,9 +292,9 @@ st.write(df[['ds', 'y']].tail(3).set_index(df.columns[0]))
 today_forecast = forecast[forecast['ds'] == today]
 
 # Get today's yhat, yhat_lower, and yhat_upper values
-today_yhat = round(today_forecast['yhat'].values[0],2)
-today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
-today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
+#today_yhat = round(today_forecast['yhat'].values[0],2)
+#today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
+#today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
 
 if len(today_forecast) > 0:
     today_yhat = round(today_forecast['yhat'].values[0], 2)
