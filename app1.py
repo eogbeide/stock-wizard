@@ -309,23 +309,23 @@ else:
 today = datetime.date.today()
 
 # Display today's forecast values
-st.subheader("Current Forecast Price Confidence Intervals:")
-st.write("- yhat_lower: ", today_yhat_lower)
-st.write("- yhat: ", today_yhat)
-st.write("- yhat_upper: ", today_yhat_upper)
+#st.subheader("Current Forecast Price Confidence Intervals:")
+#st.write("- yhat_lower: ", today_yhat_lower)
+#st.write("- yhat: ", today_yhat)
+#st.write("- yhat_upper: ", today_yhat_upper)
 
 # Create a DataFrame with the forecast values
-#data = {
-    #"Confidence Intervals": ["yhat_lower", "yhat", "yhat_upper"],
-    #"Values": [today_yhat_lower, today_yhat, today_yhat_upper]
-#}
+data = {
+    "Confidence Intervals": ["yhat_lower", "yhat", "yhat_upper"],
+    "Values": [today_yhat_lower, today_yhat, today_yhat_upper]
+}
 
-#df = pd.DataFrame(data)
+df = pd.DataFrame(data)
 
 # Display the DataFrame as a three-column table
 #st.subheader("Current Forecast Price Confidence Intervals:")
-#st.write(df)
-#st.write(df.set_index(df.columns[0]))
+st.write(df)
+st.write(df.set_index(df.columns[0]))
 
 #st.write("Forecast for", ticker)
 #forecast['ds'] = forecast['ds'].dt.date
