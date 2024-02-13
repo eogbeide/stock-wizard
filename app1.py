@@ -51,7 +51,7 @@ else:
     st.write("Welcome to the Smart AI Stock Trend Prediction Wizard by Manny: $$$")
     
 # We can get data by our choice by giving days bracket
-start_date = "2015-10-01"
+start_date = "2022-10-01"
 end_date = today.strftime("%Y-%m-%d")  # Use today's date as the end date
 
 # Get yesterday's date
