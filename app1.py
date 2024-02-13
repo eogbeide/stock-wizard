@@ -250,6 +250,7 @@ interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 
 def interactive_plot_forecastings(df, forecast, title):
     #fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
+    fig = px.line(df, x='ds', y=['y'], title=title)
     #fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
 
     # Add moving average line for y
