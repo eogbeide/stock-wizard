@@ -11,7 +11,7 @@ import math
 
 
 from pandas_datareader import data as pdr
-from datetime import datet
+from datetime import date
 import yfinance as yf
 import os
 from datetime import timedelta
