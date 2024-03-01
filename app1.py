@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.express as px
 from prophet import Prophet
 from plotly import graph_objs as go
-from matplotlib import pyplot as pltp
+from matplotlib import pyplot as plt
 import glob
 import datetime
 import numpy as np
@@ -11,7 +11,7 @@ import math
 
 
 from pandas_datareader import data as pdr
-from datetime import date
+from datetime import datet
 import yfinance as yf
 import os
 from datetime import timedelta
