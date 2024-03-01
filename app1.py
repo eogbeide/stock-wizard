@@ -223,7 +223,7 @@ m = Prophet()
 m.fit(train)
 
 # Make predictions
-future = m.make_future_dataframe(periods=120)
+future = m.make_future_dataframe(periods=130)
 forecast = m.predict(future)
 
 # Add predicted values to the original dataframe
