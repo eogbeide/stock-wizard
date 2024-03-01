@@ -243,7 +243,7 @@ st.write(f" - Number of days in testing data: {len(test)}")
 # Select the last 24 months of data
 df_last_24_months = df.tail(60)
 forecast_last_24_months = forecast.tail(60)
-forecast_last_24_months.tail(10)
+st.write(forecast_last_24_months.tail(10))
 
 # Plot the forecast and the original values for comparison
 st.header("Interactive Plot")
