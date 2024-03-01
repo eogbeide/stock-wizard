@@ -243,7 +243,7 @@ st.write(f" - Number of days in testing data: {len(test)}")
 # Select the last 24 months of data
 df_last_24_months = df.tail(60)
 forecast_last_24_months = forecast.tail(60)
-st.write(forecast_last_24_months.tail(10))
+#st.write(forecast_last_24_months.tail(10))
 
 # Plot the forecast and the original values for comparison
 st.header("Interactive Plot")
@@ -329,13 +329,13 @@ df = pd.DataFrame(data)
 #st.write(df)
 st.write(df.set_index(df.columns[0]))
 
-#st.write("Forecast for", ticker)
-#forecast['ds'] = forecast['ds'].dt.date
-#forecast.reset_index(drop=True)
-#forecast.reset_index(drop=True, inplace=True)
+st.write("Forecast for", ticker)
+forecast['ds'] = forecast['ds'].dt.date
+forecast.reset_index(drop=True)
+forecast.reset_index(drop=True, inplace=True)
 #st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(30))
 #st.write(forecast[['ds', 'yhat_lower', 'yhat_upper']].tail(30))
-#forecast = forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10).set_index(forecast.columns[0])
+forecast = forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10).set_index(forecast.columns[0])
 
 #st.write(forecast)
 
