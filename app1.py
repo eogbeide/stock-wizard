@@ -335,7 +335,7 @@ forecast.reset_index(drop=True)
 forecast.reset_index(drop=True, inplace=True)
 st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(30))
 #st.write(forecast[['ds', 'yhat_lower', 'yhat_upper']].tail(30))
-forecast = forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10).set_index(forecast.columns[0])
+#forecast = forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10).set_index(forecast.columns[0])
 
 #st.write(forecast)
 
