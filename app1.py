@@ -223,7 +223,7 @@ m = Prophet()
 m.fit(train)
 
 # Make predictions
-future = m.make_future_dataframe(periods=120)
+future = m.make_future_dataframe(periods=140)
 forecast = m.predict(future)
 
 # Add predicted values to the original dataframe
@@ -333,7 +333,7 @@ st.write("Forecast for", ticker)
 forecast['ds'] = forecast['ds'].dt.date
 forecast.reset_index(drop=True)
 forecast.reset_index(drop=True, inplace=True)
-st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(30))
+st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10))
 #st.write(forecast[['ds', 'yhat_lower', 'yhat_upper']].tail(30))
 #forecast = forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10).set_index(forecast.columns[0])
 
