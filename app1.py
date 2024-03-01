@@ -249,7 +249,7 @@ forecast_last_24_months = forecast.tail(60)
 st.header("Interactive Plot")
 interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 
-def interactive_plot_forecastings(df, forecast, title):
+#def interactive_plot_forecastings(df, forecast, title):
     #fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
     fig = px.line(df, x='ds', y=['y'], title=title)
     #fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
@@ -258,14 +258,14 @@ def interactive_plot_forecastings(df, forecast, title):
     #moving_avg = df['y'].rolling(window=7).mean()
     #fig.add_trace(go.Scatter(x=df['ds'], y=moving_avg, mode='lines', name='Moving Average'))
 
-    max_points = df[df['y'] == df['y'].max()]
-    min_points = df[df['y'] == df['y'].min()]
+    #max_points = df[df['y'] == df['y'].max()]
+    #min_points = df[df['y'] == df['y'].min()]
 
     # Add maximum points to the plot
-    fig.add_trace(go.Scatter(x=max_points['ds'], y=max_points['y'], mode='markers', name='Maximum'))
+    #fig.add_trace(go.Scatter(x=max_points['ds'], y=max_points['y'], mode='markers', name='Maximum'))
 
     # Add minimum points to the plot
-    fig.add_trace(go.Scatter(x=min_points['ds'], y=min_points['y'], mode='markers', name='Minimum'))
+    #fig.add_trace(go.Scatter(x=min_points['ds'], y=min_points['y'], mode='markers', name='Minimum'))
 
     # Add logistic moving average line for y
     #def logistic_moving_avg(x):
@@ -275,15 +275,15 @@ def interactive_plot_forecastings(df, forecast, title):
     #fig.add_trace(go.Scatter(x=df['ds'], y=moving_avg, mode='lines', name='Logistic Moving Average'))
     
     # Calculate quarterly average line
-    quarterly_avg = df.groupby(df['ds'].dt.quarter)['y'].mean()
-    quarters = df['ds'].dt.quarter.unique()
+    #quarterly_avg = df.groupby(df['ds'].dt.quarter)['y'].mean()
+   #quarters = df['ds'].dt.quarter.unique()
 
     # Add quarterly average line
-    fig.add_trace(go.Scatter(x=df['ds'], y=df['ds'].map(lambda x: quarterly_avg[x.quarter]), mode='lines', name='Quarterly Average'))
+    #fig.add_trace(go.Scatter(x=df['ds'], y=df['ds'].map(lambda x: quarterly_avg[x.quarter]), mode='lines', name='Quarterly Average'))
 
-    st.plotly_chart(fig)
+    #st.plotly_chart(fig)
     
-interactive_plot_forecastings(df_last_24_months, forecast_last_24_months, f'{title} ({today})')
+#interactive_plot_forecastings(df_last_24_months, forecast_last_24_months, f'{title} ({today})')
 
 st.subheader("Last Three Days Closing Prices")
 df['ds'] = pd.to_datetime(df['ds']).dt.date
