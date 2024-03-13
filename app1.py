@@ -243,7 +243,7 @@ st.write(f" - Number of days in testing data: {len(test)}")
 # Select the last 24 months of data
 df_last_24_months = df.tail(60)
 forecast_last_24_months = forecast.tail(60)
-#st.write(forecast_last_24_months.tail(10))
+st.write(forecast_last_24_months.tail(10))
 
 # Plot the forecast and the original values for comparison
 st.header("Interactive Plot")
@@ -298,14 +298,14 @@ today_forecast = forecast[forecast['ds'] == today]
 #today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
 #today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
 
-if len(today_forecast) > 0:
+#if len(today_forecast) > 0:
     today_yhat = round(today_forecast['yhat'].values[0], 2)
     today_yhat_lower = round(today_forecast['yhat_lower'].values[0], 2)
     today_yhat_upper = round(today_forecast['yhat_upper'].values[0], 2)
-else:
-    today_yhat = None  # or assign a default value
-    today_yhat_lower = None  # or assign a default value
-    today_yhat_upper = None  # or assign a default value
+#else:
+    #today_yhat = None  # or assign a default value
+    #today_yhat_lower = None  # or assign a default value
+    #today_yhat_upper = None  # or assign a default value
 
 # Get today's date as a datetime.date object
 today = datetime.date.today()
@@ -325,9 +325,9 @@ data = {
 df = pd.DataFrame(data)
 
 # Display the DataFrame as a three-column table
-st.subheader("Current Forecast Price Confidence Intervals:")
-st.write(df)
-st.write(df.set_index(df.columns[0]))
+#st.subheader("Current Forecast Price Confidence Intervals:")
+#st.write(df)
+#st.write(df.set_index(df.columns[0]))
 
 st.write("Forecast for", ticker)
 forecast['ds'] = forecast['ds'].dt.date
