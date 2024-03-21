@@ -311,10 +311,10 @@ today_forecast = forecast[forecast['ds'] == today]
 today = datetime.date.today()
 
 # Display today's forecast values
-st.subheader("Current Forecast Price Confidence Intervals:")
-st.write("- yhat_lower: ", today_yhat_lower)
-st.write("- yhat: ", today_yhat)
-st.write("- yhat_upper: ", today_yhat_upper)
+#st.subheader("Current Forecast Price Confidence Intervals:")
+#st.write("- yhat_lower: ", today_yhat_lower)
+#st.write("- yhat: ", today_yhat)
+#st.write("- yhat_upper: ", today_yhat_upper)
 
 # Create a DataFrame with the forecast values
 #data = {
