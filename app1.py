@@ -203,7 +203,7 @@ def interactive_plot_forecasting(df, forecast, title):
     # Add quarterly average line
     #fig.add_trace(go.Scatter(x=df['ds'], y=df['ds'].map(lambda x: quarterly_avg[x.quarter]), mode='lines', name='Quarterly Average'))
   
-    st.plotly_chart(fig)
+    #st.plotly_chart(fig)
 
 option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
 
