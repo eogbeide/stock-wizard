@@ -249,10 +249,10 @@ st.write(f" - Number of days in testing data: {len(test)}")
 st.header("Interactive Plot")
 interactive_plot_forecasting(df, forecast, f'{title} ({today})')
 
-#def interactive_plot_forecastings(df, forecast, title):
-    #fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
-    #fig = px.line(df, x='ds', y=['y'], title=title)
-    #fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
+def interactive_plot_forecastings(df, forecast, title):
+    fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
+    fig = px.line(df, x='ds', y=['y'], title=title)
+    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
 
     # Add moving average line for y
     #moving_avg = df['y'].rolling(window=7).mean()
@@ -275,15 +275,15 @@ interactive_plot_forecasting(df, forecast, f'{title} ({today})')
     #fig.add_trace(go.Scatter(x=df['ds'], y=moving_avg, mode='lines', name='Logistic Moving Average'))
     
     # Calculate quarterly average line
-    #quarterly_avg = df.groupby(df['ds'].dt.quarter)['y'].mean()
-   #quarters = df['ds'].dt.quarter.unique()
+    quarterly_avg = df.groupby(df['ds'].dt.quarter)['y'].mean()
+    quarters = df['ds'].dt.quarter.unique()
 
     # Add quarterly average line
-    #fig.add_trace(go.Scatter(x=df['ds'], y=df['ds'].map(lambda x: quarterly_avg[x.quarter]), mode='lines', name='Quarterly Average'))
+    fig.add_trace(go.Scatter(x=df['ds'], y=df['ds'].map(lambda x: quarterly_avg[x.quarter]), mode='lines', name='Quarterly Average'))
 
-    #st.plotly_chart(fig)
+    st.plotly_chart(fig)
     
-#interactive_plot_forecastings(df_last_24_months, forecast_last_24_months, f'{title} ({today})')
+interactive_plot_forecastings(df_last_24_months, forecast_last_24_months, f'{title} ({today})')
 
 st.subheader("Last Three Days Closing Prices")
 df['ds'] = pd.to_datetime(df['ds']).dt.date
