@@ -298,11 +298,11 @@ today_forecast = forecast[forecast['ds'] == today]
 #today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
 #today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
 
-#if len(today_forecast) > 0:
+if len(today_forecast) > 0:
     today_yhat = round(today_forecast['yhat'].values[0], 2)
     today_yhat_lower = round(today_forecast['yhat_lower'].values[0], 2)
     today_yhat_upper = round(today_forecast['yhat_upper'].values[0], 2)
-#else:
+else:
     #today_yhat = None  # or assign a default value
     #today_yhat_lower = None  # or assign a default value
     #today_yhat_upper = None  # or assign a default value
