@@ -241,9 +241,9 @@ st.write(f" - Number of days in training data: {len(train)}")
 st.write(f" - Number of days in testing data: {len(test)}")
 
 # Select the last 24 months of data
-df_last_24_months = df.tail(60)
-forecast_last_24_months = forecast.tail(60)
-st.write(forecast_last_24_months.tail(10))
+#df_last_24_months = df.tail(60)
+#forecast_last_24_months = forecast.tail(60)
+#st.write(forecast_last_24_months.tail(10))
 
 # Plot the forecast and the original values for comparison
 st.header("Interactive Plot")
@@ -317,12 +317,12 @@ st.write("- yhat: ", today_yhat)
 st.write("- yhat_upper: ", today_yhat_upper)
 
 # Create a DataFrame with the forecast values
-data = {
-    "Confidence Intervals": ["yhat_lower", "yhat", "yhat_upper"],
-    "Values": [today_yhat_lower, today_yhat, today_yhat_upper]
-}
+#data = {
+    #"Confidence Intervals": ["yhat_lower", "yhat", "yhat_upper"],
+    #"Values": [today_yhat_lower, today_yhat, today_yhat_upper]
+#}
 
-df = pd.DataFrame(data)
+#df = pd.DataFrame(data)
 
 # Display the DataFrame as a three-column table
 #st.subheader("Current Forecast Price Confidence Intervals:")
@@ -330,9 +330,9 @@ df = pd.DataFrame(data)
 #st.write(df.set_index(df.columns[0]))
 
 #st.write("Forecast for", ticker)
-forecast['ds'] = forecast['ds'].dt.date
-forecast.reset_index(drop=True)
-forecast.reset_index(drop=True, inplace=True)
+#forecast['ds'] = forecast['ds'].dt.date
+#forecast.reset_index(drop=True)
+#forecast.reset_index(drop=True, inplace=True)
 #st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10))
 #st.write(forecast[['ds', 'yhat_lower', 'yhat_upper']].tail(3)).set_index(forecast.columns[0])
 #forecast = forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10).set_index(forecast.columns[0])
