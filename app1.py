@@ -26,7 +26,9 @@ yf.pdr_override()
 # Tickers list
 #ticker_list = sorted (['LLY','V','MA','WBA','BMY','HUM','CI','UNH','CVS','DOCU','ZM','ABNB','SNOW','LYFT','UBER','DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CADL','MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC'])
 #ticker_list = sorted (['C', 'WFC', 'GS', 'RIVN', 'LCID', 'CL', 'MRK', 'JPM', 'T', 'TMUS', 'CMCSA', 'VOD', 'LOW', 'FND', 'PEP', 'PG', 'MRM', 'KMB','UL', 'EL', 'VZ', 'LLY','V','MA','ABBV','WBA','BMY','HUM','CI','UNH','CVS','DOCU','ZM','ABNB','SNOW','LYFT','UBER','DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CADL','MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC'])
-ticker_list = sorted (['DOW', 'EZBC','BTCO','FBTC','BITB','AVGO','SATS','ISRG','BCH-USD','AVAX-USD','SOL-USD','GOLD','OXY','ARM','SOFI','SBUX','ARM', 'NIO','AMC','CTLT','ECL','EFX','NKE','C', 'WFC', 'GS', 'RIVN', 'LCID', 'CL', 'MRK', 'JPM', 'T', 'TMUS', 'CMCSA', 'VOD', 'LOW', 'FND', 'PEP', 'PG', 'MRM', 'KMB','UL', 'EL', 'VZ', 'LLY','V','MA','ABBV','WBA','BMY','HUM','CI','UNH','CVS','DOCU','ZM','ABNB','SNOW','LYFT','UBER','DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CADL','MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC'])
+#ticker_list = sorted (['DOW', 'EZBC','BTCO','FBTC','BITB','AVGO','SATS','ISRG','BCH-USD','AVAX-USD','SOL-USD','GOLD','OXY','ARM','SOFI','SBUX','ARM', 'NIO','AMC','CTLT','ECL','EFX','NKE','C', 'WFC', 'GS', 'RIVN', 'LCID', 'CL', 'MRK', 'JPM', 'T', 'TMUS', 'CMCSA', 'VOD', 'LOW', 'FND', 'PEP', 'PG', 'MRM', 'KMB','UL', 'EL', 'VZ', 'LLY','V','MA','ABBV','WBA','BMY','HUM','CI','UNH','CVS','DOCU','ZM','ABNB','SNOW','LYFT','UBER','DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CADL','MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC'])
+#ticker_list = sorted (['DOW', 'EZBC','BTCO','FBTC','BITB','AVGO','SATS','ISRG','BCH-USD','AVAX-USD','SOL-USD','GOLD','OXY','ARM','SOFI','SBUX','ARM', 'NIO','AMC','CTLT','ECL','EFX','NKE','C', 'WFC', 'GS', 'RIVN', 'LCID', 'CL', 'MRK', 'JPM', 'T', 'TMUS', 'CMCSA', 'VOD', 'LOW', 'FND', 'PEP', 'PG', 'MRM', 'KMB','UL', 'EL', 'VZ', 'LLY','V','MA','ABBV','WBA','BMY','HUM','CI','UNH','CVS','DOCU','ZM','ABNB','SNOW','LYFT','UBER','DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CADL','MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC'])
+ticker_list = sorted (['DOW','SPY', 'META', 'TSLA', 'AMZN', 'GOOG'])
 ticker_list = sorted(ticker_list)
 
 # Sort the ticker list alphabetically
@@ -203,7 +205,7 @@ def interactive_plot_forecasting(df, forecast, title):
     # Add quarterly average line
     #fig.add_trace(go.Scatter(x=df['ds'], y=df['ds'].map(lambda x: quarterly_avg[x.quarter]), mode='lines', name='Quarterly Average'))
   
-    #st.plotly_chart(fig)
+    st.plotly_chart(fig)
 
 option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
 
