@@ -9,7 +9,6 @@ import datetime
 import numpy as np
 import math
 
-
 from pandas_datareader import data as pdr
 from datetime import date
 import yfinance as yf
