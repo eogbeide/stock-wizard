@@ -9,6 +9,6 @@ PyDictionary
 nltk
 urllib3
 PyPDF2
-numpy == 24.1.2
+numpy
 openpyxl
 matplotlib
