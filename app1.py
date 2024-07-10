@@ -8,7 +8,6 @@ import glob
 import datetime
 #import numpy as np
 import numpy as np
-num = np.float64
 import math
 
 
