@@ -10,6 +10,5 @@ nltk
 urllib3
 PyPDF2
 numpy
-num = np.float64
 openpyxl
 matplotlib
