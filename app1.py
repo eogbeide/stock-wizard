@@ -158,8 +158,10 @@ for selected_file in selected_files:
 
 
 def calculate_trend_break(df):
-    df['trend'] = np.where(df['y'].diff() > 50, 'up', 'down')
-    df['trend_break'] = np.where(df['trend'].shift() != df['trend'], 1, 0)
+    #df['trend'] = np.where(df['y'].diff() > 50, 'up', 'down')
+    df['trend'] = np.where(np.greater(df['y'].diff(), 50), 'up', 'down')
+    #df['trend_break'] = np.where(df['trend'].shift() != df['trend'], 1, 0)
+    df['trend_break'] = np.where(np.not_equal(df['trend'].shift(), df['trend']), 1, 0)
     return df
 
 #@st.cache_data(experimental_allow_widgets=True)
