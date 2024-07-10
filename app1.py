@@ -7,7 +7,7 @@ from matplotlib import pyplot as plt
 import glob
 import datetime
 #import numpy as np
-import numpy as np
+import numpy as np.float64
 num = np.float64
 import math
 
