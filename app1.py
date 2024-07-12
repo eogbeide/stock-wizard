@@ -1,5 +1,5 @@
 import pandas as pd
-from prophet import Prophet
+from fbprophet import Prophet
 import yfinance as yf
 import streamlit as st
 from datetime import datetime, timedelta
