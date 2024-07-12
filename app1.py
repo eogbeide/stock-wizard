@@ -1,39 +1,384 @@
-import pandas as pd
-import numpy as np
 import streamlit as st
-from datetime import datetime, timedelta
+import pandas as pd
+import plotly.express as px
+from prophet import Prophet
+from plotly import graph_objs as go
+from matplotlib import pyplot as plt
+import glob
+import datetime
+import numpy as np
+import math
 
-# Define the ticker list
-ticker_list = sorted(['DOW', 'SPY', 'META', 'TSLA', 'AMZN', 'GOOG', 'UNH', 'SPCE', 'NVDA'])
+from pandas_datareader import data as pdr
+from datetime import date
+import yfinance as yf
+import os
+from datetime import timedelta
+import sys
 
-# Function to generate random noise data
-def generate_random_data(start_date, end_date):
-    date_range = pd.date_range(start=start_date, end=end_date, freq='H')
-    num_hours = len(date_range)
-    noise_data = np.random.normal(0, 1, num_hours)
-    return pd.DataFrame({'Date': date_range, 'Noise': noise_data})
+# Set the desired width for DataFrame display
+pd.set_option('display.width', 40)
 
-# Function to generate forecast
-def generate_forecast(stock_data):
-    future_dates = pd.date_range(start=stock_data['Date'].iloc[-1], periods=30, freq='H')
-    forecast_data = pd.DataFrame({'Date': future_dates})
-    forecast_data['Noise'] = np.random.normal(0, 1, len(forecast_data))
-    return forecast_data.set_index('Date')
+st.set_page_config(page_title="Stock Price Prediction Wizard App")
+yf.pdr_override()
 
-# Fetch stock data and generate forecast for each ticker
-forecasts = {}
-for ticker in ticker_list:
-    # Fetch stock data for the last 90 days
-    end_date = datetime.now()
-    start_date = end_date - timedelta(days=90)
-    stock_data = generate_random_data(start_date, end_date)
+# Tickers list
+#ticker_list = sorted (['LLY','V','MA','WBA','BMY','HUM','CI','UNH','CVS','DOCU','ZM','ABNB','SNOW','LYFT','UBER','DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CADL','MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC'])
+#ticker_list = sorted (['C', 'WFC', 'GS', 'RIVN', 'LCID', 'CL', 'MRK', 'JPM', 'T', 'TMUS', 'CMCSA', 'VOD', 'LOW', 'FND', 'PEP', 'PG', 'MRM', 'KMB','UL', 'EL', 'VZ', 'LLY','V','MA','ABBV','WBA','BMY','HUM','CI','UNH','CVS','DOCU','ZM','ABNB','SNOW','LYFT','UBER','DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CADL','MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC'])
+#ticker_list = sorted (['DOW', 'EZBC','BTCO','FBTC','BITB','AVGO','SATS','ISRG','BCH-USD','AVAX-USD','SOL-USD','GOLD','OXY','ARM','SOFI','SBUX','ARM', 'NIO','AMC','CTLT','ECL','EFX','NKE','C', 'WFC', 'GS', 'RIVN', 'LCID', 'CL', 'MRK', 'JPM', 'T', 'TMUS', 'CMCSA', 'VOD', 'LOW', 'FND', 'PEP', 'PG', 'MRM', 'KMB','UL', 'EL', 'VZ', 'LLY','V','MA','ABBV','WBA','BMY','HUM','CI','UNH','CVS','DOCU','ZM','ABNB','SNOW','LYFT','UBER','DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CADL','MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC'])
+#ticker_list = sorted (['DOW', 'EZBC','BTCO','FBTC','BITB','AVGO','SATS','ISRG','BCH-USD','AVAX-USD','SOL-USD','GOLD','OXY','ARM','SOFI','SBUX','ARM', 'NIO','AMC','CTLT','ECL','EFX','NKE','C', 'WFC', 'GS', 'RIVN', 'LCID', 'CL', 'MRK', 'JPM', 'T', 'TMUS', 'CMCSA', 'VOD', 'LOW', 'FND', 'PEP', 'PG', 'MRM', 'KMB','UL', 'EL', 'VZ', 'LLY','V','MA','ABBV','WBA','BMY','HUM','CI','UNH','CVS','DOCU','ZM','ABNB','SNOW','LYFT','UBER','DLTR','DG','COST','KO','TGT','JNJ','HD','WMT','INAB','CADL','MTCH', 'EA', 'PYPL', 'INTC', 'PFE', 'MRNA', 'CRL', 'CRM', 'AFRM', 'MU', 'AMAT', 'DELL', 'HPQ', 'BABA', 'VTWG', 'SPGI', 'STX', 'LABU', 'TSM', 'AMZN', 'BOX', 'AAPL', 'NFLX', 'AMD', 'GME', 'GOOG', 'GUSH', 'LU', 'META', 'MSFT', 'NVDA', 'PLTR', 'SITM', 'SPCE', 'SPY', 'TSLA', 'URI', 'WDC'])
+ticker_list = sorted (['DOW','SPY', 'META', 'TSLA', 'AMZN', 'GOOG', 'UNH', 'SPCE', 'NVDA'])
+ticker_list = sorted(ticker_list)
+
+# Sort the ticker list alphabetically
+#ticker_list_sorted = sorted(ticker_list)
+#ticker_list = ticker_list_sorted
+
+#def load_data():
+    #tickers = ticker_list
+   # return pd.DataFrame({"Ticker": tickers})
+#df = load_data()
+
+today = date.today()
+# Check if today is a weekend (Saturday or Sunday)
+if today.weekday() >= 5:
+    # Display error message
+    #error_message = "It is weekend; Check back on Monday"
+    #print(error_message)
+    st.write("It is the weekend, check back on Monday when prices are updated")
+    #sys.exit()
+else:
+    #st.write("Welcome to the Stock Trend Prediction Wizard App") 
+    st.write("Welcome to the Smart AI Stock Trend Prediction Wizard by Manny: $$$")
     
-    # Generate forecast
-    forecast = generate_forecast(stock_data)
-    forecasts[ticker] = forecast
+# We can get data by our choice by giving days bracket
+start_date = "2012-10-01"
+end_date = today.strftime("%Y-%m-%d")  # Use today's date as the end date
 
-# Display forecast plots using Streamlit
-for ticker, forecast in forecasts.items():
-    st.subheader(f"Forecast for {ticker}")
-    st.write(forecast)
-    st.line_chart(forecast)
+# Get yesterday's date
+#yesterday = (date.today() - timedelta(days=1)).strftime("%Y-%m-%d")
+#yesterday = (pd.to_datetime('today') - pd.to_timedelta(1, unit='d')).strftime("%Y-%m-%d")
+
+# Get yesterday's date
+#yesterday = today - datetime.timedelta(days=1)
+yesterday = (pd.to_datetime('today') - pd.to_timedelta(1, unit='d')).strftime("%Y-%m-%d")
+#yesterday = today - datetime.pd.to_timedelta(days=1)
+
+files = []
+
+#@st.cache_data(experimental_allow_widgets=True)
+def getData(ticker):
+    print(ticker)
+    data = pdr.get_data_yahoo(ticker, start=start_date, end=today)
+    dataname = ticker + '_' + str(today)
+    files.append(dataname)
+    SaveData(data, dataname)
+
+# Create a data folder in your current dir.
+#@st.cache_data(experimental_allow_widgets=True)
+def SaveData(df, filename):
+    save_path = os.path.expanduser('~/Documents/data/')
+    os.makedirs(save_path, exist_ok=True)  # Create the directory if it doesn't exist
+    df.to_csv(os.path.join(save_path, filename + '.csv'))
+
+# This loop will iterate over ticker list, will pass one ticker to get data, and save that data as a file.
+for tik in ticker_list:
+    getData(tik)
+
+# Pull data, train model, and predict
+#@st.cache_data(experimental_allow_widgets=True)
+def select_files(files):
+    num_files = len(files)
+
+    selected_files = []
+    selected_ticker_info = None
+    
+    while True:
+        try:
+            #tickers = st.multiselect(
+                #"Filter by sorted company ticker:", options=df.sort_values(by="Ticker").Ticker.unique()
+            #)
+            
+            # Sort the ticker list alphabetically
+            ticker_list_sorted = sorted(ticker_list)
+            
+            # Display the sorted ticker list in Streamlit
+            choice = st.sidebar.selectbox(
+                "Select Company Ticker", 
+                range(1, num_files + 1), 
+                format_func=lambda x: files[x - 1].split('/')[-1].split('_')[0],
+                key="selectbox"
+            )
+            
+            selected_file = files[choice - 1]
+            selected_files.append(selected_file)
+            
+            # Retrieve ticker information from yfinance
+            selected_ticker = selected_file.split('/')[-1].split('_')[0]
+            ticker_info = yf.Ticker(selected_ticker)
+            selected_ticker_info = ticker_info.info
+                   
+            break
+        except IndexError:
+            st.sidebar.warning("Invalid choice. Please try again.")
+
+    return selected_files, selected_ticker_info
+    
+# the path to your csv file directory
+mycsvdir = os.path.expanduser('~/Documents/data')
+
+# get all the csv files in that directory (assuming they have the extension .csv)
+csvfiles = glob.glob(os.path.join(mycsvdir, '*.csv'))
+
+# Prompt the user to select two files
+selected_files, selected_ticker_info = select_files(csvfiles)
+
+# Read the selected files using pandas
+dfs = []
+for selected_file in selected_files:
+    df = pd.read_csv(selected_file)
+    df = df[['Date', 'Close']]
+    df.columns = ['ds', 'y']
+    df['ds'] = pd.to_datetime(df['ds'])
+    df.reset_index(inplace=True, drop=True)
+    dfs.append(df)
+
+# Plot the selected files
+titles = []
+tickers = []
+for selected_file in selected_files:
+    ticker = selected_file.split('/')[-1].split('_')[0]
+    tickers.append(ticker)
+    selected_file = selected_file.replace(mycsvdir + '/', '')  # Remove the directory path
+    selected_file = selected_file.replace('.csv', '')  # Remove the ".csv" extension
+    #selected_file = selected_file.replace('data"\"', '')  # Remove the ".data" extension
+    ticker = ticker.replace('data"\"', '')  # Remove the ".data" extension
+    #titles.append(f'Original Vs Predicted ({ticker})')
+    titles.append(f'Chart of Original Price (y)   Vs   Predicted Price for ({ticker})')
+
+
+def calculate_trend_break(df):
+    #df['trend'] = np.where(df['y'].diff() > 50, 'up', 'down')
+    df['trend'] = np.where(np.greater(df['y'].diff(), 50), 'up', 'down')
+    #df['trend_break'] = np.where(df['trend'].shift() != df['trend'], 1, 0)
+    df['trend_break'] = np.where(np.not_equal(df['trend'].shift(), df['trend']), 1, 0)
+    return df
+
+#@st.cache_data(experimental_allow_widgets=True)
+def interactive_plot_forecasting(df, forecast, title):
+    df = calculate_trend_break(df)
+    fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
+    
+    # Get maximum and minimum points
+    max_points = df[df['y'] == df['y'].max()]
+    min_points = df[df['y'] == df['y'].min()]
+
+    # Add maximum points to the plot
+    fig.add_trace(go.Scatter(x=max_points['ds'], y=max_points['y'], mode='markers', name='Maximum'))
+
+    # Add minimum points to the plot
+    fig.add_trace(go.Scatter(x=min_points['ds'], y=min_points['y'], mode='markers', name='Minimum'))
+
+    # Add yhat_lower and yhat_upper
+    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
+    fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
+
+    # Add trend break points
+    #trend_break_points = df[df['trend_break'] == 1]
+    #fig.add_trace(go.Scatter(x=trend_break_points['ds'], y=trend_break_points['y'], mode='markers', name='Trend Break'))
+
+    # Add forecasted values
+    #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat'], mode='lines', name='yhat future prediction'))
+    #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
+    #fig.add_trace(go.Scatter(x=forecast['ds'], y=forecast['yhat_upper'], mode='lines', name='yhat_upper'))
+
+    # Add moving average line for y
+    moving_avg = df['y'].rolling(window=7).mean()
+    #fig.add_trace(go.Scatter(x=df['ds'], y=moving_avg, mode='lines', name='Moving Average'))
+
+    # Calculate circumference
+    circumference = math.pi * df['y'].sum()
+
+    # Calculate quarterly average line
+    quarterly_avg = df.groupby(df['ds'].dt.quarter)['y'].mean()
+    quarters = df['ds'].dt.quarter.unique()
+
+    # Add quarterly average line
+    #fig.add_trace(go.Scatter(x=df['ds'], y=df['ds'].map(lambda x: quarterly_avg[x.quarter]), mode='lines', name='Quarterly Average'))
+  
+    st.plotly_chart(fig)
+
+option = st.sidebar.write("Company Selected:", selected_ticker_info['longName'])
+
+# Append today's date to the titles
+today = date.today().strftime("%Y-%m-%d")
+
+# Iterate over the selected files and their corresponding titles
+for df, title, ticker in zip(dfs, titles, tickers):
+    # Split the data into testing and training datasets
+    train = df[df['ds'] <= '10/31/2023']
+    test = df[df['ds'] >= '11/01/2023']
+
+# Initialize Model
+m = Prophet()
+
+# Create and fit the prophet model to the training data
+m.fit(train)
+
+# Make predictions
+future = m.make_future_dataframe(periods=130)
+forecast = m.predict(future)
+
+# Add predicted values to the original dataframe
+df['predicted'] = forecast['trend']
+
+st.title("Major US Stocks AI Forecast Wizard")
+st.write("")
+#st.write("The Smart AI Stock Trend Wiz by Manny: $$$")
+st.write(f" - **Company Name:** ", selected_ticker_info['longName'])
+
+#st.write(f"Number of months in train data for {ticker}: {len(train)}")
+#st.write(f" - Number of months in test data for {ticker}: {len(test)}")
+st.subheader(f"Machine Learning Modeling Information")
+st.write(f" - Number of days in training data: {len(train)}")
+st.write(f" - Number of days in testing data: {len(test)}")
+
+# Select the last 24 months of data
+df_last_24_months = df.tail(60)
+forecast_last_24_months = forecast.tail(60)
+#st.write(forecast_last_24_months.tail(10))
+
+# Plot the forecast and the original values for comparison
+st.header("Interactive Plot")
+interactive_plot_forecasting(df, forecast, f'{title} ({today})')
+
+def interactive_plot_forecastings(df, forecast, title):
+    fig = px.line(df, x='ds', y=['y', 'predicted'], title=title)
+    fig = px.line(df, x='ds', y=['y'], title=title)
+    #fig.add_trace(go.Scatter(x=df['ds'], y=forecast['yhat_lower'], mode='lines', name='yhat_lower'))
+
+    # Add moving average line for y
+    #moving_avg = df['y'].rolling(window=7).mean()
+    #fig.add_trace(go.Scatter(x=df['ds'], y=moving_avg, mode='lines', name='Moving Average'))
+
+    #max_points = df[df['y'] == df['y'].max()]
+    #min_points = df[df['y'] == df['y'].min()]
+
+    # Add maximum points to the plot
+    #fig.add_trace(go.Scatter(x=max_points['ds'], y=max_points['y'], mode='markers', name='Maximum'))
+
+    # Add minimum points to the plot
+    #fig.add_trace(go.Scatter(x=min_points['ds'], y=min_points['y'], mode='markers', name='Minimum'))
+
+    # Add logistic moving average line for y
+    #def logistic_moving_avg(x):
+        #return np.log(np.mean(np.exp(x)))
+
+    #moving_avg = df['y'].rolling(window=7).apply(logistic_moving_avg)
+    #fig.add_trace(go.Scatter(x=df['ds'], y=moving_avg, mode='lines', name='Logistic Moving Average'))
+    
+    # Calculate quarterly average line
+    quarterly_avg = df.groupby(df['ds'].dt.quarter)['y'].mean()
+    quarters = df['ds'].dt.quarter.unique()
+
+    # Add quarterly average line
+    fig.add_trace(go.Scatter(x=df['ds'], y=df['ds'].map(lambda x: quarterly_avg[x.quarter]), mode='lines', name='Quarterly Average'))
+
+    st.plotly_chart(fig)
+    
+interactive_plot_forecastings(df_last_24_months, forecast_last_24_months, f'{title} ({today})')
+
+st.subheader("Last Three Days Closing Prices")
+df['ds'] = pd.to_datetime(df['ds']).dt.date
+#st.write(df[['ds', 'y']].tail(3).reset_index(drop=True))
+st.write(df[['ds', 'y']].tail(3).set_index(df.columns[0]))
+
+# Extract today's forecast values
+today_forecast = forecast[forecast['ds'] == today]
+
+# Get today's yhat, yhat_lower, and yhat_upper values
+#today_yhat = round(today_forecast['yhat'].values[0],2)
+#today_yhat_lower = round(today_forecast['yhat_lower'].values[0],2)
+#today_yhat_upper = round(today_forecast['yhat_upper'].values[0],2)
+
+#if len(today_forecast) > 0:
+    #today_yhat = round(today_forecast['yhat'].values[0], 2)
+    #today_yhat_lower = round(today_forecast['yhat_lower'].values[0], 2)
+    #today_yhat_upper = round(today_forecast['yhat_upper'].values[0], 2)
+#else:
+    #today_yhat = None  # or assign a default value
+    #today_yhat_lower = None  # or assign a default value
+    #today_yhat_upper = None  # or assign a default value
+
+# Get today's date as a datetime.date object
+today = datetime.date.today()
+
+# Display today's forecast values
+#st.subheader("Current Forecast Price Confidence Intervals:")
+#st.write("- yhat_lower: ", today_yhat_lower)
+#st.write("- yhat: ", today_yhat)
+#st.write("- yhat_upper: ", today_yhat_upper)
+
+# Create a DataFrame with the forecast values
+#data = {
+    #"Confidence Intervals": ["yhat_lower", "yhat", "yhat_upper"],
+    #"Values": [today_yhat_lower, today_yhat, today_yhat_upper]
+#}
+
+#df = pd.DataFrame(data)
+
+# Display the DataFrame as a three-column table
+#st.subheader("Current Forecast Price Confidence Intervals:")
+#st.write(df)
+#st.write(df.set_index(df.columns[0]))
+
+#st.write("Forecast for", ticker)
+#forecast['ds'] = forecast['ds'].dt.date
+#forecast.reset_index(drop=True)
+#forecast.reset_index(drop=True, inplace=True)
+#st.write(forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10))
+#st.write(forecast[['ds', 'yhat_lower', 'yhat_upper']].tail(3)).set_index(forecast.columns[0])
+#forecast = forecast[['ds', 'yhat_lower', 'yhat', 'yhat_upper']].tail(10).set_index(forecast.columns[0])
+
+#st.write(forecast)
+
+
+#df = pd.DataFrame(data)
+
+
+
+#st.write(" - Location: ", selected_ticker_info['country'])
+st.header("How to read chart:")
+st.write(f" - **yhat or predicted** is the median price that shows price trend")
+st.write(f" - **yhat_lower** is the lowest price boundary. Closing price below yhat_lower signals a buying opportunity")
+st.write(f" - **yhat_upper** is the highest price boundary. Closing price above yhat_upper signals a selling or profit taking opportunity")
+
+# Delete existing files
+for file in csvfiles:
+    os.remove(file.replace('\\', '/'))
+
+# Display selected ticker information
+#st.write("Selected Ticker Information:")
+# st.write(selected_ticker_info)
+st.subheader("Other Stats")
+st.write(" - 50-Day Average: ", selected_ticker_info['fiftyDayAverage'])
+st.write(" - 200-Day Average: ", selected_ticker_info['twoHundredDayAverage'])
+#st.write(" - beta: ")
+if 'beta' in selected_ticker_info:
+    st.write(" - beta:", selected_ticker_info['beta'])
+else:
+    st.write(" - Beta Not Available")
+st.header("About Company")
+if 'longBusinessSummary' in selected_ticker_info:
+    st.write(selected_ticker_info['longBusinessSummary'])
+else:
+    st.write("Not Available")
+
+if 'longName' in selected_ticker_info:
+    st.write(selected_ticker_info['longName'])
+else:
+    st.write("Not Available")
+
+
+st.title("DISCLAIMER")
+st.write("Please note that the information provided in this app does not replace professional advice from licensed finance professionals and brokers. Due to the inherent risks in stock trading, it is advised that users consult with professionals before making any financial decisions.")
