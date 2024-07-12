@@ -12,5 +12,3 @@ PyPDF2
 numpy
 openpyxl
 matplotlib
-xgboost
-sklearn
