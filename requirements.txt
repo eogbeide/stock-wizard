@@ -9,6 +9,6 @@ PyDictionary
 nltk
 urllib3
 PyPDF2
-numpy
+numpy-1.23.5
 openpyxl
 matplotlib
