@@ -6,7 +6,7 @@ from plotly import graph_objs as go
 from matplotlib import pyplot as plt
 import glob
 import datetime
-import numpy as np.float64
+import numpy as np
 import math
 
 from pandas_datareader import data as pdr
@@ -158,10 +158,10 @@ for selected_file in selected_files:
 
 
 def calculate_trend_break(df):
-    #df['trend'] = np.where(df['y'].diff() > 50, 'up', 'down')
-    df['trend'] = np.where(np.greater(df['y'].diff(), 50), 'up', 'down')
-    #df['trend_break'] = np.where(df['trend'].shift() != df['trend'], 1, 0)
-    df['trend_break'] = np.where(np.not_equal(df['trend'].shift(), df['trend']), 1, 0)
+    #df['trend'] = np.float64.where(df['y'].diff() > 50, 'up', 'down')
+    df['trend'] = np.float64.where(np.greater(df['y'].diff(), 50), 'up', 'down')
+    #df['trend_break'] = np.float64.where(df['trend'].shift() != df['trend'], 1, 0)
+    df['trend_break'] = np.float.64.where(np.not_equal(df['trend'].shift(), df['trend']), 1, 0)
     return df
 
 #@st.cache_data(experimental_allow_widgets=True)
@@ -272,7 +272,7 @@ def interactive_plot_forecastings(df, forecast, title):
 
     # Add logistic moving average line for y
     #def logistic_moving_avg(x):
-        #return np.log(np.mean(np.exp(x)))
+        #return np.float.64.log(npfloat.64.mean(np.float.64.exp(x)))
 
     #moving_avg = df['y'].rolling(window=7).apply(logistic_moving_avg)
     #fig.add_trace(go.Scatter(x=df['ds'], y=moving_avg, mode='lines', name='Logistic Moving Average'))
