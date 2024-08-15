@@ -40,6 +40,10 @@ def main():
     forecast = model_fit.forecast(steps=30)
     forecast_dates = pd.date_range(final_df.index[-1], periods=31)[1:]
     forecast_df = pd.DataFrame({'Date': forecast_dates, 'Forecast': forecast})
+    
+    # Format the 'Close' values to two decimal places
+    final_df_formatted = final_df.copy()
+    final_df_formatted['Close'] = final_df_formatted['Close'].apply(lambda x: round(x, 2))
 
     # Plotting
     fig, ax = plt.subplots(figsize=(12, 6))
@@ -50,9 +54,9 @@ def main():
 
     st.pyplot(fig)
 
-    # Display the 30-day forecast as a table without the index column and Close values formatted to 2 decimal places
+    # Display the 30-day forecast as a table without the index column
     st.write("30-Day Forecast:")
-    st.write(forecast_df[['Date', 'Forecast']].to_string(index=False, float_format='%.2f'))
+    st.write(forecast_df[['Date', 'Forecast']].to_string(index=False))
     
 if __name__ == '__main__':
     main()
