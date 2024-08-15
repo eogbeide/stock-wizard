@@ -41,10 +41,6 @@ def main():
     forecast_dates = pd.date_range(final_df.index[-1], periods=31)[1:]
     forecast_df = pd.DataFrame({'Date': forecast_dates, 'Forecast': forecast})
 
-    # Display the 30-day forecast as a table
-    st.write("30-Day Forecast:")
-    st.write(forecast_df[['Date', 'Forecast']])
-
     # Plotting
     fig, ax = plt.subplots(figsize=(12, 6))
     ax.plot(final_df.index, final_df["Close"], label='Actual')
@@ -54,5 +50,9 @@ def main():
 
     st.pyplot(fig)
 
+    # Display the 30-day forecast as a table
+    st.write("30-Day Forecast:")
+    st.write(forecast_df[['Date', 'Forecast']])
+    
 if __name__ == '__main__':
     main()
