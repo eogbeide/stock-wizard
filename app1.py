@@ -42,14 +42,19 @@ def main():
     forecast_dates = pd.date_range(final_df.index[-1], periods=31)[1:]
     forecast_df = pd.DataFrame({'Date': forecast_dates, 'Forecast': forecast})
 
-    st.write("30-Day Forecast:")
-    st.write(forecast_df)
+    # Create a DataFrame combining historical data and predictions
+    combined_df = pd.concat([final_df, pd.DataFrame(data={'Date': forecast_dates, 'Close': forecast})])
 
-    # Interactive plot using Altair
-    fig = alt.Chart(forecast_df).mark_line(color='green').encode(
+    # Interactive plot using Altair for historical data and predictions
+    fig = alt.Chart(combined_df.reset_index()).mark_line(color='blue').encode(
+        x='Date:T',
+        y='Close:Q',
+        tooltip=['Date', 'Close']
+    ).properties(width=600, height=400, title='Historical Data and Predictions') + \
+    alt.Chart(forecast_df).mark_line(color='green').encode(
         x='Date:T',
         y='Forecast:Q'
-    ).properties(width=600, height=400, title='30-Day Forecast')
+    )
 
     st.altair_chart(fig, use_container_width=True)
 
