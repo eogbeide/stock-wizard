@@ -7,7 +7,8 @@ from statsmodels.tsa.arima.model import ARIMA
 
 def load_data(ticker_symbol):
     spy_data = yf.Ticker(ticker_symbol)
-    ticker_symbol = sorted (['DOW','SPY', 'META', 'TSLA', 'AMZN', 'GOOG', 'UNH', 'SPCE', 'NVDA'])
+    # Define the ticker symbol for SPY
+    ticker_symbol = (['DOW','SPY', 'META', 'TSLA', 'AMZN', 'GOOG', 'UNH', 'SPCE', 'NVDA'])
     spy_history = spy_data.history(period="1y")[["Open", "High", "Low", "Close"]]
     return spy_history["Close"]
 
