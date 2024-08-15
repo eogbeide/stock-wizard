@@ -61,9 +61,9 @@ def main():
 
     st.pyplot(fig)
 
-    st.write("Predictions:")
-    forecast_df['Date'] = forecast_df['Date'].dt.date 
+    st.write("Predictions:")    
     st.write(forecast_df[['Date', 'Forecast']].head(10).set_index(forecast_df.columns[0]).round(2))  # Display only 'Date' and 'Forecast' columns
+    forecast_df['Date'] = forecast_df['Date'].dt.date 
 
 
 if __name__ == '__main__':
