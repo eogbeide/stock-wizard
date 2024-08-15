@@ -62,7 +62,7 @@ def main():
     st.pyplot(fig)
 
     st.write("Predictions:")
-    st.write(forecast_df)
+    st.write(forecast_df[['Date', 'Forecast']])  # Display only 'Date' and 'Forecast' columns
 
 if __name__ == '__main__':
     main()
