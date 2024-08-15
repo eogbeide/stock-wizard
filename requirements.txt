@@ -12,3 +12,4 @@ PyPDF2
 numpy
 openpyxl
 matplotlib
+statsmodels
