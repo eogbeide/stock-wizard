@@ -13,3 +13,4 @@ numpy
 openpyxl
 matplotlib
 statsmodels
+fbprophet
