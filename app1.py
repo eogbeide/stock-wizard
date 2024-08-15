@@ -11,6 +11,7 @@ def load_data(ticker_symbol):
     
     # Convert datetime index to date datatype
     spy_history.index = pd.to_datetime(spy_history.index).date
+    spy_history['Date'] =  spy_history['Date'].dt.date 
         
     final_df = spy_history[["Close"]]
     
@@ -63,7 +64,7 @@ def main():
 
     st.write("Predictions:")    
     st.write(forecast_df[['Date', 'Forecast']].head(10).set_index(forecast_df.columns[0]).round(2))  # Display only 'Date' and 'Forecast' columns
-    forecast_df['Date'] = forecast_df['Date'].dt.date 
+    
 
 
 if __name__ == '__main__':
