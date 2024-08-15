@@ -38,15 +38,18 @@ def main():
     st.write(f"Mean Absolute Percentage Error (MAPE) on the validation set: {mape:.2f}%")
 
     forecast = model_fit.forecast(steps=30)
-    forecast_df = pd.DataFrame(forecast, columns=['Forecast'], index=pd.date_range(final_df.index[-1], periods=31)[1:])
+    forecast_dates = pd.date_range(final_df.index[-1], periods=31)[1:]
+    forecast_df = pd.DataFrame({'Date': forecast_dates, 'Forecast': forecast})
 
+    # Display the 30-day forecast as a table
     st.write("30-Day Forecast:")
-    st.write(forecast_df)
+    st.write(forecast_df[['Date', 'Forecast']])
 
+    # Plotting
     fig, ax = plt.subplots(figsize=(12, 6))
     ax.plot(final_df.index, final_df["Close"], label='Actual')
     ax.plot(predictions.index, predictions, label='Predictions', color='red')
-    ax.plot(forecast_df.index, forecast_df['Forecast'], label='Forecast', color='green')
+    ax.plot(forecast_df['Date'], forecast_df['Forecast'], label='Forecast', color='green')
     ax.legend()
 
     st.pyplot(fig)
