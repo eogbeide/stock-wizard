@@ -2,7 +2,7 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
-from fbprophet import Prophet
+from prophet import Prophet
 
 def load_data(ticker_symbol):
     spy_data = yf.Ticker(ticker_symbol)
