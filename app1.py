@@ -8,7 +8,10 @@ from statsmodels.tsa.arima.model import ARIMA
 def load_data(ticker_symbol):
     spy_data = yf.Ticker(ticker_symbol)
     spy_history = spy_data.history(start="2001-01-01", actions=False)[["Open", "High", "Low", "Close"]]
-    spy_history.index = spy_history.index.date
+    
+    # Convert datetime index to date datatype
+    spy_history.index = pd.to_datetime(spy_history.index).date
+    
     final_df = spy_history[["Close"]]
     
     # Set index and column names to False
