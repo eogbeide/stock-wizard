@@ -3,7 +3,6 @@ import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-import statsmodels.api as sm
 from statsmodels.tsa.arima.model import ARIMA
 
 def load_data(ticker_symbol):
@@ -16,7 +15,9 @@ def load_data(ticker_symbol):
 def main():
     st.title('Stock Price Forecasting with ARIMA Model')
 
-    ticker_symbol = st.sidebar.text_input('Enter Ticker Symbol', 'SPY')
+    tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'SPY']  # List of ticker symbols
+    ticker_symbol = st.sidebar.selectbox('Select Ticker Symbol', tickers)
+
     final_df = load_data(ticker_symbol)
 
     order_p = st.sidebar.slider('Order p', 0, 10, 2)
