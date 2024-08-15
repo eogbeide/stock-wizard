@@ -11,11 +11,11 @@ def load_data(ticker_symbol):
     
     # Convert datetime index to date datatype
     spy_history.index = pd.to_datetime(spy_history.index).date
-    spy_history['Date'] =  spy_history['Date'].dt.date 
+    spy_history['Date'] = spy_history.index  # No need to convert datetime to date 
         
     final_df = spy_history[["Close"]]
     
-    # Set index and column names to False
+    # Set index and column names to None
     final_df.index.name = None
     final_df.columns.name = None
     
@@ -50,7 +50,7 @@ def main():
     forecast_dates = pd.date_range(final_df.index[-1], periods=31)[1:]
     forecast_df = pd.DataFrame({'Date': forecast_dates, 'Forecast': forecast})
     
-    # Set index and column names to False for forecast_df
+    # Set index and column names to None for forecast_df
     forecast_df.index.name = None
     forecast_df.columns.name = None
 
@@ -63,9 +63,7 @@ def main():
     st.pyplot(fig)
 
     st.write("Predictions:")    
-    st.write(forecast_df[['Date', 'Forecast']].head(10).set_index(forecast_df.columns[0]).round(2))  # Display only 'Date' and 'Forecast' columns
-    
-
+    st.write(forecast_df[['Date', 'Forecast']].head(10).set_index('Date').round(2))  # Display only 'Date' and 'Forecast' columns
 
 if __name__ == '__main__':
     main()
