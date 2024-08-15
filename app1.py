@@ -64,13 +64,5 @@ def main():
     st.write("Predictions:")
     st.write(forecast_df[['Date', 'Forecast']])  # Display only 'Date' and 'Forecast' columns
 
-    # Plot for 2024 data
-    fig_2024, ax_2024 = plt.subplots(figsize=(12, 6))
-    final_df_2024 = final_df.loc['2024']
-    ax_2024.plot(final_df_2024.index, final_df_2024["Close"], label='Actual 2024 Data', color='blue')
-    ax_2024.legend()
-
-    st.pyplot(fig_2024)
-
 if __name__ == '__main__':
     main()
