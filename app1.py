@@ -50,9 +50,6 @@ def main():
     forecast_df.index.name = None
     forecast_df.columns.name = None
 
-    st.write("Predictions:")
-    st.write(forecast_df)
-
     fig, ax = plt.subplots(figsize=(12, 6))
     ax.plot(final_df.index, final_df["Close"], label='Actual')
     ax.plot(predictions.index, predictions, label='Predictions', color='red')
@@ -60,6 +57,9 @@ def main():
     ax.legend()
 
     st.pyplot(fig)
+
+    st.write("Predictions:")
+    st.write(forecast_df)
 
 if __name__ == '__main__':
     main()
