@@ -4,7 +4,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 from statsmodels.tsa.arima.model import ARIMA
-import altair as alt
 
 def load_data(ticker_symbol):
     spy_data = yf.Ticker(ticker_symbol)
@@ -39,24 +38,18 @@ def main():
     st.write(f"Mean Absolute Percentage Error (MAPE) on the validation set: {mape:.2f}%")
 
     forecast = model_fit.forecast(steps=30)
-    forecast_dates = pd.date_range(final_df.index[-1], periods=31)[1:]
-    forecast_df = pd.DataFrame({'Date': forecast_dates, 'Forecast': forecast})
+    forecast_df = pd.DataFrame(forecast, columns=['Forecast'], index=pd.date_range(final_df.index[-1], periods=31)[1:])
 
-    # Create a DataFrame combining historical data and predictions
-    combined_df = pd.concat([final_df, pd.DataFrame(data={'Date': forecast_dates, 'Close': forecast})])
+    st.write("30-Day Forecast:")
+    st.write(forecast_df)
 
-    # Interactive plot using Altair for historical data and predictions
-    fig = alt.Chart(combined_df.reset_index()).mark_line(color='blue').encode(
-        x='Date:T',
-        y='Close:Q',
-        tooltip=['Date', 'Close']
-    ).properties(width=600, height=400, title='Historical Data and Predictions') + \
-    alt.Chart(forecast_df).mark_line(color='green').encode(
-        x='Date:T',
-        y='Forecast:Q'
-    )
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(final_df.index, final_df["Close"], label='Actual')
+    ax.plot(predictions.index, predictions, label='Predictions', color='red')
+    ax.plot(forecast_df.index, forecast_df['Forecast'], label='Forecast', color='green')
+    ax.legend()
 
-    st.altair_chart(fig, use_container_width=True)
+    st.pyplot(fig)
 
 if __name__ == '__main__':
     main()
