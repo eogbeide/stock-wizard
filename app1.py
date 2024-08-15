@@ -3,7 +3,7 @@ import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-from fbprophet import Prophet
+from prophet import Prophet
 
 def load_data(ticker_symbol):
     spy_data = yf.Ticker(ticker_symbol)
