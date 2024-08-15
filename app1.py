@@ -23,7 +23,7 @@ def main():
     model = ARIMA(data, order=(2, 1, 2))
     model_fit = model.fit()
 
-    forecast, stderr, conf_int = model_fit.forecast(steps=30, alpha=0.05)
+    #forecast, stderr, conf_int = model_fit.forecast(steps=30, alpha=0.05)
 
     st.write("### Forecasted Stock Prices")
     forecast_df = pd.DataFrame({
