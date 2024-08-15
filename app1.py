@@ -10,7 +10,8 @@ def load_data(ticker_symbol):
     spy_history = spy_data.history(start="2001-01-01", actions=False)[["Open", "High", "Low", "Close"]]
     
     # Convert datetime index to date datatype
-    spy_history.index = pd.to_datetime(spy_history.index).date
+    #spy_history.index = pd.to_datetime(spy_history.index).date
+    spy_history.index = pd.to_date(spy_history.index).date
     
     final_df = spy_history[["Close"]]
     
