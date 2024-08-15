@@ -3,46 +3,54 @@ import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-from sklearn.preprocessing import MinMaxScaler
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense
+from statsmodels.tsa.arima.model import ARIMA
 
 def load_data(ticker_symbol):
     spy_data = yf.Ticker(ticker_symbol)
-    spy_history = spy_data.history(start="2001-01-01", actions=False)[["Close"]]
-    return spy_history
-
-def create_LSTM_model():
-    model = Sequential()
-    model.add(LSTM(50, return_sequences=True, input_shape=(30, 1)))
-    model.add(LSTM(50, return_sequences=False))
-    model.add(Dense(1))
-    model.compile(optimizer='adam', loss='mean_squared_error')
-    return model
+    spy_history = spy_data.history(start="2001-01-01", actions=False)[["Open", "High", "Low", "Close"]]
+    spy_history.index = spy_history.index.date
+    final_df = spy_history[["Close"]]
+    return final_df
 
 def main():
-    st.title('Stock Price Forecasting with LSTM Model')
+    st.title('Stock Price Forecasting with ARIMA Model')
 
     tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'SPY']  # List of ticker symbols
     ticker_symbol = st.sidebar.selectbox('Select Ticker Symbol', tickers)
 
-    data = load_data(ticker_symbol)
-    dataset = data.values
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(dataset)
+    final_df = load_data(ticker_symbol)
 
-    x_train, y_train = [], []
-    for i in range(30, len(dataset)):
-        x_train.append(scaled_data[i-30:i, 0])
-        y_train.append(scaled_data[i, 0])
-    x_train, y_train = np.array(x_train), np.array(y_train)
+    order_p = st.sidebar.slider('Order p', 0, 10, 2)
+    order_d = st.sidebar.slider('Order d', 0, 10, 1)
+    order_q = st.sidebar.slider('Order q', 0, 10, 2)
 
-    x_train = np.reshape(x_train, (x_train.shape[0], x_train.shape[1], 1))
+    model = ARIMA(final_df["Close"], order=(order_p, order_d, order_q))
+    model_fit = model.fit()
 
-    model = create_LSTM_model()
-    model.fit(x_train, y_train, epochs=100, batch_size=32)
+    n_train = len(final_df) - 30
+    train = final_df["Close"][:n_train]
+    test = final_df["Close"][n_train:]
 
-    st.write("LSTM model trained and ready for forecasting.")
+    predictions = model_fit.predict(start=n_train, end=len(final_df) - 1, typ='levels')
+
+    mape = np.mean(np.abs((test - predictions) / test)) * 100
+
+    st.write(f"Mean Absolute Percentage Error (MAPE) on the validation set: {mape:.2f}%")
+
+    forecast = model_fit.forecast(steps=30)
+    forecast_dates = pd.date_range(final_df.index[-1], periods=31)[1:]
+    forecast_df = pd.DataFrame({'Date': forecast_dates, 'Forecast': forecast})
+
+    st.write("Predictions:")
+    st.write(forecast_df)
+
+    fig, ax = plt.subplots(figsize=(12, 6))
+    ax.plot(final_df.index, final_df["Close"], label='Actual')
+    ax.plot(predictions.index, predictions, label='Predictions', color='red')
+    ax.plot(forecast_df['Date'], forecast_df['Forecast'], label='Forecast', color='green')
+    ax.legend()
+
+    st.pyplot(fig)
 
 if __name__ == '__main__':
     main()
