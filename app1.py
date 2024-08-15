@@ -40,7 +40,7 @@ def main():
     forecast = model_fit.forecast(steps=30)
     forecast_dates = pd.date_range(final_df.index[-1], periods=31)[1:]
     forecast_df = pd.DataFrame({'Date': forecast_dates, 'Forecast': forecast})
-    
+
     # Plotting
     fig, ax = plt.subplots(figsize=(12, 6))
     ax.plot(final_df.index, final_df["Close"], label='Actual')
