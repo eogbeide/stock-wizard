@@ -3,7 +3,7 @@ import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-from statsmodels.tsa.statespace.sarimax import SARIMAX
+from statsmodels.tsa.arima.model import ARIMA
 
 def load_data(ticker_symbol):
     spy_data = yf.Ticker(ticker_symbol)
@@ -21,7 +21,7 @@ def load_data(ticker_symbol):
     return final_df
 
 def main():
-    st.title('Stock Price Forecasting with SARIMA Model')
+    st.title('Stock Price Forecasting with ARIMA Model')
 
     tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'SPY']  # List of ticker symbols
     ticker_symbol = st.sidebar.selectbox('Select Ticker Symbol', tickers)
@@ -31,9 +31,8 @@ def main():
     order_p = st.sidebar.slider('Order p', 0, 10, 2)
     order_d = st.sidebar.slider('Order d', 0, 10, 1)
     order_q = st.sidebar.slider('Order q', 0, 10, 2)
-    order_s = st.sidebar.slider('Seasonal Order s', 0, 10, 12)  # Seasonal order for SARIMA
 
-    model = SARIMAX(final_df["Close"], order=(order_p, order_d, order_q), seasonal_order=(order_p, order_d, order_q, order_s))
+    model = ARIMA(final_df["Close"], order=(order_p, order_d, order_q))
     model_fit = model.fit()
 
     n_train = len(final_df) - 30
