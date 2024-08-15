@@ -36,7 +36,7 @@ def main():
     model = ARIMA(final_df["Close"], order=(order_p, order_d, order_q))
     model_fit = model.fit()
 
-    n_train = len(final_df) - 30
+    n_train = len(final_df) - 90
     train = final_df["Close"][:n_train]
     test = final_df["Close"][n_train:]
 
@@ -44,10 +44,10 @@ def main():
 
     mape = np.mean(np.abs((test - predictions) / test)) * 100
 
-    st.write(f"Mean Absolute Percentage Error (MAPE) on the validation set: {mape:.2f}%")
+    st.write(f"Mean Absolute Percentage Error (MAPE) on the test set: {mape:.2f}%")
 
-    forecast = model_fit.forecast(steps=30)
-    forecast_dates = pd.date_range(final_df.index[-1], periods=31)[1:]
+    forecast = model_fit.forecast(steps=90)
+    forecast_dates = pd.date_range(final_df.index[-1], periods=91)[1:]
     forecast_df = pd.DataFrame({'Date': forecast_dates, 'Forecast': forecast})
     
     # Set index and column names to None for forecast_df
