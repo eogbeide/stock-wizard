@@ -2,45 +2,33 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
-import numpy as np
-from statsmodels.tsa.arima.model import ARIMA
+from fbprophet import Prophet
 
 def load_data(ticker_symbol):
     spy_data = yf.Ticker(ticker_symbol)
-    # Define the ticker symbol for SPY
-    ticker_symbol = (['DOW','SPY', 'META', 'TSLA', 'AMZN', 'GOOG', 'UNH', 'SPCE', 'NVDA'])
-    spy_history = spy_data.history(period="1y")[["Open", "High", "Low", "Close"]]
-    return spy_history["Close"]
+    spy_history = spy_data.history(start="2001-01-01", actions=False)[["Close"]]
+    spy_history = spy_history.reset_index()
+    spy_history = spy_history.rename(columns={"Date": "ds", "Close": "y"})
+    return spy_history
 
 def main():
-    st.title('Stock Forecasting App')
+    st.title('Stock Price Forecasting with Prophet Model')
 
-    ticker_symbol = st.sidebar.text_input('Enter Ticker Symbol', 'AAPL')
+    ticker_symbol = st.sidebar.selectbox('Select Ticker Symbol', ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'SPY'])
+    
     data = load_data(ticker_symbol)
 
-    st.write(f"### {ticker_symbol} Stock Data")
-    st.write(data)
+    model = Prophet()
+    model.fit(data)
 
-    model = ARIMA(data, order=(2, 1, 2))
-    model_fit = model.fit()
+    future = model.make_future_dataframe(periods=30)
+    forecast = model.predict(future)
 
-    forecast, stderr, conf_int = model_fit.forecast(steps=30, alpha=0.05)
+    st.write('### Forecast Data')
+    st.write(forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail())
 
-    st.write("### Forecasted Stock Prices")
-    forecast_df = pd.DataFrame({
-        "Date": pd.date_range(start=data.index[-1], periods=31)[1:],
-        "Forecasted Price": forecast,
-        "Lower CI": forecast - 1.96 * stderr,
-        "Upper CI": forecast + 1.96 * stderr
-    })
-    st.write(forecast_df)
-
-    st.write("### Interactive Plot")
-    fig, ax = plt.subplots()
-    ax.plot(data.index, data, label='Actual')
-    ax.plot(forecast_df["Date"], forecast_df["Forecasted Price"], label='Forecast', color='green')
-    ax.fill_between(forecast_df["Date"], forecast_df["Lower CI"], forecast_df["Upper CI"], color='lightgray', label='Confidence Intervals')
-    ax.legend()
+    fig = model.plot(forecast, xlabel='Date', ylabel='Price')
+    plt.title('Stock Price Forecast using Prophet Model')
     st.pyplot(fig)
 
 if __name__ == '__main__':
