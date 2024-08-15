@@ -4,6 +4,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
 from statsmodels.tsa.arima.model import ARIMA
+import altair as alt
 
 def load_data(ticker_symbol):
     spy_data = yf.Ticker(ticker_symbol)
@@ -40,23 +41,17 @@ def main():
     forecast = model_fit.forecast(steps=30)
     forecast_dates = pd.date_range(final_df.index[-1], periods=31)[1:]
     forecast_df = pd.DataFrame({'Date': forecast_dates, 'Forecast': forecast})
-    
-    # Format the 'Close' values to two decimal places
-    final_df_formatted = final_df.copy()
-    final_df_formatted['Close'] = final_df_formatted['Close'].apply(lambda x: round(x, 2))
 
-    # Plotting
-    fig, ax = plt.subplots(figsize=(12, 6))
-    ax.plot(final_df.index, final_df["Close"], label='Actual')
-    ax.plot(predictions.index, predictions, label='Predictions', color='red')
-    ax.plot(forecast_df['Date'], forecast_df['Forecast'], label='Forecast', color='green')
-    ax.legend()
-
-    st.pyplot(fig)
-
-    # Display the 30-day forecast as a table without the index column
     st.write("30-Day Forecast:")
-    st.write(forecast_df[['Date', 'Forecast']].to_string(index=False))
-    
+    st.write(forecast_df)
+
+    # Interactive plot using Altair
+    fig = alt.Chart(forecast_df).mark_line(color='green').encode(
+        x='Date:T',
+        y='Forecast:Q'
+    ).properties(width=600, height=400, title='30-Day Forecast')
+
+    st.altair_chart(fig, use_container_width=True)
+
 if __name__ == '__main__':
     main()
