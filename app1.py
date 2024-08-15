@@ -3,41 +3,74 @@ import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
 import numpy as np
-from prophet import Prophet
+from statsmodels.tsa.arima.model import ARIMA
 
 def load_data(ticker_symbol):
     spy_data = yf.Ticker(ticker_symbol)
-    spy_history = spy_data.history(start="2001-01-01", actions=False)[["Close"]]
+    spy_history = spy_data.history(start="2001-01-01", actions=False)[["Open", "High", "Low", "Close"]]
     
-    spy_history.reset_index(inplace=True)
-    spy_history.columns = ['ds', 'y']  # Renaming columns for Prophet
+    # Convert datetime index to date datatype
+    spy_history.index = pd.to_datetime(spy_history.index).date
+        
+    final_df = spy_history[["Close"]]
     
-    return spy_history
+    # Set index and column names to False
+    final_df.index.name = None
+    final_df.columns.name = None
+    
+    return final_df
 
 def main():
-    st.title('Stock Price Forecasting with Prophet')
+    st.title('Stock Price Forecasting with ARIMA Model')
 
     tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'SPY']  # List of ticker symbols
     ticker_symbol = st.sidebar.selectbox('Select Ticker Symbol', tickers)
 
     final_df = load_data(ticker_symbol)
 
-    model = Prophet()
-    model.fit(final_df)
+    order_p = st.sidebar.slider('Order p', 0, 10, 2)
+    order_d = st.sidebar.slider('Order d', 0, 10, 1)
+    order_q = st.sidebar.slider('Order q', 0, 10, 2)
 
-    future = model.make_future_dataframe(periods=30)
-    forecast = model.predict(future)
+    model = ARIMA(final_df["Close"], order=(order_p, order_d, order_q))
+    model_fit = model.fit()
+
+    n_train = len(final_df) - 30
+    train = final_df["Close"][:n_train]
+    test = final_df["Close"][n_train:]
+
+    predictions = model_fit.predict(start=n_train, end=len(final_df) - 1, typ='levels')
+
+    mape = np.mean(np.abs((test - predictions) / test)) * 100
+
+    st.write(f"Mean Absolute Percentage Error (MAPE) on the validation set: {mape:.2f}%")
+
+    forecast = model_fit.forecast(steps=30)
+    forecast_dates = pd.date_range(final_df.index[-1], periods=31)[1:]
+    forecast_df = pd.DataFrame({'Date': forecast_dates, 'Forecast': forecast})
+    
+    # Set index and column names to False for forecast_df
+    forecast_df.index.name = None
+    forecast_df.columns.name = None
 
     fig, ax = plt.subplots(figsize=(12, 6))
-    ax.plot(final_df['ds'], final_df['y'], label='Actual', color='blue')
-    ax.plot(forecast['ds'], forecast['yhat'], label='Forecast', color='green')
-    ax.fill_between(forecast['ds'], forecast['yhat_lower'], forecast['yhat_upper'], color='gray', alpha=0.2)
+    ax.plot(final_df.index, final_df["Close"], label='Actual')
+    ax.plot(predictions.index, predictions, label='Predictions', color='red')
+    ax.plot(forecast_df['Date'], forecast_df['Forecast'], label='Forecast', color='green')
     ax.legend()
 
     st.pyplot(fig)
 
-    st.write("Forecast:")
-    st.write(forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(30))  # Display forecast for the last 30 days
+    st.write("Predictions:")
+    st.write(forecast_df[['Date', 'Forecast']])  # Display only 'Date' and 'Forecast' columns
+
+    # Plot for 2024 data
+    fig_2024, ax_2024 = plt.subplots(figsize=(12, 6))
+    final_df_2024 = final_df.loc['2024']
+    ax_2024.plot(final_df_2024.index, final_df_2024["Close"], label='Actual 2024 Data', color='blue')
+    ax_2024.legend()
+
+    st.pyplot(fig_2024)
 
 if __name__ == '__main__':
     main()
