@@ -1,35 +1,50 @@
-import streamlit as st
 import yfinance as yf
 import pandas as pd
 import matplotlib.pyplot as plt
-from prophet import Prophet
+import numpy as np
+import statsmodels.api as sm
+from statsmodels.tsa.arima.model import ARIMA
+from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
 
-def load_data(ticker_symbol):
-    spy_data = yf.Ticker(ticker_symbol)
-    spy_history = spy_data.history(start="2001-01-01", actions=False)[["Close"]]
-    spy_history = spy_history.reset_index()
-    spy_history = spy_history.rename(columns={"Date": "ds", "Close": "y"})
-    return spy_history
+# Define the ticker symbol for SPY
+ticker_symbol = "SPY"
 
-def main():
-    st.title('Stock Price Forecasting with Prophet Model')
+# Fetch historical data for SPY from Yahoo Finance starting from 2001
+spy_data = yf.Ticker(ticker_symbol)
 
-    ticker_symbol = st.sidebar.selectbox('Select Ticker Symbol', ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'SPY'])
-    
-    data = load_data(ticker_symbol)
+# Get historical market data for the specified columns since 2001
+spy_history = spy_data.history(start="2001-01-01", actions=False)[["Open", "High", "Low", "Close"]]
 
-    model = Prophet()
-    model.fit(data)
+# Convert 'Date' column to date data type
+spy_history.index = spy_history.index.date
 
-    future = model.make_future_dataframe(periods=30)
-    forecast = model.predict(future)
+# Create a final dataframe with only the "Close" column
+final_df = spy_history[["Close"]]
 
-    st.write('### Forecast Data')
-    st.write(forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail())
+# Train the ARIMA model
+model = ARIMA(final_df["Close"], order=(2, 1, 2))  # Example order, adjust as needed
+model_fit = model.fit()
 
-    fig = model.plot(forecast, xlabel='Date', ylabel='Price')
-    plt.title('Stock Price Forecast using Prophet Model')
-    st.pyplot(fig)
+# Validate the model on a validation set (e.g., last 30 days)
+n_train = len(final_df) - 30
+train = final_df["Close"][:n_train]
+test = final_df["Close"][n_train:]
 
-if __name__ == '__main__':
-    main()
+# Make predictions for the validation set
+predictions = model_fit.predict(start=n_train, end=len(final_df)-1, typ='levels')
+
+# Calculate MAPE for the validation set
+mape = np.mean(np.abs((test - predictions) / test)) * 100
+
+print(f"Mean Absolute Percentage Error (MAPE) on the validation set: {mape:.2f}%")
+
+# Forecast the next 30 days
+forecast = model_fit.forecast(steps=30)
+
+# Plot the predictions and forecast
+plt.figure(figsize=(12, 6))
+plt.plot(final_df.index, final_df["Close"], label='Actual')
+plt.plot(predictions.index, predictions, label='Predictions', color='red')
+plt.plot(np.arange(len(final_df), len(final_df) + 30), forecast, label='Forecast', color='green')
+plt.legend()
+plt.show()
