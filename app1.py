@@ -10,6 +10,11 @@ def load_data(ticker_symbol):
     spy_history = spy_data.history(start="2001-01-01", actions=False)[["Open", "High", "Low", "Close"]]
     spy_history.index = spy_history.index.date
     final_df = spy_history[["Close"]]
+    
+    # Set index and column names to False
+    final_df.index.name = None
+    final_df.columns.name = None
+    
     return final_df
 
 def main():
@@ -40,6 +45,10 @@ def main():
     forecast = model_fit.forecast(steps=30)
     forecast_dates = pd.date_range(final_df.index[-1], periods=31)[1:]
     forecast_df = pd.DataFrame({'Date': forecast_dates, 'Forecast': forecast})
+    
+    # Set index and column names to False for forecast_df
+    forecast_df.index.name = None
+    forecast_df.columns.name = None
 
     st.write("Predictions:")
     st.write(forecast_df)
