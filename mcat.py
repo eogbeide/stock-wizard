@@ -16,14 +16,28 @@ The vertebrate nervous system is organized into two main divisions: the central 
 # Function to parse the question and options
 def parse_question(text):
     lines = text.strip().split('\n')
+    
+    if len(lines) < 10:
+        raise ValueError("Input text does not contain enough lines for parsing.")
+    
     question = lines[1].strip()
     options = [line.strip() for line in lines[2:6]]
-    answer = lines[7].strip().split(": ")[1]
+    answer_line = lines[7].strip().split(": ")
+    
+    if len(answer_line) < 2:
+        raise ValueError("Answer line is malformed.")
+    
+    correct_answer = answer_line[1]
     explanation = lines[9].strip()
-    return question, options, answer, explanation
+    
+    return question, options, correct_answer, explanation
 
 # Extract information from the text
-question, options, correct_answer, explanation = parse_question(text)
+try:
+    question, options, correct_answer, explanation = parse_question(text)
+except ValueError as e:
+    st.error(f"Error parsing question: {e}")
+    st.stop()
 
 # Streamlit app layout
 st.title("Multiple Choice Question")
