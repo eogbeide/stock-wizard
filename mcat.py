@@ -47,7 +47,7 @@ def read_questions_from_docx(file_path):
         elif text.startswith("A)") or text.startswith("B)") or text.startswith("C)") or text.startswith("D)"):
             choices.append(text)
         elif text.startswith("Answer:"):
-            answer = text.split(":")[1].strip()[0]  # Get the letter of the answer (A, B, C, or D)
+            answer = text.split(":")[1].strip()  # Get the full answer text (e.g., "A) Central and peripheral nervous systems")
         elif text.startswith("Explanation:"):
             explanation = text.split(":", 1)[1].strip()  # Get the explanation text
 
@@ -72,7 +72,8 @@ def take_quiz(questions):
             # Show the user's selected answer
             st.write(f"You selected: {user_answer}")
 
-            correct_answer = question.choices[ord(question.answer) - ord('A')]  # Get the correct answer choice
+            # Determine the correct answer based on the provided answer text
+            correct_answer = question.answer.strip()  # Full text of the correct answer
             if user_answer == correct_answer:  # Correct answer check
                 st.write("Correct!")
                 score += 1
