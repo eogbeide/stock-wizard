@@ -47,7 +47,7 @@ def read_questions_from_docx(file_path):
         elif text.startswith("A)") or text.startswith("B)") or text.startswith("C)") or text.startswith("D)"):
             choices.append(text)
         elif text.startswith("Answer:"):
-            answer = text.split(":")[1].strip()  # Get the full answer text (e.g., "A) Central and peripheral nervous systems")
+            answer = text.split(":")[1].strip()  # Get the full answer text
         elif text.startswith("Explanation:"):
             explanation = text.split(":", 1)[1].strip()  # Get the explanation text
 
@@ -66,6 +66,8 @@ def take_quiz(questions):
         question = questions[question_index]
         
         st.write(question.text)
+        
+        # Show the choices as separate radio buttons
         user_answer = st.radio("Select your answer:", question.choices)
 
         if st.button("Submit"):
