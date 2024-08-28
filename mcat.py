@@ -17,17 +17,21 @@ The vertebrate nervous system is organized into two main divisions: the central 
 def parse_question(text):
     lines = text.strip().split('\n')
     
+    # Debugging output
+    st.write("Parsed lines:", lines)
+
     if len(lines) < 10:
         raise ValueError("Input text does not contain enough lines for parsing.")
     
     question = lines[1].strip()
     options = [line.strip() for line in lines[2:6]]
-    answer_line = lines[7].strip().split(": ")
     
+    # Check for a valid answer line
+    answer_line = lines[7].strip().split(": ")
     if len(answer_line) < 2:
         raise ValueError("Answer line is malformed.")
     
-    correct_answer = answer_line[1]
+    correct_answer = answer_line[1].strip()
     explanation = lines[9].strip()
     
     return question, options, correct_answer, explanation
