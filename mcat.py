@@ -38,47 +38,48 @@ def read_questions_from_docx(file_path):
 
     return questions
 
-def take_quiz(questions):
-    score = 0
-    question_index = 0
+def display_question(question):
+    st.write(question.text)
+    user_answer = st.radio("Select your answer:", question.choices)
+    return user_answer
 
-    while question_index < len(questions):
-        question = questions[question_index]
-
-        st.write(question.text)
-
-        # User selects an answer with a unique key
-        user_answer = st.radio("Select your answer:", question.choices, key=f"radio_{question_index}")
-
-        if st.button("Submit", key=f"submit_{question_index}"):
-            st.write(f"You selected: {user_answer}")
-
-            correct_answer = question.answer.strip()
-            if user_answer == correct_answer:
-                st.write("Correct!")
-                score += 1
-            else:
-                st.write(f"Wrong! The correct answer is: {correct_answer}.")
-            
-            # Show explanation
-            st.write("Explanation:")
-            st.write(question.explanation)
-
-            question_index += 1
-
-            if question_index < len(questions):
-                st.success("Next question:")
-            else:
-                st.write(f"\nYour final score: {score}/{len(questions)}")
-                break
-
-    st.write(f"\nYour score: {score}/{len(questions)}")
-
-if __name__ == "__main__":
+def main():
     file_path = "mcat.docx"  # Path to your .docx file
 
     # Read questions from the docx file
     quiz_questions = read_questions_from_docx(file_path)
     
     st.title("Multiple Choice Quiz")
-    take_quiz(quiz_questions)
+
+    if 'question_index' not in st.session_state:
+        st.session_state.question_index = 0
+
+    if st.session_state.question_index < len(quiz_questions):
+        question = quiz_questions[st.session_state.question_index]
+        
+        user_answer = display_question(question)
+
+        if st.button("Submit"):
+            correct_answer = question.answer.strip()
+            if user_answer == correct_answer:
+                st.success("Correct!")
+            else:
+                st.error(f"Wrong! The correct answer is: {correct_answer}.")
+            
+            # Show explanation
+            st.write("Explanation:")
+            st.write(question.explanation)
+
+            # Move to the next question
+            st.session_state.question_index += 1
+
+            if st.session_state.question_index < len(quiz_questions):
+                st.success("Next question will load below.")
+            else:
+                st.write("You have completed the quiz!")
+
+    else:
+        st.write("You have completed the quiz!")
+
+if __name__ == "__main__":
+    main()
