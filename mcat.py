@@ -60,11 +60,15 @@ def read_questions_from_docx(file_path):
 
 def take_quiz(questions):
     score = 0
-    for question in questions:
-        st.write(question.text)
-        user_answer = st.selectbox("Select your answer:", question.choices, key=question.text)
+    question_index = 0
 
-        if st.button("Submit", key=question.text + "_submit"):
+    while question_index < len(questions):
+        question = questions[question_index]
+        
+        st.write(question.text)
+        user_answer = st.radio("Select your answer:", question.choices)
+
+        if st.button("Submit"):
             # Show the user's selected answer
             st.write(f"You selected: {user_answer}")
 
@@ -75,6 +79,14 @@ def take_quiz(questions):
             else:
                 st.write(f"Wrong! The correct answer is {correct_answer}.")
                 st.write(f"Explanation: {question.explanation}")
+            
+            question_index += 1  # Move to the next question
+
+            if question_index < len(questions):
+                st.success("Next question:")
+            else:
+                st.write(f"\nYour final score: {score}/{len(questions)}")
+                break
 
     st.write(f"\nYour score: {score}/{len(questions)}")
 
