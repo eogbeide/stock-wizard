@@ -20,9 +20,11 @@ def parse_question(text):
     # Debugging output
     st.write("Parsed lines:", lines)
 
+    # Ensure there are enough lines to parse
     if len(lines) < 10:
         raise ValueError("Input text does not contain enough lines for parsing.")
     
+    # Extract components
     question = lines[1].strip()
     options = [line.strip() for line in lines[2:6]]
     
