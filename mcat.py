@@ -67,7 +67,7 @@ def take_quiz(questions):
         
         st.write(question.text)
         
-        # Show the choices as separate radio buttons
+        # Create separate radio buttons for each option A, B, C, and D
         user_answer = st.radio("Select your answer:", question.choices)
 
         if st.button("Submit"):
