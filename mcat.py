@@ -21,31 +21,26 @@ def read_questions_from_docx(file_path):
         text = paragraph.text.strip()
         if text.startswith("Question"):
             if question_text:
-                # Ensure exactly four choices are added
-                if len(choices) == 4:
-                    questions.append(Question(question_text, choices, answer, explanation))
-                else:
-                    st.error("Each question must have exactly four choices.")
+                questions.append(Question(question_text, choices, answer, explanation))
             question_text = text
             choices = []
             answer = ""
             explanation = ""
         elif text.startswith("A)") or text.startswith("B)") or text.startswith("C)") or text.startswith("D)"):
-            if len(choices) < 4:  # Only allow up to four choices
-                choices.append(text)
+            choices.append(text)
         elif text.startswith("Answer:"):
             answer = text.split(":")[1].strip()
         elif text.startswith("Explanation:"):
             explanation = text.split(":", 1)[1].strip()
 
-    # Add the last question if it exists
-    if question_text and len(choices) == 4:
+    if question_text:
         questions.append(Question(question_text, choices, answer, explanation))
 
     return questions
 
 def display_question(question):
     st.write(question.text)
+    # Displaying options in a clear format
     user_answer = st.radio("Select your answer:", question.choices)
     return user_answer
 
