@@ -28,15 +28,32 @@ def read_questions_from_docx(file_path):
     questions = []
     doc = docx.Document(file_path)
 
+    question_text = ""
+    choices = []
+    answer = ""
+    explanation = ""
+
     for paragraph in doc.paragraphs:
-        if paragraph.text.strip():  # Only process non-empty lines
-            parts = paragraph.text.split('|')
-            if len(parts) == 7:  # Expecting: Question|Choice1|Choice2|Choice3|Choice4|CorrectChoice|Explanation
-                question_text = parts[0].strip()
-                choices = [parts[i].strip() for i in range(1, 5)]
-                answer = parts[5].strip()
-                explanation = parts[6].strip()
+        text = paragraph.text.strip()
+        if text.startswith("Question"):
+            if question_text:  # Save the previous question if it exists
                 questions.append(Question(question_text, choices, answer, explanation))
+            
+            # Reset for the new question
+            question_text = text
+            choices = []
+            answer = ""
+            explanation = ""
+        elif text.startswith("A)") or text.startswith("B)") or text.startswith("C)") or text.startswith("D)"):
+            choices.append(text)
+        elif text.startswith("Answer:"):
+            answer = text.split(":")[1].strip()[0]  # Get the letter of the answer (A, B, C, or D)
+        elif text.startswith("Explanation:"):
+            explanation = text.split(":", 1)[1].strip()  # Get the explanation text
+
+    # Append the last question
+    if question_text:
+        questions.append(Question(question_text, choices, answer, explanation))
 
     return questions
 
@@ -51,11 +68,12 @@ def take_quiz(questions):
             # Show the user's selected answer
             st.write(f"You selected: {user_answer}")
 
-            if user_answer == question.choices[int(question.answer) - 1]:  # Correct answer check
+            correct_answer = question.choices[ord(question.answer) - ord('A')]  # Get the correct answer choice
+            if user_answer == correct_answer:  # Correct answer check
                 st.write("Correct!")
                 score += 1
             else:
-                st.write(f"Wrong! The correct answer is {question.choices[int(question.answer) - 1]}.")
+                st.write(f"Wrong! The correct answer is {correct_answer}.")
                 st.write(f"Explanation: {question.explanation}")
 
     st.write(f"\nYour score: {score}/{len(questions)}")
