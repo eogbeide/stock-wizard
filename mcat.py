@@ -60,6 +60,9 @@ def take_quiz(questions):
 
         # Create separate radio buttons for each option A, B, C, and D
         user_answer = st.radio("Select your answer:", question.choices, key=f"answer_{question_index}")
+        user_answer = st.radio("Select your answer:", question.choices, key=f"answer_{question_index}")
+        user_answer = st.radio("Select your answer:", question.choices, key=f"answer_{question_index}")
+        user_answer = st.radio("Select your answer:", question.choices, key=f"answer_{question_index}")
 
         if st.button("Submit", key=f"submit_{question_index}"):
             st.write(f"You selected: {user_answer}")
