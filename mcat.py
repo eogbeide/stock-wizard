@@ -40,7 +40,7 @@ def read_questions_from_docx(file_path):
 
 def display_question(question):
     st.write(question.text)
-    # Displaying options in a clear format
+    # Displaying options as separate radio buttons
     user_answer = st.radio("Select your answer:", question.choices)
     return user_answer
 
