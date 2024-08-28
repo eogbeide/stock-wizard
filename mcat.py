@@ -1,7 +1,6 @@
 import requests
 import docx
 import streamlit as st
-import os
 
 class Question:
     def __init__(self, text, choices, answer, explanation):
@@ -44,20 +43,20 @@ def read_questions_from_docx(file_path):
 
 def take_quiz(questions):
     score = 0
-
     for question in questions:
         st.write(question.text)
-        user_answer = st.selectbox("Select your answer:", question.choices)
+        user_answer = st.selectbox("Select your answer:", question.choices, key=question.text)
 
-        # Show the user's selected answer
-        st.write(f"You selected: {user_answer}")
+        if st.button("Submit", key=question.text + "_submit"):
+            # Show the user's selected answer
+            st.write(f"You selected: {user_answer}")
 
-        if user_answer == question.choices[int(question.answer) - 1]:  # Correct answer check
-            st.write("Correct!")
-            score += 1
-        else:
-            st.write(f"Wrong! The correct answer is {question.choices[int(question.answer) - 1]}.")
-            st.write(f"Explanation: {question.explanation}")
+            if user_answer == question.choices[int(question.answer) - 1]:  # Correct answer check
+                st.write("Correct!")
+                score += 1
+            else:
+                st.write(f"Wrong! The correct answer is {question.choices[int(question.answer) - 1]}.")
+                st.write(f"Explanation: {question.explanation}")
 
     st.write(f"\nYour score: {score}/{len(questions)}")
 
