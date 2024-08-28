@@ -70,8 +70,12 @@ def take_quiz(questions):
                 score += 1
             else:
                 st.write(f"Wrong! The correct answer is {correct_answer}.")
-                st.write(f"Explanation: {question.explanation}")
+            
+            # Show explanation
+            st.write("Explanation:")
+            st.write(question.explanation)
 
+            # Move to the next question
             question_index += 1
 
             if question_index < len(questions):
@@ -85,6 +89,7 @@ def take_quiz(questions):
 if __name__ == "__main__":
     raw_docx_url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/mcat.docx"
     
+    # Download the docx file
     file_path = download_docx(raw_docx_url)
     
     if file_path:
