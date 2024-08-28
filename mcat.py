@@ -47,8 +47,8 @@ def take_quiz(questions):
 
         st.write(question.text)
 
-        # User selects an answer
-        user_answer = st.radio("Select your answer:", question.choices, key=f"answer_{question_index}")
+        # User selects an answer with a unique key
+        user_answer = st.radio("Select your answer:", question.choices, key=f"radio_{question_index}")
 
         if st.button("Submit", key=f"submit_{question_index}"):
             st.write(f"You selected: {user_answer}")
