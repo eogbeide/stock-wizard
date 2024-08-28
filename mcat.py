@@ -1,67 +1,84 @@
 import streamlit as st
+import docx
 
-# Sample text with question, options, answer, and explanation.
-text = """
-Question 1:
-Which of the following correctly describes the two main divisions of the vertebrate nervous system?
-A) Central and peripheral nervous systems
-B) Somatic and autonomic nervous systems
-C) Sympathetic and parasympathetic nervous systems
-D) Cerebral and cerebellar nervous systems
-Answer: A) Central and peripheral nervous systems
-Explanation:
-The vertebrate nervous system is organized into two main divisions: the central nervous system (CNS), which includes the brain and spinal cord, and the peripheral nervous system (PNS), which consists of all the nerves that extend from the CNS to the rest of the body.
-"""
+class Question:
+    def __init__(self, text, choices, answer, explanation):
+        self.text = text
+        self.choices = choices
+        self.answer = answer
+        self.explanation = explanation
 
-# Function to parse the question and options
-def parse_question(text):
-    lines = text.strip().split('\n')
-    
-    # Debugging output
-    st.write("Parsed lines:", lines)
+def read_questions_from_docx(file_path):
+    questions = []
+    doc = docx.Document(file_path)
 
-    # Ensure there are enough lines to parse
-    if len(lines) < 10:
-        raise ValueError("Input text does not contain enough lines for parsing.")
-    
-    # Extract components
-    question = lines[1].strip()
-    options = [line.strip() for line in lines[2:6]]
-    
-    # Check for a valid answer line
-    answer_line = lines[7].strip().split(": ")
-    if len(answer_line) < 2:
-        raise ValueError("Answer line is malformed.")
-    
-    correct_answer = answer_line[1].strip()
-    explanation = lines[9].strip()
-    
-    return question, options, correct_answer, explanation
+    question_text = ""
+    choices = []
+    answer = ""
+    explanation = ""
 
-# Extract information from the text
-try:
-    question, options, correct_answer, explanation = parse_question(text)
-except ValueError as e:
-    st.error(f"Error parsing question: {e}")
-    st.stop()
+    for paragraph in doc.paragraphs:
+        text = paragraph.text.strip()
+        if text.startswith("Question"):
+            if question_text:
+                questions.append(Question(question_text, choices, answer, explanation))
+            question_text = text
+            choices = []
+            answer = ""
+            explanation = ""
+        elif text.startswith("A)") or text.startswith("B)") or text.startswith("C)") or text.startswith("D)"):
+            choices.append(text)
+        elif text.startswith("Answer:"):
+            answer = text.split(":")[1].strip()
+        elif text.startswith("Explanation:"):
+            explanation = text.split(":", 1)[1].strip()
 
-# Streamlit app layout
-st.title("Multiple Choice Question")
-st.write(question)
+    if question_text:
+        questions.append(Question(question_text, choices, answer, explanation))
 
-# User selects an answer
-user_answer = st.radio("Select your answer:", options)
+    return questions
 
-# Submit button
-if st.button("Submit"):
-    st.write(f"You selected: {user_answer}")
+def take_quiz(questions):
+    score = 0
+    question_index = 0
+
+    while question_index < len(questions):
+        question = questions[question_index]
+
+        st.write(question.text)
+
+        # User selects an answer
+        user_answer = st.radio("Select your answer:", question.choices, key=f"answer_{question_index}")
+
+        if st.button("Submit", key=f"submit_{question_index}"):
+            st.write(f"You selected: {user_answer}")
+
+            correct_answer = question.answer.strip()
+            if user_answer == correct_answer:
+                st.write("Correct!")
+                score += 1
+            else:
+                st.write(f"Wrong! The correct answer is: {correct_answer}.")
+            
+            # Show explanation
+            st.write("Explanation:")
+            st.write(question.explanation)
+
+            question_index += 1
+
+            if question_index < len(questions):
+                st.success("Next question:")
+            else:
+                st.write(f"\nYour final score: {score}/{len(questions)}")
+                break
+
+    st.write(f"\nYour score: {score}/{len(questions)}")
+
+if __name__ == "__main__":
+    file_path = "mcat.docx"  # Path to your .docx file
+
+    # Read questions from the docx file
+    quiz_questions = read_questions_from_docx(file_path)
     
-    # Check the selected answer
-    if user_answer == correct_answer:
-        st.write("Correct!")
-    else:
-        st.write(f"Wrong! The correct answer is: {correct_answer}.")
-    
-    # Show explanation
-    st.write("Explanation:")
-    st.write(explanation)
+    st.title("Multiple Choice Quiz")
+    take_quiz(quiz_questions)
