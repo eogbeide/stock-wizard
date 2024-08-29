@@ -15,7 +15,7 @@ def read_questions_from_csv(file_path):
     for index, row in df.iterrows():
         question_text = row['Question']
         choices = [row['A'], row['B'], row['C'], row['D']]
-        answer = row['Answer'].strip()  # Ensure no extra spaces
+        answer = row['E'].strip()  # Ensure no extra spaces
         explanation = row['Explanation']
         questions.append(Question(question_text, choices, answer, explanation))
 
