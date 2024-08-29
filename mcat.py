@@ -22,7 +22,7 @@ def read_questions_from_csv(file_path):
 
     for index, row in df.iterrows():
         question_text = row['Question']
-        choices = [row['C'], row['D'], row['E'], row['F']]
+        choices = [row['C'].strip(), row['D'].strip(), row['E'].strip(), row['F'].strip()]
         answer = row['G'].strip()  # Answer from Column G
         explanation = row['H']  # Explanation from Column H
         serial_number = row['S/N']  # S/N from Column A
