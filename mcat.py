@@ -42,7 +42,7 @@ def display_question(question):
     return user_answer
 
 def main():
-    file_path = "mcatss.csv"  # Path to your CSV file
+    file_path = "mymcat.csv"  # Path to your CSV file
 
     # Read questions from the CSV file
     all_questions = read_questions_from_csv(file_path)
