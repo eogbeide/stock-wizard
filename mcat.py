@@ -13,8 +13,7 @@ def read_questions_from_docx(file_path):
     doc = docx.Document(file_path)
 
     question_text = ""
-    #choices = []
-    choices = ""
+    choices = []  # Initialize choices list
     answer = ""
     explanation = ""
 
@@ -24,11 +23,11 @@ def read_questions_from_docx(file_path):
             if question_text:
                 questions.append(Question(question_text, choices, answer, explanation))
             question_text = text
-            choices = []
+            choices = []  # Reset choices for each new question
             answer = ""
             explanation = ""
         elif text.startswith("A)") or text.startswith("B)") or text.startswith("C)") or text.startswith("D)"):
-            choices.append(text)  # Each choice is added here
+            choices.append(text)  # Add choices for A-D
         elif text.startswith("Answer:"):
             answer = text.split(":")[1].strip()
         elif text.startswith("Explanation:"):
@@ -41,7 +40,7 @@ def read_questions_from_docx(file_path):
 
 def display_question(question):
     st.write(question.text)
-    # Displaying options with radio buttons, each choice appears on a separate line
+    # Displaying options as separate radio buttons
     user_answer = st.radio("Select your answer:", question.choices)
     return user_answer
 
