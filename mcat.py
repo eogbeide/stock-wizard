@@ -79,11 +79,13 @@ def main():
 
             if st.session_state.question_index >= len(quiz_questions):
                 st.write("You have completed the quiz!")
+                st.session_state.question_index = 0  # Reset for a new round
+
     else:
         user_answer = display_question(question)
 
-        # Store the selected answer
-        if st.button("Submit"):
+        # Store the selected answer only if a selection has been made
+        if st.button("Submit") and user_answer:
             st.session_state.user_answer = user_answer
             st.session_state.show_explanation = True
 
