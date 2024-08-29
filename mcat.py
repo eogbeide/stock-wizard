@@ -2,11 +2,12 @@ import streamlit as st
 import pandas as pd
 
 class Question:
-    def __init__(self, text, choices, answer, explanation):
+    def __init__(self, text, choices, answer, explanation, serial_number):
         self.text = text
         self.choices = choices
         self.answer = answer
         self.explanation = explanation
+        self.serial_number = serial_number
 
 def read_questions_from_csv(file_path):
     questions = []
@@ -24,12 +25,13 @@ def read_questions_from_csv(file_path):
         choices = [row['C'], row['D'], row['E'], row['F']]
         answer = row['G'].strip()  # Answer from Column G
         explanation = row['H']  # Explanation from Column H
-        questions.append(Question(question_text, choices, answer, explanation))
+        serial_number = row['S/N']  # S/N from Column A
+        questions.append(Question(question_text, choices, answer, explanation, serial_number))
 
     return questions
 
 def display_question(question):
-    st.write(question.text)
+    st.write(f"**Question {question.serial_number}:** {question.text}")
     
     # Create labeled choices for radio buttons
     labeled_choices = [f"{chr(67 + i)}) {choice}" for i, choice in enumerate(question.choices)]
@@ -54,6 +56,7 @@ def main():
         st.session_state.question_index = 0
         st.session_state.user_answer = None
         st.session_state.show_explanation = False
+        st.session_state.correct_answers = 0  # Track correct answers
 
     question_index = st.session_state.question_index
     question = quiz_questions[question_index]
@@ -66,6 +69,7 @@ def main():
         # Compare with the correct answer (also stripped)
         if user_answer.lower() == question.answer.lower():  # Case-insensitive comparison
             st.success("Correct!")
+            st.session_state.correct_answers += 1  # Update score
         else:
             st.error(f"Wrong! The correct answer is: {question.answer}.")
         
@@ -85,7 +89,9 @@ def main():
 
                 if st.session_state.question_index >= len(quiz_questions):
                     st.write("You have completed the quiz!")
+                    st.write(f"Your score: {st.session_state.correct_answers}/{len(quiz_questions)}")
                     st.session_state.question_index = 0  # Reset for a new round
+                    st.session_state.correct_answers = 0  # Reset score
 
         with col2:
             back_disabled = st.session_state.question_index == 0
