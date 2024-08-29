@@ -65,7 +65,6 @@ def main():
         st.session_state.user_answer = None
         st.session_state.show_explanation = False
         st.session_state.correct_answers = 0  # Initialize correct_answers
-        st.session_state.submit_disabled = False  # Track button state
 
     question_index = st.session_state.question_index
     question = quiz_questions[question_index]
@@ -88,47 +87,36 @@ def main():
         # Show explanation
         st.write(question.explanation)
 
-        # Display the current score
-        st.write(f"**Current Score: {st.session_state.correct_answers} out of {num_questions}**")
-
         # Navigation buttons
         col1, col2 = st.columns(2)
 
         with col1:
-            next_disabled = st.session_state.question_index >= len(quiz_questions) - 1 or st.session_state.submit_disabled
+            next_disabled = st.session_state.question_index >= len(quiz_questions) - 1
             if st.button("Next Question", disabled=next_disabled):
                 st.session_state.question_index += 1
                 st.session_state.user_answer = None
                 st.session_state.show_explanation = False
-                st.session_state.submit_disabled = True  # Disable button after click
 
                 if st.session_state.question_index >= len(quiz_questions):
                     st.write("You have completed the quiz!")
-                    st.write(f"Your final score: {st.session_state.correct_answers}/{num_questions}")
+                    st.write(f"Your score: {st.session_state.correct_answers}/{len(quiz_questions)}")
                     st.session_state.question_index = 0  # Reset for a new round
                     st.session_state.correct_answers = 0  # Reset score
-                    st.session_state.submit_disabled = False  # Enable buttons for the next round
 
         with col2:
-            back_disabled = st.session_state.question_index == 0 or st.session_state.submit_disabled
+            back_disabled = st.session_state.question_index == 0
             if st.button("Back", disabled=back_disabled):
                 st.session_state.question_index -= 1
                 st.session_state.user_answer = None
                 st.session_state.show_explanation = False
-                st.session_state.submit_disabled = True  # Disable button after click
 
     else:
         user_answer = display_question(question)
 
-        submit_disabled = user_answer is None or st.session_state.submit_disabled  # No selection made or button disabled
+        submit_disabled = user_answer is None  # No selection made
         if st.button("Submit", disabled=submit_disabled):
             st.session_state.user_answer = user_answer
             st.session_state.show_explanation = True
-            st.session_state.submit_disabled = True  # Disable button after click
-
-    # Reset button state for next question
-    if st.session_state.show_explanation:
-        st.session_state.submit_disabled = False
 
 if __name__ == "__main__":
     main()
