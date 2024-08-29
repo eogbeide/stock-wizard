@@ -42,7 +42,7 @@ def display_question(question):
     st.write(question.text)
     
     # Create labeled choices for multiselect
-    labeled_choices = [f"{choice}" for choice in question.choices]
+    labeled_choices = [f"{choice.split(')')[0]}) {choice.split(')')[1].strip()}" for choice in question.choices]
     
     # Create a multiselect for each choice
     user_answers = st.multiselect("Select your answer (A, B, C, D):", labeled_choices, key="answer_select")
