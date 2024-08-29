@@ -1,4 +1,12 @@
+import streamlit as st
 import docx
+
+class Question:
+    def __init__(self, text, choices, answer, explanation):
+        self.text = text
+        self.choices = choices
+        self.answer = answer
+        self.explanation = explanation
 
 def clean_and_format_questions(file_path):
     questions = []
@@ -25,7 +33,8 @@ def clean_and_format_questions(file_path):
         elif text.startswith("Explanation:"):
             explanation = text.split(":", 1)[1].strip()
 
-    if question_text and len(choices) == 4:  # Check last question
+    # Check the last question
+    if question_text and len(choices) == 4:
         questions.append((question_text, choices, answer, explanation))
 
     # Format each question for Streamlit
@@ -41,62 +50,73 @@ def clean_and_format_questions(file_path):
 
     return formatted_questions
 
-# Example usage
-file_path = "mcat.docx"
-formatted_questions = clean_and_format_questions(file_path)
+def display_question(question):
+    st.write(question[0])  # Display the question text
+    
+    # Create radio buttons for the choices
+    user_answer = st.radio("Select your answer (A, B, C, D):", question[1], key="answer_select")
+    return user_answer
 
-# Display formatted questions for verification
-for q in formatted_questions:
-    print(q[0])  # Question text
-    for choice in q[1]:  # Choices
-        print(choice)
-    print(f"Answer: {q[2]}")
-    print(f"Explanation: {q[3]}\n")
+def main():
+    file_path = "mcat.docx"  # Path to your .docx file
 
-import docx
+    # Clean and format questions from the docx file
+    quiz_questions = clean_and_format_questions(file_path)
 
-def clean_and_format_docx(input_file, output_file):
-    doc = docx.Document(input_file)
-    formatted_questions = []
+    # Check if there are any valid questions
+    if not quiz_questions:
+        st.error("No valid questions available for the quiz.")
+        return
 
-    question_text = ""
-    choices = []
-    answer = ""
-    explanation = ""
+    st.title("Multiple Choice Quiz")
 
-    for paragraph in doc.paragraphs:
-        text = paragraph.text.strip()
-        if text.startswith("Question"):
-            if question_text and len(choices) == 4:  # Ensure exactly 4 choices
-                formatted_questions.append((question_text, choices, answer, explanation))
-            question_text = text
-            choices = []
-            answer = ""
-            explanation = ""
-        elif text.startswith("A)") or text.startswith("B)") or text.startswith("C)") or text.startswith("D)"):
-            choices.append(text)
-        elif text.startswith("Answer:"):
-            answer = text.split(":")[1].strip()
-        elif text.startswith("Explanation:"):
-            explanation = text.split(":", 1)[1].strip()
+    if 'question_index' not in st.session_state:
+        st.session_state.question_index = 0
+        st.session_state.user_answer = None
+        st.session_state.show_explanation = False
 
-    # Check the last question
-    if question_text and len(choices) == 4:
-        formatted_questions.append((question_text, choices, answer, explanation))
+    question_index = st.session_state.question_index
+    question = quiz_questions[question_index]
 
-    # Write to a new document
-    new_doc = docx.Document()
-    for question, choices, answer, explanation in formatted_questions:
-        new_doc.add_paragraph(question)
-        for choice in choices:
-            new_doc.add_paragraph(choice)
-        new_doc.add_paragraph(f"Answer: {answer}")
-        new_doc.add_paragraph(f"Explanation: {explanation}")
-        new_doc.add_paragraph()  # Add a blank line for spacing
+    if st.session_state.show_explanation:
+        correct_answer = question[2].strip().split(",")  # Assuming answers are comma-separated
+        if st.session_state.user_answer in correct_answer:
+            st.success("Correct!")
+        else:
+            st.error(f"Wrong! The correct answer is: {', '.join(correct_answer)}.")
+        
+        # Show explanation
+        st.write("Explanation:")
+        st.write(question[3])
 
-    new_doc.save(output_file)
+        # Buttons to navigate questions
+        col1, col2 = st.columns(2)
+
+        with col1:
+            next_disabled = st.session_state.question_index >= len(quiz_questions) - 1
+            if st.button("Next Question", disabled=next_disabled):
+                st.session_state.question_index += 1
+                st.session_state.user_answer = None
+                st.session_state.show_explanation = False
+
+                if st.session_state.question_index >= len(quiz_questions):
+                    st.write("You have completed the quiz!")
+                    st.session_state.question_index = 0  # Reset for a new round
+
+        with col2:
+            back_disabled = st.session_state.question_index == 0
+            if st.button("Back", disabled=back_disabled):
+                st.session_state.question_index -= 1
+                st.session_state.user_answer = None
+                st.session_state.show_explanation = False
+
+    else:
+        user_answer = display_question(question)
+
+        submit_disabled = user_answer is None  # No selection made
+        if st.button("Submit", disabled=submit_disabled):
+            st.session_state.user_answer = user_answer
+            st.session_state.show_explanation = True
 
 if __name__ == "__main__":
-    input_file = "mcat.docx"  # Original file
-    output_file = "formatted_mcat.docx"  # Cleaned output file
-    clean_and_format_docx(input_file, output_file)
+    main()
