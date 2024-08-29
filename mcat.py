@@ -1,113 +1,73 @@
-import streamlit as st
 import pandas as pd
+from docx import Document
+import re
 
-class Question:
-    def __init__(self, text, choices, answer, explanation, serial_number):
-        self.text = text
-        self.choices = choices
-        self.answer = answer
-        self.explanation = explanation
-        self.serial_number = serial_number
-
-def read_questions_from_csv(file_path):
+def extract_questions_from_docx(docx_file):
+    document = Document(docx_file)
     questions = []
-    df = pd.read_csv(file_path)
+    
+    # Regular expressions to match the question format
+    question_pattern = re.compile(r'Question (\d+): (.*)')
+    answer_pattern = re.compile(r'Answer: ([A-D]\)) (.*)')
+    explanation_pattern = re.compile(r'Explanation:\s*(.*)')
+    
+    current_question = None
+    options = {}
+    
+    for para in document.paragraphs:
+        # Match question
+        question_match = question_pattern.match(para.text.strip())
+        if question_match:
+            if current_question:
+                # Save the previous question before starting a new one
+                questions.append((current_question, options['A'], options['B'], options['C'], options['D'], answer, explanation))
+            
+            # Start a new question
+            question_number = question_match.group(1)
+            current_question = question_match.group(2)
+            options = {}
+            answer = None
+            explanation = None
+            
+        # Match options A-D
+        if current_question and para.text.strip() in ['A)', 'B)', 'C)', 'D)']:
+            option_letter = para.text.strip()[0]
+            option_text = para.text.strip()[3:]  # Get text after "A) "
+            options[option_letter] = option_text
+        
+        # Match answer
+        answer_match = answer_pattern.match(para.text.strip())
+        if answer_match:
+            answer = answer_match.group(1).strip()  # A), B), C), or D)
 
-    # Check for expected columns
-    expected_columns = ['S/N', 'Question', 'C', 'D', 'E', 'F', 'G', 'H']
-    for col in expected_columns:
-        if col not in df.columns:
-            st.error(f"Missing column: {col}")
-            return []
-
-    for index, row in df.iterrows():
-        question_text = row['Question']
-        choices = [row['C'], row['D'], row['E'], row['F']]
-        answer = row['G'].strip()  # Answer from Column G
-        explanation = row['H']  # Explanation from Column H
-        serial_number = row['S/N']  # S/N from Column A
-        questions.append(Question(question_text, choices, answer, explanation, serial_number))
-
+        # Match explanation
+        explanation_match = explanation_pattern.match(para.text.strip())
+        if explanation_match:
+            explanation = explanation_match.group(1).strip()
+    
+    # Append the last question
+    if current_question:
+        questions.append((current_question, options.get('A'), options.get('B'), options.get('C'), options.get('D'), answer, explanation))
+    
     return questions
 
-def display_question(question):
-    st.write(f"**Question {question.serial_number}:** {question.text}")
-    
-    # Create labeled choices for radio buttons
-    labeled_choices = [f"{chr(67 + i)}) {choice}" for i, choice in enumerate(question.choices)]
-    
-    # Display choices
-    user_answer = st.radio("Select your answer:", labeled_choices, key="answer_select")
-    return user_answer
+def save_to_csv(questions, csv_file):
+    # Prepare DataFrame
+    df = pd.DataFrame(questions, columns=['S/N', 'Question', 'C', 'D', 'E', 'F', 'G', 'H'])
+    # Save to CSV
+    df.to_csv(csv_file, index=False)
 
 def main():
-    file_path = "mcat.csv"  # Path to your CSV file
-
-    # Read questions from the CSV file
-    quiz_questions = read_questions_from_csv(file_path)
+    docx_file = 'mcat.docx'  # Path to your DOCX file
+    csv_file = 'mcat.csv'      # Path to save the CSV file
     
-    if not quiz_questions:
-        st.write("No questions available.")
-        return
+    questions = extract_questions_from_docx(docx_file)
     
-    st.title("Multiple Choice Quiz")
-
-    # Initialize session state variables
-    if 'question_index' not in st.session_state:
-        st.session_state.question_index = 0
-        st.session_state.user_answer = None
-        st.session_state.show_explanation = False
-        st.session_state.correct_answers = 0  # Initialize correct_answers
-
-    question_index = st.session_state.question_index
-    question = quiz_questions[question_index]
-
-    if st.session_state.show_explanation:
-        # Check if the selected answer matches the expected answer
-        user_answer_index = ord(st.session_state.user_answer[0]) - 67  # Adjust for C, D, E, F
-        user_answer = question.choices[user_answer_index].strip()  # Get the selected choice and strip spaces
-        
-        # Compare with the correct answer (also stripped)
-        if user_answer.lower() == question.answer.lower():  # Case-insensitive comparison
-            st.success("Correct!")
-            st.session_state.correct_answers += 1  # Update score
-        else:
-            st.error(f"Wrong! The correct answer is: {question.answer}.")
-        
-        # Show explanation
-        st.write("Explanation:")
-        st.write(question.explanation)
-
-        # Navigation buttons
-        col1, col2 = st.columns(2)
-
-        with col1:
-            next_disabled = st.session_state.question_index >= len(quiz_questions) - 1
-            if st.button("Next Question", disabled=next_disabled):
-                st.session_state.question_index += 1
-                st.session_state.user_answer = None
-                st.session_state.show_explanation = False
-
-                if st.session_state.question_index >= len(quiz_questions):
-                    st.write("You have completed the quiz!")
-                    st.write(f"Your score: {st.session_state.correct_answers}/{len(quiz_questions)}")
-                    st.session_state.question_index = 0  # Reset for a new round
-                    st.session_state.correct_answers = 0  # Reset score
-
-        with col2:
-            back_disabled = st.session_state.question_index == 0
-            if st.button("Back", disabled=back_disabled):
-                st.session_state.question_index -= 1
-                st.session_state.user_answer = None
-                st.session_state.show_explanation = False
-
-    else:
-        user_answer = display_question(question)
-
-        submit_disabled = user_answer is None  # No selection made
-        if st.button("Submit", disabled=submit_disabled):
-            st.session_state.user_answer = user_answer
-            st.session_state.show_explanation = True
+    # Transform the questions to include serial numbers
+    questions_with_serial = [(i + 1,) + q for i, q in enumerate(questions)]
+    
+    save_to_csv(questions_with_serial, csv_file)
+    print(f'Successfully saved questions to {csv_file}')
 
 if __name__ == "__main__":
     main()
