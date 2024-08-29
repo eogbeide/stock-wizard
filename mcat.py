@@ -61,9 +61,10 @@ def main():
     if st.session_state.show_explanation:
         # Check if the selected answer matches the expected answer
         user_answer_index = ord(st.session_state.user_answer[0]) - 67  # Adjust for C, D, E, F
-        user_answer = question.choices[user_answer_index]  # Get the selected choice
+        user_answer = question.choices[user_answer_index].strip()  # Get the selected choice and strip spaces
         
-        if user_answer == question.answer:
+        # Compare with the correct answer (also stripped)
+        if user_answer.lower() == question.answer.lower():  # Case-insensitive comparison
             st.success("Correct!")
         else:
             st.error(f"Wrong! The correct answer is: {question.answer}.")
