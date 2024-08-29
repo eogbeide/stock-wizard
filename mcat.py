@@ -2,19 +2,20 @@ import streamlit as st
 import pandas as pd
 
 class Question:
-    def __init__(self, text, choices, answer, explanation, serial_number):
+    def __init__(self, text, choices, answer, explanation, serial_number, subject):
         self.text = text
         self.choices = choices
         self.answer = answer
         self.explanation = explanation
         self.serial_number = serial_number
+        self.subject = subject  # Add subject attribute
 
 def read_questions_from_csv(file_path):
     questions = []
     df = pd.read_csv(file_path)
 
     # Check for expected columns
-    expected_columns = ['S/N', 'Question', 'C', 'D', 'E', 'F', 'G', 'H']
+    expected_columns = ['S/N', 'Question', 'C', 'D', 'E', 'F', 'G', 'H', 'I']
     for col in expected_columns:
         if col not in df.columns:
             st.error(f"Missing column: {col}")
@@ -26,7 +27,8 @@ def read_questions_from_csv(file_path):
         answer = row['G'].replace('Answer:', '').strip()  # Clean the answer
         explanation = row['H']  # Explanation from Column H
         serial_number = row['S/N']  # S/N from Column A
-        questions.append(Question(question_text, choices, answer, explanation, serial_number))
+        subject = row['I']  # Subject from Column I
+        questions.append(Question(question_text, choices, answer, explanation, serial_number, subject))
 
     return questions
 
@@ -53,6 +55,18 @@ def main():
     
     st.title("Multiple Choice Quiz")
 
+    # Create a set of distinct subjects
+    subjects = sorted(set(question.subject for question in all_questions))
+    
+    # Select subject from sidebar
+    selected_subject = st.sidebar.selectbox("Select Subject:", ["All"] + subjects)
+
+    # Filter questions based on selected subject
+    if selected_subject == "All":
+        quiz_questions = all_questions
+    else:
+        quiz_questions = [q for q in all_questions if q.subject == selected_subject]
+
     # Select the total number of questions to display
     num_questions = st.sidebar.selectbox("Select number of questions:", [10, 20, 30, 40, 50, 60, 70, 80, 90, 100], index=0)
 
@@ -60,13 +74,13 @@ def main():
     min_question, max_question = st.sidebar.slider(
         "Select range of questions:",
         1,
-        len(all_questions),
+        len(quiz_questions),
         (1, 20),  # Default range
         1  # Step size
     )
 
     # Filter questions based on the selected range
-    quiz_questions = all_questions[min_question - 1:max_question]  # Adjust for zero-based indexing
+    quiz_questions = quiz_questions[min_question - 1:max_question]  # Adjust for zero-based indexing
 
     # Initialize session state variables
     if 'question_index' not in st.session_state:
