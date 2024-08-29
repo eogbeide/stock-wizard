@@ -54,7 +54,7 @@ def main():
     st.title("Multiple Choice Quiz")
 
     # Select the total number of questions to display
-    num_questions = st.sidebar.selectbox("Select number of questions:", [10, 20, 30, 40, 50], index=0)
+    num_questions = st.sidebar.selectbox("Select number of questions:", [10, 20, 30, 40, 50, 60. 70, 80, 90, 100, 150, 200, 250, 300, 350, 400], index=0)
 
     # Use the first `num_questions` from the list
     quiz_questions = all_questions[:min(num_questions, len(all_questions))]
