@@ -52,11 +52,12 @@ def main():
     
     st.title("Multiple Choice Quiz")
 
+    # Initialize session state variables
     if 'question_index' not in st.session_state:
         st.session_state.question_index = 0
         st.session_state.user_answer = None
         st.session_state.show_explanation = False
-        st.session_state.correct_answers = 0  # Track correct answers
+        st.session_state.correct_answers = 0  # Initialize correct_answers
 
     question_index = st.session_state.question_index
     question = quiz_questions[question_index]
