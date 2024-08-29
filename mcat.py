@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import random  # Import random module
 
 class Question:
     def __init__(self, text, choices, answer, explanation, serial_number):
@@ -54,11 +53,11 @@ def main():
     
     st.title("Multiple Choice Quiz")
 
-    # Sidebar for selecting the number of questions
+    # Select the total number of questions to display
     num_questions = st.sidebar.selectbox("Select number of questions:", [10, 20, 30, 40, 50], index=0)
 
-    # Randomly select the specified number of questions
-    quiz_questions = random.sample(all_questions, min(num_questions, len(all_questions)))
+    # Use the first `num_questions` from the list
+    quiz_questions = all_questions[:min(num_questions, len(all_questions))]
 
     # Initialize session state variables
     if 'question_index' not in st.session_state:
