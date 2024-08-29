@@ -41,11 +41,18 @@ def read_questions_from_docx(file_path):
 def display_question(question):
     st.write(question.text)
     
+    # Ensure there are exactly four choices
+    if len(question.choices) < 4:
+        st.error("Insufficient choices available for this question.")
+        return None
+    
     # Create explicit A, B, C, D labeled choices for radio buttons
-    labeled_choices = [f"A) {question.choices[0].split(') ')[1]}",
-                       f"B) {question.choices[1].split(') ')[1]}",
-                       f"C) {question.choices[2].split(') ')[1]}",
-                       f"D) {question.choices[3].split(') ')[1]}"]
+    labeled_choices = [
+        f"A) {question.choices[0].split(') ')[1]}",
+        f"B) {question.choices[1].split(') ')[1]}",
+        f"C) {question.choices[2].split(') ')[1]}",
+        f"D) {question.choices[3].split(') ')[1]}"
+    ]
     
     # Create a radio button for the choices
     user_answer = st.radio("Select your answer (A, B, C, D):", labeled_choices, key="answer_select")
