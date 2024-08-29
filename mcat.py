@@ -12,9 +12,16 @@ def read_questions_from_csv(file_path):
     questions = []
     df = pd.read_csv(file_path)
 
+    # Check for expected columns
+    expected_columns = ['S/N', 'Question', 'C', 'D', 'E', 'F', 'G', 'H']
+    for col in expected_columns:
+        if col not in df.columns:
+            st.error(f"Missing column: {col}")
+            return []
+
     for index, row in df.iterrows():
         question_text = row['Question']
-        choices = [row['C'], row['D'], row['E'], row['F']]  # Adjusted for new columns
+        choices = [row['C'], row['D'], row['E'], row['F']]
         answer = row['G'].strip()  # Answer from Column G
         explanation = row['H']  # Explanation from Column H
         questions.append(Question(question_text, choices, answer, explanation))
@@ -36,6 +43,10 @@ def main():
 
     # Read questions from the CSV file
     quiz_questions = read_questions_from_csv(file_path)
+    
+    if not quiz_questions:
+        st.write("No questions available.")
+        return
     
     st.title("Multiple Choice Quiz")
 
