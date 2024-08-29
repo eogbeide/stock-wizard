@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import random  # Import random module
 
 class Question:
     def __init__(self, text, choices, answer, explanation, serial_number):
@@ -35,7 +34,7 @@ def display_question(question):
     # Display the S/N and question text
     st.write(f"**{question.serial_number}. {question.text}**")
     
-    # Create labeled choices for radio buttons
+    # Create labeled choices for radio buttons without repeating headers
     labeled_choices = [f"{chr(65 + i)}) {choice.strip()}" for i, choice in enumerate(question.choices)]
     
     # Display choices
@@ -46,19 +45,13 @@ def main():
     file_path = "mcatss.csv"  # Path to your CSV file
 
     # Read questions from the CSV file
-    all_questions = read_questions_from_csv(file_path)
+    quiz_questions = read_questions_from_csv(file_path)
     
-    if not all_questions:
+    if not quiz_questions:
         st.write("No questions available.")
         return
     
     st.title("Multiple Choice Quiz")
-
-    # Sidebar for selecting the number of questions
-    num_questions = st.sidebar.selectbox("Select number of questions:", [10, 20, 30, 40, 50], index=0)
-
-    # Randomly select the specified number of questions
-    quiz_questions = random.sample(all_questions, min(num_questions, len(all_questions)))
 
     # Initialize session state variables
     if 'question_index' not in st.session_state:
@@ -69,9 +62,6 @@ def main():
 
     question_index = st.session_state.question_index
     question = quiz_questions[question_index]
-
-    # Display current question number out of total
-    st.write(f"**Question {question_index + 1} of {len(quiz_questions)}**")
 
     if st.session_state.show_explanation:
         # Check if the selected answer matches the expected answer
