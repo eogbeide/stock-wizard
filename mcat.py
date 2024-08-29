@@ -74,7 +74,7 @@ def main():
         col1, col2 = st.columns(2)
 
         with col1:
-            if st.button("Next Question", disabled=st.session_state.question_index >= len(quiz_questions) - 1):
+            if st.button("Next Question"):
                 st.session_state.question_index += 1
                 st.session_state.user_answer = None
                 st.session_state.show_explanation = False
@@ -84,16 +84,17 @@ def main():
                     st.session_state.question_index = 0  # Reset for a new round
 
         with col2:
-            if st.button("Back", disabled=st.session_state.question_index == 0):
-                st.session_state.question_index -= 1
-                st.session_state.user_answer = None
-                st.session_state.show_explanation = False
+            if st.button("Back"):
+                if st.session_state.question_index > 0:
+                    st.session_state.question_index -= 1
+                    st.session_state.user_answer = None
+                    st.session_state.show_explanation = False
 
     else:
         user_answer = display_question(question)
 
         # Store the selected answer only if a selection has been made
-        if st.button("Submit", disabled=st.session_state.user_answer is None):
+        if st.button("Submit"):
             st.session_state.user_answer = user_answer
             st.session_state.show_explanation = True
 
