@@ -40,7 +40,11 @@ def read_questions_from_docx(file_path):
 
 def display_question(question):
     st.write(question.text)
-    user_answer = st.radio("Select your answer:", question.choices, key="radio_answer")
+    user_answer = None
+    # Create radio buttons for each choice
+    for choice in question.choices:
+        if st.radio(f"{choice}", ("Select",), key=choice) == "Select":
+            user_answer = choice
     return user_answer
 
 def main():
