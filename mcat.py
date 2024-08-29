@@ -41,11 +41,8 @@ def read_questions_from_docx(file_path):
 def display_question(question):
     st.write(question.text)
     
-    # Format the choices with labels A, B, C, D
-    formatted_choices = [f"{choice}" for choice in question.choices]
-    
-    # Create a dropdown for selecting the answer
-    user_answer = st.selectbox("Select your answer:", formatted_choices, key="answer_select")
+    # Create radio buttons for each choice
+    user_answer = st.radio("Select your answer:", question.choices, key="answer_select")
     return user_answer
 
 def main():
