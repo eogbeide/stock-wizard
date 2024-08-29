@@ -65,7 +65,7 @@ def main():
 
     # Check if there are any valid questions
     if not quiz_questions:
-        st.error("No valid questions available for the quiz.")
+        st.error("No valid questions available for the quiz. Please check your .docx file format.")
         return
 
     st.title("Multiple Choice Quiz")
