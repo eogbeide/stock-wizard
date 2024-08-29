@@ -31,7 +31,8 @@ def read_questions_from_csv(file_path):
     return questions
 
 def display_question(question):
-    st.write(f"**Question {question.serial_number}:** {question.text}")
+    # Display the question text without additional formatting
+    st.write(question.text)
     
     # Create labeled choices for radio buttons
     labeled_choices = [f"{chr(67 + i)}) {choice}" for i, choice in enumerate(question.choices)]
