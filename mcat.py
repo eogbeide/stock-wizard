@@ -13,7 +13,8 @@ def read_questions_from_docx(file_path):
     doc = docx.Document(file_path)
 
     question_text = ""
-    choices = []
+    #choices = []
+    choices = ""
     answer = ""
     explanation = ""
 
