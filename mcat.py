@@ -33,6 +33,7 @@ def read_questions_from_docx(file_path):
         elif text.startswith("Explanation:"):
             explanation = text.split(":", 1)[1].strip()
 
+    # Append the last question if it exists
     if question_text:
         questions.append(Question(question_text, choices, answer, explanation))
 
@@ -44,7 +45,7 @@ def display_question(question):
     # Create labeled choices for radio buttons
     labeled_choices = [f"{choice.split(')')[0]}) {choice.split(')')[1].strip()}" for choice in question.choices]
     
-    # Display each choice on a new line
+    # Display choices
     user_answer = st.radio("Select your answer:", labeled_choices, key="answer_select")
     return user_answer
 
@@ -75,7 +76,7 @@ def main():
         st.write("Explanation:")
         st.write(question.explanation)
 
-        # Button to move to the next question
+        # Navigation buttons
         col1, col2 = st.columns(2)
 
         with col1:
