@@ -74,27 +74,32 @@ def main():
         col1, col2 = st.columns(2)
 
         with col1:
-            if st.button("Next Question"):
+            # Disable the button if it's the last question
+            next_disabled = st.session_state.question_index >= len(quiz_questions) - 1
+            if st.button("Next Question", disabled=next_disabled):
                 st.session_state.question_index += 1
                 st.session_state.user_answer = None
                 st.session_state.show_explanation = False
 
+                # Reset if at the end of the quiz
                 if st.session_state.question_index >= len(quiz_questions):
                     st.write("You have completed the quiz!")
                     st.session_state.question_index = 0  # Reset for a new round
 
         with col2:
-            if st.button("Back"):
-                if st.session_state.question_index > 0:
-                    st.session_state.question_index -= 1
-                    st.session_state.user_answer = None
-                    st.session_state.show_explanation = False
+            # Disable the button if at the first question
+            back_disabled = st.session_state.question_index == 0
+            if st.button("Back", disabled=back_disabled):
+                st.session_state.question_index -= 1
+                st.session_state.user_answer = None
+                st.session_state.show_explanation = False
 
     else:
         user_answer = display_question(question)
 
         # Store the selected answer only if a selection has been made
-        if st.button("Submit"):
+        submit_disabled = user_answer is None
+        if st.button("Submit", disabled=submit_disabled):
             st.session_state.user_answer = user_answer
             st.session_state.show_explanation = True
 
