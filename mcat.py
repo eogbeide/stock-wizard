@@ -14,9 +14,9 @@ def read_questions_from_csv(file_path):
 
     for index, row in df.iterrows():
         question_text = row['Question']
-        choices = [row['A'], row['B'], row['C'], row['D']]
-        answer = row['E'].strip()  # Ensure no extra spaces
-        explanation = row['Explanation']
+        choices = [row['C'], row['D'], row['E'], row['F']]  # Adjusted for new columns
+        answer = row['G'].strip()  # Answer from Column G
+        explanation = row['H']  # Explanation from Column H
         questions.append(Question(question_text, choices, answer, explanation))
 
     return questions
@@ -25,7 +25,7 @@ def display_question(question):
     st.write(question.text)
     
     # Create labeled choices for radio buttons
-    labeled_choices = [f"{chr(65 + i)}) {choice}" for i, choice in enumerate(question.choices)]
+    labeled_choices = [f"{chr(67 + i)}) {choice}" for i, choice in enumerate(question.choices)]
     
     # Display choices
     user_answer = st.radio("Select your answer:", labeled_choices, key="answer_select")
@@ -49,7 +49,7 @@ def main():
 
     if st.session_state.show_explanation:
         # Check if the selected answer matches the expected answer
-        user_answer_index = ord(st.session_state.user_answer[0]) - 65  # Convert A/B/C/D to index
+        user_answer_index = ord(st.session_state.user_answer[0]) - 67  # Adjust for C, D, E, F
         user_answer = question.choices[user_answer_index]  # Get the selected choice
         
         if user_answer == question.answer:
