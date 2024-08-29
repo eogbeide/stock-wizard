@@ -40,7 +40,6 @@ def read_questions_from_docx(file_path):
 
 def display_question(question):
     st.write(question.text)
-    # Use a unique key for the radio button; users can select only one option
     user_answer = st.radio("Select your answer:", question.choices, key="radio_answer")
     return user_answer
 
@@ -72,14 +71,24 @@ def main():
         st.write(question.explanation)
 
         # Button to move to the next question
-        if st.button("Next Question"):
-            st.session_state.question_index += 1
-            st.session_state.user_answer = None
-            st.session_state.show_explanation = False
+        col1, col2 = st.columns(2)
 
-            if st.session_state.question_index >= len(quiz_questions):
-                st.write("You have completed the quiz!")
-                st.session_state.question_index = 0  # Reset for a new round
+        with col1:
+            if st.button("Next Question"):
+                st.session_state.question_index += 1
+                st.session_state.user_answer = None
+                st.session_state.show_explanation = False
+
+                if st.session_state.question_index >= len(quiz_questions):
+                    st.write("You have completed the quiz!")
+                    st.session_state.question_index = 0  # Reset for a new round
+
+        with col2:
+            if st.button("Back"):
+                if st.session_state.question_index > 0:
+                    st.session_state.question_index -= 1
+                    st.session_state.user_answer = None
+                    st.session_state.show_explanation = False
 
     else:
         user_answer = display_question(question)
