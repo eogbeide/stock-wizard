@@ -1,5 +1,5 @@
 import streamlit as st
-import docx
+import pandas as pd
 
 class Question:
     def __init__(self, text, choices, answer, explanation):
@@ -8,33 +8,15 @@ class Question:
         self.answer = answer
         self.explanation = explanation
 
-def read_questions_from_docx(file_path):
+def read_questions_from_csv(file_path):
     questions = []
-    doc = docx.Document(file_path)
+    df = pd.read_csv(file_path)
 
-    question_text = ""
-    choices = []
-    answer = ""
-    explanation = ""
-
-    for paragraph in doc.paragraphs:
-        text = paragraph.text.strip()
-        if text.startswith("Question"):
-            if question_text:
-                questions.append(Question(question_text, choices, answer, explanation))
-            question_text = text
-            choices = []
-            answer = ""
-            explanation = ""
-        elif text.startswith("A)") or text.startswith("B)") or text.startswith("C)") or text.startswith("D)"):
-            choices.append(text)  # Keep the full text for choices
-        elif text.startswith("Answer:"):
-            answer = text.split(":")[1].strip()
-        elif text.startswith("Explanation:"):
-            explanation = text.split(":", 1)[1].strip()
-
-    # Append the last question if it exists
-    if question_text:
+    for index, row in df.iterrows():
+        question_text = row['Question']
+        choices = [row['A'], row['B'], row['C'], row['D']]
+        answer = row['Answer']
+        explanation = row['Explanation']
         questions.append(Question(question_text, choices, answer, explanation))
 
     return questions
@@ -43,17 +25,17 @@ def display_question(question):
     st.write(question.text)
     
     # Create labeled choices for radio buttons
-    labeled_choices = [f"{choice.split(')')[0]}) {choice.split(')')[1].strip()}" for choice in question.choices]
+    labeled_choices = [f"{chr(65 + i)}) {choice}" for i, choice in enumerate(question.choices)]
     
     # Display choices
     user_answer = st.radio("Select your answer:", labeled_choices, key="answer_select")
     return user_answer
 
 def main():
-    file_path = "mcat.docx"  # Path to your .docx file
+    file_path = "mcat.csv"  # Path to your CSV file
 
-    # Read questions from the docx file
-    quiz_questions = read_questions_from_docx(file_path)
+    # Read questions from the CSV file
+    quiz_questions = read_questions_from_csv(file_path)
     
     st.title("Multiple Choice Quiz")
 
