@@ -27,7 +27,7 @@ def read_questions_from_docx(file_path):
             answer = ""
             explanation = ""
         elif text.startswith("A)") or text.startswith("B)") or text.startswith("C)") or text.startswith("D)"):
-            choices.append(text)
+            choices.append(text)  # Keep the full text for choices
         elif text.startswith("Answer:"):
             answer = text.split(":")[1].strip()
         elif text.startswith("Explanation:"):
@@ -40,8 +40,12 @@ def read_questions_from_docx(file_path):
 
 def display_question(question):
     st.write(question.text)
+    
+    # Format the choices with labels A, B, C, D
+    formatted_choices = [f"{choice}" for choice in question.choices]
+    
     # Create a dropdown for selecting the answer
-    user_answer = st.selectbox("Select your answer:", question.choices, key="answer_select")
+    user_answer = st.selectbox("Select your answer:", formatted_choices, key="answer_select")
     return user_answer
 
 def main():
