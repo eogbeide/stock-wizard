@@ -48,11 +48,15 @@ def main():
     question = quiz_questions[question_index]
 
     if st.session_state.show_explanation:
-        correct_answer = question.answer.strip().split(",")  # Assuming answers are comma-separated
-        if st.session_state.user_answer in correct_answer:
+        # Check if the selected answer matches the expected answer
+        correct_answer = question.answer.strip()  # Get the correct answer
+        user_answer_index = ord(st.session_state.user_answer[0]) - 65  # Convert A/B/C/D to index
+        user_answer = question.choices[user_answer_index]  # Get the selected choice
+        
+        if user_answer == correct_answer:
             st.success("Correct!")
         else:
-            st.error(f"Wrong! The correct answer is: {', '.join(correct_answer)}.")
+            st.error(f"Wrong! The correct answer is: {correct_answer}.")
         
         # Show explanation
         st.write("Explanation:")
