@@ -31,8 +31,8 @@ def read_questions_from_csv(file_path):
     return questions
 
 def display_question(question):
-    # Display the question text
-    st.write(question.text)
+    # Display the S/N and question text
+    st.write(f"**{question.serial_number}. {question.text}**")
     
     # Create labeled choices for radio buttons without repeating headers
     labeled_choices = [f"{chr(65 + i)}) {choice.strip()}" for i, choice in enumerate(question.choices)]
