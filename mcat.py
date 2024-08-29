@@ -20,7 +20,7 @@ def read_questions_from_docx(file_path):
     for paragraph in doc.paragraphs:
         text = paragraph.text.strip()
         if text.startswith("Question"):
-            if question_text and len(choices) >= 4:  # Ensure at least 4 choices
+            if question_text:
                 questions.append(Question(question_text, choices, answer, explanation))
             question_text = text
             choices = []
@@ -33,14 +33,18 @@ def read_questions_from_docx(file_path):
         elif text.startswith("Explanation:"):
             explanation = text.split(":", 1)[1].strip()
 
-    # Check the last question
-    if question_text and len(choices) >= 4:
+    if question_text:
         questions.append(Question(question_text, choices, answer, explanation))
 
     return questions
 
 def display_question(question):
     st.write(question.text)
+    
+    # Ensure there are exactly four choices
+    if len(question.choices) < 4:
+        st.error("Insufficient choices available for this question.")
+        return None
     
     # Create explicit A, B, C, D labeled choices for radio buttons
     labeled_choices = [
@@ -59,12 +63,7 @@ def main():
 
     # Read questions from the docx file
     quiz_questions = read_questions_from_docx(file_path)
-
-    # Check if there are any valid questions
-    if not quiz_questions:
-        st.error("No valid questions available for the quiz.")
-        return
-
+    
     st.title("Multiple Choice Quiz")
 
     if 'question_index' not in st.session_state:
