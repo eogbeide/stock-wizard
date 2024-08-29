@@ -40,8 +40,8 @@ def read_questions_from_docx(file_path):
 
 def display_question(question):
     st.write(question.text)
-    # Displaying options as separate radio buttons
-    user_answer = st.radio("Select your answer:", question.choices, key="user_answer")
+    # Use a unique key for the radio button to avoid session state conflicts
+    user_answer = st.radio("Select your answer:", question.choices, key="radio_answer")
     return user_answer
 
 def main():
@@ -85,7 +85,7 @@ def main():
         user_answer = display_question(question)
 
         # Store the selected answer only if a selection has been made
-        if st.button("Submit") and user_answer:
+        if st.button("Submit"):
             st.session_state.user_answer = user_answer
             st.session_state.show_explanation = True
 
