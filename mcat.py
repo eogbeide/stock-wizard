@@ -40,7 +40,7 @@ def read_questions_from_docx(file_path):
 
 def display_question(question):
     st.write(question.text)
-    # Use a unique key for the radio button to avoid session state conflicts
+    # Use a unique key for the radio button; users can select only one option
     user_answer = st.radio("Select your answer:", question.choices, key="radio_answer")
     return user_answer
 
