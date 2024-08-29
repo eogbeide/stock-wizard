@@ -41,8 +41,11 @@ def read_questions_from_docx(file_path):
 def display_question(question):
     st.write(question.text)
     
-    # Create labeled choices for radio buttons
-    labeled_choices = [f"{choice.split(')')[0]}) {choice.split(')')[1].strip()}" for choice in question.choices]
+    # Create explicit A, B, C, D labeled choices for radio buttons
+    labeled_choices = [f"A) {question.choices[0].split(') ')[1]}",
+                       f"B) {question.choices[1].split(') ')[1]}",
+                       f"C) {question.choices[2].split(') ')[1]}",
+                       f"D) {question.choices[3].split(') ')[1]}"]
     
     # Create a radio button for the choices
     user_answer = st.radio("Select your answer (A, B, C, D):", labeled_choices, key="answer_select")
