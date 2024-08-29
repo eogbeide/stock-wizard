@@ -41,7 +41,7 @@ def read_questions_from_docx(file_path):
 def display_question(question):
     st.write(question.text)
     # Displaying options as separate radio buttons
-    user_answer = st.radio("Select your answer:", question.choices)
+    user_answer = st.radio("Select your answer:", question.choices, key="user_answer")
     return user_answer
 
 def main():
@@ -54,33 +54,38 @@ def main():
 
     if 'question_index' not in st.session_state:
         st.session_state.question_index = 0
+        st.session_state.user_answer = None
+        st.session_state.show_explanation = False
 
-    if st.session_state.question_index < len(quiz_questions):
-        question = quiz_questions[st.session_state.question_index]
+    question_index = st.session_state.question_index
+    question = quiz_questions[question_index]
+
+    if st.session_state.show_explanation:
+        correct_answer = question.answer.strip()
+        if st.session_state.user_answer == correct_answer:
+            st.success("Correct!")
+        else:
+            st.error(f"Wrong! The correct answer is: {correct_answer}.")
         
+        # Show explanation
+        st.write("Explanation:")
+        st.write(question.explanation)
+
+        # Button to move to the next question
+        if st.button("Next Question"):
+            st.session_state.question_index += 1
+            st.session_state.user_answer = None
+            st.session_state.show_explanation = False
+
+            if st.session_state.question_index >= len(quiz_questions):
+                st.write("You have completed the quiz!")
+    else:
         user_answer = display_question(question)
 
+        # Store the selected answer
         if st.button("Submit"):
-            correct_answer = question.answer.strip()
-            if user_answer == correct_answer:
-                st.success("Correct!")
-            else:
-                st.error(f"Wrong! The correct answer is: {correct_answer}.")
-            
-            # Show explanation
-            st.write("Explanation:")
-            st.write(question.explanation)
-
-            # Move to the next question
-            st.session_state.question_index += 1
-
-            if st.session_state.question_index < len(quiz_questions):
-                st.success("Next question will load below.")
-            else:
-                st.write("You have completed the quiz!")
-
-    else:
-        st.write("You have completed the quiz!")
+            st.session_state.user_answer = user_answer
+            st.session_state.show_explanation = True
 
 if __name__ == "__main__":
     main()
