@@ -27,7 +27,7 @@ def read_questions_from_docx(file_path):
             answer = ""
             explanation = ""
         elif text.startswith("A)") or text.startswith("B)") or text.startswith("C)") or text.startswith("D)"):
-            choices.append(text)
+            choices.append(text)  # Each choice is added here
         elif text.startswith("Answer:"):
             answer = text.split(":")[1].strip()
         elif text.startswith("Explanation:"):
@@ -40,8 +40,8 @@ def read_questions_from_docx(file_path):
 
 def display_question(question):
     st.write(question.text)
-    # Use a unique key for the radio button to avoid session state conflicts
-    user_answer = st.radio("Select your answer:", question.choices, key="radio_answer")
+    # Displaying options with radio buttons, each choice appears on a separate line
+    user_answer = st.radio("Select your answer:", question.choices)
     return user_answer
 
 def main():
