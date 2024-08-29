@@ -23,7 +23,7 @@ def read_questions_from_csv(file_path):
     for index, row in df.iterrows():
         question_text = row['Question']
         choices = [row['C'], row['D'], row['E'], row['F']]
-        answer = row['G'].strip()  # Answer from Column G
+        answer = row['G'].replace('Answer:', '').strip()  # Clean the answer
         explanation = row['H']  # Explanation from Column H
         serial_number = row['S/N']  # S/N from Column A
         questions.append(Question(question_text, choices, answer, explanation, serial_number))
@@ -68,7 +68,7 @@ def main():
         user_answer_index = ord(st.session_state.user_answer[0]) - 65  # Adjust for A, B, C, D
         user_answer = question.choices[user_answer_index].strip()  # Get the selected choice and strip spaces
         
-        # Compare with the correct answer (also stripped)
+        # Compare with the correct answer (cleaned)
         if user_answer.lower() == question.answer.lower():  # Case-insensitive comparison
             st.success("Correct!")
             st.session_state.correct_answers += 1  # Update score
@@ -76,7 +76,6 @@ def main():
             st.error(f"Wrong! The correct answer is: {question.answer}.")
         
         # Show explanation
-        st.write("Explanation:")
         st.write(question.explanation)
 
         # Navigation buttons
