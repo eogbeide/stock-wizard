@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import random  # Import random module
 
 class Question:
     def __init__(self, text, choices, answer, explanation, serial_number):
