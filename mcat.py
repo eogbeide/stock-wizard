@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import random
 
 class Question:
     def __init__(self, text, choices, answer, explanation, serial_number):
@@ -45,11 +46,14 @@ def main():
     file_path = "mcatss.csv"  # Path to your CSV file
 
     # Read questions from the CSV file
-    quiz_questions = read_questions_from_csv(file_path)
+    all_questions = read_questions_from_csv(file_path)
     
-    if not quiz_questions:
+    if not all_questions:
         st.write("No questions available.")
         return
+    
+    # Randomly select 10 questions
+    quiz_questions = random.sample(all_questions, min(10, len(all_questions)))
     
     st.title("Multiple Choice Quiz")
 
@@ -91,6 +95,8 @@ def main():
                 if st.session_state.question_index >= len(quiz_questions):
                     st.write("You have completed the quiz!")
                     st.write(f"Your score: {st.session_state.correct_answers}/{len(quiz_questions)}")
+                    percentage = (st.session_state.correct_answers / len(quiz_questions)) * 100
+                    st.write(f"Your score percentage: {percentage:.2f}%")
                     st.session_state.question_index = 0  # Reset for a new round
                     st.session_state.correct_answers = 0  # Reset score
 
