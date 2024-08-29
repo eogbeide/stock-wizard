@@ -88,7 +88,7 @@ def main():
         st.write(question.explanation)
 
         # Display the current score
-        st.write(f"**Current Score: {st.session_state.correct_answers} out of {question_index + 1}**")
+        st.write(f"**Current Score: {st.session_state.correct_answers} out of {num_questions}**")
 
         # Navigation buttons
         col1, col2 = st.columns(2)
@@ -102,7 +102,7 @@ def main():
 
                 if st.session_state.question_index >= len(quiz_questions):
                     st.write("You have completed the quiz!")
-                    st.write(f"Your final score: {st.session_state.correct_answers}/{len(quiz_questions)}")
+                    st.write(f"Your final score: {st.session_state.correct_answers}/{num_questions}")
                     st.session_state.question_index = 0  # Reset for a new round
                     st.session_state.correct_answers = 0  # Reset score
 
