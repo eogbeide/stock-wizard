@@ -41,8 +41,11 @@ def read_questions_from_docx(file_path):
 def display_question(question):
     st.write(question.text)
     
+    # Create labeled choices for multiselect
+    labeled_choices = [f"{choice}" for choice in question.choices]
+    
     # Create a multiselect for each choice
-    user_answers = st.multiselect("Select your answer:", question.choices, key="answer_select")
+    user_answers = st.multiselect("Select your answer (A, B, C, D):", labeled_choices, key="answer_select")
     return user_answers
 
 def main():
