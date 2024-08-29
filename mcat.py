@@ -15,7 +15,7 @@ def read_questions_from_csv(file_path):
     for index, row in df.iterrows():
         question_text = row['Question']
         choices = [row['A'], row['B'], row['C'], row['D']]
-        answer = row['Answer']
+        answer = row['Answer'].strip()  # Ensure no extra spaces
         explanation = row['Explanation']
         questions.append(Question(question_text, choices, answer, explanation))
 
@@ -49,14 +49,13 @@ def main():
 
     if st.session_state.show_explanation:
         # Check if the selected answer matches the expected answer
-        correct_answer = question.answer.strip()  # Get the correct answer
         user_answer_index = ord(st.session_state.user_answer[0]) - 65  # Convert A/B/C/D to index
         user_answer = question.choices[user_answer_index]  # Get the selected choice
         
-        if user_answer == correct_answer:
+        if user_answer == question.answer:
             st.success("Correct!")
         else:
-            st.error(f"Wrong! The correct answer is: {correct_answer}.")
+            st.error(f"Wrong! The correct answer is: {question.answer}.")
         
         # Show explanation
         st.write("Explanation:")
