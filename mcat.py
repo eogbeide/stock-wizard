@@ -41,12 +41,12 @@ def read_questions_from_docx(file_path):
 def display_question(question):
     st.write(question.text)
     
-    # Create labeled choices for multiselect
+    # Create labeled choices for radio buttons
     labeled_choices = [f"{choice.split(')')[0]}) {choice.split(')')[1].strip()}" for choice in question.choices]
     
-    # Create a multiselect for each choice
-    user_answers = st.multiselect("Select your answer (A, B, C, D):", labeled_choices, key="answer_select")
-    return user_answers
+    # Create a radio button for the choices
+    user_answer = st.radio("Select your answer (A, B, C, D):", labeled_choices, key="answer_select")
+    return user_answer
 
 def main():
     file_path = "mcat.docx"  # Path to your .docx file
@@ -66,7 +66,7 @@ def main():
 
     if st.session_state.show_explanation:
         correct_answer = question.answer.strip().split(",")  # Assuming answers are comma-separated
-        if set(st.session_state.user_answer) == set(correct_answer):
+        if st.session_state.user_answer in correct_answer:
             st.success("Correct!")
         else:
             st.error(f"Wrong! The correct answer is: {', '.join(correct_answer)}.")
@@ -100,12 +100,12 @@ def main():
                 st.session_state.show_explanation = False
 
     else:
-        user_answers = display_question(question)
+        user_answer = display_question(question)
 
         # Store the selected answer only if a selection has been made
-        submit_disabled = not user_answers  # No selection made
+        submit_disabled = user_answer is None  # No selection made
         if st.button("Submit", disabled=submit_disabled):
-            st.session_state.user_answer = user_answers
+            st.session_state.user_answer = user_answer
             st.session_state.show_explanation = True
 
 if __name__ == "__main__":
