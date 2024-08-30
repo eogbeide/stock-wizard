@@ -82,7 +82,7 @@ def main():
     st.write(f"**Question {st.session_state.question_index + 1}**: {question_to_display['question']}")
     st.write(f"**Explanation**: {question_to_display['explanation']}")
 
-    # Navigation buttons
+    st.markdown("### Navigation")
     col1, col2 = st.columns(2)
 
     with col1:
