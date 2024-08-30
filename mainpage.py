@@ -33,13 +33,21 @@ st.title("Your MCAT Prep Companion")
 if st.button("Go to MCAT Topics"):
     #st.write("You need to enable JavaScript to run this app.")
     st.markdown("[Open MCAT Topics](https://mcattopics.streamlit.app/)", unsafe_allow_html=True)
-    
-if st.button("Go to MCAT Prep"):
+
+
+if st.button("Go to MCAT Lab Review"):
     #st.write("You need to enable JavaScript to run this app.")
-    st.markdown("[Open MCAT Prep](https://mcatprep.streamlit.app/)", unsafe_allow_html=True)
+    st.markdown("[Open MCAT Lab Review](https://mcatlabs.streamlit.app/)", unsafe_allow_html=True)
+    
+if st.button("Go to MCAT Prep Quiz"):
+    #st.write("You need to enable JavaScript to run this app.")
+    st.markdown("[Open MCAT Quiz Prep](https://mcatprep.streamlit.app/)", unsafe_allow_html=True)
 
 if st.button("Learn About US Medical School Pre-reqs"):
     #st.write("You need to enable JavaScript to run this app.")
     st.markdown("[Open Med Schools Prerequisites Page](https://medschool.streamlit.app/)", unsafe_allow_html=True)
+
+
+
 
 
