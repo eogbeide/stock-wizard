@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 
 # Load data from CSV on GitHub
-#@st.cache_data
 def load_data():
     url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/labs.csv"
     df = pd.read_csv(url, encoding='ISO-8859-1')  # Specify encoding here
@@ -17,9 +16,6 @@ def main():
 
     # Clean column names
     df.columns = df.columns.str.strip()  # Remove any leading/trailing whitespace
-
-    # Debugging: Print column names
-    #st.write("Available columns:", df.columns.tolist())
 
     # Sidebar for subject selection
     if 'Subject' in df.columns:
@@ -37,11 +33,13 @@ def main():
         topic_data = subject_data[subject_data['Topic'] == selected_topic]
 
         if not topic_data.empty:
+            # Display Description in a box
             st.subheader("Description")
-            st.write(topic_data['Description'].values[0])  # Display the description
+            st.info(topic_data['Description'].values[0])  # Use st.info for a box
 
+            # Display Questions and Answers in another box
             st.subheader("Questions and Answers")
-            st.write(topic_data['Questions and Answers'].values[0])  # Display questions and answers
+            st.success(topic_data['Questions and Answers'].values[0])  # Use st.success for a box
         else:
             st.write("No data available for the selected topic.")
     else:
