@@ -5,7 +5,7 @@ import pandas as pd
 @st.cache_data
 def load_data():
     url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/labs.csv"
-    df = pd.read_csv(url)
+    df = pd.read_csv(url, encoding='ISO-8859-1')  # Specify encoding here
     return df
 
 # Main function to run the app
