@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as stu
 
 # Custom CSS for styling
 st.markdown(
