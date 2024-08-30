@@ -19,7 +19,7 @@ def main():
     df.columns = df.columns.str.strip()  # Remove any leading/trailing whitespace
 
     # Debugging: Print column names
-    st.write("Available columns:", df.columns.tolist())
+    #st.write("Available columns:", df.columns.tolist())
 
     # Sidebar for subject selection
     if 'Subject' in df.columns:
