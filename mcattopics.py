@@ -9,7 +9,7 @@ def read_questions_from_csv(file_path):
 # Main function to run the Streamlit app
 def main():
     # URL to the CSV file on GitHub
-    file_path = "https://raw.githubusercontent.com/yourusername/yourrepo/main/mcattopics.csv"  # Update with your actual GitHub URL
+    file_path = "https://raw.githubusercontent.com/yourusername/eogbeide/stock-wizard/mcattopics.csv"  # Update with your actual GitHub URL
 
     # Read questions from the CSV file
     df = read_questions_from_csv(file_path)
