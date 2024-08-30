@@ -11,4 +11,8 @@ if st.button("Go to MCAT Prep"):
     #st.write("You need to enable JavaScript to run this app.")
     st.markdown("[Open MCAT Prep](https://mcatprep.streamlit.app/)", unsafe_allow_html=True)
 
+if st.button("Learn About US Medical School Pre-reqs"):
+    #st.write("You need to enable JavaScript to run this app.")
+    st.markdown("[Open Med Schools Prerequisites Page](https://medschool.streamlit.app/)", unsafe_allow_html=True)
+
 
