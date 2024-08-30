@@ -5,7 +5,7 @@ st.markdown(
     """
     <style>
     .main {
-        background-color: #f0f2f5;
+        background-color: #87CEEB;  /* Sky blue */
         padding: 20px;
     }
     .button {
@@ -24,6 +24,7 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
 
 
 st.title("Your MCAT Prep Companion")
