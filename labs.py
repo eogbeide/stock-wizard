@@ -10,7 +10,7 @@ def load_data():
 
 # Main function to run the app
 def main():
-    st.title("Labs Data Viewer")
+    st.title("MCAT Labs")
 
     # Load the data
     df = load_data()
