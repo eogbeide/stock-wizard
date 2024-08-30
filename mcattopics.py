@@ -66,25 +66,17 @@ def main():
     if selected_topic != "All":
         df = df[df['topic'] == selected_topic]
 
-    # Select the number of questions to display
-    num_questions = st.sidebar.selectbox("Select number of questions to display:", [20, 40, 60], index=0)
-
-    # Initialize session state
+    # Select the number of questions to display (just one at a time)
     if 'question_index' not in st.session_state:
         st.session_state.question_index = 0
 
-    # Calculate the total number of questions
     total_questions = len(df)
 
-    # Display current question range
-    start_index = st.session_state.question_index
-    end_index = start_index + num_questions
-    questions_to_display = df.iloc[start_index:end_index]
-
-    # Display questions and explanations
-    for index, row in questions_to_display.iterrows():
-        st.write(f"**Question {index + 1}**: {row['question']}")
-        st.write(f"**Explanation**: {row['explanation']}")
+    # Display the current question
+    if total_questions > 0:
+        question_to_display = df.iloc[st.session_state.question_index]
+        st.write(f"**Question {st.session_state.question_index + 1}**: {question_to_display['question']}")
+        st.write(f"**Explanation**: {question_to_display['explanation']}")
 
     # Navigation buttons
     col1, col2 = st.columns(2)
@@ -92,12 +84,12 @@ def main():
     with col1:
         if st.button("Back"):
             if st.session_state.question_index > 0:
-                st.session_state.question_index -= num_questions
+                st.session_state.question_index -= 1
 
     with col2:
         if st.button("Next"):
-            if end_index < total_questions:
-                st.session_state.question_index += num_questions
+            if st.session_state.question_index < total_questions - 1:
+                st.session_state.question_index += 1
 
     # Reset button
     if st.button("Reset"):
