@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # Load data from CSV on GitHub
-@st.cache_data
+#@st.cache_data
 def load_data():
     url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/labs.csv"
     df = pd.read_csv(url, encoding='ISO-8859-1')  # Specify encoding here
