@@ -51,7 +51,7 @@ def main():
             st.error(f"Missing column: {col}")
             return
 
-    st.title("MCAT Topics Quiz")
+    st.title("MCAT Topics Explanation")
 
     # Create sidebars for Subject and Topic selection
     subjects = df['subject'].unique()
