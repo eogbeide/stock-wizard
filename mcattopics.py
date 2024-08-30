@@ -22,7 +22,7 @@ def read_questions_from_csv(file_path):
 # Main function to run the Streamlit app
 def main():
     # URL to the CSV file on GitHub
-    file_path = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/mcattopics.csv"  # Update with your actual GitHub URL
+    file_path = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/mcattopics.csv"
 
     # Read questions from the CSV file
     df = read_questions_from_csv(file_path)
@@ -31,20 +31,31 @@ def main():
         st.write("No data available.")
         return
 
+    # Clean column names
+    df.columns = df.columns.str.strip()  # Remove spaces
+    df.columns = df.columns.str.lower()   # Normalize case
+
+    # Check if required columns are present
+    required_columns = ['subject', 'topics', 'question', 'explanation']
+    for col in required_columns:
+        if col not in df.columns:
+            st.error(f"Missing column: {col}")
+            return
+
     st.title("MCAT Topics Quiz")
 
     # Create sidebars for Subject and Topic selection
-    subjects = df['Subject'].unique()
+    subjects = df['subject'].unique()
     selected_subject = st.sidebar.selectbox("Select Subject:", ["All"] + list(subjects))
 
     if selected_subject != "All":
-        df = df[df['Subject'] == selected_subject]
+        df = df[df['subject'] == selected_subject]
 
-    topics = df['Topics'].unique()
+    topics = df['topics'].unique()
     selected_topic = st.sidebar.selectbox("Select Topic:", ["All"] + list(topics))
 
     if selected_topic != "All":
-        df = df[df['Topics'] == selected_topic]
+        df = df[df['topics'] == selected_topic]
 
     # Select the number of questions to display
     num_questions = st.sidebar.selectbox("Select number of questions to display:", [20, 40, 60], index=0)
@@ -63,8 +74,8 @@ def main():
 
     # Display questions and explanations
     for index, row in questions_to_display.iterrows():
-        st.write(f"**Question {index + 1}**: {row['Question']}")
-        st.write(f"**Explanation**: {row['Explanation']}")
+        st.write(f"**Question {index + 1}**: {row['question']}")
+        st.write(f"**Explanation**: {row['explanation']}")
 
     # Navigation buttons
     col1, col2 = st.columns(2)
