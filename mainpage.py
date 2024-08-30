@@ -1,10 +1,12 @@
 import streamlit as st
 
-# Define the pages for the two apps
-pg = st.navigation([
-    st.Page("https://mcatprep.streamlit.app/", label="MCAT Prep"),
-    st.Page("https://mcattopics.streamlit.app/", label="MCAT Topics")
-])
+st.title("MCAT Resources")
 
-# Run the navigation
-pg.run()
+# Create buttons to navigate to the external apps
+if st.button("Go to MCAT Prep"):
+    st.write("You need to enable JavaScript to run this app.")
+    st.markdown("[Open MCAT Prep](https://mcatprep.streamlit.app/)", unsafe_allow_html=True)
+
+if st.button("Go to MCAT Topics"):
+    st.write("You need to enable JavaScript to run this app.")
+    st.markdown("[Open MCAT Topics](https://mcattopics.streamlit.app/)", unsafe_allow_html=True)
