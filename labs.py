@@ -4,7 +4,7 @@ import pandas as pd
 # Load data from CSV on GitHub
 @st.cache_data
 def load_data():
-    url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/labs.csv"  # Update with your GitHub URL
+    url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/labs.csv"
     df = pd.read_csv(url)
     return df
 
@@ -18,12 +18,19 @@ def main():
     # Clean column names
     df.columns = df.columns.str.strip()  # Remove any leading/trailing whitespace
 
+    # Sidebar for subject selection
+    subjects = df['Subject'].unique()
+    selected_subject = st.sidebar.selectbox("Select Subject:", subjects)
+
+    # Filter data based on selected subject
+    subject_data = df[df['Subject'] == selected_subject]
+
     # Sidebar for topic selection
-    topics = df['Topic'].unique()
+    topics = subject_data['Topic'].unique()
     selected_topic = st.sidebar.selectbox("Select Topic:", topics)
 
     # Filter data based on selected topic
-    topic_data = df[df['Topic'] == selected_topic]
+    topic_data = subject_data[subject_data['Topic'] == selected_topic]
 
     if not topic_data.empty:
         st.subheader("Description")
