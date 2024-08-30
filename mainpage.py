@@ -1,5 +1,31 @@
 import streamlit as st
 
+# Custom CSS for styling
+st.markdown(
+    """
+    <style>
+    .main {
+        background-color: #f0f2f5;
+        padding: 20px;
+    }
+    .button {
+        background-color: #007bff;
+        color: white;
+        border: None;
+        border-radius: 5px;
+        padding: 10px 20px;
+        font-size: 16px;
+        cursor: pointer;
+    }
+    .button:hover {
+        background-color: #0056b3;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
+
 st.title("Your MCAT Prep Companion")
 
 # Create buttons to navigate to the external apps
