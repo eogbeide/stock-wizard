@@ -33,13 +33,14 @@ def main():
         topic_data = subject_data[subject_data['Topic'] == selected_topic]
 
         if not topic_data.empty:
-            # Display Description in a box
-            st.subheader("Description")
-            st.info(topic_data['Description'].values[0])  # Use st.info for a box
+            # Display Description in the sidebar
+            st.sidebar.subheader("Description")
+            st.sidebar.info(topic_data['Description'].values[0])  # Use st.info for a box
 
-            # Display Questions and Answers in another box
+            # Display Questions and Answers in an expander
             st.subheader("Questions and Answers")
-            st.success(topic_data['Questions and Answers'].values[0])  # Use st.success for a box
+            with st.expander("View Questions and Answers"):
+                st.write(topic_data['Questions and Answers'].values[0])  # Display questions and answers
         else:
             st.write("No data available for the selected topic.")
     else:
