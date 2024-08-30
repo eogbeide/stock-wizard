@@ -5,7 +5,7 @@ from urllib.error import URLError
 # Function to read questions from CSV
 def read_questions_from_csv(file_path):
     try:
-        df = pd.read_csv(file_path, encoding='utf-8',errors='ignore')  # Try with UTF-8 encoding
+        df = pd.read_csv(file_path, encoding='utf-8')  # Try with UTF-8 encoding
         return df
     except UnicodeDecodeError:
         st.error("Error decoding the CSV file. Trying a different encoding.")
