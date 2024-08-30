@@ -10,7 +10,7 @@ st.markdown(
     }
     .button {
         background-color: #007bff;
-        color: white;
+        color: grey;
         border: None;
         border-radius: 5px;
         padding: 10px 20px;
