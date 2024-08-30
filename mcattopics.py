@@ -69,11 +69,18 @@ def main():
 
     total_questions = len(df)
 
-    # Display the current question only if there are questions available
-    if total_questions > 0:
-        question_to_display = df.iloc[st.session_state.question_index]
-        st.write(f"**Question {st.session_state.question_index + 1}**: {question_to_display['question']}")
-        st.write(f"**Explanation**: {question_to_display['explanation']}")
+    # Adjust question index if it's out of bounds
+    if total_questions == 0:
+        st.write("No questions available for the selected subject and topic.")
+        return
+
+    # Ensure the question index is within the valid range
+    st.session_state.question_index = min(st.session_state.question_index, total_questions - 1)
+
+    # Display the current question
+    question_to_display = df.iloc[st.session_state.question_index]
+    st.write(f"**Question {st.session_state.question_index + 1}**: {question_to_display['question']}")
+    st.write(f"**Explanation**: {question_to_display['explanation']}")
 
     # Navigation buttons
     col1, col2 = st.columns(2)
