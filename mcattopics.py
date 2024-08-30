@@ -1,18 +1,35 @@
 import streamlit as st
 import pandas as pd
+from urllib.error import URLError
 
 # Function to read questions from CSV
 def read_questions_from_csv(file_path):
-    df = pd.read_csv(file_path)
-    return df
+    try:
+        df = pd.read_csv(file_path, encoding='utf-8')  # Try with UTF-8 encoding
+        return df
+    except UnicodeDecodeError:
+        st.error("Error decoding the CSV file. Trying a different encoding.")
+        try:
+            df = pd.read_csv(file_path, encoding='ISO-8859-1')  # Fallback to ISO-8859-1
+            return df
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
+            return pd.DataFrame()  # Return an empty DataFrame on failure
+    except URLError as e:
+        st.error(f"Error fetching data: {e.reason}")
+        return pd.DataFrame()  # Return an empty DataFrame on failure
 
 # Main function to run the Streamlit app
 def main():
     # URL to the CSV file on GitHub
-    file_path = "mcattopics.csv"  # Update with your actual GitHub URL
+    file_path = "https://raw.githubusercontent.com/yourusername/yourrepo/main/mcattopics.csv"  # Update with your actual GitHub URL
 
     # Read questions from the CSV file
     df = read_questions_from_csv(file_path)
+
+    if df.empty:
+        st.write("No data available.")
+        return
 
     st.title("MCAT Topics Quiz")
 
