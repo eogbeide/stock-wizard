@@ -35,8 +35,17 @@ def main():
     df.columns = df.columns.str.strip()  # Remove spaces
     df.columns = df.columns.str.lower()   # Normalize case
 
+    # Rename columns to match expected names
+    df.rename(columns={
+        's/n': 'serial_number',
+        'subject': 'subject',
+        'topic': 'topic',
+        'question': 'question',
+        'explanation': 'explanation'
+    }, inplace=True)
+
     # Check if required columns are present
-    required_columns = ['subject', 'topics', 'question', 'explanation']
+    required_columns = ['subject', 'topic', 'question', 'explanation']
     for col in required_columns:
         if col not in df.columns:
             st.error(f"Missing column: {col}")
@@ -51,11 +60,11 @@ def main():
     if selected_subject != "All":
         df = df[df['subject'] == selected_subject]
 
-    topics = df['topics'].unique()
+    topics = df['topic'].unique()
     selected_topic = st.sidebar.selectbox("Select Topic:", ["All"] + list(topics))
 
     if selected_topic != "All":
-        df = df[df['topics'] == selected_topic]
+        df = df[df['topic'] == selected_topic]
 
     # Select the number of questions to display
     num_questions = st.sidebar.selectbox("Select number of questions to display:", [20, 40, 60], index=0)
