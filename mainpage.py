@@ -1,6 +1,6 @@
 import streamlit as st
 
-st.title("MCAT Resources Designed Just For You")
+st.title("Your MCAT Prep Companion")
 
 # Create buttons to navigate to the external apps
 if st.button("Go to MCAT Prep"):
