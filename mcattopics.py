@@ -77,10 +77,14 @@ def main():
     # Ensure the question index is within the valid range
     st.session_state.question_index = min(st.session_state.question_index, total_questions - 1)
 
-    # Display the current question
+    # Display the current question in a box
     question_to_display = df.iloc[st.session_state.question_index]
-    st.write(f"**Question {st.session_state.question_index + 1}**: {question_to_display['question']}")
-    st.write(f"**Explanation**: {question_to_display['explanation']}")
+    st.markdown("### Question")
+    st.success(question_to_display['question'])
+
+    # Display the explanation in an expander
+    with st.expander("View Explanation"):
+        st.write(question_to_display['explanation'])
 
     st.markdown("### Navigation")
     col1, col2 = st.columns(2)
