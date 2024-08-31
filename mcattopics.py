@@ -1,4 +1,4 @@
-import streamlit as stoo
+import streamlit as st
 import pandas as pd
 from urllib.error import URLError
 
