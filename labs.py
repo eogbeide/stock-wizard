@@ -33,9 +33,9 @@ def main():
         topic_data = subject_data[subject_data['Topic'] == selected_topic]
 
         if not topic_data.empty:
-            # Display Description in the sidebar
-            st.sidebar.subheader("Description")
-            st.sidebar.info(topic_data['Description'].values[0])  # Use st.info for a box
+            # Display Description in a box
+            st.subheader("Description")
+            st.info(topic_data['Description'].values[0])  # Use st.info for a box
 
             # Display Questions and Answers in an expander
             st.subheader("Questions and Answers")
