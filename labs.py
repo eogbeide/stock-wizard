@@ -17,7 +17,7 @@ def main():
     # Clean column names
     df.columns = df.columns.str.strip()  # Remove any leading/trailing whitespace
 
-    # Initialize session state
+    # Initialize session state for subject and topic indices
     if 'subject_index' not in st.session_state:
         st.session_state.subject_index = 0
     if 'topic_index' not in st.session_state:
@@ -57,8 +57,9 @@ def main():
                     if st.session_state.topic_index > 0:
                         st.session_state.topic_index -= 1
                     else:
-                        st.session_state.subject_index = (st.session_state.subject_index - 1) % len(subjects)
-                        st.session_state.topic_index = 0
+                        if st.session_state.subject_index > 0:
+                            st.session_state.subject_index -= 1
+                            st.session_state.topic_index = 0
 
             # Next Button
             with col2:
@@ -66,8 +67,9 @@ def main():
                     if st.session_state.topic_index < len(topics) - 1:
                         st.session_state.topic_index += 1
                     else:
-                        st.session_state.subject_index = (st.session_state.subject_index + 1) % len(subjects)
-                        st.session_state.topic_index = 0
+                        if st.session_state.subject_index < len(subjects) - 1:
+                            st.session_state.subject_index += 1
+                            st.session_state.topic_index = 0
 
         else:
             st.write("No data available for the selected topic.")
