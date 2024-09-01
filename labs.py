@@ -33,32 +33,14 @@ def main():
         topic_data = subject_data[subject_data['Topic'] == selected_topic]
 
         if not topic_data.empty:
-            # Initialize session state for question index
-            if 'question_index' not in st.session_state:
-                st.session_state.question_index = 0
-
             # Display Description in a box
             st.subheader("Description")
-            st.info(topic_data['Description'].values[st.session_state.question_index])  # Display current description
+            st.info(topic_data['Description'].values[0])  # Use st.info for a box
 
             # Display Questions and Answers in an expander
             st.subheader("Questions and Answers")
             with st.expander("View Questions and Answers"):
-                st.write(topic_data['Questions and Answers'].values[st.session_state.question_index])  # Display current questions and answers
-
-            # Navigation buttons
-            col1, col2 = st.columns(2)
-
-            with col1:
-                if st.button("Back"):
-                    if st.session_state.question_index > 0:
-                        st.session_state.question_index -= 1
-
-            with col2:
-                if st.button("Next"):
-                    if st.session_state.question_index < len(topic_data) - 1:
-                        st.session_state.question_index += 1
-
+                st.write(topic_data['Questions and Answers'].values[0])  # Display questions and answers
         else:
             st.write("No data available for the selected topic.")
     else:
