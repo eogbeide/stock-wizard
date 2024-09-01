@@ -29,6 +29,26 @@ st.markdown(
 
 st.title("Your MCAT Prep Companion")
 
+import streamlit as st
+
+def main():
+    st.title("Welcome!")
+    
+    st.write("""
+    These resources were curated to **assist pre-medical students in understanding MCAT concepts**. 
+    These materials are provided **entirely free of charge as a service to the community**.
+    """)
+
+    st.write("""
+    **Designed to enhance your learning experience**, these resources aim to support your understanding 
+    **without replacing your current study methods and materials**.
+    """)
+
+    st.write("Happy studying!")
+
+if __name__ == "__main__":
+    main()
+
 # Create buttons to navigate to the external apps
 if st.button("Go to MCAT Topics"):
     #st.write("You need to enable JavaScript to run this app.")
@@ -47,24 +67,6 @@ if st.button("Learn About US Medical School Pre-reqs"):
     #st.write("You need to enable JavaScript to run this app.")
     st.markdown("[Open Med Schools Prerequisites Page](https://medschool.streamlit.app/)", unsafe_allow_html=True)
 
-
-def main():
-    st.title("Welcome!")
-    
-    st.write("""
-    These resources were curated to help pre-medical students demystify MCAT concepts. 
-    These materials are offered completely free of charge as a pro bono service.
-    """)
-
-    st.write("""
-    Designed to complement your learning, these resources are intended to enhance your understanding 
-    without replacing your existing study methods and materials.
-    """)
-
-    st.write("Happy studying!")
-
-if __name__ == "__main__":
-    main()
 
 
 
