@@ -48,6 +48,25 @@ if st.button("Learn About US Medical School Pre-reqs"):
     st.markdown("[Open Med Schools Prerequisites Page](https://medschool.streamlit.app/)", unsafe_allow_html=True)
 
 
+def main():
+    st.title("Welcome!")
+    
+    st.write("""
+    These resources were curated to help pre-medical students demystify MCAT concepts. 
+    These materials are offered completely free of charge as a pro bono service.
+    """)
+
+    st.write("""
+    Designed to complement your learning, these resources are intended to enhance your understanding 
+    without replacing your existing study methods and materials.
+    """)
+
+    st.write("Happy studying!")
+
+if __name__ == "__main__":
+    main()
+
+
 
 
 
