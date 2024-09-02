@@ -36,10 +36,12 @@ def main():
     if not subject_data.empty:
         current_question = subject_data.iloc[st.session_state.question_index]
         
-        # Try to split the question and answer
+        # Try to extract the question and answer
         try:
-            question, answer = current_question['Questions and Answers'].split('---')
-        except ValueError:
+            # Split based on newlines and remove empty strings
+            qa_pairs = [qa.strip() for qa in current_question['Questions and Answers'].split('\n\n') if qa.strip()]
+            question, answer = qa_pairs[0], qa_pairs[1]
+        except IndexError:
             st.error("The format of the question and answer is incorrect. Please check the CSV file.")
             return
 
