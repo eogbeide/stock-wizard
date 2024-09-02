@@ -65,7 +65,8 @@ def main():
 
                 # Get the current question-answer pair
                 question, answer = st.session_state.qa_pairs[st.session_state.question_index]
-                st.subheader(question.strip())
+                sn = st.session_state.current_row_index + 1  # S/N based on the row index
+                st.subheader(f"Q{sn}.{question.strip()}")  # Display S/N with question
 
                 # Answer display logic
                 if st.session_state.show_answer[st.session_state.question_index]:
