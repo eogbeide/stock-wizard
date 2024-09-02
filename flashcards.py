@@ -34,10 +34,11 @@ def main():
     # Filter data based on selected subject
     subject_data = df[df['Subject'] == selected_subject]
 
-    # Initialize session state for question index
+    # Initialize session state for question index and answer visibility
     if 'qa_pairs' not in st.session_state:
         st.session_state.qa_pairs = []  # Store question-answer pairs
         st.session_state.question_index = 0  # Initialize question index
+        st.session_state.show_answer = False  # Track if the answer is shown
 
     # Display the current question
     if not subject_data.empty:
@@ -56,8 +57,11 @@ def main():
             st.subheader(question.strip())
 
             # Answer display logic
-            if st.button("Show Answer"):
+            if st.session_state.show_answer:
                 st.info(answer.strip())
+            else:
+                if st.button("Show Answer"):
+                    st.session_state.show_answer = True  # Set state to show the answer
 
             # Navigation buttons
             col1, col2 = st.columns(2)
@@ -67,6 +71,7 @@ def main():
                 if st.button("Back"):
                     if st.session_state.question_index > 0:
                         st.session_state.question_index -= 1
+                        st.session_state.show_answer = False  # Reset answer visibility
                     else:
                         st.session_state.question_index = 0  # Remain at the first question
 
@@ -75,6 +80,7 @@ def main():
                 if st.button("Next"):
                     if st.session_state.question_index < len(st.session_state.qa_pairs) - 1:
                         st.session_state.question_index += 1
+                        st.session_state.show_answer = False  # Reset answer visibility
                     else:
                         st.session_state.question_index = len(st.session_state.qa_pairs) - 1  # Stay at the last question
 
