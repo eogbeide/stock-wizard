@@ -3,7 +3,7 @@ import pandas as pd
 
 # Load data from CSV on GitHub
 def load_data():
-    url = "https://raw.githubusercontent.com/yourusername/yourrepository/main/flashcards.csv"
+    url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/flashcards.csv"
     df = pd.read_csv(url)
     return df
 
