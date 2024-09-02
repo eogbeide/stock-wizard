@@ -1,4 +1,4 @@
-import streamlit as stdd
+import streamlit as st
 import pandas as pd
 import re
 
