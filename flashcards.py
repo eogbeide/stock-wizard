@@ -59,10 +59,10 @@ def main():
             # Answer display logic
             if st.session_state.show_answer:
                 st.info(answer.strip())
-
-            # Button to show the answer
-            if st.button("Show Answer"):
-                st.session_state.show_answer = True  # Set flag to show the answer
+            else:
+                # Button to show the answer
+                if st.button("Show Answer"):
+                    st.session_state.show_answer = True  # Set flag to show the answer
 
             # Navigation buttons
             col1, col2 = st.columns(2)
