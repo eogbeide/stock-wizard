@@ -3,9 +3,13 @@ import pandas as pd
 
 # Load data from CSV on GitHub
 def load_data():
-    url = "https://raw.githubusercontent.com/yourusername/yourrepository/main/flashcards.csv"
-    df = pd.read_csv(url)
-    return df
+    url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/flashcards.csv"
+    try:
+        df = pd.read_csv(url)
+        return df
+    except Exception as e:
+        st.error(f"Error loading data: {e}")
+        return pd.DataFrame()  # Return an empty DataFrame
 
 # Main function to run the app
 def main():
@@ -34,16 +38,16 @@ def main():
         
         # Try to split the question and answer
         try:
-            question, answer = current_question['Questions and Answers'].split(' | ')
+            question, answer = current_question['Questions and Answers'].split('---')
         except ValueError:
             st.error("The format of the question and answer is incorrect. Please check the CSV file.")
             return
 
-        st.subheader(question)
+        st.subheader(question.strip())
 
         # Answer display logic
         if st.button("Show Answer"):
-            st.info(answer)
+            st.info(answer.strip())
 
         # Navigation buttons
         col1, col2 = st.columns(2)
