@@ -36,20 +36,20 @@ def main():
     if not subject_data.empty:
         current_question = subject_data.iloc[st.session_state.question_index]
         
-        # Try to extract the question and answer
-        try:
-            # Split based on newlines and remove empty strings
-            qa_pairs = [qa.strip() for qa in current_question['Questions and Answers'].split('\n\n') if qa.strip()]
-            question, answer = qa_pairs[0], qa_pairs[1]
-        except IndexError:
+        # Extract question and answer
+        question_answer = current_question['Questions and Answers'].split('---')
+        if len(question_answer) >= 2:
+            question = question_answer[0].strip()
+            answer = question_answer[1].strip()
+        else:
             st.error("The format of the question and answer is incorrect. Please check the CSV file.")
             return
 
-        st.subheader(question.strip())
+        st.subheader(question)
 
         # Answer display logic
         if st.button("Show Answer"):
-            st.info(answer.strip())
+            st.info(answer)
 
         # Navigation buttons
         col1, col2 = st.columns(2)
