@@ -6,7 +6,7 @@ import re
 def load_data():
     url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/flashcards.csv"
     try:
-        df = pd.read_csv(url, encoding='ISO-8859-1)
+        df = pd.read_csv(url, encoding='ISO-8859-1')
         return df
     except Exception as e:
         st.error(f"Error loading data: {e}")
