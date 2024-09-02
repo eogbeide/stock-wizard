@@ -26,7 +26,6 @@ def main():
 
     # Clean column names
     df.columns = df.columns.str.strip()  # Remove any leading/trailing whitespace
-    st.write(df.columns)  # Debugging: print column names to check available columns
 
     # Sidebar for subject selection
     subjects = df['Subject'].unique()
