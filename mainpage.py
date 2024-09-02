@@ -25,11 +25,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-
-
 st.title("Your MCAT Prep Companion")
-
-import streamlit as st
 
 def main():
     st.title("Welcome!")
@@ -51,22 +47,16 @@ if __name__ == "__main__":
 
 # Create buttons to navigate to the external apps
 if st.button("Go to MCAT Topics"):
-    #st.write("You need to enable JavaScript to run this app.")
-    st.markdown("[Open MCAT Topics](https://mcattopics.streamlit.app/)", unsafe_allow_html=True)
-
+    st.markdown("<iframe src='https://mcattopics.streamlit.app/' width='100%' height='600'></iframe>", unsafe_allow_html=True)
 
 if st.button("Go to MCAT Lab Review"):
-    #st.write("You need to enable JavaScript to run this app.")
-    st.markdown("[Open MCAT Lab Review](https://mcatlabs.streamlit.app/)", unsafe_allow_html=True)
+    st.markdown("<iframe src='https://mcatlabs.streamlit.app/' width='100%' height='600'></iframe>", unsafe_allow_html=True)
 
 if st.button("Go to MCAT Flashcards"):
-    #st.write("You need to enable JavaScript to run this app.")
-    st.markdown("[Open MCAT Flash Cards](https://mcatflashcards.streamlit.app/)", unsafe_allow_html=True)
-    
+    st.markdown("<iframe src='https://mcatflashcards.streamlit.app/' width='100%' height='600'></iframe>", unsafe_allow_html=True)
+
 if st.button("Go to MCAT Prep Quiz"):
-    #st.write("You need to enable JavaScript to run this app.")
-    st.markdown("[Open MCAT Quiz Prep](https://mcatprep.streamlit.app/)", unsafe_allow_html=True)
+    st.markdown("<iframe src='https://mcatprep.streamlit.app/' width='100%' height='600'></iframe>", unsafe_allow_html=True)
 
 if st.button("Learn About US Medical School Pre-reqs"):
-    #st.write("You need to enable JavaScript to run this app.")
-    st.markdown("[Open Med Schools Prerequisites Page](https://medschool.streamlit.app/)", unsafe_allow_html=True)
+    st.markdown("<iframe src='https://medschool.streamlit.app/' width='100%' height='600'></iframe>", unsafe_allow_html=True)
