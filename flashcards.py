@@ -61,12 +61,17 @@ def main():
                 if st.button("Back"):
                     if st.session_state.question_index > 0:
                         st.session_state.question_index -= 1
+                    else:
+                        st.session_state.question_index = 0  # Remain at the first question
 
             # Next Button
             with col2:
                 if st.button("Next"):
                     if st.session_state.question_index < len(subject_data) - 1:
                         st.session_state.question_index += 1
+                    else:
+                        st.session_state.question_index = len(subject_data) - 1  # Stay at the last question
+
         else:
             st.error("No valid question and answer pairs found in the format. Please check the CSV file.")
 
