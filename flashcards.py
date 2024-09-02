@@ -18,8 +18,17 @@ def main():
     # Load the data
     df = load_data()
 
+    # Check if the DataFrame is empty
+    if df.empty:
+        st.error("No data available. Please check the CSV file URL.")
+        return
+
     # Clean column names
-    df.columns = df.columns.str.strip()  # Remove any leading/trailing whitespace
+    try:
+        df.columns = df.columns.str.strip()  # Remove any leading/trailing whitespace
+    except AttributeError:
+        st.error("Error processing column names. Please ensure the CSV has the correct format.")
+        return
 
     # Sidebar for subject selection
     subjects = df['Subject'].unique()
