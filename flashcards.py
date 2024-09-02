@@ -27,12 +27,12 @@ def main():
     # Clean column names
     df.columns = df.columns.str.strip()  # Remove any leading/trailing whitespace
 
-    # Sidebar for subject selection
-    subjects = df['Subject'].unique()
-    selected_subject = st.sidebar.selectbox("Select Subject:", subjects)
+    # Sidebar for topic selection
+    topics = df['Topic'].unique()
+    selected_topic = st.sidebar.selectbox("Select Topic:", topics)
 
-    # Filter data based on selected subject
-    subject_data = df[df['Subject'] == selected_subject]
+    # Filter data based on selected topic
+    topic_data = df[df['Topic'] == selected_topic]
 
     # Initialize session state for question index
     if 'qa_pairs' not in st.session_state:
@@ -41,8 +41,8 @@ def main():
         st.session_state.show_answer = [False]  # Track if the answer should be shown for each question
 
     # Display the current question
-    if not subject_data.empty:
-        current_question = subject_data.iloc[0]  # We only take the first row for the selected subject
+    if not topic_data.empty:
+        current_question = topic_data.iloc[0]  # We only take the first row for the selected topic
         
         # Extract questions and answers using regex
         st.session_state.qa_pairs = re.findall(
@@ -89,7 +89,7 @@ def main():
             st.error("No valid question and answer pairs found in the format. Please check the CSV file.")
 
     else:
-        st.write("No flashcards available for the selected subject.")
+        st.write("No flashcards available for the selected topic.")
 
 if __name__ == "__main__":
     main()
