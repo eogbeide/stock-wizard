@@ -58,6 +58,10 @@ if st.button("Go to MCAT Topics"):
 if st.button("Go to MCAT Lab Review"):
     #st.write("You need to enable JavaScript to run this app.")
     st.markdown("[Open MCAT Lab Review](https://mcatlabs.streamlit.app/)", unsafe_allow_html=True)
+
+if st.button("Go to MCAT Flashcards"):
+    #st.write("You need to enable JavaScript to run this app.")
+    st.markdown("[Open MCAT Flash Cards](https://mcatflashcards.streamlit.app/)", unsafe_allow_html=True)
     
 if st.button("Go to MCAT Prep Quiz"):
     #st.write("You need to enable JavaScript to run this app.")
