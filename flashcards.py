@@ -3,7 +3,7 @@ import pandas as pd
 
 # Load data from CSV on GitHub
 def load_data():
-    url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/flashcards.csv"
+    url = "https://raw.githubusercontent.com/yourusername/yourrepository/main/flashcards.csv"
     df = pd.read_csv(url)
     return df
 
@@ -32,8 +32,12 @@ def main():
     if not subject_data.empty:
         current_question = subject_data.iloc[st.session_state.question_index]
         
-        # Assuming the columns are named "Questions and Answers"
-        question, answer = current_question['Questions and Answers'].split(' | ')  # Adjust split based on your format
+        # Try to split the question and answer
+        try:
+            question, answer = current_question['Questions and Answers'].split(' | ')
+        except ValueError:
+            st.error("The format of the question and answer is incorrect. Please check the CSV file.")
+            return
 
         st.subheader(question)
 
