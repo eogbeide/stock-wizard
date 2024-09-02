@@ -61,20 +61,23 @@ def main():
                 # Initialize question index if not set
                 if 'question_index' not in st.session_state:
                     st.session_state.question_index = 0  # Initialize question index to zero
-                    st.session_state.show_answer = [False] * len(st.session_state.qa_pairs)  # Track answer visibility for each question
 
                 # Get the current question-answer pair
                 question, answer = st.session_state.qa_pairs[st.session_state.question_index]
                 flashcard_number = st.session_state.question_index + 1  # Flashcard number based on question index
                 st.subheader(f"Flashcard {flashcard_number}: {question.strip()}")  # Display Flashcard # with question
 
+                # Show Answer button logic
+                if 'show_answer' not in st.session_state:
+                    st.session_state.show_answer = False  # Initialize answer visibility state
+
                 # Answer display logic
-                if st.session_state.show_answer[st.session_state.question_index]:
+                if st.session_state.show_answer:
                     st.info(answer.strip())
                 else:
                     # Button to show the answer
                     if st.button("Show Answer"):
-                        st.session_state.show_answer[st.session_state.question_index] = True  # Set flag to show the answer for the current question
+                        st.session_state.show_answer = True  # Set flag to show the answer for the current question
 
                 # Navigation buttons
                 col1, col2 = st.columns(2)
@@ -84,6 +87,7 @@ def main():
                     if st.button("Back"):
                         if st.session_state.question_index > 0:
                             st.session_state.question_index -= 1
+                            st.session_state.show_answer = False  # Reset answer visibility
                         else:
                             st.session_state.question_index = 0  # Remain at the first question
 
@@ -92,11 +96,12 @@ def main():
                     if st.button("Next"):
                         if st.session_state.question_index < len(st.session_state.qa_pairs) - 1:
                             st.session_state.question_index += 1
+                            st.session_state.show_answer = False  # Reset answer visibility
                         else:
                             # Move to the next row if available
                             st.session_state.current_row_index += 1
                             st.session_state.question_index = 0  # Reset question index for the next row
-                            st.session_state.show_answer = [False] * len(st.session_state.qa_pairs)  # Reset answers
+                            st.session_state.show_answer = False  # Reset answer visibility
 
             else:
                 st.error("No valid question and answer pairs found in the format. Please check the CSV file.")
