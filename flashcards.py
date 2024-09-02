@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import re
 
 # Load data from CSV on GitHub
 def load_data():
@@ -24,11 +25,7 @@ def main():
         return
 
     # Clean column names
-    try:
-        df.columns = df.columns.str.strip()  # Remove any leading/trailing whitespace
-    except AttributeError:
-        st.error("Error processing column names. Please ensure the CSV has the correct format.")
-        return
+    df.columns = df.columns.str.strip()  # Remove any leading/trailing whitespace
 
     # Sidebar for subject selection
     subjects = df['Subject'].unique()
@@ -45,35 +42,33 @@ def main():
     if not subject_data.empty:
         current_question = subject_data.iloc[st.session_state.question_index]
         
-        # Extract question and answer
-        question_answer = current_question['Questions and Answers'].split('---')
-        if len(question_answer) >= 2:
-            question = question_answer[0].strip()
-            answer = question_answer[1].strip()
+        # Extract questions and answers using regex
+        qa_pairs = re.findall(r'Flashcard \d+:\s*Q:\s*(.*?)\s*A:\s*(.*?)(?=\s*Flashcard \d+:|$)', current_question['Questions and Answers'], re.DOTALL)
+
+        if qa_pairs:
+            question, answer = qa_pairs[0]  # Get the first question-answer pair
+            st.subheader(question.strip())
+
+            # Answer display logic
+            if st.button("Show Answer"):
+                st.info(answer.strip())
+
+            # Navigation buttons
+            col1, col2 = st.columns(2)
+
+            # Back Button
+            with col1:
+                if st.button("Back"):
+                    if st.session_state.question_index > 0:
+                        st.session_state.question_index -= 1
+
+            # Next Button
+            with col2:
+                if st.button("Next"):
+                    if st.session_state.question_index < len(subject_data) - 1:
+                        st.session_state.question_index += 1
         else:
-            st.error("The format of the question and answer is incorrect. Please check the CSV file.")
-            return
-
-        st.subheader(question)
-
-        # Answer display logic
-        if st.button("Show Answer"):
-            st.info(answer)
-
-        # Navigation buttons
-        col1, col2 = st.columns(2)
-
-        # Back Button
-        with col1:
-            if st.button("Back"):
-                if st.session_state.question_index > 0:
-                    st.session_state.question_index -= 1
-
-        # Next Button
-        with col2:
-            if st.button("Next"):
-                if st.session_state.question_index < len(subject_data) - 1:
-                    st.session_state.question_index += 1
+            st.error("No valid question and answer pairs found in the format. Please check the CSV file.")
 
     else:
         st.write("No flashcards available for the selected subject.")
