@@ -35,18 +35,24 @@ def main():
     subject_data = df[df['Subject'] == selected_subject]
 
     # Initialize session state for question index
-    if 'question_index' not in st.session_state:
-        st.session_state.question_index = 0
+    if 'qa_pairs' not in st.session_state:
+        st.session_state.qa_pairs = []  # Store question-answer pairs
+        st.session_state.question_index = 0  # Initialize question index
 
     # Display the current question
     if not subject_data.empty:
-        current_question = subject_data.iloc[st.session_state.question_index]
+        current_question = subject_data.iloc[0]  # We only take the first row for the selected subject
         
         # Extract questions and answers using regex
-        qa_pairs = re.findall(r'Flashcard \d+:\s*Q:\s*(.*?)\s*A:\s*(.*?)(?=\s*Flashcard \d+:|$)', current_question['Questions and Answers'], re.DOTALL)
+        st.session_state.qa_pairs = re.findall(
+            r'Flashcard \d+:\s*Q:\s*(.*?)\s*A:\s*(.*?)(?=\s*Flashcard \d+:|$)', 
+            current_question['Questions and Answers'], 
+            re.DOTALL
+        )
 
-        if qa_pairs:
-            question, answer = qa_pairs[0]  # Get the first question-answer pair
+        if st.session_state.qa_pairs:
+            # Get the current question-answer pair
+            question, answer = st.session_state.qa_pairs[st.session_state.question_index]
             st.subheader(question.strip())
 
             # Answer display logic
@@ -67,10 +73,10 @@ def main():
             # Next Button
             with col2:
                 if st.button("Next"):
-                    if st.session_state.question_index < len(subject_data) - 1:
+                    if st.session_state.question_index < len(st.session_state.qa_pairs) - 1:
                         st.session_state.question_index += 1
                     else:
-                        st.session_state.question_index = len(subject_data) - 1  # Stay at the last question
+                        st.session_state.question_index = len(st.session_state.qa_pairs) - 1  # Stay at the last question
 
         else:
             st.error("No valid question and answer pairs found in the format. Please check the CSV file.")
