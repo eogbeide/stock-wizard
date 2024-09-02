@@ -3,7 +3,7 @@ import pandas as pd
 
 # Load data from CSV on GitHub
 def load_data():
-    url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/flashcards.csv"
+    url = "https://raw.githubusercontent.com/yourusername/yourrepository/main/flashcards.csv"
     df = pd.read_csv(url)
     return df
 
@@ -31,11 +31,15 @@ def main():
     # Display the current question
     if not subject_data.empty:
         current_question = subject_data.iloc[st.session_state.question_index]
-        st.subheader(current_question['Questions'])
+        
+        # Assuming the columns are named "Questions and Answers"
+        question, answer = current_question['Questions and Answers'].split(' | ')  # Adjust split based on your format
+
+        st.subheader(question)
 
         # Answer display logic
         if st.button("Show Answer"):
-            st.info(current_question['Answers'])
+            st.info(answer)
 
         # Navigation buttons
         col1, col2 = st.columns(2)
