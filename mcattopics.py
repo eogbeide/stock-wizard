@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 from urllib.error import URLError
 import pyttsx3
+from gtts import gTTS
+import os
 
 # Function to read questions from CSV
 def read_questions_from_csv(file_path):
@@ -20,9 +22,9 @@ def read_questions_from_csv(file_path):
 
 # Function for text-to-speech
 def speak_text(text):
-    engine = pyttsx3.init(driverName='sapi5')  # Use 'espeak' for Linux
-    engine.say(text)
-    engine.runAndWait()
+    tts = gTTS(text=text, lang='en')
+    tts.save("temp.mp3")
+    os.system("mpg321 temp.mp3")  # Use an appropriate command to play the audio
 
 # Main function to run the Streamlit app
 def main():
