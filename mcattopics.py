@@ -20,7 +20,7 @@ def read_questions_from_csv(file_path):
 
 # Function for text-to-speech
 def speak_text(text):
-    engine = pyttsx3.init()
+    engine = pyttsx3.init(driverName='sapi5')  # Use 'espeak' for Linux
     engine.say(text)
     engine.runAndWait()
 
