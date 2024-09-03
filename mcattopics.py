@@ -52,7 +52,7 @@ def main():
     }, inplace=True)
 
     # Check if required columns are present
-    required_columns = ['subject', 'topic', 'question', 'explanation']
+    required_columns = ['serial_number', 'subject', 'topic', 'question', 'explanation']
     for col in required_columns:
         if col not in df.columns:
             st.error(f"Missing column: {col}")
@@ -90,7 +90,7 @@ def main():
     # Display the current question in a box
     question_to_display = df.iloc[st.session_state.question_index]
     st.markdown("### Question")
-    st.success(question_to_display['question'])
+    st.success(f"{question_to_display['serial_number']}. {question_to_display['question']}")  # Include S/N
 
     # Display the explanation in an expander
     with st.expander("View Explanation"):
