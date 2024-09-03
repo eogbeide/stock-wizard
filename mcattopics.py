@@ -1,9 +1,6 @@
 import streamlit as st
 import pandas as pd
 from urllib.error import URLError
-from gtts import gTTS
-import os
-import tempfile
 
 # Function to read questions from CSV
 def read_questions_from_csv(file_path):
@@ -19,13 +16,6 @@ def read_questions_from_csv(file_path):
     except Exception as e:
         st.error(f"An error occurred: {e}")
         return pd.DataFrame()  # Return an empty DataFrame on failure
-
-# Function for text-to-speech
-def speak_text(text):
-    tts = gTTS(text=text, lang='en')
-    with tempfile.NamedTemporaryFile(delete=True) as tmp:
-        tts.save(f"{tmp.name}.mp3")
-        os.system(f"mpg321 {tmp.name}.mp3")  # Use an appropriate command to play the audio
 
 # Main function to run the Streamlit app
 def main():
@@ -52,7 +42,7 @@ def main():
     }, inplace=True)
 
     # Check if required columns are present
-    required_columns = ['serial_number', 'subject', 'topic', 'question', 'explanation']
+    required_columns = ['subject', 'topic', 'question', 'explanation']
     for col in required_columns:
         if col not in df.columns:
             st.error(f"Missing column: {col}")
@@ -90,13 +80,11 @@ def main():
     # Display the current question in a box
     question_to_display = df.iloc[st.session_state.question_index]
     st.markdown("### Question")
-    st.success(f"{question_to_display['serial_number']}. {question_to_display['question']}")  # Include S/N
+    st.success(question_to_display['question'])
 
     # Display the explanation in an expander
     with st.expander("View Explanation"):
         st.write(question_to_display['explanation'])
-        if st.button("Read Explanation Aloud"):
-            speak_text(question_to_display['explanation'])
 
     st.markdown("### Navigation")
     col1, col2 = st.columns(2)
