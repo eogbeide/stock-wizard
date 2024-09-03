@@ -1,9 +1,6 @@
 import streamlit as st
 import pandas as pd
 from urllib.error import URLError
-import pyttsx3
-from gtts import gTTS
-import os
 
 # Function to read questions from CSV
 def read_questions_from_csv(file_path):
@@ -19,12 +16,6 @@ def read_questions_from_csv(file_path):
     except Exception as e:
         st.error(f"An error occurred: {e}")
         return pd.DataFrame()  # Return an empty DataFrame on failure
-
-# Function for text-to-speech
-def speak_text(text):
-    tts = gTTS(text=text, lang='en')
-    tts.save("temp.mp3")
-    os.system("mpg321 temp.mp3")  # Use an appropriate command to play the audio
 
 # Main function to run the Streamlit app
 def main():
@@ -91,16 +82,9 @@ def main():
     st.markdown("### Question")
     st.success(question_to_display['question'])
 
-    # Text-to-speech button for the question
-    if st.button("Read Question Aloud"):
-        speak_text(question_to_display['question'])
-
     # Display the explanation in an expander
     with st.expander("View Explanation"):
         st.write(question_to_display['explanation'])
-        # Text-to-speech button for the explanation
-        if st.button("Read Explanation Aloud"):
-            speak_text(question_to_display['explanation'])
 
     st.markdown("### Navigation")
     col1, col2 = st.columns(2)
