@@ -54,6 +54,11 @@ def main():
             st.subheader("Questions and Answers")
             with st.expander("View Questions and Answers"):
                 st.write(topic_data['Questions and Answers'].values[0])  # Display questions and answers
+
+            # Example of displaying a math formula
+            st.subheader("Relevant Math Formulas")
+            st.markdown(r"**Example Formula:** The quadratic formula is given by: $$x = \frac{-b \pm \sqrt{b^2 - 4ac}}{2a}$$")
+
         else:
             st.write("No data available for the selected topic.")
     else:
