@@ -9,6 +9,19 @@ def load_data():
 
 # Main function to run the app
 def main():
+    # Custom CSS to set font to Comic Sans MS and font size to 10
+    st.markdown(
+        """
+        <style>
+        body {
+            font-family: 'Comic Sans MS';
+            font-size: 10px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
     st.title("MCAT Labs")
 
     # Load the data
