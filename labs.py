@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as ste
 import pandas as pd
 
 # Load data from CSV on GitHub
