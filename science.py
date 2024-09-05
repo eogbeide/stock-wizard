@@ -23,6 +23,10 @@ filtered_data = filtered_data[filtered_data['Topic'] == selected_topic]
 if 'selected_index' not in st.session_state:
     st.session_state.selected_index = 0
 
+# Ensure the selected index is within the bounds of the filtered data
+if st.session_state.selected_index >= len(filtered_data):
+    st.session_state.selected_index = len(filtered_data) - 1
+
 # Navigation buttons at the top
 col1, col2 = st.columns(2)
 
@@ -38,20 +42,23 @@ with col2:
 
 # Get the current scenario and its serial number
 current_index = st.session_state.selected_index
-scenario = filtered_data['Scenario'].iloc[current_index]
-serial_number = filtered_data['S/N'].iloc[current_index]  # Assuming S/N column exists
+if len(filtered_data) > 0:  # Ensure there's data available
+    scenario = filtered_data['Scenario'].iloc[current_index]
+    serial_number = filtered_data['S/N'].iloc[current_index]  # Assuming S/N column exists
 
-# Display scenario in a box with S/N
-st.subheader(f'Scenario (S/N: {serial_number})')
-st.write(scenario)
+    # Display scenario in a box with S/N
+    st.subheader(f'Scenario (S/N: {serial_number})')
+    st.write(scenario)
 
-# Get the questions and answers related to the current scenario
-questions_answers = filtered_data['Question and Answer'].tolist()
+    # Get the questions and answers related to the current scenario
+    questions_answers = filtered_data['Question and Answer'].tolist()
 
-# Display selected Question and Answer
-selected_qa = questions_answers[current_index]
-st.subheader('Question and Answer')
-st.write(selected_qa)
+    # Display selected Question and Answer
+    selected_qa = questions_answers[current_index]
+    st.subheader('Question and Answer')
+    st.write(selected_qa)
 
-# Display the current scenario index
-st.write(f"Scenario {st.session_state.selected_index + 1} of {len(filtered_data)}")
+    # Display the current scenario index
+    st.write(f"Scenario {st.session_state.selected_index + 1} of {len(filtered_data)}")
+else:
+    st.write("No scenarios available for the selected Subject and Topic.")
