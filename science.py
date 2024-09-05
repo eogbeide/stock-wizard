@@ -19,32 +19,42 @@ selected_topic = st.sidebar.selectbox('Select Topic', topics)
 # Further filter data based on the selected topic
 filtered_data = filtered_data[filtered_data['Topic'] == selected_topic]
 
-# Initialize session state to track the selected scenario index
-if 'selected_index' not in st.session_state:
-    st.session_state.selected_index = 0
+# Initialize session state to track the selected S/N
+if 'selected_sn' not in st.session_state:
+    st.session_state.selected_sn = None
 
-# Ensure the selected index is within the bounds of the filtered data
-if st.session_state.selected_index >= len(filtered_data):
-    st.session_state.selected_index = len(filtered_data) - 1
+# Create a mapping of S/N to index
+sn_to_index = {sn: index for index, sn in enumerate(filtered_data['S/N'])}
+
+# Sidebar for S/N selection
+if len(filtered_data) > 0:
+    selected_sn = st.sidebar.selectbox('Select S/N', filtered_data['S/N'].tolist(), index=0)
+    st.session_state.selected_sn = selected_sn
+
+# Get the current index based on the selected S/N
+current_index = sn_to_index[st.session_state.selected_sn]
 
 # Navigation buttons at the top
 col1, col2 = st.columns(2)
 
 with col1:
     if st.button('Back'):
-        if st.session_state.selected_index > 0:
-            st.session_state.selected_index -= 1
+        current_serials = filtered_data['S/N'].tolist()
+        current_index = current_serials.index(st.session_state.selected_sn)
+        if current_index > 0:
+            st.session_state.selected_sn = current_serials[current_index - 1]
 
 with col2:
     if st.button('Next'):
-        if st.session_state.selected_index < len(filtered_data) - 1:
-            st.session_state.selected_index += 1
+        current_serials = filtered_data['S/N'].tolist()
+        current_index = current_serials.index(st.session_state.selected_sn)
+        if current_index < len(current_serials) - 1:
+            st.session_state.selected_sn = current_serials[current_index + 1]
 
 # Get the current scenario and its serial number
-current_index = st.session_state.selected_index
-if len(filtered_data) > 0:  # Ensure there's data available
+if st.session_state.selected_sn is not None:  # Ensure there's data available
     scenario = filtered_data['Scenario'].iloc[current_index]
-    serial_number = filtered_data['S/N'].iloc[current_index]  # Assuming S/N column exists
+    serial_number = st.session_state.selected_sn
 
     # Display scenario in a box with S/N
     st.subheader(f'Scenario (S/N: {serial_number})')
@@ -59,6 +69,6 @@ if len(filtered_data) > 0:  # Ensure there's data available
     st.write(selected_qa)
 
     # Display the current scenario index
-    st.write(f"Scenario {st.session_state.selected_index + 1} of {len(filtered_data)}")
+    st.write(f"Scenario {current_index + 1} of {len(filtered_data)}")
 else:
     st.write("No scenarios available for the selected Subject and Topic.")
