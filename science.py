@@ -28,7 +28,7 @@ if len(filtered_data) > 0:
     serial_numbers = filtered_data['S/N'].tolist()
 
     # Sidebar for S/N selection
-    #selected_sn = st.sidebar.selectbox('Select S/N', serial_numbers, index=st.session_state.selected_index)
+    selected_sn = st.sidebar.selectbox('Select S/N', serial_numbers, index=st.session_state.selected_index)
 
     # Update selected index based on S/N selection
     st.session_state.selected_index = serial_numbers.index(selected_sn)
