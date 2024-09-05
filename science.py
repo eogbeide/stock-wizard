@@ -3,7 +3,7 @@ import pandas as pd
 
 # Load data from the CSV file on GitHub with explicit encoding
 url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/science.csv'
-data = pd.read_csv(url, encoding='ISO-8859-1')  # Use 'utf-8' or 'ISO-8859-1'
+data = pd.read_csv(url, encoding='ISO-8859-1')
 
 # Sidebar for subject selection
 subjects = data['Subject'].unique()
@@ -11,6 +11,13 @@ selected_subject = st.sidebar.selectbox('Select Subject', subjects)
 
 # Filter data based on the selected subject
 filtered_data = data[data['Subject'] == selected_subject]
+
+# Sidebar for topic selection
+topics = filtered_data['Topic'].unique()  # Assuming the 'Topic' column exists
+selected_topic = st.sidebar.selectbox('Select Topic', topics)
+
+# Further filter data based on the selected topic
+filtered_data = filtered_data[filtered_data['Topic'] == selected_topic]
 
 # Initialize session state to track the selected scenario index
 if 'selected_index' not in st.session_state:
