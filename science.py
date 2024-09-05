@@ -16,6 +16,19 @@ filtered_data = data[data['Subject'] == selected_subject]
 if 'selected_index' not in st.session_state:
     st.session_state.selected_index = 0
 
+# Navigation buttons at the top
+col1, col2 = st.columns(2)
+
+with col1:
+    if st.button('Back'):
+        if st.session_state.selected_index > 0:
+            st.session_state.selected_index -= 1
+
+with col2:
+    if st.button('Next'):
+        if st.session_state.selected_index < len(filtered_data) - 1:
+            st.session_state.selected_index += 1
+
 # Get the current scenario and its serial number
 current_index = st.session_state.selected_index
 scenario = filtered_data['Scenario'].iloc[current_index]
@@ -32,19 +45,6 @@ questions_answers = filtered_data['Question and Answer'].tolist()
 selected_qa = questions_answers[current_index]
 st.subheader('Question and Answer')
 st.write(selected_qa)
-
-# Navigation buttons
-col1, col2 = st.columns(2)
-
-with col1:
-    if st.button('Back'):
-        if st.session_state.selected_index > 0:
-            st.session_state.selected_index -= 1
-
-with col2:
-    if st.button('Next'):
-        if st.session_state.selected_index < len(filtered_data) - 1:
-            st.session_state.selected_index += 1
 
 # Display the current scenario index
 st.write(f"Scenario {st.session_state.selected_index + 1} of {len(filtered_data)}")
