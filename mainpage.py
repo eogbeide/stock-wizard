@@ -54,10 +54,13 @@ if st.button("Go to MCAT Topics"):
     #st.write("You need to enable JavaScript to run this app.")
     st.markdown("[Open MCAT Topics](https://mcattopics.streamlit.app/)", unsafe_allow_html=True)
 
-
 if st.button("Go to MCAT Lab Review"):
     #st.write("You need to enable JavaScript to run this app.")
     st.markdown("[Open MCAT Lab Review](https://mcatlabs.streamlit.app/)", unsafe_allow_html=True)
+
+if st.button("Go to MCAT Scientific Reasoning Questions"):
+    #st.write("You need to enable JavaScript to run this app.")
+    st.markdown("[Open MCAT Scientific Reasoning Questions](https://mcatreasoning.streamlit.app/)", unsafe_allow_html=True)
 
 if st.button("Go to MCAT Flashcards"):
     #st.write("You need to enable JavaScript to run this app.")
@@ -66,10 +69,6 @@ if st.button("Go to MCAT Flashcards"):
 if st.button("Go to MCAT Prep Quiz"):
     #st.write("You need to enable JavaScript to run this app.")
     st.markdown("[Open MCAT Quiz Prep](https://mcatprep.streamlit.app/)", unsafe_allow_html=True)
-
-if st.button("Go to MCAT Scientific Reasoning Questions"):
-    #st.write("You need to enable JavaScript to run this app.")
-    st.markdown("[Open MCAT Scientific Reasoning Questions](https://mcatreasoning.streamlit.app/)", unsafe_allow_html=True)
 
 if st.button("Learn About US Medical School Pre-reqs"):
     #st.write("You need to enable JavaScript to run this app.")
