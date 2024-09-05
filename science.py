@@ -22,7 +22,7 @@ if 'selected_index' not in st.session_state:
     st.session_state.selected_index = 0
 
 # Dropdown for Question and Answer
-questions_answers = filtered_data[['Question and Answer', 'Details']].values.tolist()
+questions_answers = filtered_data['Question and Answer'].values.tolist()
 selected_qa = questions_answers[st.session_state.selected_index]
 
 # Display selected Question and Answer in an expander
