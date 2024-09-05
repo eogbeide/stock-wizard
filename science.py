@@ -23,15 +23,9 @@ filtered_data = filtered_data[filtered_data['Topic'] == selected_topic]
 if 'selected_index' not in st.session_state:
     st.session_state.selected_index = 0
 
-# Create a list of S/Ns for easy navigation
+# Create a list of scenarios for easy navigation
 if len(filtered_data) > 0:
-    serial_numbers = filtered_data['S/N'].tolist()
-
-    # Sidebar for S/N selection
-    selected_sn = st.sidebar.selectbox('Select S/N', serial_numbers, index=st.session_state.selected_index)
-
-    # Update selected index based on S/N selection
-    st.session_state.selected_index = serial_numbers.index(selected_sn)
+    scenarios = filtered_data['Scenario'].tolist()
 
     # Navigation buttons at the top
     col1, col2 = st.columns(2)
@@ -43,13 +37,13 @@ if len(filtered_data) > 0:
 
     with col2:
         if st.button('Next'):
-            if st.session_state.selected_index < len(serial_numbers) - 1:
+            if st.session_state.selected_index < len(scenarios) - 1:
                 st.session_state.selected_index += 1
 
     # Get the current scenario and its serial number
     current_index = st.session_state.selected_index
-    scenario = filtered_data['Scenario'].iloc[current_index]
-    serial_number = serial_numbers[current_index]
+    scenario = scenarios[current_index]
+    serial_number = filtered_data['S/N'].iloc[current_index]  # Assuming S/N column exists
 
     # Display scenario in a box with S/N
     st.subheader(f'Scenario (S/N: {serial_number})')
