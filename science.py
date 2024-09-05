@@ -3,7 +3,7 @@ import pandas as pd
 
 # Load data from the CSV file on GitHub with explicit encoding
 url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/science.csv'
-data = pd.read_csv(url, encoding='ISO-8859-1')  # Try 'utf-8' or 'ISO-8859-1'
+data = pd.read_csv(url, encoding='ISO-8859-1')  # Use 'utf-8' or 'ISO-8859-1'
 
 # Sidebar for subject selection
 subjects = data['Subject'].unique()
@@ -22,12 +22,12 @@ if 'selected_index' not in st.session_state:
     st.session_state.selected_index = 0
 
 # Dropdown for Question and Answer
-questions_answers = filtered_data['Question and Answer'].tolist()
+questions_answers = filtered_data[['Question and Answer', 'Details']].values.tolist()
 selected_qa = questions_answers[st.session_state.selected_index]
 
-# Display selected Question and Answer
-st.subheader('Question and Answer')
-st.write(selected_qa)
+# Display selected Question and Answer in an expander
+with st.expander(selected_qa[0], expanded=True):  # Use the question as the label
+    st.write(selected_qa[1])  # Display the corresponding details
 
 # Navigation buttons
 col1, col2 = st.columns(2)
