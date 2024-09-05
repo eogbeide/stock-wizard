@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 
 # Load data from the CSV file on GitHub
-url = 'https://raw.githubusercontent.com/yourusername/yourrepo/main/science.csv'  # Update with the actual path
+url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/science.csv'  # Update with the actual path
 data = pd.read_csv(url)
 
 # Sidebar for subject selection
