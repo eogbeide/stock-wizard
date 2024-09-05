@@ -3,7 +3,7 @@ import pandas as pd
 
 # Load data from the CSV file on GitHub with explicit encoding
 url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/science.csv'
-data = pd.read_csv(url, encoding='ISO-8859-1')  # Use 'utf-8' or 'ISO-8859-1'
+data = pd.read_csv(url, encoding='ISO-8859-1')
 
 # Sidebar for subject selection
 subjects = data['Subject'].unique()
@@ -17,30 +17,36 @@ scenario = filtered_data['Scenario'].iloc[0]  # Assuming one scenario per subjec
 st.subheader('Scenario')
 st.write(scenario)
 
+# Check the columns in the filtered data
+st.write("Filtered Data Columns:", filtered_data.columns.tolist())
+
 # Initialize session state to track the selected question index
 if 'selected_index' not in st.session_state:
     st.session_state.selected_index = 0
 
-# Dropdown for Question and Answer
-questions_answers = filtered_data[['Question and Answer', 'Details']].values.tolist()
-selected_qa = questions_answers[st.session_state.selected_index]
+# Ensure 'Question and Answer' and 'Details' columns exist
+if 'Question and Answer' in filtered_data.columns and 'Details' in filtered_data.columns:
+    questions_answers = filtered_data[['Question and Answer', 'Details']].values.tolist()
+    selected_qa = questions_answers[st.session_state.selected_index]
 
-# Display selected Question and Answer in an expander
-with st.expander(selected_qa[0], expanded=True):  # Use the question as the label
-    st.write(selected_qa[1])  # Display the corresponding details
+    # Display selected Question and Answer in an expander
+    with st.expander(selected_qa[0], expanded=True):  # Use the question as the label
+        st.write(selected_qa[1])  # Display the corresponding details
 
-# Navigation buttons
-col1, col2 = st.columns(2)
+    # Navigation buttons
+    col1, col2 = st.columns(2)
 
-with col1:
-    if st.button('Back'):
-        if st.session_state.selected_index > 0:
-            st.session_state.selected_index -= 1
+    with col1:
+        if st.button('Back'):
+            if st.session_state.selected_index > 0:
+                st.session_state.selected_index -= 1
 
-with col2:
-    if st.button('Next'):
-        if st.session_state.selected_index < len(questions_answers) - 1:
-            st.session_state.selected_index += 1
+    with col2:
+        if st.button('Next'):
+            if st.session_state.selected_index < len(questions_answers) - 1:
+                st.session_state.selected_index += 1
 
-# Display the current question index
-st.write(f"Question {st.session_state.selected_index + 1} of {len(questions_answers)}")
+    # Display the current question index
+    st.write(f"Question {st.session_state.selected_index + 1} of {len(questions_answers)}")
+else:
+    st.error("The required columns 'Question and Answer' or 'Details' are not present in the data.")
