@@ -1,6 +1,10 @@
 import streamlit as st
 import pandas as pd
 
+# Create a timestamp to force a refresh
+today = datetime.datetime.now().date()
+st.write(f"Last updated: {today}")
+
 st.set_page_config(layout="wide")
 st.markdown("""
 <style>
