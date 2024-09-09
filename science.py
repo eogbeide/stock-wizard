@@ -1,6 +1,10 @@
 import streamlit as st
 import pandas as pd
 
+# Create a timestamp to force a refresh
+today = datetime.datetime.now().date()
+st.write(f"Last updated: {today}")
+
 # Load data from the CSV file on GitHub with explicit encoding
 url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/science.csv'
 data = pd.read_csv(url, encoding='ISO-8859-1')
