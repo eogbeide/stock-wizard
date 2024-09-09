@@ -1,6 +1,10 @@
 import streamlit as st
 import pandas as pd
 
+# Create a timestamp to force a refresh
+today = datetime.datetime.now().date()
+st.write(f"Last updated: {today}")
+
 class Question:
     def __init__(self, text, choices, answer, explanation, serial_number, subject):
         self.text = text
