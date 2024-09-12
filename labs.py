@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 
 # Create a timestamp to force a refresh
-today = datetime.datetime.now().date()
-st.write(f"Last updated: {today}")
+#today = datetime.datetime.now().date()
+#st.write(f"Last updated: {today}")
 
 # Load data from CSV on GitHub
 def load_data():
