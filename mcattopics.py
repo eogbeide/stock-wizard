@@ -3,8 +3,8 @@ import pandas as pd
 from urllib.error import URLError
 
 # Create a timestamp to force a refresh
-today = datetime.datetime.now().date()
-st.write(f"Last updated: {today}")
+# today = datetime.datetime.now().date()
+# st.write(f"Last updated: {today}")
 
 # Function to read questions from CSV
 def read_questions_from_csv(file_path):
