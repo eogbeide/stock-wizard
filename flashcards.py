@@ -2,8 +2,6 @@ import streamlit as st
 import pandas as pd
 import re
 
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js"></script>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
