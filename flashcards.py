@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import re
 
-<!DOCTYPE html>
+<html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
