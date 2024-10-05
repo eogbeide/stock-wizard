@@ -51,7 +51,7 @@ today = datetime.datetime.now().date()
 st.write(f"Last updated: {today}")
 
 # Create buttons to navigate to the external apps
-if st.button("Go to MCAT Companion for MCAT Q&A"):
+if st.button("Go to MCAT Companion ChatGPT"):
     st.markdown("[Open MCAT Companion](https://poe.com/MCATCompanion)", unsafe_allow_html=True)
 
 if st.button("Go to MCAT Topics"):
