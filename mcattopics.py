@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from urllib.error import URLError
+<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js"></script>
 
 # Create a timestamp to force a refresh
 # today = datetime.datetime.now().date()
