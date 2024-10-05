@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js"></script>
 
 # Create a timestamp to force a refresh
 #today = datetime.datetime.now().date()
