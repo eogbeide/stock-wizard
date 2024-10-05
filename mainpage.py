@@ -1,4 +1,4 @@
-import streamlit as stn
+import streamlit as st
 import datetime
 
 # Custom CSS for styling
