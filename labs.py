@@ -3,41 +3,6 @@ import pandas as pd
 
 import streamlit as st
 
-# CSS styles as a multi-line string
-css = """
-<style>
-    body {
-        font-family: Arial, sans-serif;
-        margin: 20px;
-        padding: 20px;
-        background-color: #f4f4f4;
-    }
-    .equation {
-        padding: 10px;
-        margin: 15px 0;
-        border: 1px solid #ccc;
-        border-radius: 4px;
-        background-color: white;
-        font-size: 24px;
-        text-align: center;
-    }
-</style>
-"""
-
-# Display the CSS in the Streamlit app
-st.markdown(css, unsafe_allow_html=True)
-
-# Predefined LaTeX equations
-equations = [
-    r"\Delta KE = \frac{1}{2} m v^2 - \frac{1}{2} m u^2",
-    r"E = mc^2",
-    r"F = ma"
-]
-
-# Render equations
-for equation in equations:
-    st.markdown(f"<div class='equation'>$$ {equation} $$</div>", unsafe_allow_html=True)
-
 
 # Create a timestamp to force a refresh
 #today = datetime.datetime.now().date()
