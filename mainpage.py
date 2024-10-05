@@ -54,7 +54,7 @@ st.write(f"Last updated: {today}")
 if st.button("Go to MCAT Topics"):
     st.markdown("[Open MCAT Topics](https://mcattopics.streamlit.app/)", unsafe_allow_html=True)
 
-if st.button("Access MCAT Companion to answer any MCAT questions"):
+if st.button("Go to MCAT Companion for MCAT Q&A"):
     st.markdown("[Open MCAT Companion](https://poe.com/MCATCompanion)", unsafe_allow_html=True)
 
 if st.button("Go to MCAT Lab Review"):
