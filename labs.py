@@ -1,62 +1,42 @@
 import streamlit as st
 import pandas as pd
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Dynamic Math Equations Display</title>
-    <script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
-    <script id="MathJax-script" src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 20px;
-            padding: 20px;
-            background-color: #f4f4f4;
-        }
-        .equation {
-            padding: 10px;
-            margin: 15px 0;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            background-color: white;
-            font-size: 24px;
-            text-align: center;
-        }
-    </style>
-</head>
-<body>
+import streamlit as st
 
-    <h1>Dynamic Math Equations Display</h1>
-    
-    <div class="equation" id="equation1"></div>
-    <div class="equation" id="equation2"></div>
-    <div class="equation" id="equation3"></div>
+# CSS styles as a multi-line string
+css = """
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        margin: 20px;
+        padding: 20px;
+        background-color: #f4f4f4;
+    }
+    .equation {
+        padding: 10px;
+        margin: 15px 0;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background-color: white;
+        font-size: 24px;
+        text-align: center;
+    }
+</style>
+"""
 
-    <script>
-        // Predefined LaTeX equations
-        const equations = [
-            r"\Delta KE = \frac{1}{2} m v^2 - \frac{1}{2} m u^2",
-            r"E = mc^2",
-            r"F = ma"
-        ];
+# Display the CSS in the Streamlit app
+st.markdown(css, unsafe_allow_html=True)
 
-        // Function to render equations
-        function renderEquations() {
-            equations.forEach((equation, index) => {
-                document.getElementById(`equation${index + 1}`).innerHTML = `\\[ ${equation} \\]`;
-            });
-            MathJax.typeset(); // Rerender the equations
-        }
+# Predefined LaTeX equations
+equations = [
+    r"\Delta KE = \frac{1}{2} m v^2 - \frac{1}{2} m u^2",
+    r"E = mc^2",
+    r"F = ma"
+]
 
-        // Call the function to render equations on page load
-        renderEquations();
-    </script>
-
-</body>
-</html>
+# Render equations
+for equation in equations:
+    st.markdown(f"<div class='equation'>$$ {equation} $$</div>", unsafe_allow_html=True)
 
 
 # Create a timestamp to force a refresh
