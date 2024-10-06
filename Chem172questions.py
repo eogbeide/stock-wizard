@@ -3,6 +3,112 @@ import pandas as pd
 import requests
 from io import StringIO  # Import StringIO from the io module
 
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Equations Display</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 800px;
+            margin: auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .equation {
+            margin-bottom: 15px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            transition: background 0.3s;
+        }
+        .equation:hover {
+            background-color: #f0f0f0;
+        }
+        .details {
+            display: none;
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f9f9f9;
+            border: 1px solid #e0e0e0;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            padding: 8px 12px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+        button:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Math Equations</h1>
+
+    <div class="equation">
+        <strong>Equation 1:</strong> E = mc²
+        <button onclick="toggleDetails(1)">Show Details</button>
+        <div class="details" id="details-1">
+            <p><strong>Answer:</strong> This formula shows the equivalence of mass and energy.</p>
+            <p><strong>Explanation:</strong> E represents energy, m represents mass, and c represents the speed of light.</p>
+        </div>
+    </div>
+
+    <div class="equation">
+        <strong>Equation 2:</strong> a² + b² = c²
+        <button onclick="toggleDetails(2)">Show Details</button>
+        <div class="details" id="details-2">
+            <p><strong>Answer:</strong> This is the Pythagorean theorem.</p>
+            <p><strong>Explanation:</strong> It relates the lengths of the sides of a right triangle.</p>
+        </div>
+    </div>
+
+    <div class="equation">
+        <strong>Equation 3:</strong> F = ma
+        <button onclick="toggleDetails(3)">Show Details</button>
+        <div class="details" id="details-3">
+            <p><strong>Answer:</strong> This is Newton's second law of motion.</p>
+            <p><strong>Explanation:</strong> F represents force, m represents mass, and a represents acceleration.</p>
+        </div>
+    </div>
+</div>
+
+<script>
+    function toggleDetails(equationNumber) {
+        const details = document.getElementById(`details-${equationNumber}`);
+        if (details.style.display === "none" || details.style.display === "") {
+            details.style.display = "block";
+        } else {
+            details.style.display = "none";
+        }
+    }
+</script>
+
+</body>
+</html>
+
+
+
 # Load the CSV file from GitHub
 #@st.cache_data
 def load_data():
