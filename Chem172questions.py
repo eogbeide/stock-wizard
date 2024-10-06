@@ -5,7 +5,7 @@ import requests
 # Load the CSV file from GitHub
 @st.cache_data
 def load_data():
-    url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/new/main/Chem172_questions.csv'  # Update with the actual raw URL
+    url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Chem172_questions.csv'  # Update with the actual raw URL
     response = requests.get(url)
     response.raise_for_status()  # Raise an error for bad requests
     return pd.read_csv(pd.compat.StringIO(response.text))
