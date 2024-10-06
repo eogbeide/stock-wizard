@@ -35,10 +35,7 @@ def main():
     st.subheader(f"Question {st.session_state.question_index + 1}: {current_question['Question']}")
     
     if st.button("Show Answer"):
-        st.write(current_question['Answer'])
-    
-    if st.button("Show Explanation"):
-        st.write(current_question['Explanation'])
+        st.write(current_question['Answer and Explanation'])
 
     # Navigation buttons
     col1, col2 = st.columns(2)
