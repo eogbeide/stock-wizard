@@ -4,7 +4,7 @@ import requests
 from io import StringIO  # Import StringIO from the io module
 
 # Load the CSV file from GitHub
-@st.cache_data
+#@st.cache_data
 def load_data():
     url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Chem172_questions.csv'  # Raw URL for the CSV
     response = requests.get(url)
