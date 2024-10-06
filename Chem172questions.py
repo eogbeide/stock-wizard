@@ -3,7 +3,6 @@ import pandas as pd
 import requests
 from io import StringIO  # Import StringIO from the io module
 
-
 # Load the CSV file from GitHub
 @st.cache_data
 def load_data():
@@ -29,16 +28,7 @@ def main():
     if 'question_index' not in st.session_state:
         st.session_state.question_index = 0
 
-    # Display current question
-    current_question = chapter_data.iloc[st.session_state.question_index]
-    
-    st.title(f"Chapter: {selected_chapter}")
-    st.subheader(f"Question {st.session_state.question_index + 1}: {current_question['Question']}")
-    
-    if st.button("Show Answer"):
-        st.write(current_question['Answer and Explanation'])
-
-    # Navigation buttons
+    # Navigation buttons at the top
     col1, col2 = st.columns(2)
     
     with col1:
@@ -51,7 +41,15 @@ def main():
             if st.button("Next"):
                 st.session_state.question_index += 1
 
+    # Display current question
+    current_question = chapter_data.iloc[st.session_state.question_index]
+    
+    st.title(f"Chapter: {selected_chapter}")
+    st.subheader(f"Question {st.session_state.question_index + 1}: {current_question['Question']}")
+    
+    if st.button("Show Answer"):
+        st.write(current_question['Answer and Explanation'])
+
 # Run the app
 if __name__ == "__main__":
     main()
-
