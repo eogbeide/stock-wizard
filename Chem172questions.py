@@ -54,11 +54,5 @@ def main():
 if __name__ == "__main__":
     main()
 
-
-
-# Create a timestamp to force a refresh
-today = datetime.datetime.now().date()
-st.write(f"Last updated: {today}")
-
 if st.button("Go to ChemCompanion ChatGPT"):
     st.markdown("[Open Chemistry Companion](https://poe.com/Chemistry_Shoreline)", unsafe_allow_html=True)
