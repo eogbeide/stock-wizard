@@ -6,7 +6,7 @@ from io import StringIO  # Import StringIO from the io module
 # Load the CSV file from GitHub
 @st.cache_data
 def load_data():
-    url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Chem172_notes.csv'  # Raw URL for the CSV
+    url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Chem 172_notes.csv'  # Raw URL for the CSV
     response = requests.get(url)
     response.raise_for_status()  # Raise an error for bad requests
     return pd.read_csv(StringIO(response.text))  # Use StringIO from io
