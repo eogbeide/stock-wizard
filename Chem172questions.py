@@ -53,6 +53,3 @@ def main():
 # Run the app
 if __name__ == "__main__":
     main()
-
-if st.button("Go to ChemCompanion ChatGPT"):
-    st.markdown("[Open Chemistry Companion](https://poe.com/Chemistry_Shoreline)", unsafe_allow_html=True)
