@@ -1,37 +1,5 @@
 import streamlit as st
 import pandas as pd
-<script type="text/javascript" src="http://cdn.mathjax.org/mathjax/latest/MathJax.js"></script>
-
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>MathJax</title>
-<script src="https://polyfill.io/v3/polyfill.min.js?features=es6"></script>
-<script id="MathJax-script" async src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
-</head>
-
-<body>
-\(
-  \begin{array}{ccc}
-    \left\lbrace
-    \begin{matrix}
-      \mathrm{Option1}\\
-      \mathrm{Option2}
-    \end{matrix}
-    \right\rbrace & %
-%
-    your\ content & %
-%
-    \begin{matrix}
-      \mathrm{type1}\\
-      \mathrm{type2}\\
-      \mathrm{type3}
-    \end{matrix}\\
-  \end{array}
-\)
-</body>
-</html>
 
 # Create a timestamp to force a refresh
 #today = datetime.datetime.now().date()
