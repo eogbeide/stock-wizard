@@ -1,6 +1,9 @@
 import streamlit as st
 import pandas as pd
 
+<SCRIPT SRC='https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML'></SCRIPT>
+<SCRIPT>MathJax.Hub.Config({ tex2jax: {inlineMath: [['$','$'], ['\\(','\\)']]}})</SCRIPT>
+
 # Create a timestamp to force a refresh
 #today = datetime.datetime.now().date()
 #st.write(f"Last updated: {today}")
