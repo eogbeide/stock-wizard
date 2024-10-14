@@ -1,8 +1,14 @@
 import streamlit as st
 import pandas as pd
 
-<SCRIPT SRC='https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML'></SCRIPT>
-<SCRIPT>MathJax.Hub.Config({ tex2jax: {inlineMath: [['$','$'], ['\\(','\\)']]}})</SCRIPT>
+html_content = """
+<!DOCTYPE html>
+<html>
+<head>
+    <SCRIPT SRC='https://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML'></SCRIPT>
+</head>
+<body>
+
 
 # Create a timestamp to force a refresh
 #today = datetime.datetime.now().date()
@@ -69,3 +75,14 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+</body>
+</html>
+"""
+
+# Write to an HTML file
+with open('output.html', 'w') as f:
+    f.write(html_content)
