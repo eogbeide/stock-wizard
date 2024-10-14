@@ -1,16 +1,6 @@
 import streamlit as st
 import pandas as pd
 
-// @flow
-/* eslint no-console:0 */
-/**
- * This is the main entry point for KaTeX. Here, we expose functions for
- * rendering expressions either to DOM nodes or to markup strings.
- *
- * We also expose the ParseError class to check if errors thrown from KaTeX are
- * errors in the expression, or errors in javascript handling.
- */
-
 import ParseError from "./src/ParseError";
 import Settings, {SETTINGS_SCHEMA} from "./src/Settings";
 
@@ -226,9 +216,6 @@ export default {
         LineNode,
     },
 };
-
-with open('output.html', 'w') as f:
-    f.write(html_content)
 
 # Create a timestamp to force a refresh
 #today = datetime.datetime.now().date()
