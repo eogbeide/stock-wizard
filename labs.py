@@ -1,7 +1,20 @@
 import streamlit as st
 import pandas as pd
 
-<script async src="https://cdn.jsdelivr.net/npm/mathjax@2/MathJax.js?config=TeX-AMS_CHTML"></script>
+html_content = """
+<!DOCTYPE html>
+<html>
+<head>
+    <script async src="https://cdn.jsdelivr.net/npm/mathjax@2/MathJax.js?config=TeX-AMS_CHTML"></script>
+</head>
+<body>
+    <!-- Your content here -->
+</body>
+</html>
+"""
+
+with open('output.html', 'w') as f:
+    f.write(html_content)
 
 # Create a timestamp to force a refresh
 #today = datetime.datetime.now().date()
