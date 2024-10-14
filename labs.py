@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 
-import streamlit as st
+<script async src="https://cdn.jsdelivr.net/npm/mathjax@2/MathJax.js?config=TeX-AMS_CHTML"></script>
 
 
 # Create a timestamp to force a refresh
