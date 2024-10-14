@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as stl
 import pandas as pd
 
 html_content = """
