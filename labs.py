@@ -1,10 +1,6 @@
 import streamlit as st
 import pandas as pd
 
-# Write to an HTML file
-with open('output.html', 'w') as f:
-    f.write(html_content)
-
 
 # Create a timestamp to force a refresh
 #today = datetime.datetime.now().date()
