@@ -54,9 +54,5 @@ st.write(f"Last updated: {today}")
 if st.button("Go to Chem172 Topics"):
     st.markdown("[Open Chem172 Topics](https://chem172notes.streamlit.app/)", unsafe_allow_html=True)
 
-if st.button("Go to Chem172 Q&A"):
-    st.markdown("[Open Chem172 Q&A](https://chem172questions.streamlit.app/)", unsafe_allow_html=True)
-
-
 if st.button("Go to ChemCompanion ChatGPT"):
     st.markdown("[Open Chemistry Companion](https://poe.com/Chemistry_Shoreline)", unsafe_allow_html=True)
