@@ -6,7 +6,7 @@ from io import StringIO
 # Load the CSV file from GitHub
 @st.cache_data
 def load_data():
-    url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/mcat_passages.csv'  # Raw URL for the CSV
+    url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/mcat_passages.csv'
     response = requests.get(url)
     response.raise_for_status()  # Raise an error for bad requests
     return pd.read_csv(StringIO(response.text))  # Use StringIO to load CSV data
@@ -16,6 +16,12 @@ def main():
     # Load data
     data = load_data()
     
+    # Print the columns for debugging
+    st.write("Available columns in the DataFrame:", data.columns.tolist())
+    
+    # Clean column names
+    data.columns = data.columns.str.strip()
+
     # Sidebar for subject selection
     st.sidebar.title("Select Subject")
     subjects = data['Subject'].unique()
