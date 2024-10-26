@@ -17,7 +17,7 @@ def main():
     data = load_data()
     
     # Print the columns for debugging
-    st.write("Available columns in the DataFrame:", data.columns.tolist())
+    #st.write("Available columns in the DataFrame:", data.columns.tolist())
     
     # Clean column names
     data.columns = data.columns.str.strip()
