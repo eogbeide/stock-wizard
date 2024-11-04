@@ -24,7 +24,7 @@ def load_data(ticker_symbol):
 def main():
     st.title('Stock Price Forecasting with ARIMA Model')
 
-    tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'SPY']  # List of ticker symbols
+    tickers = ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'SPY', 'HOOD']  # List of ticker symbols
     ticker_symbol = st.sidebar.selectbox('Select Ticker Symbol', tickers)
 
     final_df = load_data(ticker_symbol)
