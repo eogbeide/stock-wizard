@@ -1,6 +1,8 @@
 import streamlit as st
 import pandas as pd
 
+@st.cache_data
+
 # Create a timestamp to force a refresh
 #today = datetime.datetime.now().date()
 #st.write(f"Last updated: {today}")
