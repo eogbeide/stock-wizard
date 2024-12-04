@@ -31,6 +31,7 @@ st.header("Selected Medical School Prerequisites")
 st.write(" - Y = Yes, N = No and C = Case-by-Case Basis")
 
 # Load the CSV file
+@st.cache_data
 df = pd.read_csv("Medical_School_Requirements5.csv", encoding='unicode_escape')
 
 # Remove leading and trailing spaces from all string columns
