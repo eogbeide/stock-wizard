@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from urllib.error import URLError
-@st.cache_data
+
 
 # Create a timestamp to force a refresh
 # today = datetime.datetime.now().date()
