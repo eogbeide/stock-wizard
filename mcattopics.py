@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from urllib.error import URLError
+@st.cache_data
 
 # Create a timestamp to force a refresh
 # today = datetime.datetime.now().date()
@@ -21,7 +22,6 @@ def read_questions_from_csv(file_path):
         st.error(f"An error occurred: {e}")
         return pd.DataFrame()  # Return an empty DataFrame on failure
 
-@st.cache_data
 # Main function to run the Streamlit app
 def main():
     # URL to the CSV file on GitHub
