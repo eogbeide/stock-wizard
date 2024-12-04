@@ -50,6 +50,10 @@ if __name__ == "__main__":
 today = datetime.datetime.now().date()
 st.write(f"Last updated: {today}")
 
+# Create a timestamp to force a refresh
+today = datetime.datetime.now().date()
+st.write(f"Last updated: {today}")
+
 # Create buttons to navigate to the external apps
 if st.button("Go to MCAT Topics"):
     st.markdown("[Open MCAT Topics](https://mcattopics.streamlit.app/)", unsafe_allow_html=True)
@@ -74,3 +78,8 @@ if st.button("Go to MCAT Companion ChatGPT"):
 
 if st.button("Learn About US Medical School Pre-reqs"):
     st.markdown("[Open Med Schools Prerequisites Page](https://medschool.streamlit.app/)", unsafe_allow_html=True)
+
+# Instructions for refreshing all links daily
+st.write("""
+To refresh all links daily, ensure to run this app once a day to get the latest updates.
+""")
