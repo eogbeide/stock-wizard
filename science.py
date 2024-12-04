@@ -6,6 +6,7 @@ import pandas as pd
 #st.write(f"Last updated: {today}")
 
 # Load data from the CSV file on GitHub with explicit encoding
+@st.cache_data
 url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/science.csv'
 data = pd.read_csv(url, encoding='ISO-8859-1')
 
