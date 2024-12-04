@@ -30,7 +30,6 @@ st.write(" - Always cross-validate with the school's website")
 st.header("Selected Medical School Prerequisites")
 st.write(" - Y = Yes, N = No and C = Case-by-Case Basis")
 
-@st.cache_data
 # Load the CSV file
 df = pd.read_csv("Medical_School_Requirements5.csv", encoding='unicode_escape')
 
