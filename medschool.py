@@ -1,5 +1,5 @@
 import streamlit as st
-import pandas as pda
+import pandas as pd
 
 @st.cache_data
 
