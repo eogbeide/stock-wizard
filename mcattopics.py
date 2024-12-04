@@ -22,6 +22,7 @@ def read_questions_from_csv(file_path):
         return pd.DataFrame()  # Return an empty DataFrame on failure
 
 # Main function to run the Streamlit app
+@st.cache_data
 def main():
     # URL to the CSV file on GitHub
     file_path = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/mcattopics.csv"
