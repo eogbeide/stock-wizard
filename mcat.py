@@ -1,9 +1,7 @@
 import streamlit as st
 import pandas as pd
 
-
-         
-
+@st.cache_data      
 # Create a timestamp to force a refresh
 #today = datetime.datetime.now().date()
 #st.write(f"Last updated: {today}")
@@ -50,7 +48,6 @@ def display_question(question):
     user_answer = st.radio("Select your answer:", labeled_choices, key="answer_select")
     return user_answer
 
-@st.cache_data
 def main():
     file_path = "mymcat.csv"  # Path to your CSV file
 
