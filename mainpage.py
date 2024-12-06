@@ -28,7 +28,6 @@ st.markdown(
 )
 
 st.write(intro_text)
-
     # Text-to-speech functionality
     st_text_to_speech(intro_text, voice="en-US-Wavenet-D")  # You can choose different voices
 
