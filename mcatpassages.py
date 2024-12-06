@@ -3,6 +3,33 @@ import pandas as pd
 import requests
 from io import StringIO
 
+
+import streamlit as st
+from gtts import gTTS
+from io import BytesIO
+
+st.title("Simple Text to Speech Converter")
+
+# Text input for user to enter content
+text_input = st.text_area("Enter text to convert to speech:")
+
+# Language selection
+language = st.selectbox("Select language", ["en", "fr", "ru", "hi", "es"])
+
+# Button to generate speech
+if st.button("Generate my speech"):
+    if text_input:
+        # Create an audio stream from the text
+        tts = gTTS(text_input, lang=language)
+        audio_stream = BytesIO()
+        tts.save(audio_stream)
+        audio_stream.seek(0)  # Move to the start of the stream
+        
+        # Play the audio
+        st.audio(audio_stream)
+    else:
+        st.warning("Please enter some text")
+
 # Load the CSV file from GitHub
 @st.cache_data
 def load_data():
