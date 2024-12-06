@@ -3,31 +3,29 @@ import pandas as pd
 from urllib.error import URLError
 
 
-import streamlit as st
 from gtts import gTTS
+import streamlit as st
 from io import BytesIO
 
 st.title("Simple Text to Speech Converter")
 
-# Text input for user to enter content
-text_input = st.text_area("Enter text to convert to speech:")
+text_area = st.text_area("Enter text to convert to speech:")
 
-# Language selection
-language = st.selectbox("Select language", ["en", "fr", "ru", "hi", "es"])
+st.sidebar.file_uploader("Choose a file:", type=["txt"])
 
-# Button to generate speech
-if st.button("Generate my speech"):
-    if text_input:
-        # Create an audio stream from the text
-        tts = gTTS(text=text_input, lang=language)
-        audio_stream = BytesIO()
-        tts.save(audio_stream)
-        audio_stream.seek(0)  # Move to the start of the stream
-        
-        # Play the audio
-        st.audio(audio_stream, format='audio/mp3')
-    else:
-        st.warning("Please enter some text")
+if uploaded_file is not None:
+    file_text = uploaded_file.read().decode("utf-8")
+    st.subheader("Text from uploaded file:")
+    st.text(file_text)
+else:
+    language = st.selectbox("Select language:", ["en", "fr", "ru", "hi", "es"])
+
+if st.button("Convert"):
+    audio_stream = gTTS(text=text_area, lang=language)
+    st.success("Speech is generated successfully!")
+    st.audio(audio_stream)
+else:
+    st.warning("Please enter some text or upload from device.")
 
 
 @st.cache_data
