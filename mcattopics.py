@@ -5,33 +5,21 @@ from urllib.error import URLError
 
 from gtts import gTTS
 import streamlit as st
-from io import BytesIO
 
-st.title("Copy Text Here or Upload Document to Covert to Voice")
+st.title("Simple Text to Speech Converter")
 
 text_area = st.text_area("Enter text to convert to speech:")
-
-# Define uploaded_file here
-uploaded_file = st.sidebar.file_uploader("Choose a file:", type=["txt"])
-
-if uploaded_file is not None:
-    file_text = uploaded_file.read().decode("utf-8")
-    st.subheader("Text from uploaded file:")
-    st.text(file_text)
-    text_to_convert = file_text  # Use the uploaded file text as input
-else:
-    text_to_convert = text_area  # Use the text area input if no file is uploaded
 
 language = st.selectbox("Select language:", ["en", "fr", "ru", "hi", "es"])
 
 if st.button("Convert"):
-    if text_to_convert:  # Check if there's text to convert
-        audio_stream = gTTS(text=text_to_convert, lang=language)
+    if text_area:  # Check if there's text to convert
+        audio_stream = gTTS(text=text_area, lang=language)
         audio_stream.save("output.mp3")  # Save the audio file
         st.success("Speech is generated successfully!")
         st.audio("output.mp3")  # Play the audio file
     else:
-        st.warning("Please enter some text or upload from device.")
+        st.warning("Please enter some text.")
 
 
 @st.cache_data
