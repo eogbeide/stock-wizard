@@ -5,29 +5,22 @@ from io import StringIO
 
 
 from gtts import gTTS
-from io import BytesIO
+import streamlit as st
 
 st.title("Simple Text to Speech Converter")
 
-# Text input for user to enter content
-text_input = st.text_area("Enter text to convert to speech:")
+text_area = st.text_area("Enter text to convert to speech:")
 
-# Language selection
-language = st.selectbox("Select language", ["en", "fr", "ru", "hi", "es"])
+language = st.selectbox("Select language:", ["en", "fr", "ru", "hi", "es"])
 
-# Button to generate speech
-if st.button("Generate my speech"):
-    if text_input:
-        # Create an audio stream from the text
-        tts = gTTS(text_input, lang=language)
-        audio_stream = BytesIO()
-        tts.save(audio_stream)
-        audio_stream.seek(0)  # Move to the start of the stream
-        
-        # Play the audio
-        st.audio(audio_stream)
+if st.button("Convert"):
+    if text_area:  # Check if there's text to convert
+        audio_stream = gTTS(text=text_area, lang=language)
+        audio_stream.save("output.mp3")  # Save the audio file
+        st.success("Speech is generated successfully!")
+        st.audio("output.mp3")  # Play the audio file
     else:
-        st.warning("Please enter some text")
+        st.warning("Please enter some text.")
 
 # Load the CSV file from GitHub
 @st.cache_data
