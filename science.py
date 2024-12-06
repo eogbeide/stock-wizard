@@ -4,7 +4,6 @@ import pandas as pd
 from gtts import gTTS
 import streamlit as st
 
-@st.cache_data
 st.title("Simple Text to Speech Converter")
 
 text_area = st.text_area("Enter text to convert to speech:")
