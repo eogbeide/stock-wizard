@@ -1,5 +1,6 @@
 import streamlit as st
 import datetime
+from streamlit_text_to_speech import st_text_to_speech
 
 # Custom CSS for styling
 st.markdown(
@@ -25,6 +26,12 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
+st.write(intro_text)
+
+    # Text-to-speech functionality
+    st_text_to_speech(intro_text, voice="en-US-Wavenet-D")  # You can choose different voices
+
 
 st.title("Your MCAT Prep Companion")
 
