@@ -6,7 +6,6 @@ from urllib.error import URLError
 from gtts import gTTS
 from io import BytesIO
 
-@st.cache_data
 st.title("Simple Text to Speech Converter")
 
 # Text input for user to enter content
@@ -30,6 +29,7 @@ if st.button("Generate my speech"):
         st.warning("Please enter some text")
 
 
+@st.cache_data
 # Create a timestamp to force a refresh
 # today = datetime.datetime.now().date()
 # st.write(f"Last updated: {today}")
