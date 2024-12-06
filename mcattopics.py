@@ -7,7 +7,7 @@ from gtts import gTTS
 import streamlit as st
 from io import BytesIO
 
-st.title("Copy Text Here to Covert to Voice or Upload document to Convert to Voice")
+st.title("Copy Text Here or Upload Document to Covert to Voice")
 
 text_area = st.text_area("Enter text to convert to speech:")
 
