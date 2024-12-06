@@ -18,15 +18,6 @@ if st.button("Convert"):
         audio_stream.save("output.mp3")  # Save the audio file
         st.success("Speech is generated successfully!")
         st.audio("output.mp3")  # Play the audio file
-        
-        # JavaScript to copy the text to the clipboard
-        js_code = f"""
-        <script>
-        navigator.clipboard.writeText("{text_area}");
-        alert("Text copied to clipboard!");
-        </script>
-        """
-        st.markdown(js_code, unsafe_allow_html=True)
     else:
         st.warning("Please enter some text.")
 
