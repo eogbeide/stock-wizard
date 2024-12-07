@@ -6,7 +6,7 @@ import streamlit as st
 
 st.title("Simple Text to Speech Converter")
 
-text_area = st.text_area("Enter text to convert to speech:")
+text_area = st.text_area("Copy and paste text here to convert to speech:")
 
 language = st.selectbox("Select language:", ["en", "fr", "ru", "hi", "es"])
 
