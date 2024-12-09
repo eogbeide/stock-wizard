@@ -2,9 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from io import StringIO
-from gtts import gTTS
-import os
-import time
+
 
 # Load the CSV file from GitHub
 @st.cache_data
@@ -14,33 +12,13 @@ def load_data():
     response.raise_for_status()  # Raise an error for bad requests
     return pd.read_csv(StringIO(response.text))  # Use StringIO to load CSV data
 
-# Function to convert text to speech
-def text_to_speech(text):
-    if not text or not isinstance(text, str):
-        st.error("No valid text provided for speech.")
-        return
-
-    audio_file = "answer.mp3"
-    
-    # Check if audio file already exists
-    if os.path.exists(audio_file):
-        os.remove(audio_file)  # Remove the old file to avoid confusion
-    
-    try:
-        tts = gTTS(text=text, lang='en')
-        tts.save(audio_file)
-        os.system("start " + audio_file)  # Change command based on OS
-    except Exception as e:
-        if "429" in str(e):
-            st.error("Too many requests to the TTS API. Please try again later.")
-        else:
-            st.error(f"Error in text-to-speech conversion: {e}")
-        time.sleep(5)  # Wait before retrying
-
 # Main function
 def main():
     # Load data
     data = load_data()
+    
+    # Print the columns for debugging
+    #st.write("Available columns in the DataFrame:", data.columns.tolist())
     
     # Clean column names
     data.columns = data.columns.str.strip()
@@ -84,7 +62,6 @@ def main():
         
         if st.button("Show Answer"):
             st.write(current_topic['Answer and Explanation'])
-            text_to_speech(current_topic['Answer and Explanation'])  # Read the answer out loud
     else:
         st.write("No topic available for this chapter.")
 
