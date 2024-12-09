@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 import requests
 from io import StringIO
-
+from gtts import gTTS
+import os
 
 # Load the CSV file from GitHub
 @st.cache_data
@@ -16,9 +17,6 @@ def load_data():
 def main():
     # Load data
     data = load_data()
-    
-    # Print the columns for debugging
-    #st.write("Available columns in the DataFrame:", data.columns.tolist())
     
     # Clean column names
     data.columns = data.columns.str.strip()
@@ -61,7 +59,16 @@ def main():
         st.subheader(f"Topic {st.session_state.topic_index + 1}: {current_topic['Topic']}")
         
         if st.button("Show Answer"):
-            st.write(current_topic['Answer and Explanation'])
+            answer_text = current_topic['Answer and Explanation']
+            st.write(answer_text)
+            
+            # Convert text to speech
+            tts = gTTS(text=answer_text, lang='en')
+            tts.save("answer.mp3")
+            st.audio("answer.mp3", format='audio/mp3')
+            
+            # Optionally, remove the audio file after playing
+            os.remove("answer.mp3")
     else:
         st.write("No topic available for this chapter.")
 
