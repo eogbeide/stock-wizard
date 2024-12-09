@@ -16,9 +16,8 @@ def load_data():
 # Function to convert text to speech
 def text_to_speech(text):
     tts = gTTS(text=text, lang='en')
-    audio_file = 'answer.mp3'
-    tts.save(audio_file)
-    return audio_file
+    tts.save("answer.mp3")
+    os.system("start answer.mp3")  # Use "start" for Windows, "open" for macOS, "xdg-open" for Linux
 
 # Main function
 def main():
@@ -65,16 +64,9 @@ def main():
         st.title(f"Subject: {selected_subject} - Chapter: {selected_chapter}")
         st.subheader(f"Topic {st.session_state.topic_index + 1}: {current_topic['Topic']}")
         
-        # Use expander for the answer
-        with st.expander("Show Answer"):
-            answer_text = current_topic['Answer and Explanation']
-            st.write(answer_text)
-            
-            # Button to read the answer aloud
-            if st.button("Read Answer Aloud"):
-                audio_file = text_to_speech(answer_text)
-                st.audio(audio_file, format='audio/mp3')
-
+        if st.button("Show Answer"):
+            st.write(current_topic['Answer and Explanation'])
+            text_to_speech(current_topic['Answer and Explanation'])  # Read the answer out loud
     else:
         st.write("No topic available for this chapter.")
 
