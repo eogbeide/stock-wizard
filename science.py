@@ -1,27 +1,32 @@
 import streamlit as st
 import pandas as pd
-
 from gtts import gTTS
-import streamlit as st
 
 st.title("Simple Text to Speech Converter")
 
-text_area = st.text_area("Copy and paste text here to convert to speech:")
+# Predefined text that can be "copied" into the text area
+default_text = "Enter your text here to convert to speech."
 
+# Text area for input
+text_area = st.text_area("Copy and paste text here to convert to speech:", value=default_text)
+
+# Language selection
 language = st.selectbox("Select language:", ["en", "fr", "ru", "hi", "es"])
 
+# Button to set predefined text in the text area
+if st.button("Set Default Text"):
+    st.session_state.text_area_value = default_text
+    st.experimental_rerun()  # Rerun to update the text area
+
+# Convert button
 if st.button("Convert"):
     if text_area:  # Check if there's text to convert
         audio_stream = gTTS(text=text_area, lang=language)
         audio_stream.save("output.mp3")  # Save the audio file
-        st.success("Speech is generated successfully!")
+        st.success("Speech generated successfully!")
         st.audio("output.mp3")  # Play the audio file
     else:
         st.warning("Please enter some text.")
-
-# Create a timestamp to force a refresh
-#today = datetime.datetime.now().date()
-#st.write(f"Last updated: {today}")
 
 # Load data from the CSV file on GitHub with explicit encoding
 url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/science.csv'
