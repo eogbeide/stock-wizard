@@ -2,7 +2,8 @@ import streamlit as st
 import pandas as pd
 import requests
 from io import StringIO
-import pyttsx3
+from gtts import gTTS
+import os
 
 # Load the CSV file from GitHub
 @st.cache_data
@@ -12,11 +13,11 @@ def load_data():
     response.raise_for_status()  # Raise an error for bad requests
     return pd.read_csv(StringIO(response.text))  # Use StringIO to load CSV data
 
-# Function to convert text to speech
+# Function to convert text to speech using gTTS
 def speak(text):
-    engine = pyttsx3.init()
-    engine.say(text)
-    engine.runAndWait()
+    tts = gTTS(text=text, lang='en')
+    tts.save("answer.mp3")
+    os.system("mpg321 answer.mp3")  # Play the audio file
 
 # Main function
 def main():
