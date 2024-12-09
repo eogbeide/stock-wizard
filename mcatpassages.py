@@ -31,15 +31,16 @@ def text_to_speech(text):
 
             # Check if the audio file already exists
             if not os.path.exists(audio_file):
-                for attempt in range(3):  # Retry up to 3 times
+                for attempt in range(5):  # Retry up to 5 times
                     try:
                         tts = gTTS(chunk, lang='en')
                         tts.save(audio_file)
                         break  # Break if successful
                     except Exception as e:
                         if "429" in str(e):
-                            st.warning("Rate limit exceeded. Retrying in 5 seconds...")
-                            time.sleep(5)  # Wait before retrying
+                            wait_time = 5 * (2 ** attempt)  # Exponential backoff
+                            st.warning(f"Rate limit exceeded. Retrying in {wait_time} seconds...")
+                            time.sleep(wait_time)  # Wait before retrying
                         else:
                             st.error(f"An error occurred: {e}")
                             return []
