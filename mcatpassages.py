@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from io import StringIO
-from gtts import gTTS, gTTSError
+import pyttsx3
 import os
 import tempfile
 
@@ -13,6 +13,9 @@ def load_data():
     response = requests.get(url)
     response.raise_for_status()  # Raise an error for bad requests
     return pd.read_csv(StringIO(response.text))  # Use StringIO to load CSV data
+
+# Initialize TTS engine
+engine = pyttsx3.init()
 
 # Main function
 def main():
@@ -63,18 +66,17 @@ def main():
             answer_text = current_topic['Answer and Explanation']
             st.write(answer_text)
 
-            try:
-                # Convert text to speech
-                with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as temp_audio_file:
-                    tts = gTTS(text=answer_text, lang='en')
-                    tts.save(temp_audio_file.name)
-                    st.audio(temp_audio_file.name, format='audio/mp3')
-                    
-            except gTTSError as e:
-                st.error("Error generating audio: " + str(e))
-                
-            except Exception as e:
-                st.error("An unexpected error occurred: " + str(e))
+            # Cache the audio output path
+            audio_file_path = f"answer_{st.session_state.topic_index}.mp3"
+            
+            # Check if audio file already exists
+            if os.path.exists(audio_file_path):
+                st.audio(audio_file_path, format='audio/mp3')
+            else:
+                # Use pyttsx3 for local TTS
+                engine.save_to_file(answer_text, audio_file_path)
+                engine.runAndWait()
+                st.audio(audio_file_path, format='audio/mp3')
                 
     else:
         st.write("No topic available for this chapter.")
