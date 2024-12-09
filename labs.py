@@ -35,10 +35,9 @@ def main():
         topic_data = subject_data[subject_data['Topic'] == selected_topic]
 
         if not topic_data.empty:
-            # Display Description in a box
-            st.subheader("Description")
+            # Display Description
             description = topic_data['Description'].values[0]
-            st.info(description)  # Use st.info for a box
+            st.write(description)  # Display description as plain text
 
             # Convert Description to speech
             if st.button("Read Description Aloud"):
@@ -46,9 +45,9 @@ def main():
                 audio_stream.save("description.mp3")
                 st.audio("description.mp3")  # Play the audio file
 
-            # Display Questions and Answers in an expander
-            st.subheader("Questions and Answers")
+            # Display Questions and Answers
             questions_answers = topic_data['Questions and Answers'].values[0]
+            st.write("Questions and Answers:")
             with st.expander("View Questions and Answers"):
                 st.write(questions_answers)  # Display questions and answers
 
