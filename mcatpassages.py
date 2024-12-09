@@ -3,29 +3,6 @@ import pandas as pd
 from gtts import gTTS
 import os
 
-st.title("Simple Text to Speech Converter")
-
-# Text area for user input
-text_area = st.text_area("Copy and paste text here to convert to speech:")
-
-language = st.selectbox("Select language:", ["en", "fr", "ru", "hi", "es"])
-
-if st.button("Convert"):
-    if text_area:  # Check if there's text to convert
-        audio_stream = gTTS(text=text_area, lang=language)
-        audio_stream.save("output.mp3")  # Save the audio file
-        st.success("Speech is generated successfully!")
-        st.audio("output.mp3")  # Play the audio file
-    else:
-        st.warning("Please enter some text.")
-        
-@st.cache_data
-# Load data from CSV on GitHub
-def load_data():
-    url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/labs.csv"
-    df = pd.read_csv(url, encoding='ISO-8859-1')  # Specify encoding here
-    return df
-
 # Main function to run the app
 def main():
     # Custom CSS to set font to Comic Sans MS and font size to 10
@@ -43,6 +20,13 @@ def main():
 
     st.title("MCAT Labs")
 
+    # Load data from CSV on GitHub
+    @st.cache_data
+    def load_data():
+        url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/labs.csv"
+        df = pd.read_csv(url, encoding='ISO-8859-1')  # Specify encoding here
+        return df
+    
     # Load the data
     df = load_data()
 
