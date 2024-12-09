@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from urllib.error import URLError
 from gtts import gTTS
-import os
+import re
 
 @st.cache_data
 def read_questions_from_csv(file_path):
@@ -18,6 +18,13 @@ def read_questions_from_csv(file_path):
     except Exception as e:
         st.error(f"An error occurred: {e}")
         return pd.DataFrame()  # Return an empty DataFrame on failure
+
+# Function to clean text
+def clean_text(text):
+    # Remove unwanted characters and HTTP elements
+    text = re.sub(r'[*#]', '', text)  # Remove asterisks and hashes
+    text = re.sub(r'http\S+|www\S+|https\S+', '', text)  # Remove URLs
+    return text.strip()
 
 # Main function to run the Streamlit app
 def main():
@@ -90,7 +97,7 @@ def main():
         
         # Button to read the explanation text
         if st.button("Read Explanation Text"):
-            explanation_text = question_to_display['explanation']
+            explanation_text = clean_text(question_to_display['explanation'])  # Clean the explanation text
             audio_stream = gTTS(text=explanation_text, lang='en')
             audio_file_path = "explanation_output.mp3"
             audio_stream.save(audio_file_path)  # Save the audio file for the explanation
