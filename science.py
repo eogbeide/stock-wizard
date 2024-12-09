@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from gtts import gTTS
+import re
 
 # Load data from the CSV file on GitHub with explicit encoding
 url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/science.csv'
@@ -26,6 +27,13 @@ if 'selected_index' not in st.session_state:
 
 # Language selection
 language = st.selectbox("Select language:", ["en", "fr", "ru", "hi", "es"])
+
+# Function to clean text
+def clean_text(text):
+    # Remove asterisks and HTTP codes
+    text = text.replace('*', '').strip()  # Remove asterisks
+    text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)  # Remove URLs
+    return text
 
 # Create a list of scenarios for easy navigation
 if len(filtered_data) > 0:
@@ -63,14 +71,16 @@ if len(filtered_data) > 0:
 
     # Button to read the scenario text
     if st.button("Read Scenario Text"):
-        audio_stream = gTTS(text=scenario, lang=language)
+        clean_scenario = clean_text(scenario)  # Clean the scenario text
+        audio_stream = gTTS(text=clean_scenario, lang=language)
         audio_stream.save("scenario_output.mp3")  # Save the audio file for the scenario
         st.success("Scenario text is being read!")
         st.audio("scenario_output.mp3")  # Play the audio file
 
     # Button to read the Q&A text
     if st.button("Read Q&A Text"):
-        audio_stream = gTTS(text=selected_qa, lang=language)
+        clean_qa = clean_text(selected_qa)  # Clean the Q&A text
+        audio_stream = gTTS(text=clean_qa, lang=language)
         audio_stream.save("qa_output.mp3")  # Save the audio file for Q&A
         st.success("Q&A text is being read!")
         st.audio("qa_output.mp3")  # Play the audio file
