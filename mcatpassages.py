@@ -2,8 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from io import StringIO
-from gtts import gTTS
-import tempfile
+
 
 # Load the CSV file from GitHub
 @st.cache_data
@@ -17,6 +16,9 @@ def load_data():
 def main():
     # Load data
     data = load_data()
+    
+    # Print the columns for debugging
+    #st.write("Available columns in the DataFrame:", data.columns.tolist())
     
     # Clean column names
     data.columns = data.columns.str.strip()
@@ -59,18 +61,7 @@ def main():
         st.subheader(f"Topic {st.session_state.topic_index + 1}: {current_topic['Topic']}")
         
         if st.button("Show Answer"):
-            answer_text = current_topic['Answer and Explanation']
-            st.write(answer_text)
-            
-            try:
-                if answer_text.strip():
-                    with tempfile.NamedTemporaryFile(delete=True, suffix=".mp3") as tmp_file:
-                        tts = gTTS(answer_text, lang='en')
-                        tts.save(tmp_file.name)
-                        tmp_file.seek(0)
-                        st.audio(tmp_file.name, format='audio/mp3')
-            except Exception as e:
-                st.error(f"An error occurred: {e}")
+            st.write(current_topic['Answer and Explanation'])
     else:
         st.write("No topic available for this chapter.")
 
