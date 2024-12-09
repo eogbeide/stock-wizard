@@ -3,7 +3,6 @@ import pandas as pd
 import requests
 from io import StringIO
 from gtts import gTTS
-import os
 
 # Load the CSV file from GitHub
 @st.cache_data
@@ -15,11 +14,27 @@ def load_data():
 
 # Function to convert text to speech
 def text_to_speech(text):
-    # Clean the text by removing special characters
-    clean_text = ''.join(e for e in text if e.isalnum() or e.isspace() or e in ['.', ',', '!', '?'])
-    tts = gTTS(clean_text, lang='en')
-    tts.save("answer.mp3")
-    return "answer.mp3"
+    try:
+        # Clean the text by removing special characters
+        clean_text = ''.join(e for e in text if e.isalnum() or e.isspace() or e in ['.', ',', '!', '?'])
+        
+        # Split the text into manageable chunks if necessary
+        max_length = 200  # Maximum length of each chunk
+        chunks = [clean_text[i:i + max_length] for i in range(0, len(clean_text), max_length)]
+
+        audio_files = []
+        
+        for idx, chunk in enumerate(chunks):
+            tts = gTTS(chunk, lang='en')
+            audio_file = f"answer_{idx}.mp3"
+            tts.save(audio_file)
+            audio_files.append(audio_file)
+
+        return audio_files
+
+    except Exception as e:
+        st.error(f"An error occurred during text-to-speech conversion: {e}")
+        return []
 
 # Main function
 def main():
@@ -69,8 +84,10 @@ def main():
         if st.button("Show Answer"):
             answer_text = current_topic['Answer and Explanation']
             st.write(answer_text)
-            audio_file = text_to_speech(answer_text)
-            st.audio(audio_file, format='audio/mp3')
+            audio_files = text_to_speech(answer_text)
+            
+            for audio_file in audio_files:
+                st.audio(audio_file, format='audio/mp3')
 
     else:
         st.write("No topic available for this chapter.")
