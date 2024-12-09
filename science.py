@@ -30,10 +30,10 @@ language = st.selectbox("Select language:", ["en", "fr", "ru", "hi", "es"])
 
 # Function to clean text
 def clean_text(text):
-    # Remove asterisks and HTTP codes
-    text = text.replace('*', '').strip()  # Remove asterisks
-    text = re.sub(r'http\S+|www\S+|https\S+', '', text, flags=re.MULTILINE)  # Remove URLs
-    return text
+    # Remove unwanted characters and HTTP elements
+    text = re.sub(r'[*#]', '', text)  # Remove asterisks and hashes
+    text = re.sub(r'http\S+|www\S+|https\S+', '', text)  # Remove URLs
+    return text.strip()
 
 # Create a list of scenarios for easy navigation
 if len(filtered_data) > 0:
