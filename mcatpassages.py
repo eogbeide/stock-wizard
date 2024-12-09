@@ -1,11 +1,11 @@
 import streamlit as st
 import pandas as pd
-
 from gtts import gTTS
-import streamlit as st
+import os
 
 st.title("Simple Text to Speech Converter")
 
+# Text area for user input
 text_area = st.text_area("Copy and paste text here to convert to speech:")
 
 language = st.selectbox("Select language:", ["en", "fr", "ru", "hi", "es"])
@@ -19,11 +19,6 @@ if st.button("Convert"):
     else:
         st.warning("Please enter some text.")
         
-
-# Create a timestamp to force a refresh
-#today = datetime.datetime.now().date()
-#st.write(f"Last updated: {today}")
-
 @st.cache_data
 # Load data from CSV on GitHub
 def load_data():
@@ -72,12 +67,30 @@ def main():
         if not topic_data.empty:
             # Display Description in a box
             st.subheader("Description")
-            st.info(topic_data['Description'].values[0])  # Use st.info for a box
+            description = topic_data['Description'].values[0]
+            st.info(description)  # Use st.info for a box
+
+            # Clean description for TTS
+            cleaned_description = description.replace('*', '').replace('#', '').strip()
+            if st.button("Read Description Aloud"):
+                audio_stream = gTTS(text=cleaned_description, lang='en')
+                audio_stream.save("description.mp3")  # Save the audio file
+                st.audio("description.mp3")  # Play the audio file
+                os.remove("description.mp3")  # Remove the audio file after playing
 
             # Display Questions and Answers in an expander
             st.subheader("Questions and Answers")
             with st.expander("View Questions and Answers"):
-                st.write(topic_data['Questions and Answers'].values[0])  # Display questions and answers
+                questions_answers = topic_data['Questions and Answers'].values[0]
+                st.write(questions_answers)  # Display questions and answers
+
+                # Clean questions and answers for TTS
+                cleaned_qa = questions_answers.replace('*', '').replace('#', '').strip()
+                if st.button("Read Questions and Answers Aloud"):
+                    audio_stream = gTTS(text=cleaned_qa, lang='en')
+                    audio_stream.save("qa.mp3")  # Save the audio file
+                    st.audio("qa.mp3")  # Play the audio file
+                    os.remove("qa.mp3")  # Remove the audio file after playing
 
         else:
             st.write("No data available for the selected topic.")
