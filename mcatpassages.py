@@ -2,9 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from io import StringIO
-import pyttsx3
-import os
-import tempfile
+
 
 # Load the CSV file from GitHub
 @st.cache_data
@@ -14,13 +12,13 @@ def load_data():
     response.raise_for_status()  # Raise an error for bad requests
     return pd.read_csv(StringIO(response.text))  # Use StringIO to load CSV data
 
-# Initialize TTS engine
-engine = pyttsx3.init()
-
 # Main function
 def main():
     # Load data
     data = load_data()
+    
+    # Print the columns for debugging
+    #st.write("Available columns in the DataFrame:", data.columns.tolist())
     
     # Clean column names
     data.columns = data.columns.str.strip()
@@ -63,21 +61,7 @@ def main():
         st.subheader(f"Topic {st.session_state.topic_index + 1}: {current_topic['Topic']}")
         
         if st.button("Show Answer"):
-            answer_text = current_topic['Answer and Explanation']
-            st.write(answer_text)
-
-            # Cache the audio output path
-            audio_file_path = f"answer_{st.session_state.topic_index}.mp3"
-            
-            # Check if audio file already exists
-            if os.path.exists(audio_file_path):
-                st.audio(audio_file_path, format='audio/mp3')
-            else:
-                # Use pyttsx3 for local TTS
-                engine.save_to_file(answer_text, audio_file_path)
-                engine.runAndWait()
-                st.audio(audio_file_path, format='audio/mp3')
-                
+            st.write(current_topic['Answer and Explanation'])
     else:
         st.write("No topic available for this chapter.")
 
