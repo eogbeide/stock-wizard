@@ -63,11 +63,14 @@ def main():
             cleaned_text = answer_text.replace('*', '').replace('#', '').strip()  # Clean text
             st.write(cleaned_text)
 
-            # Convert text to speech
-            tts = gTTS(cleaned_text, lang='en')
-            tts.save("answer.mp3")  # Save the audio file
-            st.audio("answer.mp3", format='audio/mp3')  # Play the audio
-            os.remove("answer.mp3")  # Remove the audio file after playing
+            try:
+                # Convert text to speech
+                tts = gTTS(cleaned_text, lang='en')
+                tts.save("answer.mp3")  # Save the audio file
+                st.audio("answer.mp3", format='audio/mp3')  # Play the audio
+                os.remove("answer.mp3")  # Remove the audio file after playing
+            except Exception as e:
+                st.error(f"Error generating audio: {e}")
     else:
         st.write("No topic available for this chapter.")
 
