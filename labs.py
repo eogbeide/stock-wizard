@@ -1,8 +1,7 @@
 import streamlit as st
 import pandas as pd
-
 from gtts import gTTS
-import streamlit as st
+import os
 
 st.title("Simple Text to Speech Converter")
 
@@ -18,11 +17,6 @@ if st.button("Convert"):
         st.audio("output.mp3")  # Play the audio file
     else:
         st.warning("Please enter some text.")
-        
-
-# Create a timestamp to force a refresh
-#today = datetime.datetime.now().date()
-#st.write(f"Last updated: {today}")
 
 @st.cache_data
 # Load data from CSV on GitHub
@@ -30,6 +24,14 @@ def load_data():
     url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/labs.csv"
     df = pd.read_csv(url, encoding='ISO-8859-1')  # Specify encoding here
     return df
+
+# Function to convert text to speech
+def text_to_speech(text, lang='en'):
+    if text:
+        audio_stream = gTTS(text=text, lang=lang)
+        audio_stream.save("output.mp3")  # Save the audio file
+        return "output.mp3"
+    return None
 
 # Main function to run the app
 def main():
@@ -72,12 +74,26 @@ def main():
         if not topic_data.empty:
             # Display Description in a box
             st.subheader("Description")
-            st.info(topic_data['Description'].values[0])  # Use st.info for a box
+            description_text = topic_data['Description'].values[0]
+            st.info(description_text)  # Use st.info for a box
+
+            # Button to convert Description to speech
+            if st.button("Read Description"):
+                audio_file = text_to_speech(description_text, language)
+                if audio_file:
+                    st.audio(audio_file)  # Play the audio file
 
             # Display Questions and Answers in an expander
             st.subheader("Questions and Answers")
+            questions_answers_text = topic_data['Questions and Answers'].values[0]
             with st.expander("View Questions and Answers"):
-                st.write(topic_data['Questions and Answers'].values[0])  # Display questions and answers
+                st.write(questions_answers_text)  # Display questions and answers
+
+            # Button to convert Questions and Answers to speech
+            if st.button("Read Questions and Answers"):
+                audio_file = text_to_speech(questions_answers_text, language)
+                if audio_file:
+                    st.audio(audio_file)  # Play the audio file
 
         else:
             st.write("No data available for the selected topic.")
