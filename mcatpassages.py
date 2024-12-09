@@ -3,14 +3,16 @@ import pandas as pd
 import requests
 from io import StringIO
 from gtts import gTTS
+import time
+import os
 
 # Load the CSV file from GitHub
 @st.cache_data
 def load_data():
     url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/mcat_passages.csv'
     response = requests.get(url)
-    response.raise_for_status()  # Raise an error for bad requests
-    return pd.read_csv(StringIO(response.text))  # Use StringIO to load CSV data
+    response.raise_for_status()
+    return pd.read_csv(StringIO(response.text))
 
 # Function to convert text to speech
 def text_to_speech(text):
@@ -19,15 +21,28 @@ def text_to_speech(text):
         clean_text = ''.join(e for e in text if e.isalnum() or e.isspace() or e in ['.', ',', '!', '?'])
         
         # Split the text into manageable chunks if necessary
-        max_length = 200  # Maximum length of each chunk
+        max_length = 200
         chunks = [clean_text[i:i + max_length] for i in range(0, len(clean_text), max_length)]
 
         audio_files = []
         
         for idx, chunk in enumerate(chunks):
-            tts = gTTS(chunk, lang='en')
             audio_file = f"answer_{idx}.mp3"
-            tts.save(audio_file)
+
+            # Check if the audio file already exists
+            if not os.path.exists(audio_file):
+                for attempt in range(3):  # Retry up to 3 times
+                    try:
+                        tts = gTTS(chunk, lang='en')
+                        tts.save(audio_file)
+                        break  # Break if successful
+                    except Exception as e:
+                        if "429" in str(e):
+                            st.warning("Rate limit exceeded. Retrying in 5 seconds...")
+                            time.sleep(5)  # Wait before retrying
+                        else:
+                            st.error(f"An error occurred: {e}")
+                            return []
             audio_files.append(audio_file)
 
         return audio_files
@@ -38,30 +53,22 @@ def text_to_speech(text):
 
 # Main function
 def main():
-    # Load data
     data = load_data()
-    
-    # Clean column names
     data.columns = data.columns.str.strip()
 
-    # Sidebar for subject selection
     st.sidebar.title("Select Subject")
     subjects = data['Subject'].unique()
     selected_subject = st.sidebar.selectbox("Choose a Subject", subjects)
 
-    # Sidebar for chapter selection based on selected subject
     st.sidebar.title("Select Chapter")
     chapters = data[data['Subject'] == selected_subject]['Chapter'].unique()
     selected_chapter = st.sidebar.selectbox("Choose a Chapter", chapters)
 
-    # Filter data based on selected subject and chapter
     chapter_data = data[(data['Subject'] == selected_subject) & (data['Chapter'] == selected_chapter)]
 
-    # Initialize session state for topic index
     if 'topic_index' not in st.session_state:
         st.session_state.topic_index = 0
 
-    # Navigation buttons at the top
     col1, col2 = st.columns(2)
     
     with col1:
@@ -74,7 +81,6 @@ def main():
             if st.button("Next"):
                 st.session_state.topic_index += 1
 
-    # Display current topic
     if not chapter_data.empty:
         current_topic = chapter_data.iloc[st.session_state.topic_index]
         
