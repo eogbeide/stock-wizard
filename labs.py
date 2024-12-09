@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from gtts import gTTS
+import re
 
 @st.cache_data
 # Load data from CSV on GitHub
@@ -8,6 +9,11 @@ def load_data():
     url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/labs.csv"
     df = pd.read_csv(url, encoding='ISO-8859-1')  # Specify encoding here
     return df
+
+# Function to clean text
+def clean_text(text):
+    # Remove Markdown-like formatting
+    return re.sub(r'\*{1,2}|#{1,6}|<.*?>', '', text).strip()
 
 # Main function to run the app
 def main():
@@ -39,9 +45,12 @@ def main():
             description = topic_data['Description'].values[0]
             st.write(description)  # Display description as plain text
 
+            # Clean the description for TTS
+            clean_description = clean_text(description)
+
             # Convert Description to speech
             if st.button("Read Description Aloud"):
-                audio_stream = gTTS(text=description, lang='en')  # Default to English
+                audio_stream = gTTS(text=clean_description, lang='en')  # Default to English
                 audio_stream.save("description.mp3")
                 st.audio("description.mp3")  # Play the audio file
 
@@ -51,9 +60,12 @@ def main():
             with st.expander("View Questions and Answers"):
                 st.write(questions_answers)  # Display questions and answers
 
+            # Clean the questions and answers for TTS
+            clean_questions_answers = clean_text(questions_answers)
+
             # Convert Questions and Answers to speech
             if st.button("Read Questions and Answers Aloud"):
-                audio_stream = gTTS(text=questions_answers, lang='en')  # Default to English
+                audio_stream = gTTS(text=clean_questions_answers, lang='en')  # Default to English
                 audio_stream.save("qa.mp3")
                 st.audio("qa.mp3")  # Play the audio file
 
