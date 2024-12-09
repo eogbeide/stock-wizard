@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from io import StringIO
-from gtts import gTTS
+import pyttsx3
 import os
 
 # Load the CSV file from GitHub
@@ -12,6 +12,9 @@ def load_data():
     response = requests.get(url)
     response.raise_for_status()  # Raise an error for bad requests
     return pd.read_csv(StringIO(response.text))  # Use StringIO to load CSV data
+
+# Initialize the TTS engine
+engine = pyttsx3.init()
 
 # Main function
 def main():
@@ -63,15 +66,14 @@ def main():
             st.write(answer_text)
             
             # Convert answer text to speech
-            tts = gTTS(answer_text, lang='en')
-            audio_file = 'answer.mp3'
-            tts.save(audio_file)
+            engine.save_to_file(answer_text, 'answer.mp3')
+            engine.runAndWait()
             
             # Play the audio
-            st.audio(audio_file, format='audio/mp3')
+            st.audio('answer.mp3', format='audio/mp3')
             
             # Optionally, delete the audio file after playing
-            os.remove(audio_file)
+            os.remove('answer.mp3')
     else:
         st.write("No topic available for this chapter.")
 
