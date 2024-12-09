@@ -3,7 +3,6 @@ import pandas as pd
 import requests
 from io import StringIO
 
-
 # Load the CSV file from GitHub
 @st.cache_data
 def load_data():
@@ -16,9 +15,6 @@ def load_data():
 def main():
     # Load data
     data = load_data()
-    
-    # Print the columns for debugging
-    #st.write("Available columns in the DataFrame:", data.columns.tolist())
     
     # Clean column names
     data.columns = data.columns.str.strip()
@@ -60,6 +56,9 @@ def main():
         st.title(f"Subject: {selected_subject} - Chapter: {selected_chapter}")
         st.subheader(f"Topic {st.session_state.topic_index + 1}: {current_topic['Topic']}")
         
+        # Display the passage content
+        st.markdown(current_topic['Answer and Explanation'])
+
         if st.button("Show Answer"):
             st.write(current_topic['Answer and Explanation'])
     else:
