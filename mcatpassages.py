@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import requests
 from io import StringIO
+from gtts import gTTS
+import os
 
 # Load the CSV file from GitHub
 @st.cache_data
@@ -10,6 +12,13 @@ def load_data():
     response = requests.get(url)
     response.raise_for_status()  # Raise an error for bad requests
     return pd.read_csv(StringIO(response.text))  # Use StringIO to load CSV data
+
+# Function to convert text to speech
+def text_to_speech(text):
+    tts = gTTS(text=text, lang='en')
+    audio_file = 'answer.mp3'
+    tts.save(audio_file)
+    return audio_file
 
 # Main function
 def main():
@@ -58,7 +67,14 @@ def main():
         
         # Use expander for the answer
         with st.expander("Show Answer"):
-            st.write(current_topic['Answer and Explanation'])
+            answer_text = current_topic['Answer and Explanation']
+            st.write(answer_text)
+            
+            # Button to read the answer aloud
+            if st.button("Read Answer Aloud"):
+                audio_file = text_to_speech(answer_text)
+                st.audio(audio_file, format='audio/mp3')
+
     else:
         st.write("No topic available for this chapter.")
 
