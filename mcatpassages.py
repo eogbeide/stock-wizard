@@ -16,41 +16,36 @@ def load_data():
 
 # Function to convert text to speech
 def text_to_speech(text):
-    try:
-        # Clean the text by removing special characters
-        clean_text = ''.join(e for e in text if e.isalnum() or e.isspace() or e in ['.', ',', '!', '?'])
-        
-        # Split the text into manageable chunks if necessary
-        max_length = 200
-        chunks = [clean_text[i:i + max_length] for i in range(0, len(clean_text), max_length)]
+    # Clean the text by removing special characters
+    clean_text = ''.join(e for e in text if e.isalnum() or e.isspace() or e in ['.', ',', '!', '?'])
+    
+    # Split the text into manageable chunks if necessary
+    max_length = 200
+    chunks = [clean_text[i:i + max_length] for i in range(0, len(clean_text), max_length)]
 
-        audio_files = []
-        
-        for idx, chunk in enumerate(chunks):
-            audio_file = f"answer_{idx}.mp3"
+    audio_files = []
+    
+    for idx, chunk in enumerate(chunks):
+        audio_file = f"answer_{idx}.mp3"
 
-            # Check if the audio file already exists
-            if not os.path.exists(audio_file):
-                for attempt in range(5):  # Retry up to 5 times
-                    try:
-                        tts = gTTS(chunk, lang='en')
-                        tts.save(audio_file)
-                        break  # Break if successful
-                    except Exception as e:
-                        if "429" in str(e):
-                            wait_time = 5 * (2 ** attempt)  # Exponential backoff
-                            st.warning(f"Rate limit exceeded. Retrying in {wait_time} seconds...")
-                            time.sleep(wait_time)  # Wait before retrying
-                        else:
-                            st.error(f"An error occurred: {e}")
-                            return []
-            audio_files.append(audio_file)
+        # Check if the audio file already exists
+        if not os.path.exists(audio_file):
+            for attempt in range(5):  # Retry up to 5 times
+                try:
+                    tts = gTTS(chunk, lang='en')
+                    tts.save(audio_file)
+                    break  # Break if successful
+                except Exception as e:
+                    if "429" in str(e):
+                        wait_time = 2 ** attempt  # Exponential backoff
+                        st.warning(f"Rate limit exceeded. Retrying in {wait_time} seconds...")
+                        time.sleep(wait_time)  # Wait before retrying
+                    else:
+                        st.error(f"An error occurred: {e}")
+                        return []
+        audio_files.append(audio_file)
 
-        return audio_files
-
-    except Exception as e:
-        st.error(f"An error occurred during text-to-speech conversion: {e}")
-        return []
+    return audio_files
 
 # Main function
 def main():
