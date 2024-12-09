@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 from io import StringIO
 from gtts import gTTS
-import os
+import tempfile
 
 # Load the CSV file from GitHub
 @st.cache_data
@@ -62,13 +62,15 @@ def main():
             answer_text = current_topic['Answer and Explanation']
             st.write(answer_text)
             
-            # Convert text to speech
-            tts = gTTS(answer_text, lang='en')
-            tts.save("answer.mp3")
-            audio_file = open("answer.mp3", "rb")
-            st.audio(audio_file, format='audio/mp3')
-            os.remove("answer.mp3")  # Remove the file after playing
-            
+            try:
+                if answer_text.strip():
+                    with tempfile.NamedTemporaryFile(delete=True, suffix=".mp3") as tmp_file:
+                        tts = gTTS(answer_text, lang='en')
+                        tts.save(tmp_file.name)
+                        tmp_file.seek(0)
+                        st.audio(tmp_file.name, format='audio/mp3')
+            except Exception as e:
+                st.error(f"An error occurred: {e}")
     else:
         st.write("No topic available for this chapter.")
 
