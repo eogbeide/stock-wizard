@@ -2,21 +2,6 @@ import streamlit as st
 import pandas as pd
 from gtts import gTTS
 
-st.title("Simple Text to Speech Converter")
-
-text_area = st.text_area("Copy and paste text here to convert to speech:")
-
-language = st.selectbox("Select language:", ["en", "fr", "ru", "hi", "es"])
-
-if st.button("Convert"):
-    if text_area:  # Check if there's text to convert
-        audio_stream = gTTS(text=text_area, lang=language)
-        audio_stream.save("output.mp3")  # Save the audio file
-        st.success("Speech is generated successfully!")
-        st.audio("output.mp3")  # Play the audio file
-    else:
-        st.warning("Please enter some text.")
-
 @st.cache_data
 # Load data from CSV on GitHub
 def load_data():
@@ -57,7 +42,7 @@ def main():
 
             # Convert Description to speech
             if st.button("Read Description Aloud"):
-                audio_stream = gTTS(text=description, lang=language)
+                audio_stream = gTTS(text=description, lang='en')  # Default to English
                 audio_stream.save("description.mp3")
                 st.audio("description.mp3")  # Play the audio file
 
@@ -69,7 +54,7 @@ def main():
 
             # Convert Questions and Answers to speech
             if st.button("Read Questions and Answers Aloud"):
-                audio_stream = gTTS(text=questions_answers, lang=language)
+                audio_stream = gTTS(text=questions_answers, lang='en')  # Default to English
                 audio_stream.save("qa.mp3")
                 st.audio("qa.mp3")  # Play the audio file
 
