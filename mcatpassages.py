@@ -15,9 +15,16 @@ def load_data():
 
 # Function to convert text to speech
 def text_to_speech(text):
-    tts = gTTS(text=text, lang='en')
-    tts.save("answer.mp3")
-    os.system("start answer.mp3")  # Use "start" for Windows, "open" for macOS, "xdg-open" for Linux
+    if not text or not isinstance(text, str):
+        st.error("No valid text provided for speech.")
+        return
+
+    try:
+        tts = gTTS(text=text, lang='en')
+        tts.save("answer.mp3")
+        os.system("start answer.mp3")  # Use "start" for Windows, "open" for macOS, "xdg-open" for Linux
+    except Exception as e:
+        st.error(f"Error in text-to-speech conversion: {e}")
 
 # Main function
 def main():
