@@ -1,79 +1,88 @@
 import streamlit as st
 import pandas as pd
-import requests
-from io import StringIO
+
 from gtts import gTTS
-import os
+import streamlit as st
 
-# Load the CSV file from GitHub
+st.title("Simple Text to Speech Converter")
+
+text_area = st.text_area("Copy and paste text here to convert to speech:")
+
+language = st.selectbox("Select language:", ["en", "fr", "ru", "hi", "es"])
+
+if st.button("Convert"):
+    if text_area:  # Check if there's text to convert
+        audio_stream = gTTS(text=text_area, lang=language)
+        audio_stream.save("output.mp3")  # Save the audio file
+        st.success("Speech is generated successfully!")
+        st.audio("output.mp3")  # Play the audio file
+    else:
+        st.warning("Please enter some text.")
+        
+
+# Create a timestamp to force a refresh
+#today = datetime.datetime.now().date()
+#st.write(f"Last updated: {today}")
+
 @st.cache_data
+# Load data from CSV on GitHub
 def load_data():
-    url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/mcat_passages.csv'
-    response = requests.get(url)
-    response.raise_for_status()  # Raise an error for bad requests
-    return pd.read_csv(StringIO(response.text))  # Use StringIO to load CSV data
+    url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/labs.csv"
+    df = pd.read_csv(url, encoding='ISO-8859-1')  # Specify encoding here
+    return df
 
-# Main function
+# Main function to run the app
 def main():
-    # Load data
-    data = load_data()
-    
+    # Custom CSS to set font to Comic Sans MS and font size to 10
+    st.markdown(
+        """
+        <style>
+        body {
+            font-family: 'Comic Sans MS';
+            font-size: 10px;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.title("MCAT Labs")
+
+    # Load the data
+    df = load_data()
+
     # Clean column names
-    data.columns = data.columns.str.strip()
+    df.columns = df.columns.str.strip()  # Remove any leading/trailing whitespace
 
     # Sidebar for subject selection
-    st.sidebar.title("Select Subject")
-    subjects = data['Subject'].unique()
-    selected_subject = st.sidebar.selectbox("Choose a Subject", subjects)
+    if 'Subject' in df.columns:
+        subjects = df['Subject'].unique()
+        selected_subject = st.sidebar.selectbox("Select Subject:", subjects)
 
-    # Sidebar for chapter selection based on selected subject
-    st.sidebar.title("Select Chapter")
-    chapters = data[data['Subject'] == selected_subject]['Chapter'].unique()
-    selected_chapter = st.sidebar.selectbox("Choose a Chapter", chapters)
+        # Filter data based on selected subject
+        subject_data = df[df['Subject'] == selected_subject]
 
-    # Filter data based on selected subject and chapter
-    chapter_data = data[(data['Subject'] == selected_subject) & (data['Chapter'] == selected_chapter)]
+        # Sidebar for topic selection
+        topics = subject_data['Topic'].unique()
+        selected_topic = st.sidebar.selectbox("Select Topic:", topics)
 
-    # Initialize session state for topic index
-    if 'topic_index' not in st.session_state:
-        st.session_state.topic_index = 0
+        # Filter data based on selected topic
+        topic_data = subject_data[subject_data['Topic'] == selected_topic]
 
-    # Navigation buttons at the top
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        if st.session_state.topic_index > 0:
-            if st.button("Back"):
-                st.session_state.topic_index -= 1
-    
-    with col2:
-        if st.session_state.topic_index < len(chapter_data) - 1:
-            if st.button("Next"):
-                st.session_state.topic_index += 1
+        if not topic_data.empty:
+            # Display Description in a box
+            st.subheader("Description")
+            st.info(topic_data['Description'].values[0])  # Use st.info for a box
 
-    # Display current topic
-    if not chapter_data.empty:
-        current_topic = chapter_data.iloc[st.session_state.topic_index]
-        
-        st.title(f"Subject: {selected_subject} - Chapter: {selected_chapter}")
-        st.subheader(f"Topic {st.session_state.topic_index + 1}: {current_topic['Topic']}")
-        
-        if st.button("Show Answer"):
-            answer_text = current_topic['Answer and Explanation']
-            cleaned_text = answer_text.replace('*', '').replace('#', '').strip()  # Clean text
-            st.write(cleaned_text)
+            # Display Questions and Answers in an expander
+            st.subheader("Questions and Answers")
+            with st.expander("View Questions and Answers"):
+                st.write(topic_data['Questions and Answers'].values[0])  # Display questions and answers
 
-            try:
-                # Convert text to speech
-                tts = gTTS(cleaned_text, lang='en')
-                tts.save("answer.mp3")  # Save the audio file
-                st.audio("answer.mp3", format='audio/mp3')  # Play the audio
-                os.remove("answer.mp3")  # Remove the audio file after playing
-            except Exception as e:
-                st.error(f"Error generating audio: {e}")
+        else:
+            st.write("No data available for the selected topic.")
     else:
-        st.write("No topic available for this chapter.")
+        st.error("The 'Subject' column is missing from the data.")
 
-# Run the app
 if __name__ == "__main__":
     main()
