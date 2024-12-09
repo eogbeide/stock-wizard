@@ -1,22 +1,7 @@
 import streamlit as st
 import pandas as pd
 from gtts import gTTS
-import os
-
-st.title("Simple Text to Speech Converter")
-
-text_area = st.text_area("Copy and paste text here to convert to speech:")
-
-language = st.selectbox("Select language:", ["en", "fr", "ru", "hi", "es"])
-
-if st.button("Convert"):
-    if text_area:  # Check if there's text to convert
-        audio_stream = gTTS(text=text_area, lang=language)
-        audio_stream.save("output.mp3")  # Save the audio file
-        st.success("Speech is generated successfully!")
-        st.audio("output.mp3")  # Play the audio file
-    else:
-        st.warning("Please enter some text.")
+import tempfile
 
 @st.cache_data
 # Load data from CSV on GitHub
@@ -29,8 +14,10 @@ def load_data():
 def text_to_speech(text, lang='en'):
     if text:
         audio_stream = gTTS(text=text, lang=lang)
-        audio_stream.save("output.mp3")  # Save the audio file
-        return "output.mp3"
+        with tempfile.NamedTemporaryFile(delete=True, suffix=".mp3") as tmp_file:
+            audio_stream.save(tmp_file.name)  # Save the audio file to a temporary file
+            tmp_file.seek(0)  # Move to the beginning of the file
+            return tmp_file.name  # Return the file name for playback
     return None
 
 # Main function to run the app
@@ -79,7 +66,7 @@ def main():
 
             # Button to convert Description to speech
             if st.button("Read Description"):
-                audio_file = text_to_speech(description_text, language)
+                audio_file = text_to_speech(description_text)
                 if audio_file:
                     st.audio(audio_file)  # Play the audio file
 
@@ -91,7 +78,7 @@ def main():
 
             # Button to convert Questions and Answers to speech
             if st.button("Read Questions and Answers"):
-                audio_file = text_to_speech(questions_answers_text, language)
+                audio_file = text_to_speech(questions_answers_text)
                 if audio_file:
                     st.audio(audio_file)  # Play the audio file
 
