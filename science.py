@@ -1,31 +1,27 @@
 import streamlit as st
 import pandas as pd
+
 from gtts import gTTS
+import streamlit as st
 
 st.title("Simple Text to Speech Converter")
 
-# Text area for input
 text_area = st.text_area("Copy and paste text here to convert to speech:")
 
-# Language selection
 language = st.selectbox("Select language:", ["en", "fr", "ru", "hi", "es"])
 
-# Button to copy text from the text area (note: this may not work in all environments)
-if st.button("Copy Text"):
-    if text_area:
-        st.success("Text copied! Now you can convert it to speech.")
-    else:
-        st.warning("Please enter some text to copy.")
-
-# Convert button
 if st.button("Convert"):
     if text_area:  # Check if there's text to convert
         audio_stream = gTTS(text=text_area, lang=language)
         audio_stream.save("output.mp3")  # Save the audio file
-        st.success("Speech generated successfully!")
+        st.success("Speech is generated successfully!")
         st.audio("output.mp3")  # Play the audio file
     else:
         st.warning("Please enter some text.")
+
+# Create a timestamp to force a refresh
+#today = datetime.datetime.now().date()
+#st.write(f"Last updated: {today}")
 
 # Load data from the CSV file on GitHub with explicit encoding
 url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/science.csv'
@@ -85,12 +81,5 @@ if len(filtered_data) > 0:
 
     # Display the current scenario index
     st.write(f"Scenario {current_index + 1} of {len(filtered_data)}")
-
-    # Button to read the displayed scenario text
-    if st.button("Read Scenario Text"):
-        audio_stream = gTTS(text=scenario, lang=language)
-        audio_stream.save("scenario_output.mp3")  # Save the audio file for the scenario
-        st.success("Scenario text is being read!")
-        st.audio("scenario_output.mp3")  # Play the audio file
 else:
     st.write("No scenarios available for the selected Subject and Topic.")
