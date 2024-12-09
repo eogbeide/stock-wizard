@@ -1,33 +1,9 @@
 import streamlit as st
 import pandas as pd
 from urllib.error import URLError
-
-
 from gtts import gTTS
-import streamlit as st
-
-st.title("Simple Text to Speech Converter")
-
-text_area = st.text_area("Copy and paste text here to convert to speech:")
-
-language = st.selectbox("Select language:", ["en", "fr", "ru", "hi", "es"])
-
-if st.button("Convert"):
-    if text_area:  # Check if there's text to convert
-        audio_stream = gTTS(text=text_area, lang=language)
-        audio_stream.save("output.mp3")  # Save the audio file
-        st.success("Speech is generated successfully!")
-        st.audio("output.mp3")  # Play the audio file
-    else:
-        st.warning("Please enter some text.")
-
 
 @st.cache_data
-# Create a timestamp to force a refresh
-# today = datetime.datetime.now().date()
-# st.write(f"Last updated: {today}")
-
-# Function to read questions from CSV
 def read_questions_from_csv(file_path):
     try:
         df = pd.read_csv(file_path, encoding='ISO-8859-1')
@@ -110,6 +86,13 @@ def main():
     # Display the explanation in an expander
     with st.expander("View Explanation"):
         st.write(question_to_display['explanation'])
+        
+        # Button to read the explanation text
+        if st.button("Read Explanation Text"):
+            audio_stream = gTTS(text=question_to_display['explanation'], lang='en')
+            audio_stream.save("explanation_output.mp3")  # Save the audio file for the explanation
+            st.success("Explanation text is being read!")
+            st.audio("explanation_output.mp3")  # Play the audio file
 
     st.markdown("### Navigation")
     col1, col2 = st.columns(2)
