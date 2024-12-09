@@ -4,6 +4,7 @@ import requests
 from io import StringIO
 from gtts import gTTS
 import os
+import time
 
 # Load the CSV file from GitHub
 @st.cache_data
@@ -19,12 +20,22 @@ def text_to_speech(text):
         st.error("No valid text provided for speech.")
         return
 
+    audio_file = "answer.mp3"
+    
+    # Check if audio file already exists
+    if os.path.exists(audio_file):
+        os.remove(audio_file)  # Remove the old file to avoid confusion
+    
     try:
         tts = gTTS(text=text, lang='en')
-        tts.save("answer.mp3")
-        os.system("start answer.mp3")  # Use "start" for Windows, "open" for macOS, "xdg-open" for Linux
+        tts.save(audio_file)
+        os.system("start " + audio_file)  # Change command based on OS
     except Exception as e:
-        st.error(f"Error in text-to-speech conversion: {e}")
+        if "429" in str(e):
+            st.error("Too many requests to the TTS API. Please try again later.")
+        else:
+            st.error(f"Error in text-to-speech conversion: {e}")
+        time.sleep(5)  # Wait before retrying
 
 # Main function
 def main():
