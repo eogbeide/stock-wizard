@@ -24,6 +24,9 @@ filtered_data = filtered_data[filtered_data['Topic'] == selected_topic]
 if 'selected_index' not in st.session_state:
     st.session_state.selected_index = 0
 
+# Language selection
+language = st.selectbox("Select language:", ["en", "fr", "ru", "hi", "es"])
+
 # Create a list of scenarios for easy navigation
 if len(filtered_data) > 0:
     scenarios = filtered_data['Scenario'].tolist()
