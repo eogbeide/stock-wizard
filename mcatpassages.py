@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import requests
 from io import StringIO
-
+import pyttsx3
 
 # Load the CSV file from GitHub
 @st.cache_data
@@ -12,13 +12,16 @@ def load_data():
     response.raise_for_status()  # Raise an error for bad requests
     return pd.read_csv(StringIO(response.text))  # Use StringIO to load CSV data
 
+# Function to convert text to speech
+def speak(text):
+    engine = pyttsx3.init()
+    engine.say(text)
+    engine.runAndWait()
+
 # Main function
 def main():
     # Load data
     data = load_data()
-    
-    # Print the columns for debugging
-    #st.write("Available columns in the DataFrame:", data.columns.tolist())
     
     # Clean column names
     data.columns = data.columns.str.strip()
@@ -61,7 +64,9 @@ def main():
         st.subheader(f"Topic {st.session_state.topic_index + 1}: {current_topic['Topic']}")
         
         if st.button("Show Answer"):
-            st.write(current_topic['Answer and Explanation'])
+            answer_text = current_topic['Answer and Explanation']
+            st.write(answer_text)
+            speak(answer_text)  # Call speak function to read the answer aloud
     else:
         st.write("No topic available for this chapter.")
 
