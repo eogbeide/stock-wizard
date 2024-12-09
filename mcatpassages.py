@@ -2,8 +2,9 @@ import streamlit as st
 import pandas as pd
 import requests
 from io import StringIO
-from gtts import gTTS
+from gtts import gTTS, gTTSError
 import os
+import tempfile
 
 # Load the CSV file from GitHub
 @st.cache_data
@@ -61,14 +62,20 @@ def main():
         if st.button("Show Answer"):
             answer_text = current_topic['Answer and Explanation']
             st.write(answer_text)
-            
-            # Convert text to speech
-            tts = gTTS(text=answer_text, lang='en')
-            tts.save("answer.mp3")
-            st.audio("answer.mp3", format='audio/mp3')
-            
-            # Optionally, remove the audio file after playing
-            os.remove("answer.mp3")
+
+            try:
+                # Convert text to speech
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as temp_audio_file:
+                    tts = gTTS(text=answer_text, lang='en')
+                    tts.save(temp_audio_file.name)
+                    st.audio(temp_audio_file.name, format='audio/mp3')
+                    
+            except gTTSError as e:
+                st.error("Error generating audio: " + str(e))
+                
+            except Exception as e:
+                st.error("An unexpected error occurred: " + str(e))
+                
     else:
         st.write("No topic available for this chapter.")
 
