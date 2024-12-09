@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from urllib.error import URLError
 from gtts import gTTS
+import os
 
 @st.cache_data
 def read_questions_from_csv(file_path):
@@ -89,10 +90,12 @@ def main():
         
         # Button to read the explanation text
         if st.button("Read Explanation Text"):
-            audio_stream = gTTS(text=question_to_display['explanation'], lang='en')
-            audio_stream.save("explanation_output.mp3")  # Save the audio file for the explanation
+            explanation_text = question_to_display['explanation']
+            audio_stream = gTTS(text=explanation_text, lang='en')
+            audio_file_path = "explanation_output.mp3"
+            audio_stream.save(audio_file_path)  # Save the audio file for the explanation
             st.success("Explanation text is being read!")
-            st.audio("explanation_output.mp3")  # Play the audio file
+            st.audio(audio_file_path)  # Play the audio file
 
     st.markdown("### Navigation")
     col1, col2 = st.columns(2)
