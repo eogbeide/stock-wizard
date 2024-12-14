@@ -21,7 +21,11 @@ def sarima_forecast(data):
     forecast = results.get_forecast(steps=63)  # Approximately 63 trading days in 3 months
     forecast_index = pd.date_range(start=data.index[-1] + pd.Timedelta(days=1), periods=63, freq='B')
     
-    forecast_df = pd.DataFrame(forecast.predicted_mean, index=forecast_index, columns=['Forecast'])
+    # Create DataFrame for forecast
+    forecast_df = pd.DataFrame({
+        'Forecast': forecast.predicted_mean
+    }, index=forecast_index)
+
     confidence_intervals = forecast.conf_int()
     return forecast_df, confidence_intervals
 
