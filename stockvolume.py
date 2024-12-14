@@ -29,7 +29,7 @@ def sarima_forecast(data):
 st.title("SPY Volume Forecasting with SARIMA")
 
 # Dropdown to select stock symbol
-symbol = st.selectbox("Select Symbol", ["SPY"])
+symbol = st.selectbox("Select Symbol", ["SPY", "TSLA", "AMZN"])
 
 # Fetch and display data
 data = fetch_data(symbol)
@@ -51,7 +51,7 @@ ax.fill_between(confidence_intervals.index,
                 color='pink', alpha=0.3)
 
 # Formatting the plot
-ax.set_title('SPY Volume Forecast')
+ax.set_title('Stock Volume Forecast')
 ax.set_xlabel('Date')
 ax.set_ylabel('Volume')
 ax.xaxis.set_major_locator(mdates.MonthLocator())
