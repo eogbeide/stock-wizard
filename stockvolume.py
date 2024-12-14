@@ -42,7 +42,7 @@ forecast_df, confidence_intervals = sarima_forecast(data)
 # Plot the historical data and forecast
 fig, ax = plt.subplots(figsize=(12, 6))
 ax.plot(data.index, data, label='Historical Volume', color='blue')
-ax.plot(forecast_df, forecast_df['Forecast'], label='Forecast', color='orange')
+ax.plot(forecast_df.index, forecast_df['Forecast'], label='Forecast', color='orange')
 
 # Confidence intervals
 ax.fill_between(confidence_intervals.index,
