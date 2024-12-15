@@ -10,7 +10,7 @@ from datetime import timedelta
 st.title("Stock Price Forecasting with SARIMA")
 
 # User input for stock ticker
-ticker = st.text_input("Enter Stock Ticker:", value='AAPL')
+ticker = st.text_input("Enter Stock Ticker:", value=['AAPL', 'SPY', 'AMZN', 'TSLA'])
 
 # Button to fetch and process data
 if st.button("Forecast"):
