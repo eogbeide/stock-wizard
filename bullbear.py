@@ -9,8 +9,8 @@ from datetime import timedelta
 # Streamlit app title
 st.title("Stock Price Forecasting with SARIMA")
 
-# User input for stock ticker
-ticker = st.text_input("Enter Stock Ticker:", value=['AAPL', 'SPY', 'AMZN', 'TSLA'])
+# User input for stock ticker using a dropdown menu
+ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'TSLA'])
 
 # Button to fetch and process data
 if st.button("Forecast"):
