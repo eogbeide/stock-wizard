@@ -1,10 +1,10 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import timedelta
-import plotly.graph_objs as go
 
 # Streamlit app title
 st.title("Stock Price Forecasting with SARIMA and EMA")
@@ -44,49 +44,20 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Create the interactive plot using Plotly
-    fig = go.Figure()
-
-    # Historical data
-    fig.add_trace(go.Scatter(x=data.index[-180:], y=data[-180:], mode='lines', name='Last 6 Months Historical Data', line=dict(color='blue')))
-
-    # 20-day EMA
-    fig.add_trace(go.Scatter(x=ema_20.index[-180:], y=ema_20[-180:], mode='lines', name='20-Day EMA', line=dict(color='red', dash='dash')))
-
-    # 200-day EMA
-    fig.add_trace(go.Scatter(x=ema_200.index[-180:], y=ema_200[-180:], mode='lines', name='200-Day EMA', line=dict(color='green', dash='dash')))
-
-    # Forecast data
-    fig.add_trace(go.Scatter(x=forecast_index, y=forecast_values, mode='lines', name='3 Months Forecast', line=dict(color='orange')))
+    # Step 5: Plot historical data, forecast, and EMA
+    plt.figure(figsize=(14, 7))
+    plt.plot(data[-180:], label='Last 6 Months Historical Data', color='blue')  # Last 6 months of historical data
+    plt.plot(ema_20[-180:], label='20-Day EMA', color='red', linestyle='--')  # 20-day EMA
+    plt.plot(ema_200[-180:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
+    plt.plot(forecast_index, forecast_values, label='3 Months Forecast', color='orange')
+    plt.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
+    plt.title(f'{ticker} Price Forecast for Next 3 Months')
+    plt.xlabel('Date')
+    plt.ylabel('Price')
+    plt.legend()
     
-    # Confidence intervals
-    fig.add_trace(go.Scatter(
-        x=forecast_index,
-        y=conf_int.iloc[:, 0],
-        mode='lines',
-        name='Lower Bound',
-        line=dict(color='orange', width=0),
-        showlegend=False
-    ))
-    fig.add_trace(go.Scatter(
-        x=forecast_index,
-        y=conf_int.iloc[:, 1],
-        mode='lines',
-        name='Upper Bound',
-        fill='tonexty',
-        fillcolor='rgba(255, 165, 0, 0.3)',
-        line=dict(color='orange', width=0),
-        showlegend=False
-    ))
-
-    # Update layout
-    fig.update_layout(title=f'{ticker} Price Forecast for Next 3 Months',
-                      xaxis_title='Date',
-                      yaxis_title='Price',
-                      hovermode='x unified')
-
     # Display the plot in Streamlit
-    st.plotly_chart(fig)
+    st.pyplot(plt)
 
     # Create a DataFrame for forecast data including confidence intervals
     forecast_df = pd.DataFrame({
