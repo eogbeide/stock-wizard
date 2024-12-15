@@ -32,7 +32,7 @@ if st.button("Forecast"):
     model_fit = model.fit(disp=False)
 
     # Step 4: Forecast the next three months (90 days)
-    forecast_steps = 90
+    forecast_steps = 180
     forecast = model_fit.get_forecast(steps=forecast_steps)
     forecast_index = pd.date_range(start=data.index[-1] + timedelta(days=1), periods=forecast_steps, freq='D')
     forecast_values = forecast.predicted_mean
