@@ -7,7 +7,7 @@ from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import timedelta
 
 # Streamlit app title
-st.title("Stock Price Forecasting with SARIMA and EMA")
+st.title("Stock Price Forecasting with SARIMA, EMA, and MACD")
 
 # User input for stock ticker using a dropdown menu
 ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'TSLA'])
@@ -28,6 +28,12 @@ if st.button("Forecast"):
     ema_20 = data.ewm(span=20, adjust=False).mean()
     ema_200 = data.ewm(span=200, adjust=False).mean()
 
+    # Calculate MACD
+    short_ema = data.ewm(span=12, adjust=False).mean()  # Short-term EMA
+    long_ema = data.ewm(span=26, adjust=False).mean()  # Long-term EMA
+    macd_line = short_ema - long_ema  # MACD Line
+    signal_line = macd_line.ewm(span=9, adjust=False).mean()  # Signal Line
+
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
     seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
@@ -44,8 +50,11 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, and EMA
+    # Step 5: Plot historical data, forecast, EMA, and MACD
     plt.figure(figsize=(14, 7))
+    
+    # Price and EMA plot
+    plt.subplot(2, 1, 1)  # First subplot for price and EMA
     plt.plot(data[-180:], label='Last 6 Months Historical Data', color='blue')  # Last 6 months of historical data
     plt.plot(ema_20[-180:], label='20-Day EMA', color='red', linestyle='--')  # 20-day EMA
     plt.plot(ema_200[-180:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
@@ -55,7 +64,17 @@ if st.button("Forecast"):
     plt.xlabel('Date')
     plt.ylabel('Price')
     plt.legend()
-    
+
+    # MACD plot
+    plt.subplot(2, 1, 2)  # Second subplot for MACD
+    plt.plot(macd_line[-180:], label='MACD Line', color='blue')
+    plt.plot(signal_line[-180:], label='Signal Line', color='red', linestyle='--')
+    plt.title('MACD and Signal Line')
+    plt.xlabel('Date')
+    plt.ylabel('MACD')
+    plt.axhline(0, color='black', linewidth=0.5, linestyle='--')  # Adding a horizontal line at 0
+    plt.legend()
+
     # Display the plot in Streamlit
     st.pyplot(plt)
 
