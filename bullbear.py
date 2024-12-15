@@ -53,6 +53,13 @@ if st.button("Forecast"):
     # Display the plot in Streamlit
     st.pyplot(plt)
 
-    # Optionally, show the forecast data in a table
-    forecast_df = pd.DataFrame({'Date': forecast_index, 'Forecasted Price': forecast_values})
+    # Create a DataFrame for forecast data including confidence intervals
+    forecast_df = pd.DataFrame({
+        'Date': forecast_index,
+        'Forecasted Price': forecast_values,
+        'Lower Bound': conf_int.iloc[:, 0],
+        'Upper Bound': conf_int.iloc[:, 1]
+    })
+
+    # Show the forecast data in a table
     st.write(forecast_df)
