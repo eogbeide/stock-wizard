@@ -28,6 +28,12 @@ if st.button("Forecast"):
     ema_20 = data.ewm(span=20, adjust=False).mean()
     ema_200 = data.ewm(span=200, adjust=False).mean()
 
+    # Calculate MACD
+    short_ema = data.ewm(span=12, adjust=False).mean()  # Short-term EMA
+    long_ema = data.ewm(span=26, adjust=False).mean()  # Long-term EMA
+    macd_line = short_ema - long_ema  # MACD Line
+    signal_line = macd_line.ewm(span=9, adjust=False).mean()  # Signal Line
+
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
     seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
@@ -44,23 +50,8 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Calculate MACD for historical data
-    short_ema = data.ewm(span=12, adjust=False).mean()  # Short-term EMA
-    long_ema = data.ewm(span=26, adjust=False).mean()  # Long-term EMA
-    macd_line = short_ema - long_ema  # MACD Line
-    signal_line = macd_line.ewm(span=9, adjust=False).mean()  # Signal Line
-
-    # Forecast MACD for the next 90 days
-    combined_data = pd.concat([data, forecast_values.rename('Forecasted Price')])
-    
-    # Calculate the future EMAs based on combined data
-    future_short_ema = combined_data.ewm(span=12, adjust=False).mean()
-    future_long_ema = combined_data.ewm(span=26, adjust=False).mean()
-    future_macd_line = future_short_ema - future_long_ema
-    future_signal_line = future_macd_line.ewm(span=9, adjust=False).mean()
-
     # Step 5: Plot historical data, forecast, EMA, and MACD
-    plt.figure(figsize=(14, 14))
+    plt.figure(figsize=(14, 7))
     
     # Price and EMA plot
     plt.subplot(2, 1, 1)  # First subplot for price and EMA
@@ -78,8 +69,6 @@ if st.button("Forecast"):
     plt.subplot(2, 1, 2)  # Second subplot for MACD
     plt.plot(macd_line[-180:], label='MACD Line', color='blue')
     plt.plot(signal_line[-180:], label='Signal Line', color='red', linestyle='--')
-    plt.plot(forecast_index, future_macd_line[-forecast_steps:], label='Forecasted MACD Line', color='cyan', linestyle='-.')
-    plt.plot(forecast_index, future_signal_line[-forecast_steps:], label='Forecasted Signal Line', color='orange', linestyle='-.')
     plt.title('MACD and Signal Line')
     plt.xlabel('Date')
     plt.ylabel('MACD')
@@ -94,9 +83,7 @@ if st.button("Forecast"):
         'Date': forecast_index,
         'Forecasted Price': forecast_values,
         'Lower Bound': conf_int.iloc[:, 0],
-        'Upper Bound': conf_int.iloc[:, 1],
-        'Forecasted MACD': future_macd_line[-forecast_steps:].values,
-        'Forecasted Signal': future_signal_line[-forecast_steps:].values
+        'Upper Bound': conf_int.iloc[:, 1]
     })
 
     # Show the forecast data in a table
