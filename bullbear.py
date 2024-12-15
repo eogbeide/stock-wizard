@@ -78,8 +78,8 @@ if st.button("Forecast"):
         'Forecasted Price': forecast_values,
         'Lower Bound': conf_int.iloc[:, 0],
         'Upper Bound': conf_int.iloc[:, 1],
-        'Forecasted 20-Day EMA': future_ema_20[-forecast_steps:],
-        'Forecasted 200-Day EMA': future_ema_200[-forecast_steps:]
+        'Forecasted 20-Day EMA': future_ema_20[-forecast_steps:].values,
+        'Forecasted 200-Day EMA': future_ema_200[-forecast_steps:].values
     })
 
     # Show the forecast data in a table
