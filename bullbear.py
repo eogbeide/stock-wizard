@@ -95,8 +95,8 @@ if st.button("Forecast"):
         'Forecasted Price': forecast_values,
         'Lower Bound': conf_int.iloc[:, 0],
         'Upper Bound': conf_int.iloc[:, 1],
-        'Forecasted MACD': future_macd_line[-forecast_steps:],
-        'Forecasted Signal': future_signal_line[-forecast_steps:]
+        'Forecasted MACD': future_macd_line[-forecast_steps:].values,
+        'Forecasted Signal': future_signal_line[-forecast_steps:].values
     })
 
     # Show the forecast data in a table
