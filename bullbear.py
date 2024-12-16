@@ -67,7 +67,7 @@ if st.button("Forecast"):
 
     # Create a second y-axis for MACD
     ax2 = ax1.twinx()  
-    ax2.plot(macd_line[-180:], label='MACD Line', color='blue')
+    ax2.plot(macd_line[-180:], label='MACD Line', color='purple')
     ax2.plot(signal_line[-180:], label='Signal Line', color='red', linestyle='--')
     ax2.set_ylabel('MACD', color='black')
     ax2.tick_params(axis='y', labelcolor='black')
