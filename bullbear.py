@@ -10,7 +10,7 @@ from datetime import timedelta
 st.title("Stock Price Forecasting with SARIMA, EMA, and MACD")
 
 # User input for stock ticker using a dropdown menu
-ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'TSLA', 'PLTR'])
+ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'TSLA', 'PLTR', 'NVDA'])
 
 # Button to fetch and process data
 if st.button("Forecast"):
