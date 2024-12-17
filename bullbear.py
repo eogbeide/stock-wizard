@@ -1,10 +1,10 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
 import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import timedelta
+import plotly.graph_objects as go
 
 # Streamlit app title
 st.title("Stock Price Forecasting with SARIMA, EMA, and MACD")
@@ -49,33 +49,31 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, EMA, and MACD
-    fig, ax1 = plt.subplots(figsize=(14, 7))
+    # Step 5: Create interactive plot using Plotly
+    fig = go.Figure()
 
-    # Plot price and 200-day EMA
-    ax1.set_title(f'{ticker} Price Forecast and MACD', fontsize=16)
-    ax1.plot(data[-180:], label='Last 6 Months Historical Data', color='blue')  # Last 6 months of historical data
-    ax1.plot(ema_200[-180:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
-    ax1.plot(forecast_index, forecast_values, label='3 Months Forecast', color='orange')
-    ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
-    ax1.set_xlabel('Date')
-    ax1.set_ylabel('Price', color='blue')
-    ax1.tick_params(axis='y', labelcolor='blue')
-    ax1.legend(loc='upper left')
+    # Add historical data
+    fig.add_trace(go.Scatter(x=data.index[-180:], y=data[-180:], mode='lines', name='Last 6 Months Historical Data', line=dict(color='blue')))
+    
+    # Add 200-day EMA
+    fig.add_trace(go.Scatter(x=data.index[-180:], y=ema_200[-180:], mode='lines', name='200-Day EMA', line=dict(color='green', dash='dash')))
+    
+    # Add forecasted data
+    fig.add_trace(go.Scatter(x=forecast_index, y=forecast_values, mode='lines', name='3 Months Forecast', line=dict(color='orange')))
+    
+    # Add confidence intervals
+    fig.add_trace(go.Scatter(x=forecast_index, y=conf_int.iloc[:, 0], mode='lines', name='Lower Bound', line=dict(color='orange', dash='dash'), showlegend=False))
+    fig.add_trace(go.Scatter(x=forecast_index, y=conf_int.iloc[:, 1], mode='lines', name='Upper Bound', line=dict(color='orange', dash='dash'), fill='tonexty', fillcolor='rgba(255, 165, 0, 0.3)', showlegend=False))
 
-    # Create a second y-axis for MACD
-    ax2 = ax1.twinx()  
-    ax2.plot(macd_line[-180:], label='MACD Line', color='purple')
-    ax2.plot(signal_line[-180:], label='Signal Line', color='red', linestyle='--')
-    ax2.set_ylabel('MACD', color='black')
-    ax2.tick_params(axis='y', labelcolor='black')
-    ax2.axhline(0, color='black', linewidth=0.5, linestyle='--')  # Adding a horizontal line at 0
+    # Add MACD line
+    fig.add_trace(go.Scatter(x=data.index[-180:], y=macd_line[-180:], mode='lines', name='MACD Line', line=dict(color='purple')))
+    fig.add_trace(go.Scatter(x=data.index[-180:], y=signal_line[-180:], mode='lines', name='Signal Line', line=dict(color='red', dash='dash')))
 
-    # Add MACD legend
-    ax2.legend(loc='upper right')
+    # Update layout
+    fig.update_layout(title=f'{ticker} Price Forecast and MACD', xaxis_title='Date', yaxis_title='Price/MACD', template='plotly_white')
 
-    # Display the plot in Streamlit
-    st.pyplot(fig)
+    # Display the interactive plot in Streamlit
+    st.plotly_chart(fig)
 
     # Create a DataFrame for forecast data including confidence intervals
     forecast_df = pd.DataFrame({
