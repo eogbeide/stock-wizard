@@ -24,8 +24,7 @@ if st.button("Forecast"):
     data = data.asfreq('D')  # Set frequency to daily
     data.fillna(method='ffill', inplace=True)  # Forward fill to handle missing values
 
-    # Calculate 20-day and 200-day EMA
-    ema_20 = data.ewm(span=20, adjust=False).mean()
+    # Calculate 200-day EMA
     ema_200 = data.ewm(span=200, adjust=False).mean()
 
     # Calculate MACD
@@ -53,10 +52,9 @@ if st.button("Forecast"):
     # Step 5: Plot historical data, forecast, EMA, and MACD
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
-    # Plot price and EMAs
+    # Plot price and 200-day EMA
     ax1.set_title(f'{ticker} Price Forecast and MACD', fontsize=16)
     ax1.plot(data[-180:], label='Last 6 Months Historical Data', color='blue')  # Last 6 months of historical data
-    ax1.plot(ema_20[-180:], label='20-Day EMA', color='red', linestyle='--')  # 20-day EMA
     ax1.plot(ema_200[-180:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
     ax1.plot(forecast_index, forecast_values, label='3 Months Forecast', color='orange')
     ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
