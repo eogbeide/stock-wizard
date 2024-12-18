@@ -86,17 +86,18 @@ if st.button("Forecast"):
     })
 
     # Calculate MACD values for the forecast period
-    forecast_macd = short_ema[-1] - long_ema[-1]  # Using last calculated EMAs for MACD
-    forecast_signal = forecast_macd.ewm(span=9, adjust=False).mean()  # Signal line for forecast
-
-    # Show the forecast data in a table along with MACD
-    st.write(forecast_df)
-
-    # Display the MACD values for the last available day and forecasted MACD
-    macd_df = pd.DataFrame({
+    last_macd = macd_line.iloc[-1]  # Get the last MACD value
+    last_signal = signal_line.iloc[-1]  # Get the last Signal Line value
+    
+    # Prepare MACD DataFrame for forecast period
+    macd_forecast = pd.DataFrame({
         'Date': forecast_index,
-        'MACD Line': np.concatenate(([macd_line[-1]], [forecast_macd] * forecast_steps)),
-        'Signal Line': np.concatenate(([signal_line[-1]], [forecast_signal] * forecast_steps))
+        'MACD Line': [last_macd] * forecast_steps,
+        'Signal Line': [last_signal] * forecast_steps
     })
 
-    st.write(macd_df)
+    # Show the forecast data in a table
+    st.write(forecast_df)
+
+    # Display the MACD forecast data
+    st.write(macd_forecast)
