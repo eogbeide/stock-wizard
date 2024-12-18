@@ -15,8 +15,16 @@ def compute_rsi(data, window=14):
     rsi = 100 - (100 / (1 + rs))
     return rsi
 
+# Function to calculate Bollinger Bands
+def compute_bollinger_bands(data, window=20, num_sd=2):
+    middle_band = data.rolling(window=window).mean()
+    std_dev = data.rolling(window=window).std()
+    upper_band = middle_band + (std_dev * num_sd)
+    lower_band = middle_band - (std_dev * num_sd)
+    return lower_band, middle_band, upper_band
+
 # Streamlit app title
-st.title("Stock Price Forecasting with SARIMA, EMA, MACD, and RSI")
+st.title("Stock Price Forecasting with SARIMA, EMA, MACD, RSI, and Bollinger Bands")
 
 # User input for stock ticker using a dropdown menu
 ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'TSLA', 'PLTR', 'NVDA', 'JYD', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX'])
@@ -45,6 +53,9 @@ if st.button("Forecast"):
     # Calculate RSI
     rsi = compute_rsi(data)
 
+    # Calculate Bollinger Bands
+    lower_band, middle_band, upper_band = compute_bollinger_bands(data)
+
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
     seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
@@ -61,15 +72,21 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, EMA, MACD, and RSI
+    # Step 5: Plot historical data, forecast, EMA, MACD, and Bollinger Bands
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
-    ax1.set_title(f'{ticker} Price Forecast, MACD, and RSI', fontsize=16)
+    ax1.set_title(f'{ticker} Price Forecast, MACD, RSI, and Bollinger Bands', fontsize=16)
     ax1.plot(data[-180:], label='Last 6 Months Historical Data', color='blue')  # Last 6 months of historical data
     ax1.plot(ema_200[-180:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
     ax1.plot(forecast_index, forecast_values, label='3 Months Forecast', color='orange')
     ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
+    
+    # Plot Bollinger Bands
+    ax1.plot(lower_band[-180:], label='Bollinger Lower Band', color='purple', linestyle='--')
+    ax1.plot(middle_band[-180:], label='Bollinger Middle Band', color='orange', linestyle='--')
+    ax1.plot(upper_band[-180:], label='Bollinger Upper Band', color='red', linestyle='--')
+    
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
     ax1.tick_params(axis='y', labelcolor='blue')
@@ -86,21 +103,8 @@ if st.button("Forecast"):
     # Add MACD legend
     ax2.legend(loc='upper right')
 
-    # Create a new figure for RSI
-    fig_rsi, ax3 = plt.subplots(figsize=(14, 3))
-    ax3.plot(rsi[-180:], label='RSI', color='orange')
-    ax3.axhline(70, color='red', linestyle='--')  # Overbought threshold
-    ax3.axhline(30, color='green', linestyle='--')  # Oversold threshold
-    ax3.set_title(f'{ticker} RSI', fontsize=16)
-    ax3.set_xlabel('Date')
-    ax3.set_ylabel('RSI', color='orange')
-    ax3.tick_params(axis='y', labelcolor='orange')
-    ax3.set_ylim(0, 100)  # Set limits for RSI
-    ax3.legend()
-
-    # Display the plots in Streamlit
+    # Display the plot in Streamlit
     st.pyplot(fig)
-    st.pyplot(fig_rsi)
 
     # Create a DataFrame for forecast data including confidence intervals
     forecast_df = pd.DataFrame({
