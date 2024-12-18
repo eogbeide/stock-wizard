@@ -10,7 +10,7 @@ from datetime import timedelta
 st.title("Stock Price Forecasting with SARIMA, EMA, and MACD")
 
 # User input for stock ticker using a dropdown menu
-ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'TSLA', 'PLTR', 'NVDA', 'JYD', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'UBER', 'DOW', 'SITM', 'AFRM', 'MSFT', 'TSM', 'NFLX'])
+ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'TSLA', 'PLTR', 'NVDA', 'JYD', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX'])
 
 # Button to fetch and process data
 if st.button("Forecast"):
@@ -85,5 +85,18 @@ if st.button("Forecast"):
         'Upper Bound': conf_int.iloc[:, 1]
     })
 
-    # Show the forecast data in a table
+    # Calculate MACD values for the forecast period
+    forecast_macd = short_ema[-1] - long_ema[-1]  # Using last calculated EMAs for MACD
+    forecast_signal = forecast_macd.ewm(span=9, adjust=False).mean()  # Signal line for forecast
+
+    # Show the forecast data in a table along with MACD
     st.write(forecast_df)
+
+    # Display the MACD values for the last available day and forecasted MACD
+    macd_df = pd.DataFrame({
+        'Date': forecast_index,
+        'MACD Line': np.concatenate(([macd_line[-1]], [forecast_macd] * forecast_steps)),
+        'Signal Line': np.concatenate(([signal_line[-1]], [forecast_signal] * forecast_steps))
+    })
+
+    st.write(macd_df)
