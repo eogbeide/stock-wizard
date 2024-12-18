@@ -9,28 +9,15 @@ from datetime import timedelta
 # Streamlit app title
 st.title("Stock Price Forecasting with SARIMA, EMA, and MACD")
 
-# Define stock tickers
-tickers = ['AAPL', 'SPY', 'AMZN', 'TSLA', 'PLTR', 'NVDA', 'JYD', 'META', 'SITM', 
-           'MARA', 'GOOG', 'HOOD', 'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX']
-
-# Initialize session state for ticker index
-if 'ticker_index' not in st.session_state:
-    st.session_state.ticker_index = 0
-
-# Function to get the current ticker
-def get_current_ticker():
-    return tickers[st.session_state.ticker_index]
-
-# Display the current ticker
-current_ticker = get_current_ticker()
-st.write(f"Currently selected ticker: **{current_ticker}**")
+# User input for stock ticker using a dropdown menu
+ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'TSLA', 'PLTR', 'NVDA', 'JYD', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'UBER', 'DOW', 'SITM', 'AFRM', 'MSFT', 'TSM', 'NFLX'])
 
 # Button to fetch and process data
 if st.button("Forecast"):
     # Step 1: Download historical data from Yahoo Finance
     start_date = '2018-01-01'
     end_date = pd.to_datetime("today")
-    data = yf.download(current_ticker, start=start_date, end=end_date)
+    data = yf.download(ticker, start=start_date, end=end_date)
 
     # Step 2: Prepare the data
     data = data['Close']  # Use the closing prices
@@ -66,7 +53,7 @@ if st.button("Forecast"):
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
-    ax1.set_title(f'{current_ticker} Price Forecast and MACD', fontsize=16)
+    ax1.set_title(f'{ticker} Price Forecast and MACD', fontsize=16)
     ax1.plot(data[-180:], label='Last 6 Months Historical Data', color='blue')  # Last 6 months of historical data
     ax1.plot(ema_200[-180:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
     ax1.plot(forecast_index, forecast_values, label='3 Months Forecast', color='orange')
@@ -100,9 +87,3 @@ if st.button("Forecast"):
 
     # Show the forecast data in a table
     st.write(forecast_df)
-
-# Button to go to the next ticker
-if st.button("Next"):
-    # Update the ticker index to the next ticker
-    st.session_state.ticker_index = (st.session_state.ticker_index + 1) % len(tickers)
-    st.experimental_rerun()  # Rerun the app to update the display
