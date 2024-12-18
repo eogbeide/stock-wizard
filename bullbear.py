@@ -6,11 +6,20 @@ import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import timedelta
 
+# Function to compute RSI
+def compute_rsi(data, window=14):
+    delta = data.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
 # Streamlit app title
-st.title("Stock Price Forecasting with SARIMA, EMA, and MACD")
+st.title("Stock Price Forecasting with SARIMA, EMA, MACD, and RSI")
 
 # User input for stock ticker using a dropdown menu
-ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'TSLA', 'PLTR', 'NVDA', 'JYD', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'UBER', 'DOW', 'SITM', 'AFRM', 'MSFT', 'TSM', 'NFLX'])
+ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'TSLA', 'PLTR', 'NVDA', 'JYD', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX'])
 
 # Button to fetch and process data
 if st.button("Forecast"):
@@ -33,6 +42,9 @@ if st.button("Forecast"):
     macd_line = short_ema - long_ema  # MACD Line
     signal_line = macd_line.ewm(span=9, adjust=False).mean()  # Signal Line
 
+    # Calculate RSI
+    rsi = compute_rsi(data)
+
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
     seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
@@ -49,11 +61,11 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, EMA, and MACD
+    # Step 5: Plot historical data, forecast, EMA, MACD, and RSI
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
-    ax1.set_title(f'{ticker} Price Forecast and MACD', fontsize=16)
+    ax1.set_title(f'{ticker} Price Forecast, MACD, and RSI', fontsize=16)
     ax1.plot(data[-180:], label='Last 6 Months Historical Data', color='blue')  # Last 6 months of historical data
     ax1.plot(ema_200[-180:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
     ax1.plot(forecast_index, forecast_values, label='3 Months Forecast', color='orange')
@@ -74,8 +86,21 @@ if st.button("Forecast"):
     # Add MACD legend
     ax2.legend(loc='upper right')
 
-    # Display the plot in Streamlit
+    # Create a new figure for RSI
+    fig_rsi, ax3 = plt.subplots(figsize=(14, 3))
+    ax3.plot(rsi[-180:], label='RSI', color='orange')
+    ax3.axhline(70, color='red', linestyle='--')  # Overbought threshold
+    ax3.axhline(30, color='green', linestyle='--')  # Oversold threshold
+    ax3.set_title(f'{ticker} RSI', fontsize=16)
+    ax3.set_xlabel('Date')
+    ax3.set_ylabel('RSI', color='orange')
+    ax3.tick_params(axis='y', labelcolor='orange')
+    ax3.set_ylim(0, 100)  # Set limits for RSI
+    ax3.legend()
+
+    # Display the plots in Streamlit
     st.pyplot(fig)
+    st.pyplot(fig_rsi)
 
     # Create a DataFrame for forecast data including confidence intervals
     forecast_df = pd.DataFrame({
