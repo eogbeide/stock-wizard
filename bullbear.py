@@ -9,169 +9,144 @@ from datetime import timedelta
 # Streamlit app title
 st.title("Stock Price Forecasting with SARIMA, EMA, and MACD")
 
-# User input for stock ticker using a dropdown menu
-ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'TSLA', 'PLTR', 'NVDA', 'JYD', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'UBER', 'DOW', 'SITM', 'AFRM', 'MSFT', 'TSM', 'NFLX'])
+# Define stock tickers
+tickers = ['AAPL', 'SPY', 'AMZN', 'TSLA', 'PLTR', 'NVDA', 'JYD', 'META', 'SITM', 'MARA', 
+           'GOOG', 'HOOD', 'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX']
 
-# Button to fetch and process data
-if st.button("Forecast"):
-    # Step 1: Download historical data from Yahoo Finance
-    start_date = '2018-01-01'
-    end_date = pd.to_datetime("today")
-    data = yf.download(ticker, start=start_date, end=end_date)
+# Create two columns for two different stock forecasts
+col1, col2 = st.columns(2)
 
-    # Step 2: Prepare the data
-    data = data['Close']  # Use the closing prices
-    data = data.asfreq('D')  # Set frequency to daily
-    data.fillna(method='ffill', inplace=True)  # Forward fill to handle missing values
+# Column 1: First stock selection and forecast
+with col1:
+    ticker1 = st.selectbox("Select First Stock Ticker:", options=tickers)
+    if st.button("Forecast First Stock"):
+        # Download historical data from Yahoo Finance
+        start_date = '2018-01-01'
+        end_date = pd.to_datetime("today")
+        data1 = yf.download(ticker1, start=start_date, end=end_date)
 
-    # Calculate 200-day EMA
-    ema_200 = data.ewm(span=200, adjust=False).mean()
+        # Prepare the data
+        data1 = data1['Close'].asfreq('D').fillna(method='ffill')
 
-    # Calculate MACD
-    short_ema = data.ewm(span=12, adjust=False).mean()  # Short-term EMA
-    long_ema = data.ewm(span=26, adjust=False).mean()  # Long-term EMA
-    macd_line = short_ema - long_ema  # MACD Line
-    signal_line = macd_line.ewm(span=9, adjust=False).mean()  # Signal Line
+        # Calculate 200-day EMA
+        ema_200_1 = data1.ewm(span=200, adjust=False).mean()
 
-    # Step 3: Fit the SARIMA model
-    order = (1, 1, 1)  # Example values
-    seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
+        # Calculate MACD
+        short_ema_1 = data1.ewm(span=12, adjust=False).mean()
+        long_ema_1 = data1.ewm(span=26, adjust=False).mean()
+        macd_line_1 = short_ema_1 - long_ema_1
+        signal_line_1 = macd_line_1.ewm(span=9, adjust=False).mean()
 
-    model = SARIMAX(data, order=order, seasonal_order=seasonal_order)
-    model_fit = model.fit(disp=False)
+        # Fit the SARIMA model
+        model1 = SARIMAX(data1, order=(1, 1, 1), seasonal_order=(1, 1, 1, 12))
+        model_fit_1 = model1.fit(disp=False)
 
-    # Step 4: Forecast the next three months (90 days)
-    forecast_steps = 90
-    forecast = model_fit.get_forecast(steps=forecast_steps)
-    forecast_index = pd.date_range(start=data.index[-1] + timedelta(days=1), periods=forecast_steps, freq='D')
-    forecast_values = forecast.predicted_mean
+        # Forecast the next three months (90 days)
+        forecast_steps = 90
+        forecast_1 = model_fit_1.get_forecast(steps=forecast_steps)
+        forecast_index_1 = pd.date_range(start=data1.index[-1] + timedelta(days=1), periods=forecast_steps, freq='D')
+        forecast_values_1 = forecast_1.predicted_mean
+        conf_int_1 = forecast_1.conf_int()
 
-    # Get confidence intervals
-    conf_int = forecast.conf_int()
+        # Plotting
+        fig1, ax1 = plt.subplots(figsize=(14, 7))
+        ax1.set_title(f'{ticker1} Price Forecast and MACD', fontsize=16)
+        ax1.plot(data1[-180:], label='Last 6 Months Historical Data', color='blue')
+        ax1.plot(ema_200_1[-180:], label='200-Day EMA', color='green', linestyle='--')
+        ax1.plot(forecast_index_1, forecast_values_1, label='3 Months Forecast', color='orange')
+        ax1.fill_between(forecast_index_1, conf_int_1.iloc[:, 0], conf_int_1.iloc[:, 1], color='orange', alpha=0.3)
+        ax1.set_xlabel('Date')
+        ax1.set_ylabel('Price', color='blue')
+        ax1.tick_params(axis='y', labelcolor='blue')
+        ax1.legend(loc='upper left')
 
-    # Step 5: Plot historical data, forecast, EMA, and MACD
-    fig, ax1 = plt.subplots(figsize=(14, 7))
+        # Create a second y-axis for MACD
+        ax2 = ax1.twinx()  
+        ax2.plot(macd_line_1[-180:], label='MACD Line', color='purple')
+        ax2.plot(signal_line_1[-180:], label='Signal Line', color='red', linestyle='--')
+        ax2.set_ylabel('MACD', color='black')
+        ax2.tick_params(axis='y', labelcolor='black')
+        ax2.axhline(0, color='black', linewidth=0.5, linestyle='--')
 
-    # Plot price and 200-day EMA
-    ax1.set_title(f'{ticker} Price Forecast and MACD', fontsize=16)
-    ax1.plot(data[-180:], label='Last 6 Months Historical Data', color='blue')  # Last 6 months of historical data
-    ax1.plot(ema_200[-180:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
-    ax1.plot(forecast_index, forecast_values, label='3 Months Forecast', color='orange')
-    ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
-    ax1.set_xlabel('Date')
-    ax1.set_ylabel('Price', color='blue')
-    ax1.tick_params(axis='y', labelcolor='blue')
-    ax1.legend(loc='upper left')
+        # Add MACD legend
+        ax2.legend(loc='upper right')
 
-    # Create a second y-axis for MACD
-    ax2 = ax1.twinx()  
-    ax2.plot(macd_line[-180:], label='MACD Line', color='purple')
-    ax2.plot(signal_line[-180:], label='Signal Line', color='red', linestyle='--')
-    ax2.set_ylabel('MACD', color='black')
-    ax2.tick_params(axis='y', labelcolor='black')
-    ax2.axhline(0, color='black', linewidth=0.5, linestyle='--')  # Adding a horizontal line at 0
+        # Display the plot in Streamlit
+        st.pyplot(fig1)
 
-    # Add MACD legend
-    ax2.legend(loc='upper right')
+        # Create a DataFrame for forecast data including confidence intervals
+        forecast_df_1 = pd.DataFrame({
+            'Date': forecast_index_1,
+            'Forecasted Price': forecast_values_1,
+            'Lower Bound': conf_int_1.iloc[:, 0],
+            'Upper Bound': conf_int_1.iloc[:, 1]
+        })
 
-    # Display the plot in Streamlit
-    st.pyplot(fig)
+        # Show the forecast data in a table
+        st.write(forecast_df_1)
 
-    # Create a DataFrame for forecast data including confidence intervals
-    forecast_df = pd.DataFrame({
-        'Date': forecast_index,
-        'Forecasted Price': forecast_values,
-        'Lower Bound': conf_int.iloc[:, 0],
-        'Upper Bound': conf_int.iloc[:, 1]
-    })
+# Column 2: Second stock selection and forecast
+with col2:
+    ticker2 = st.selectbox("Select Second Stock Ticker:", options=tickers)
+    if st.button("Forecast Second Stock"):
+        # Download historical data from Yahoo Finance
+        data2 = yf.download(ticker2, start=start_date, end=end_date)
 
-    # Show the forecast data in a table
-    st.write(forecast_df)
+        # Prepare the data
+        data2 = data2['Close'].asfreq('D').fillna(method='ffill')
 
+        # Calculate 200-day EMA
+        ema_200_2 = data2.ewm(span=200, adjust=False).mean()
 
+        # Calculate MACD
+        short_ema_2 = data2.ewm(span=12, adjust=False).mean()
+        long_ema_2 = data2.ewm(span=26, adjust=False).mean()
+        macd_line_2 = short_ema_2 - long_ema_2
+        signal_line_2 = macd_line_2.ewm(span=9, adjust=False).mean()
 
+        # Fit the SARIMA model
+        model2 = SARIMAX(data2, order=(1, 1, 1), seasonal_order=(1, 1, 1, 12))
+        model_fit_2 = model2.fit(disp=False)
 
+        # Forecast the next three months (90 days)
+        forecast_2 = model_fit_2.get_forecast(steps=forecast_steps)
+        forecast_index_2 = pd.date_range(start=data2.index[-1] + timedelta(days=1), periods=forecast_steps, freq='D')
+        forecast_values_2 = forecast_2.predicted_mean
+        conf_int_2 = forecast_2.conf_int()
 
-#-------------
-# Streamlit app title
-st.title("Stock Price Forecasting with SARIMA, EMA, and MACD")
+        # Plotting
+        fig2, ax1 = plt.subplots(figsize=(14, 7))
+        ax1.set_title(f'{ticker2} Price Forecast and MACD', fontsize=16)
+        ax1.plot(data2[-180:], label='Last 6 Months Historical Data', color='blue')
+        ax1.plot(ema_200_2[-180:], label='200-Day EMA', color='green', linestyle='--')
+        ax1.plot(forecast_index_2, forecast_values_2, label='3 Months Forecast', color='orange')
+        ax1.fill_between(forecast_index_2, conf_int_2.iloc[:, 0], conf_int_2.iloc[:, 1], color='orange', alpha=0.3)
+        ax1.set_xlabel('Date')
+        ax1.set_ylabel('Price', color='blue')
+        ax1.tick_params(axis='y', labelcolor='blue')
+        ax1.legend(loc='upper left')
 
-# User input for stock ticker using a dropdown menu
-ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'TSLA', 'PLTR', 'NVDA', 'JYD', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'UBER', 'DOW', 'SITM', 'AFRM', 'MSFT', 'TSM', 'NFLX'])
+        # Create a second y-axis for MACD
+        ax2 = ax1.twinx()  
+        ax2.plot(macd_line_2[-180:], label='MACD Line', color='purple')
+        ax2.plot(signal_line_2[-180:], label='Signal Line', color='red', linestyle='--')
+        ax2.set_ylabel('MACD', color='black')
+        ax2.tick_params(axis='y', labelcolor='black')
+        ax2.axhline(0, color='black', linewidth=0.5, linestyle='--')
 
-# Button to fetch and process data
-if st.button("Forecast"):
-    # Step 1: Download historical data from Yahoo Finance
-    start_date = '2018-01-01'
-    end_date = pd.to_datetime("today")
-    data = yf.download(ticker, start=start_date, end=end_date)
+        # Add MACD legend
+        ax2.legend(loc='upper right')
 
-    # Step 2: Prepare the data
-    data = data['Close']  # Use the closing prices
-    data = data.asfreq('D')  # Set frequency to daily
-    data.fillna(method='ffill', inplace=True)  # Forward fill to handle missing values
+        # Display the plot in Streamlit
+        st.pyplot(fig2)
 
-    # Calculate 200-day EMA
-    ema_200 = data.ewm(span=200, adjust=False).mean()
+        # Create a DataFrame for forecast data including confidence intervals
+        forecast_df_2 = pd.DataFrame({
+            'Date': forecast_index_2,
+            'Forecasted Price': forecast_values_2,
+            'Lower Bound': conf_int_2.iloc[:, 0],
+            'Upper Bound': conf_int_2.iloc[:, 1]
+        })
 
-    # Calculate MACD
-    short_ema = data.ewm(span=12, adjust=False).mean()  # Short-term EMA
-    long_ema = data.ewm(span=26, adjust=False).mean()  # Long-term EMA
-    macd_line = short_ema - long_ema  # MACD Line
-    signal_line = macd_line.ewm(span=9, adjust=False).mean()  # Signal Line
-
-    # Step 3: Fit the SARIMA model
-    order = (1, 1, 1)  # Example values
-    seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
-
-    model = SARIMAX(data, order=order, seasonal_order=seasonal_order)
-    model_fit = model.fit(disp=False)
-
-    # Step 4: Forecast the next three months (90 days)
-    forecast_steps = 90
-    forecast = model_fit.get_forecast(steps=forecast_steps)
-    forecast_index = pd.date_range(start=data.index[-1] + timedelta(days=1), periods=forecast_steps, freq='D')
-    forecast_values = forecast.predicted_mean
-
-    # Get confidence intervals
-    conf_int = forecast.conf_int()
-
-    # Step 5: Plot historical data, forecast, EMA, and MACD
-    fig, ax1 = plt.subplots(figsize=(14, 7))
-
-    # Plot price and 200-day EMA
-    ax1.set_title(f'{ticker} Price Forecast and MACD', fontsize=16)
-    ax1.plot(data[-180:], label='Last 6 Months Historical Data', color='blue')  # Last 6 months of historical data
-    ax1.plot(ema_200[-180:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
-    ax1.plot(forecast_index, forecast_values, label='3 Months Forecast', color='orange')
-    ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
-    ax1.set_xlabel('Date')
-    ax1.set_ylabel('Price', color='blue')
-    ax1.tick_params(axis='y', labelcolor='blue')
-    ax1.legend(loc='upper left')
-
-    # Create a second y-axis for MACD
-    ax2 = ax1.twinx()  
-    ax2.plot(macd_line[-180:], label='MACD Line', color='purple')
-    ax2.plot(signal_line[-180:], label='Signal Line', color='red', linestyle='--')
-    ax2.set_ylabel('MACD', color='black')
-    ax2.tick_params(axis='y', labelcolor='black')
-    ax2.axhline(0, color='black', linewidth=0.5, linestyle='--')  # Adding a horizontal line at 0
-
-    # Add MACD legend
-    ax2.legend(loc='upper right')
-
-    # Display the plot in Streamlit
-    st.pyplot(fig)
-
-    # Create a DataFrame for forecast data including confidence intervals
-    forecast_df = pd.DataFrame({
-        'Date': forecast_index,
-        'Forecasted Price': forecast_values,
-        'Lower Bound': conf_int.iloc[:, 0],
-        'Upper Bound': conf_int.iloc[:, 1]
-    })
-
-    # Show the forecast data in a table
-    st.write(forecast_df)
-
+        # Show the forecast data in a table
+        st.write(forecast_df_2)
