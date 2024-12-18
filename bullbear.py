@@ -65,7 +65,7 @@ if st.button("Forecast"):
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
-    ax1.set_title(f'{ticker} Price Forecast, MACD and RSI', fontsize=16)
+    ax1.set_title(f'{ticker} Price Forecast, MACD, and RSI', fontsize=16)
     ax1.plot(data[-180:], label='Last 6 Months Historical Data', color='blue')  # Last 6 months of historical data
     ax1.plot(ema_200[-180:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
     ax1.plot(forecast_index, forecast_values, label='3 Months Forecast', color='orange')
@@ -86,19 +86,21 @@ if st.button("Forecast"):
     # Add MACD legend
     ax2.legend(loc='upper right')
 
-    # Create a third y-axis for RSI
-    ax3 = ax1.twinx()  
-    ax3.spines['right'].set_position(('outward', 60))  # Offset the third y-axis
+    # Create a new figure for RSI
+    fig_rsi, ax3 = plt.subplots(figsize=(14, 3))
     ax3.plot(rsi[-180:], label='RSI', color='orange')
     ax3.axhline(70, color='red', linestyle='--')  # Overbought threshold
     ax3.axhline(30, color='green', linestyle='--')  # Oversold threshold
+    ax3.set_title(f'{ticker} RSI', fontsize=16)
+    ax3.set_xlabel('Date')
     ax3.set_ylabel('RSI', color='orange')
     ax3.tick_params(axis='y', labelcolor='orange')
     ax3.set_ylim(0, 100)  # Set limits for RSI
-    ax3.legend(loc='lower right')
+    ax3.legend()
 
-    # Display the plot in Streamlit
+    # Display the plots in Streamlit
     st.pyplot(fig)
+    st.pyplot(fig_rsi)
 
     # Create a DataFrame for forecast data including confidence intervals
     forecast_df = pd.DataFrame({
