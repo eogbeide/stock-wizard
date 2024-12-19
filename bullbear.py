@@ -86,10 +86,6 @@ if st.button("Forecast"):
     ax1.tick_params(axis='y', labelcolor='blue')
     ax1.legend(loc='upper left')
 
-    # Format x-axis for daily ticks
-    ax1.xaxis.set_major_locator(plt.MaxNLocator(10))  # Limit number of x-axis labels
-    ax1.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: pd.to_datetime(x).date()))  # Format dates
-
     # Display the plot in Streamlit
     st.pyplot(fig)
 
