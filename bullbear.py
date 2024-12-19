@@ -80,7 +80,7 @@ if st.button("Forecast"):
     ax1.plot(moving_average[-180:], label='30-Day Moving Average', color='brown', linestyle='--')
 
     # Plot Bollinger Bands
-    #ax1.plot(lower_band[-180:], label='Bollinger Lower Band', color='red', linestyle='--')
+    ax1.plot(lower_band[-180:], label='Bollinger Lower Band', color='red', linestyle='--')
     #ax1.plot(middle_band[-180:], label='Bollinger Middle Band', color='orange', linestyle='--')
     #ax1.plot(upper_band[-180:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
