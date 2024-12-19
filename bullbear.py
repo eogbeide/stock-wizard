@@ -82,7 +82,7 @@ if st.button("Forecast"):
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
     ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='orange', linestyle='--')
-    #ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
+    ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
@@ -92,12 +92,13 @@ if st.button("Forecast"):
     # Display the plot in Streamlit
     st.pyplot(fig)
 
-    # Create a DataFrame for forecast data including confidence intervals
+    # Create a DataFrame for forecast data including confidence intervals and EMA values
     forecast_df = pd.DataFrame({
         'Date': forecast_index,
         'Forecasted Price': forecast_values,
         'Lower Bound': conf_int.iloc[:, 0],
-        'Upper Bound': conf_int.iloc[:, 1]
+        'Upper Bound': conf_int.iloc[:, 1],
+        '200-Day EMA': ema_200[-30:].values  # Include EMA values for the forecast period
     })
 
     # Show the forecast data in a table
