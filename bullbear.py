@@ -1,4 +1,4 @@
-import streamlit as st
+Update import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -47,6 +47,9 @@ if st.button("Forecast"):
     # Calculate daily moving average (e.g., 30-day)
     moving_average = prices.rolling(window=30).mean()
 
+    # Calculate Bollinger Bands
+    lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
+
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
     seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
@@ -63,31 +66,23 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, EMA, daily moving average
+    # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
-    ax1.set_title(f'{ticker} Price Forecast, EMA, and MA', fontsize=16)
+    ax1.set_title(f'{ticker} Price Forecast, RSI, and Bollinger Bands', fontsize=16)
     ax1.plot(prices[-180:], label='Last 6 Months Historical Data', color='blue')  # Last 6 months of historical data
     ax1.plot(ema_200[-180:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
-    ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
+    ax1.plot(forecast_index, forecast_values, label='3 Months Forecast', color='orange')
     ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
 
     # Add daily moving average
     ax1.plot(moving_average[-180:], label='30-Day Moving Average', color='brown', linestyle='--')
 
-    # Annotate last 30 EMA values
-    last_ema_200 = ema_200[-30:]  # Get the last 30 EMA values
-    last_dates = last_ema_200.index  # Corresponding dates
-
-    for i in range(len(last_ema_200)):
-        ax1.annotate(f'{last_ema_200[i]:.2f}', 
-                     (last_dates[i], last_ema_200[i]), 
-                     textcoords="offset points", 
-                     xytext=(0, 5), 
-                     ha='center', 
-                     fontsize=8, 
-                     color='green')
+    # Plot Bollinger Bands
+    #ax1.plot(lower_band[-180:], label='Bollinger Lower Band', color='red', linestyle='--')
+    #ax1.plot(middle_band[-180:], label='Bollinger Middle Band', color='orange', linestyle='--')
+    #ax1.plot(upper_band[-180:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
