@@ -64,7 +64,7 @@ if st.button("Forecast"):
     conf_int = forecast.conf_int()
 
     # Calculate EMA and MA for the forecast period
-    combined_prices = prices.append(pd.Series(forecast_values, index=forecast_index))
+    combined_prices = pd.concat([prices, pd.Series(forecast_values, index=forecast_index)])
     ema_forecast = combined_prices.ewm(span=200, adjust=False).mean()[-forecast_steps:]
     moving_average_forecast = combined_prices.rolling(window=30).mean()[-forecast_steps:]
 
