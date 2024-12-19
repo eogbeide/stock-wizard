@@ -1,10 +1,10 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import timedelta
-import plotly.graph_objects as go
 
 # Function to compute RSI
 def compute_rsi(data, window=14):
@@ -37,68 +37,57 @@ if st.button("Forecast"):
     data = yf.download(ticker, start=start_date, end=end_date)
 
     # Step 2: Prepare the data
-    prices = data['Close']  # Use the closing prices
-    volumes = data['Volume']  # Use the trading volumes
-    prices = prices.asfreq('D')  # Set frequency to daily
-    volumes = volumes.asfreq('D').fillna(0)  # Set frequency to daily and fill NAs with 0
-    prices.fillna(method='ffill', inplace=True)  # Forward fill to handle missing prices
+    data = data['Close']  # Use the closing prices
+    data = data.asfreq('D')  # Set frequency to daily
+    data.fillna(method='ffill', inplace=True)  # Forward fill to handle missing values
 
     # Calculate 200-day EMA
-    ema_200 = prices.ewm(span=200, adjust=False).mean()
+    ema_200 = data.ewm(span=200, adjust=False).mean()
+
+    # Calculate RSI
+    rsi = compute_rsi(data)
 
     # Calculate Bollinger Bands
-    lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
+    lower_band, middle_band, upper_band = compute_bollinger_bands(data)
 
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
     seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
 
-    model = SARIMAX(prices, order=order, seasonal_order=seasonal_order)
+    model = SARIMAX(data, order=order, seasonal_order=seasonal_order)
     model_fit = model.fit(disp=False)
 
     # Step 4: Forecast the next three months (90 days)
     forecast_steps = 90
     forecast = model_fit.get_forecast(steps=forecast_steps)
-    forecast_index = pd.date_range(start=prices.index[-1] + timedelta(days=1), periods=forecast_steps, freq='D')
+    forecast_index = pd.date_range(start=data.index[-1] + timedelta(days=1), periods=forecast_steps, freq='D')
     forecast_values = forecast.predicted_mean
 
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Create an interactive plot using Plotly
-    fig = go.Figure()
+    # Step 5: Plot historical data, forecast, EMA, and Bollinger Bands
+    fig, ax1 = plt.subplots(figsize=(14, 7))
 
-    # Add historical price data
-    fig.add_trace(go.Scatter(x=prices.index[-180:], y=prices[-180:], mode='lines', name='Last 6 Months Historical Data', line=dict(color='blue')))
-    
-    # Add 200-day EMA
-    fig.add_trace(go.Scatter(x=prices.index[-180:], y=ema_200[-180:], mode='lines', name='200-Day EMA', line=dict(color='green', dash='dash')))
-    
-    # Add forecast data
-    fig.add_trace(go.Scatter(x=forecast_index, y=forecast_values, mode='lines', name='3 Months Forecast', line=dict(color='orange')))
-    
-    # Add confidence intervals
-    fig.add_trace(go.Scatter(x=forecast_index, y=conf_int.iloc[:, 0], mode='lines', name='Lower Bound', line=dict(color='orange', dash='dash'), fill='tonexty'))
-    fig.add_trace(go.Scatter(x=forecast_index, y=conf_int.iloc[:, 1], mode='lines', name='Upper Bound', line=dict(color='orange', dash='dash'), fill='tonexty'))
-    
-    # Add Bollinger Bands
-    fig.add_trace(go.Scatter(x=prices.index[-180:], y=lower_band[-180:], mode='lines', name='Bollinger Lower Band', line=dict(color='purple', dash='dash')))
-    fig.add_trace(go.Scatter(x=prices.index[-180:], y=upper_band[-180:], mode='lines', name='Bollinger Upper Band', line=dict(color='red', dash='dash')))
+    # Plot price and 200-day EMA
+    ax1.set_title(f'{ticker} Price Forecast, RSI, and Bollinger Bands', fontsize=16)
+    ax1.plot(data[-180:], label='Last 6 Months Historical Data', color='blue')  # Last 6 months of historical data
+    ax1.plot(ema_200[-180:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
+    ax1.plot(forecast_index, forecast_values, label='3 Months Forecast', color='orange')
+    ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
 
-    # Add volume as a bar chart
-    fig.add_trace(go.Bar(x=volumes.index[-180:], y=volumes[-180:], name='Volume', marker_color='rgba(158, 20, 20, 0.5)', yaxis='y2'))
-
-    # Update layout
-    fig.update_layout(
-        title=f'{ticker} Price Forecast, RSI, and Bollinger Bands',
-        xaxis_title='Date',
-        yaxis_title='Price',
-        yaxis2=dict(title='Volume', overlaying='y', side='right'),
-        hovermode='x unified'
-    )
+    # Plot Bollinger Bands
+    ax1.plot(lower_band[-180:], label='Bollinger Lower Band', color='purple', linestyle='--')
+    ax1.plot(middle_band[-180:], label='Bollinger Middle Band', color='orange', linestyle='--')
+    #ax1.plot(upper_band[-180:], label='Bollinger Upper Band', color='red', linestyle='--')
+    
+    ax1.set_xlabel('Date')
+    ax1.set_ylabel('Price', color='blue')
+    ax1.tick_params(axis='y', labelcolor='blue')
+    ax1.legend(loc='upper left')
 
     # Display the plot in Streamlit
-    st.plotly_chart(fig)
+    st.pyplot(fig)
 
     # Create a DataFrame for forecast data including confidence intervals
     forecast_df = pd.DataFrame({
