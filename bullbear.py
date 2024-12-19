@@ -77,12 +77,12 @@ if st.button("Forecast"):
     ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
 
     # Add daily moving average
-    ax1.plot(moving_average[-180:], label='30-Day Moving Average', color='purple', linestyle='--')
+    ax1.plot(moving_average[-180:], label='30-Day Moving Average', color='brown', linestyle='--')
 
     # Plot Bollinger Bands
     ax1.plot(lower_band[-180:], label='Bollinger Lower Band', color='red', linestyle='--')
-    ax1.plot(middle_band[-180:], label='Bollinger Middle Band', color='orange', linestyle='--')
-    ax1.plot(upper_band[-180:], label='Bollinger Upper Band', color='pink', linestyle='--')
+    #ax1.plot(middle_band[-180:], label='Bollinger Middle Band', color='orange', linestyle='--')
+    #ax1.plot(upper_band[-180:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
