@@ -47,6 +47,9 @@ if st.button("Forecast"):
     # Calculate daily moving average (e.g., 30-day)
     moving_average = prices.rolling(window=30).mean()
 
+    # Calculate monthly EMA
+    monthly_ema = prices.resample('M').mean().ewm(span=30, adjust=False).mean()
+
     # Calculate Bollinger Bands
     lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
 
@@ -66,23 +69,26 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
+    # Step 5: Plot historical data, forecast, EMA, daily moving average, and monthly EMA
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
-    ax1.set_title(f'{ticker} Price Forecast, RSI, and Bollinger Bands', fontsize=16)
+    ax1.set_title(f'{ticker} Price Forecast and Technical Indicators', fontsize=16)
     ax1.plot(prices[-180:], label='Last 6 Months Historical Data', color='blue')  # Last 6 months of historical data
     ax1.plot(ema_200[-180:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
-    ax1.plot(forecast_index, forecast_values, label='3 Months Forecast', color='orange')
+    ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
     ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
 
     # Add daily moving average
     ax1.plot(moving_average[-180:], label='30-Day Moving Average', color='brown', linestyle='--')
 
+    # Add monthly EMA
+    ax1.plot(monthly_ema, label='Monthly EMA', color='purple', linestyle='--')
+
     # Plot Bollinger Bands
-    #ax1.plot(lower_band[-180:], label='Bollinger Lower Band', color='red', linestyle='--')
-    #ax1.plot(middle_band[-180:], label='Bollinger Middle Band', color='orange', linestyle='--')
-    #ax1.plot(upper_band[-180:], label='Bollinger Upper Band', color='pink', linestyle='--')
+    ax1.plot(lower_band[-180:], label='Bollinger Lower Band', color='red', linestyle='--')
+    ax1.plot(middle_band[-180:], label='Bollinger Middle Band', color='orange', linestyle='--')
+    ax1.plot(upper_band[-180:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
