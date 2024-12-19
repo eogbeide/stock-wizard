@@ -66,7 +66,19 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
+    # Step 5: Forecasting the 30-Day Moving Average and 200-Day EMA
+    # Forecast for 30-Day Moving Average
+    future_dates = pd.date_range(start=prices.index[-1] + timedelta(days=1), periods=forecast_steps, freq='D')
+    future_prices = pd.Series(forecast_values, index=future_dates)
+    
+    # Combine historical prices with future prices for moving average calculation
+    combined_prices = prices.append(future_prices)
+    forecast_moving_average = combined_prices.rolling(window=30).mean()
+    
+    # Forecast for 200-Day EMA
+    future_ema_200 = pd.Series(future_prices.ewm(span=200, adjust=False).mean(), index=future_dates)
+
+    # Step 6: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
@@ -79,10 +91,12 @@ if st.button("Forecast"):
     # Add daily moving average for the last 12 months
     ax1.plot(moving_average[-360:], label='30-Day Moving Average', color='brown', linestyle='--')
 
+    # Plot forecasts for 30-Day Moving Average and 200-Day EMA
+    ax1.plot(forecast_index, forecast_moving_average[-30:], label='30-Day MA Forecast', color='purple', linestyle='--')
+    ax1.plot(future_dates, future_ema_200, label='200-Day EMA Forecast', color='cyan', linestyle='--')
+
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-    #ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='orange', linestyle='--')
-    #ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
