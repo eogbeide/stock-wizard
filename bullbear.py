@@ -24,7 +24,7 @@ def compute_bollinger_bands(data, window=20, num_sd=2):
     return lower_band, middle_band, upper_band
 
 # Streamlit app title
-st.title("Stock Price Forecasting with SARIMA, EMA, RSI, and Bollinger Bands")
+st.title("Stock Price Forecasting using SARIMA, with EMA, MA")
 
 # User input for stock ticker using a dropdown menu
 ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'TSLA', 'PLTR', 'NVDA', 'JYD', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX'])
@@ -80,7 +80,7 @@ if st.button("Forecast"):
     ax1.plot(moving_average[-180:], label='30-Day Moving Average', color='brown', linestyle='--')
 
     # Plot Bollinger Bands
-    ax1.plot(lower_band[-180:], label='Bollinger Lower Band', color='red', linestyle='--')
+    #ax1.plot(lower_band[-180:], label='Bollinger Lower Band', color='red', linestyle='--')
     #ax1.plot(middle_band[-180:], label='Bollinger Middle Band', color='orange', linestyle='--')
     #ax1.plot(upper_band[-180:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
