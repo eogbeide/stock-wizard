@@ -93,12 +93,20 @@ if st.button("Forecast"):
     st.pyplot(fig)
 
     # Create a DataFrame for forecast data including confidence intervals and EMA values
+    # Get the EMA for the forecast period
+    ema_forecast_values = []
+    for date in forecast_index:
+        if date in ema_200.index:
+            ema_forecast_values.append(ema_200[date])
+        else:
+            ema_forecast_values.append(np.nan)  # Handle missing values
+
     forecast_df = pd.DataFrame({
         'Date': forecast_index,
         'Forecasted Price': forecast_values,
         'Lower Bound': conf_int.iloc[:, 0],
         'Upper Bound': conf_int.iloc[:, 1],
-        '200-Day EMA': ema_200[-30:].values  # Include EMA values for the forecast period
+        '200-Day EMA': ema_forecast_values  # Include EMA values for the forecast period
     })
 
     # Show the forecast data in a table
