@@ -70,24 +70,14 @@ if st.button("Forecast"):
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
-    ax1.set_title(f'{ticker} Price Forecast, EMA Values, and Bollinger Bands', fontsize=16)
+    ax1.set_title(f'{ticker} Price Forecast, RSI, and Bollinger Bands', fontsize=16)
     ax1.plot(prices[-180:], label='Last 6 Months Historical Data', color='blue')  # Last 6 months of historical data
     ax1.plot(ema_200[-180:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
-    ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
+    ax1.plot(forecast_index, forecast_values, label='3 Months Forecast', color='orange')
     ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
 
     # Add daily moving average
     ax1.plot(moving_average[-180:], label='30-Day Moving Average', color='brown', linestyle='--')
-
-    # Annotate EMA values
-    for i in range(len(ema_200[-30:])):  # Last 30 days for annotation
-        ax1.annotate(f"{ema_200[-30:][i]:.2f}", 
-                     (ema_200.index[-30:][i], ema_200[-30:][i]),
-                     textcoords="offset points", 
-                     xytext=(0,10), 
-                     ha='center', 
-                     fontsize=8, 
-                     color='green')
 
     # Plot Bollinger Bands
     #ax1.plot(lower_band[-180:], label='Bollinger Lower Band', color='red', linestyle='--')
