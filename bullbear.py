@@ -78,13 +78,17 @@ if st.button("Forecast"):
 
     # Plot Bollinger Bands
     ax1.plot(lower_band[-180:], label='Bollinger Lower Band', color='purple', linestyle='--')
-    #ax1.plot(middle_band[-180:], label='Bollinger Middle Band', color='orange', linestyle='--')
+    ax1.plot(middle_band[-180:], label='Bollinger Middle Band', color='orange', linestyle='--')
     ax1.plot(upper_band[-180:], label='Bollinger Upper Band', color='red', linestyle='--')
     
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
     ax1.tick_params(axis='y', labelcolor='blue')
     ax1.legend(loc='upper left')
+
+    # Format x-axis for daily ticks
+    ax1.xaxis.set_major_locator(plt.MaxNLocator(10))  # Limit number of x-axis labels
+    ax1.xaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: pd.to_datetime(x).date()))  # Format dates
 
     # Display the plot in Streamlit
     st.pyplot(fig)
