@@ -63,7 +63,7 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
+    # Step 5: Plot historical data, forecast, EMA, daily moving average
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
@@ -76,10 +76,13 @@ if st.button("Forecast"):
     # Add daily moving average
     ax1.plot(moving_average[-180:], label='30-Day Moving Average', color='brown', linestyle='--')
 
-    # Annotate 200-Day EMA values
-    for i in range(len(ema_200[-30:])):  # Annotate last 30 values of EMA for visibility
-        ax1.annotate(f'{ema_200[-30:][i]:.2f}', 
-                     (ema_200.index[-30:][i], ema_200[-30:][i]), 
+    # Annotate last 30 EMA values
+    last_ema_200 = ema_200[-30:]  # Get the last 30 EMA values
+    last_dates = last_ema_200.index  # Corresponding dates
+
+    for i in range(len(last_ema_200)):
+        ax1.annotate(f'{last_ema_200[i]:.2f}', 
+                     (last_dates[i], last_ema_200[i]), 
                      textcoords="offset points", 
                      xytext=(0, 5), 
                      ha='center', 
