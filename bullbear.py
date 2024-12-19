@@ -66,14 +66,6 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Calculate max and min closing prices for the last year
-    if len(prices[-360:]) > 0:
-        max_price = prices[-360:].max()
-        min_price = prices[-360:].min()
-    else:
-        max_price = None
-        min_price = None
-
     # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
@@ -89,12 +81,8 @@ if st.button("Forecast"):
 
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-
-    # Add max and min lines only if they are valid
-    if max_price is not None and min_price is not None:
-        # Ensure max and min prices are within the current y-limits
-        ax1.axhline(max_price, label='Max Price', color='purple', linestyle='--')
-        ax1.axhline(min_price, label='Min Price', color='cyan', linestyle='--')
+    #ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='orange', linestyle='--')
+    #ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
