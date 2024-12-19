@@ -30,8 +30,11 @@ st.title("Stock Price Forecasting using SARIMA with EMA, MA")
 # User input for stock ticker using a dropdown menu
 ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'TSLA', 'PLTR', 'NVDA', 'JYD', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX'])
 
+# Placeholder for outputs
+output_placeholder = st.empty()
+
 # Button to fetch and process data
-if st.button("Forecast"):
+if st.button("Start Forecasting"):
     while True:
         # Step 1: Download historical data from Yahoo Finance
         start_date = '2018-01-01'
@@ -83,8 +86,6 @@ if st.button("Forecast"):
 
         # Plot Bollinger Bands
         ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-        # ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='orange', linestyle='--')
-        # ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
         ax1.set_xlabel('Date')
         ax1.set_ylabel('Price', color='blue')
@@ -92,7 +93,7 @@ if st.button("Forecast"):
         ax1.legend(loc='upper left')
 
         # Display the plot in Streamlit
-        st.pyplot(fig)
+        output_placeholder.pyplot(fig)
 
         # Create a DataFrame for forecast data including confidence intervals
         forecast_df = pd.DataFrame({
@@ -103,8 +104,7 @@ if st.button("Forecast"):
         })
 
         # Show the forecast data in a table
-        st.write(forecast_df)
+        output_placeholder.write(forecast_df)
 
         # Wait for 60 seconds before refreshing
         time.sleep(60)
-        st.experimental_rerun()
