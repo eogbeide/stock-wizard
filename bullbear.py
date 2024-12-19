@@ -80,9 +80,9 @@ if st.button("Forecast"):
     ax1.plot(moving_average[-180:], label='30-Day Moving Average', color='brown', linestyle='--')
 
     # Annotate EMA values for the last 30 days
-    for i in range(len(ema_200[-30:])):  # Last 30 days for annotation
-        ax1.annotate(f"{ema_200[-30:][i]:.2f}", 
-                     (ema_200.index[-30:][i], ema_200[-30:][i]),
+    for i in range(-30, 0):  # Last 30 days for annotation
+        ax1.annotate(f"{ema_200[i]:.2f}", 
+                     (ema_200.index[i], ema_200[i]),
                      textcoords="offset points", 
                      xytext=(0,10), 
                      ha='center', 
@@ -90,9 +90,9 @@ if st.button("Forecast"):
                      color='green')
 
     # Plot Bollinger Bands
-    #ax1.plot(lower_band[-180:], label='Bollinger Lower Band', color='red', linestyle='--')
-    #ax1.plot(middle_band[-180:], label='Bollinger Middle Band', color='orange', linestyle='--')
-    #ax1.plot(upper_band[-180:], label='Bollinger Upper Band', color='pink', linestyle='--')
+    # ax1.plot(lower_band[-180:], label='Bollinger Lower Band', color='red', linestyle='--')
+    # ax1.plot(middle_band[-180:], label='Bollinger Middle Band', color='orange', linestyle='--')
+    # ax1.plot(upper_band[-180:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
