@@ -47,9 +47,6 @@ if st.button("Forecast"):
     # Calculate daily moving average (e.g., 30-day)
     moving_average = prices.rolling(window=30).mean()
 
-    # Calculate Bollinger Bands
-    lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
-
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
     seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
@@ -66,23 +63,29 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
+    # Combine historical prices with forecasted prices
+    combined_prices = pd.concat([prices, pd.Series(forecast_values, index=forecast_index)])
+
+    # Calculate EMA and MA for the combined series
+    ema_200_forecast = combined_prices.ewm(span=200, adjust=False).mean()[-forecast_steps:]
+    moving_average_forecast = combined_prices.rolling(window=30).mean()[-forecast_steps:]
+
+    # Step 5: Plot historical data, forecast, EMA, daily moving average
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
-    ax1.set_title(f'{ticker} Price Forecast, RSI, and Bollinger Bands', fontsize=16)
+    ax1.set_title(f'{ticker} Price Forecast, EMA, and MA', fontsize=16)
     ax1.plot(prices[-180:], label='Last 6 Months Historical Data', color='blue')  # Last 6 months of historical data
-    ax1.plot(ema_200[-180:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
-    ax1.plot(forecast_index, forecast_values, label='3 Months Forecast', color='orange')
+    ax1.plot(ema_200[-180:], label='200-Day EMA (Historical)', color='green', linestyle='--')  # 200-day EMA
+    ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
     ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
 
     # Add daily moving average
-    ax1.plot(moving_average[-180:], label='30-Day Moving Average', color='brown', linestyle='--')
-
-    # Plot Bollinger Bands
-    #ax1.plot(lower_band[-180:], label='Bollinger Lower Band', color='red', linestyle='--')
-    #ax1.plot(middle_band[-180:], label='Bollinger Middle Band', color='orange', linestyle='--')
-    #ax1.plot(upper_band[-180:], label='Bollinger Upper Band', color='pink', linestyle='--')
+    ax1.plot(moving_average[-180:], label='30-Day Moving Average (Historical)', color='brown', linestyle='--')
+    
+    # Plot forecasted EMA and MA
+    ax1.plot(forecast_index, ema_200_forecast, label='Forecasted 200-Day EMA', color='darkgreen', linestyle='--')
+    ax1.plot(forecast_index, moving_average_forecast, label='Forecasted 30-Day MA', color='darkorange', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
@@ -97,7 +100,9 @@ if st.button("Forecast"):
         'Date': forecast_index,
         'Forecasted Price': forecast_values,
         'Lower Bound': conf_int.iloc[:, 0],
-        'Upper Bound': conf_int.iloc[:, 1]
+        'Upper Bound': conf_int.iloc[:, 1],
+        'Forecasted EMA': ema_200_forecast.values,
+        'Forecasted MA': moving_average_forecast.values
     })
 
     # Show the forecast data in a table
