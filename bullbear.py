@@ -66,10 +66,6 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Calculate monthly max and min points
-    monthly_max = prices.resample('M').max()
-    monthly_min = prices.resample('M').min()
-
     # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
@@ -85,10 +81,8 @@ if st.button("Forecast"):
 
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-
-    # Plot monthly max and min points
-    ax1.scatter(monthly_max.index, monthly_max, label='Monthly Max', color='purple', marker='o', s=100)
-    ax1.scatter(monthly_min.index, monthly_min, label='Monthly Min', color='cyan', marker='o', s=100)
+    #ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='orange', linestyle='--')
+    #ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
