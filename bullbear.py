@@ -66,11 +66,16 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
+    # Calculate errors for the last available data
+    actual_values = prices[-30:]  # Last available 30 days of actual prices
+    errors = actual_values - forecast_values[:len(actual_values)]
+    squared_errors = errors ** 2
+
+    # Step 5: Plot historical data, forecast, EMA, daily moving average, Bollinger Bands, and squared errors
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
-    ax1.set_title(f'{ticker} Price Forecast, EMA, MA, and Bollinger Bands', fontsize=16)
+    ax1.set_title(f'{ticker} Price Forecast, EMA, MA, Bollinger Bands, and Squared Errors', fontsize=16)
     ax1.plot(prices[-360:], label='Last 12 Months Historical Data', color='blue')  # Last 12 months of historical data
     ax1.plot(ema_200[-360:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA for the last 12 months
     ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
@@ -88,6 +93,12 @@ if st.button("Forecast"):
     ax1.set_ylabel('Price', color='blue')
     ax1.tick_params(axis='y', labelcolor='blue')
     ax1.legend(loc='upper left')
+
+    # Create a second y-axis for squared errors
+    ax2 = ax1.twinx()  
+    ax2.plot(forecast_index[:len(squared_errors)], squared_errors, label='Squared Errors', color='purple', linestyle='--', alpha=0.6)
+    ax2.set_ylabel('Squared Errors', color='purple')
+    ax2.tick_params(axis='y', labelcolor='purple')
 
     # Display the plot in Streamlit
     st.pyplot(fig)
