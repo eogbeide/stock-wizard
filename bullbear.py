@@ -44,7 +44,7 @@ if st.button("Forecast"):
     # Calculate 200-day EMA
     ema_200 = prices.ewm(span=200, adjust=False).mean()
 
-    # Calculate daily moving average (e.g., 30-day)
+    # Calculate daily moving average (30-day)
     moving_average = prices.rolling(window=30).mean()
 
     # Calculate Bollinger Bands
@@ -66,7 +66,11 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
+    # Step 5: Calculate 30-Day Moving Average for the forecasted values
+    full_forecast_series = pd.Series(np.concatenate([prices.values[-29:], forecast_values]), index=pd.date_range(start=prices.index[-30], periods=len(prices[-29:]) + forecast_steps, freq='D'))
+    forecasted_ma = full_forecast_series.rolling(window=30).mean().iloc[-forecast_steps:]
+
+    # Step 6: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
@@ -79,10 +83,11 @@ if st.button("Forecast"):
     # Add daily moving average for the last 12 months
     ax1.plot(moving_average[-360:], label='30-Day Moving Average', color='brown', linestyle='--')
 
+    # Plot forecasted 30-Day Moving Average
+    ax1.plot(forecast_index, forecasted_ma, label='Forecasted 30-Day MA', color='purple', linestyle='--')
+
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-    #ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='orange', linestyle='--')
-    #ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
@@ -102,3 +107,21 @@ if st.button("Forecast"):
 
     # Show the forecast data in a table
     st.write(forecast_df)
+
+    # Create a DataFrame for 200-Day EMA values
+    ema_df = pd.DataFrame({
+        'Date': prices.index[-len(ema_200):],
+        '200-Day EMA': ema_200
+    })
+
+    # Show the 200-Day EMA values in a table
+    st.write(ema_df)
+
+    # Create a DataFrame for forecasted 30-Day MA values
+    ma_df = pd.DataFrame({
+        'Date': forecast_index,
+        'Forecasted 30-Day MA': forecasted_ma
+    })
+
+    # Show the forecasted 30-Day MA values in a table
+    st.write(ma_df)
