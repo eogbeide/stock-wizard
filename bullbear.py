@@ -72,11 +72,11 @@ if st.button("Forecast"):
     # Check for crossovers and band touches
     for i in range(1, len(prices)):
         # Check if Close crosses above the 30-day moving average
-        if prices[i] > moving_average[i] and prices[i - 1] <= moving_average[i - 1]:
+        if prices.iloc[i] > moving_average.iloc[i] and prices.iloc[i - 1] <= moving_average.iloc[i - 1]:
             buy_signals.append(prices.index[i])  # Add date to buy signals
 
         # Check if Lower Bollinger Band touches the 200-day EMA
-        if lower_band[i] <= ema_200[i]:
+        if lower_band.iloc[i] <= ema_200.iloc[i]:
             buy_signals.append(prices.index[i])  # Add date to buy signals
 
     # Step 6: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
