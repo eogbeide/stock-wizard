@@ -27,7 +27,7 @@ def compute_bollinger_bands(data, window=20, num_sd=2):
 st.title("Stock Price Forecasting using SARIMA with EMA, MA")
 
 # User input for stock ticker using a dropdown menu
-ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'QUBT', 'RGTI', 'TSLA', 'PLTR', 'NVDA', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX', 'LCID', 'IONQ'])
+ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'NVO', 'XMTR', 'AMD', 'RGTI', 'TSLA', 'PLTR', 'NVDA', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX', 'LCID', 'IONQ'])
 
 # Button to fetch and process data
 if st.button("Forecast"):
