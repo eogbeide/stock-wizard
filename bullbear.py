@@ -44,7 +44,7 @@ if st.button("Forecast"):
     # Calculate 200-day EMA
     ema_200 = prices.ewm(span=200, adjust=False).mean()
 
-    # Calculate daily moving average (e.g., 30-day)
+    # Calculate daily moving average (30-day)
     moving_average = prices.rolling(window=30).mean()
 
     # Calculate Bollinger Bands
@@ -52,7 +52,7 @@ if st.button("Forecast"):
 
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
-    seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
+    seasonal_order = (1, 1, 1, 7)  # Example values for weekly seasonality (daily data)
 
     model = SARIMAX(prices, order=order, seasonal_order=seasonal_order)
     model_fit = model.fit(disp=False)
@@ -81,8 +81,6 @@ if st.button("Forecast"):
 
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-    #ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='orange', linestyle='--')
-    #ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
