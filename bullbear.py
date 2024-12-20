@@ -44,7 +44,7 @@ if st.button("Forecast"):
     # Calculate 200-day EMA
     ema_200 = prices.ewm(span=200, adjust=False).mean()
 
-    # Calculate daily moving average (e.g., 30-day)
+    # Calculate daily moving average (30-day)
     moving_average = prices.rolling(window=30).mean()
 
     # Calculate Bollinger Bands
@@ -66,7 +66,11 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
+    # Step 5: Forecast the 200-Day EMA for the next 30 days
+    extended_prices = pd.concat([prices, pd.Series(forecast_values, index=forecast_index)])
+    forecasted_ema_200 = extended_prices.ewm(span=200, adjust=False).mean()
+
+    # Step 6: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
@@ -79,10 +83,11 @@ if st.button("Forecast"):
     # Add daily moving average for the last 12 months
     ax1.plot(moving_average[-360:], label='30-Day Moving Average', color='brown', linestyle='--')
 
+    # Plot forecasted 200-Day EMA
+    ax1.plot(forecast_index, forecasted_ema_200[-30:], label='Forecasted 200-Day EMA', color='purple', linestyle='--')
+
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-    #ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='orange', linestyle='--')
-    #ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
@@ -102,3 +107,12 @@ if st.button("Forecast"):
 
     # Show the forecast data in a table
     st.write(forecast_df)
+
+    # Create a DataFrame for forecasted 200-Day EMA values
+    ema_forecast_df = pd.DataFrame({
+        'Date': forecast_index,
+        'Forecasted 200-Day EMA': forecasted_ema_200[-30:]  # Get the last 30 forecasted EMA values
+    })
+
+    # Show the forecasted 200-Day EMA values in a table
+    st.write(ema_forecast_df)
