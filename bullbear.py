@@ -41,9 +41,6 @@ if st.button("Forecast"):
     prices = prices.asfreq('D')  # Set frequency to daily
     prices.fillna(method='ffill', inplace=True)  # Forward fill to handle missing values
 
-    # Calculate daily percentage change
-    daily_pct_change = prices.pct_change() * 100  # Convert to percentage
-
     # Calculate 200-day EMA
     ema_200 = prices.ewm(span=200, adjust=False).mean()
 
@@ -52,6 +49,10 @@ if st.button("Forecast"):
 
     # Calculate Bollinger Bands
     lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
+
+    # Calculate support and resistance levels
+    support_level = prices.rolling(window=30).min().iloc[-1]  # Lowest price in the last 30 days
+    resistance_level = prices.rolling(window=30).max().iloc[-1]  # Highest price in the last 30 days
 
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
@@ -69,13 +70,13 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, EMA, daily moving average, Bollinger Bands, and daily percentage change
+    # Step 5: Plot historical data, forecast, EMA, daily moving average, Bollinger Bands, support and resistance levels
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
-    ax1.set_title(f'{ticker} Price Forecast, EMA, MA, Bollinger Bands, and Daily % Change', fontsize=16)
+    ax1.set_title(f'{ticker} Price Forecast, EMA, MA, Bollinger Bands, Support & Resistance', fontsize=16)
     ax1.plot(prices[-360:], label='Last 12 Months Historical Data', color='blue')  # Last 12 months of historical data
-    ax1.plot(ema_200[-360:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA for the last 12 months
+    ax1.plot(ema_200[-360:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
     ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
     ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
 
@@ -84,19 +85,15 @@ if st.button("Forecast"):
 
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-    # ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='black', linestyle='--')
-    # ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
+
+    # Plot support and resistance levels
+    ax1.axhline(y=support_level, color='green', linestyle='--', label='Support Level')
+    ax1.axhline(y=resistance_level, color='red', linestyle='--', label='Resistance Level')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
     ax1.tick_params(axis='y', labelcolor='blue')
     ax1.legend(loc='upper left')
-
-    # Create a second y-axis for daily percentage change
-    ax2 = ax1.twinx()
-    ax2.plot(daily_pct_change[-360:], label='Daily % Change', color='purple', linestyle='--', alpha=0.6)
-    ax2.set_ylabel('Daily % Change', color='purple')
-    ax2.tick_params(axis='y', labelcolor='purple')
 
     # Display the plot in Streamlit
     st.pyplot(fig)
