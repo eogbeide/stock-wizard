@@ -81,6 +81,8 @@ if st.button("Forecast"):
 
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
+    #ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='orange', linestyle='--')
+    #ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
@@ -100,12 +102,3 @@ if st.button("Forecast"):
 
     # Show the forecast data in a table
     st.write(forecast_df)
-
-    # Create a DataFrame for 200-Day EMA values
-    ema_df = pd.DataFrame({
-        'Date': prices.index[-len(ema_200):],
-        '200-Day EMA': ema_200
-    })
-
-    # Show the 200-Day EMA values in a table
-    st.write(ema_df)
