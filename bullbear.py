@@ -24,7 +24,7 @@ def compute_bollinger_bands(data, window=20, num_sd=2):
     return lower_band, middle_band, upper_band
 
 # Streamlit app title
-st.title("Stock Price Forecasting using SARIMA with EMA, MA, and Std Dev")
+st.title("Stock Price Forecasting using SARIMA with EMA, MA, and Variance")
 
 # User input for stock ticker using a dropdown menu
 ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'TSLA', 'PLTR', 'NVDA', 'JYD', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX'])
@@ -50,11 +50,8 @@ if st.button("Forecast"):
     # Calculate Bollinger Bands
     lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
 
-    # Calculate rolling standard deviation of Close prices
-    std_dev = prices.rolling(window=30).std()
-
-    # Calculate Close / Std Dev
-    close_std_dev_ratio = prices / std_dev
+    # Calculate rolling variance of Close prices
+    rolling_variance = prices.rolling(window=30).var()
 
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
@@ -98,16 +95,16 @@ if st.button("Forecast"):
     # Display the plot in Streamlit
     st.pyplot(fig)
 
-    # Step 6: Plot Close / Std Dev in a separate figure
+    # Step 6: Plot rolling variance in a separate figure
     fig2, ax2 = plt.subplots(figsize=(14, 4))
-    ax2.set_title(f'{ticker} Close / 30-Day Rolling Std Dev', fontsize=16)
-    ax2.plot(close_std_dev_ratio[-360:], label='Close / Std Dev', color='purple', linestyle='--')
+    ax2.set_title(f'{ticker} 30-Day Rolling Variance', fontsize=16)
+    ax2.plot(rolling_variance[-360:], label='30-Day Rolling Variance', color='purple', linestyle='--')
     ax2.set_xlabel('Date')
-    ax2.set_ylabel('Ratio', color='purple')
+    ax2.set_ylabel('Variance', color='purple')
     ax2.tick_params(axis='y', labelcolor='purple')
     ax2.legend(loc='upper left')
 
-    # Display the Close / Std Dev plot in Streamlit
+    # Display the variance plot in Streamlit
     st.pyplot(fig2)
 
     # Create a DataFrame for forecast data including confidence intervals
