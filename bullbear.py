@@ -67,7 +67,11 @@ if st.button("Forecast"):
     conf_int = forecast.conf_int()
 
     # Step 5: Calculate 30-Day Moving Average for the forecasted values
-    full_forecast_series = pd.Series(np.concatenate([prices.values[-29:], forecast_values]), index=pd.date_range(start=prices.index[-30], periods=len(prices[-29:]) + forecast_steps, freq='D'))
+    # Create a series for the last 29 days of actual prices and the forecast values
+    last_29_prices = prices[-29:]
+    full_forecast_series = pd.Series(np.concatenate([last_29_prices, forecast_values]), index=pd.date_range(start=last_29_prices.index[0], periods=len(last_29_prices) + forecast_steps, freq='D'))
+
+    # Calculate the 30-Day Moving Average for the concatenated series
     forecasted_ma = full_forecast_series.rolling(window=30).mean().iloc[-forecast_steps:]
 
     # Step 6: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
