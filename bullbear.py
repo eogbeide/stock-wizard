@@ -66,16 +66,7 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Identify buy signals
-    buy_signals = []
-
-    # Check for crossovers
-    for i in range(1, len(prices)):
-        # Check if Close crosses above the 30-day moving average
-        if prices.iloc[i] > moving_average.iloc[i] and prices.iloc[i - 1] <= moving_average.iloc[i - 1]:
-            buy_signals.append(prices.index[i])  # Add date to buy signals
-
-    # Step 6: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
+    # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
@@ -90,10 +81,8 @@ if st.button("Forecast"):
 
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-
-    # Plot buy signals
-    for signal in buy_signals:
-        ax1.axvline(x=signal, color='purple', linestyle='--', label='Buy Signal' if buy_signals.index(signal) == 0 else "")  # Only label the first occurrence
+    #ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='black', linestyle='--')
+    #ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
