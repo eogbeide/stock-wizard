@@ -69,28 +69,18 @@ if st.button("Forecast"):
     # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
-    # Define the date range for the last 12 months
-    last_12_months = pd.date_range(start=pd.to_datetime("today") - pd.DateOffset(months=12), end=pd.to_datetime("today"))
-
-    # Filter the prices and indicators for the last 12 months
-    prices_last_12 = prices[prices.index >= last_12_months[0]]
-    ema_200_last_12 = ema_200[ema_200.index >= last_12_months[0]]
-    moving_average_last_12 = moving_average[moving_average.index >= last_12_months[0]]
-    lower_band_last_12 = lower_band[lower_band.index >= last_12_months[0]]
-    upper_band_last_12 = upper_band[upper_band.index >= last_12_months[0]]
-
     # Plot historical daily closing prices
     ax1.set_title(f'{ticker} Price Forecast, EMA, MA, and Bollinger Bands', fontsize=16)
-    ax1.plot(prices_last_12, label='Daily Closing Prices', color='blue')  # Last 12 months of closing prices
-    ax1.plot(ema_200_last_12, label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
+    ax1.plot(prices, label='Daily Closing Prices', color='blue')  # All historical closing prices
+    ax1.plot(ema_200, label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
     ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
     ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
 
     # Add daily moving average for the last 12 months
-    ax1.plot(moving_average_last_12, label='30-Day Moving Average', color='brown', linestyle='--')
+    ax1.plot(moving_average[-360:], label='30-Day Moving Average', color='brown', linestyle='--')
 
     # Plot Bollinger Bands
-    ax1.plot(lower_band_last_12, label='Bollinger Lower Band', color='red', linestyle='--')
+    ax1.plot(lower_band, label='Bollinger Lower Band', color='red', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
