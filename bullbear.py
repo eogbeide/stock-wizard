@@ -24,7 +24,7 @@ def compute_bollinger_bands(data, window=20, num_sd=2):
     return lower_band, middle_band, upper_band
 
 # Function to calculate Momentum Oscillator
-def compute_momentum_oscillator(data, window=14):
+def compute_momentum_oscillator(data, window=20):
     momentum = data['Close'].diff(window)
     return momentum
 
