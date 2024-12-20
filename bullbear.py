@@ -24,7 +24,7 @@ def compute_bollinger_bands(data, window=20, num_sd=2):
     return lower_band, middle_band, upper_band
 
 # Streamlit app title
-st.title("Stock Price Forecasting using SARIMA with EMA, MA")
+st.title("Stock Price Forecasting using SARIMA with EMA, MA, and Std Dev")
 
 # User input for stock ticker using a dropdown menu
 ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'TSLA', 'PLTR', 'NVDA', 'JYD', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX'])
@@ -50,6 +50,9 @@ if st.button("Forecast"):
     # Calculate Bollinger Bands
     lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
 
+    # Calculate rolling standard deviation of Close prices
+    std_dev = prices.rolling(window=30).std()
+
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
     seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
@@ -66,11 +69,11 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
+    # Step 5: Plot historical data, forecast, EMA, daily moving average, Bollinger Bands, and Std Dev
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
-    ax1.set_title(f'{ticker} Price Forecast, EMA, MA, and Bollinger Bands', fontsize=16)
+    ax1.set_title(f'{ticker} Price Forecast, EMA, MA, Bollinger Bands, and Std Dev', fontsize=16)
     ax1.plot(prices[-360:], label='Last 12 Months Historical Data', color='blue')  # Last 12 months of historical data
     ax1.plot(ema_200[-360:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA for the last 12 months
     ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
@@ -81,8 +84,11 @@ if st.button("Forecast"):
 
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-    #ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='black', linestyle='--')
-    #ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
+    ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='black', linestyle='--')
+    ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
+
+    # Plot Standard Deviation
+    ax1.plot(std_dev[-360:], label='30-Day Std Dev', color='purple', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
