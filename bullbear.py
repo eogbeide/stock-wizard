@@ -66,15 +66,14 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-# Step 5: Identify buy signals when lower Bollinger Band equals 200-day EMA
-buy_signals = []
+    # Step 5: Identify buy signals when lower Bollinger Band is lower than 200-day EMA
+    buy_signals = []
 
-# Check for buy signal condition
-for i in range(len(lower_band)):
-    # Check if both values are not NaN and approximately equal
-    if not np.isnan(lower_band.iloc[i]) and not np.isnan(ema_200.iloc[i]):
-        if np.isclose(lower_band.iloc[i], ema_200.iloc[i]):
-            buy_signals.append(prices.index[i])  # Record date of buy signal
+    # Check for buy signal condition
+    for i in range(len(lower_band)):
+        if not np.isnan(lower_band.iloc[i]) and not np.isnan(ema_200.iloc[i]):
+            if lower_band.iloc[i] < ema_200.iloc[i]:
+                buy_signals.append(prices.index[i])  # Record date of buy signal
 
     # Step 6: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
     fig, ax1 = plt.subplots(figsize=(14, 7))
