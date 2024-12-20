@@ -44,7 +44,7 @@ if st.button("Forecast"):
     # Calculate 200-day EMA
     ema_200 = prices.ewm(span=200, adjust=False).mean()
 
-    # Calculate daily moving average (30-day)
+    # Calculate daily moving average (e.g., 30-day)
     moving_average = prices.rolling(window=30).mean()
 
     # Calculate Bollinger Bands
@@ -52,7 +52,7 @@ if st.button("Forecast"):
 
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
-    seasonal_order = (1, 1, 1, 7)  # Example values for weekly seasonality (daily data)
+    seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
 
     model = SARIMAX(prices, order=order, seasonal_order=seasonal_order)
     model_fit = model.fit(disp=False)
@@ -69,10 +69,10 @@ if st.button("Forecast"):
     # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
-    # Plot price and 200-day EMA
+    # Plot historical daily closing prices
     ax1.set_title(f'{ticker} Price Forecast, EMA, MA, and Bollinger Bands', fontsize=16)
-    ax1.plot(prices[-360:], label='Last 12 Months Historical Data', color='blue')  # Last 12 months of historical data
-    ax1.plot(ema_200[-360:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA for the last 12 months
+    ax1.plot(prices, label='Daily Closing Prices', color='blue')  # All historical closing prices
+    ax1.plot(ema_200, label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
     ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
     ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
 
@@ -80,7 +80,7 @@ if st.button("Forecast"):
     ax1.plot(moving_average[-360:], label='30-Day Moving Average', color='brown', linestyle='--')
 
     # Plot Bollinger Bands
-    ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
+    ax1.plot(lower_band, label='Bollinger Lower Band', color='red', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
