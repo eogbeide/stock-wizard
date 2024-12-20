@@ -81,8 +81,11 @@ if st.button("Forecast"):
 
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-    #ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='black', linestyle='--')
-    #ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
+
+    # Plot multiplicative impact (e.g., 10% increase)
+    multiplier = 1.1  # 10% increase
+    impacted_prices = prices[-360:] * multiplier
+    ax1.plot(prices.index[-360:], impacted_prices, label='Price x 1.1', color='purple', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
