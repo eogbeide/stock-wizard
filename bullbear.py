@@ -81,11 +81,8 @@ if st.button("Forecast"):
 
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-
-    # Highlight points where Close is near the 200-day EMA
-    threshold = 0.05  # 5% threshold
-    near_ema = np.abs(prices[-360:] - ema_200[-360:]) / ema_200[-360:] < threshold
-    ax1.scatter(prices.index[-360:][near_ema], prices[-360:][near_ema], color='purple', label='Close Near EMA', s=50, zorder=5)
+    #ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='black', linestyle='--')
+    #ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
