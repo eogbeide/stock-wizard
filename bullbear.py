@@ -69,11 +69,11 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, EMA, daily moving average, Bollinger Bands, and Std Dev
+    # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
-    ax1.set_title(f'{ticker} Price Forecast, EMA, MA, Bollinger Bands, and Std Dev', fontsize=16)
+    ax1.set_title(f'{ticker} Price Forecast, EMA, MA, and Bollinger Bands', fontsize=16)
     ax1.plot(prices[-360:], label='Last 12 Months Historical Data', color='blue')  # Last 12 months of historical data
     ax1.plot(ema_200[-360:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA for the last 12 months
     ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
@@ -87,9 +87,6 @@ if st.button("Forecast"):
     ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='black', linestyle='--')
     ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
-    # Plot Standard Deviation
-    ax1.plot(std_dev[-360:], label='30-Day Std Dev', color='purple', linestyle='--')
-
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
     ax1.tick_params(axis='y', labelcolor='blue')
@@ -97,6 +94,18 @@ if st.button("Forecast"):
 
     # Display the plot in Streamlit
     st.pyplot(fig)
+
+    # Step 6: Plot standard deviation in a separate figure
+    fig2, ax2 = plt.subplots(figsize=(14, 4))
+    ax2.set_title(f'{ticker} 30-Day Rolling Standard Deviation', fontsize=16)
+    ax2.plot(std_dev[-360:], label='30-Day Rolling Std Dev', color='purple', linestyle='--')
+    ax2.set_xlabel('Date')
+    ax2.set_ylabel('Standard Deviation', color='purple')
+    ax2.tick_params(axis='y', labelcolor='purple')
+    ax2.legend(loc='upper left')
+
+    # Display the standard deviation plot in Streamlit
+    st.pyplot(fig2)
 
     # Create a DataFrame for forecast data including confidence intervals
     forecast_df = pd.DataFrame({
