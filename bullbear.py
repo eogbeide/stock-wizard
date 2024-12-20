@@ -23,37 +23,8 @@ def compute_bollinger_bands(data, window=20, num_sd=2):
     lower_band = middle_band - (std_dev * num_sd)
     return lower_band, middle_band, upper_band
 
-# Function to calculate Supertrend
-def compute_supertrend(df, period=7, multiplier=3):
-    hl = (df['High'] + df['Low']) / 2
-    atr = df['Close'].rolling(window=period).apply(lambda x: x.max() - x.min(), raw=False)
-
-    # Initialize Supertrend, upper and lower bands
-    supertrend = pd.Series(index=df.index)
-    upper_band = pd.Series(index=df.index)
-    lower_band = pd.Series(index=df.index)
-
-    for i in range(1, len(df)):
-        if pd.isna(atr[i]) or pd.isna(hl[i]):
-            continue
-        upper_band[i] = hl[i] + (multiplier * atr[i])
-        lower_band[i] = hl[i] - (multiplier * atr[i])
-
-        if df['Close'].iloc[i] <= upper_band.iloc[i - 1]:
-            upper_band[i] = min(upper_band[i], upper_band.iloc[i - 1])
-
-        if df['Close'].iloc[i] >= lower_band.iloc[i - 1]:
-            lower_band[i] = max(lower_band[i], lower_band.iloc[i - 1])
-
-        if df['Close'].iloc[i] <= upper_band.iloc[i]:
-            supertrend[i] = lower_band[i]
-        else:
-            supertrend[i] = upper_band[i]
-
-    return supertrend
-
 # Streamlit app title
-st.title("Stock Price Forecasting using SARIMA with EMA, MA, and Supertrend")
+st.title("Stock Price Forecasting using SARIMA with EMA, MA")
 
 # User input for stock ticker using a dropdown menu
 ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'TSLA', 'PLTR', 'NVDA', 'JYD', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX'])
@@ -65,77 +36,69 @@ if st.button("Forecast"):
     end_date = pd.to_datetime("today")
     data = yf.download(ticker, start=start_date, end=end_date)
 
-    # Check if necessary columns exist
-    if not all(col in data.columns for col in ['High', 'Low', 'Close']):
-        st.error("Data does not contain necessary columns: 'High', 'Low', 'Close'")
-    else:
-        # Step 2: Prepare the data
-        prices = data['Close']  # Use the closing prices
-        prices = prices.asfreq('D')  # Set frequency to daily
-        prices.fillna(method='ffill', inplace=True)  # Forward fill to handle missing values
+    # Step 2: Prepare the data
+    prices = data['Close']  # Use the closing prices
+    prices = prices.asfreq('D')  # Set frequency to daily
+    prices.fillna(method='ffill', inplace=True)  # Forward fill to handle missing values
 
-        # Calculate 200-day EMA
-        ema_200 = prices.ewm(span=200, adjust=False).mean()
+    # Calculate 200-day EMA
+    ema_200 = prices.ewm(span=200, adjust=False).mean()
 
-        # Calculate daily moving average (e.g., 30-day)
-        moving_average = prices.rolling(window=30).mean()
+    # Calculate daily moving average (e.g., 30-day)
+    moving_average = prices.rolling(window=30).mean()
 
-        # Calculate Bollinger Bands
-        lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
+    # Calculate Bollinger Bands
+    lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
 
-        # Calculate Supertrend
-        data['Supertrend'] = compute_supertrend(data)
+    # Step 3: Fit the SARIMA model
+    order = (1, 1, 1)  # Example values
+    seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
 
-        # Step 3: Fit the SARIMA model
-        order = (1, 1, 1)  # Example values
-        seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
+    model = SARIMAX(prices, order=order, seasonal_order=seasonal_order)
+    model_fit = model.fit(disp=False)
 
-        model = SARIMAX(prices, order=order, seasonal_order=seasonal_order)
-        model_fit = model.fit(disp=False)
+    # Step 4: Forecast the next one month (30 days)
+    forecast_steps = 30
+    forecast = model_fit.get_forecast(steps=forecast_steps)
+    forecast_index = pd.date_range(start=prices.index[-1] + timedelta(days=1), periods=forecast_steps, freq='D')
+    forecast_values = forecast.predicted_mean
 
-        # Step 4: Forecast the next one month (30 days)
-        forecast_steps = 30
-        forecast = model_fit.get_forecast(steps=forecast_steps)
-        forecast_index = pd.date_range(start=prices.index[-1] + timedelta(days=1), periods=forecast_steps, freq='D')
-        forecast_values = forecast.predicted_mean
+    # Get confidence intervals
+    conf_int = forecast.conf_int()
 
-        # Get confidence intervals
-        conf_int = forecast.conf_int()
+    # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
+    fig, ax1 = plt.subplots(figsize=(14, 7))
 
-        # Step 5: Plot historical data, forecast, EMA, daily moving average, Bollinger Bands, and Supertrend
-        fig, ax1 = plt.subplots(figsize=(14, 7))
+    # Plot price and 200-day EMA
+    ax1.set_title(f'{ticker} Price Forecast, EMA, MA, and Bollinger Bands', fontsize=16)
+    ax1.plot(prices[-360:], label='Last 12 Months Historical Data', color='blue')  # Last 12 months of historical data
+    ax1.plot(ema_200[-360:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA for the last 12 months
+    ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
+    ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
 
-        # Plot price, EMA, and Supertrend
-        ax1.set_title(f'{ticker} Price Forecast, EMA, MA, Bollinger Bands, and Supertrend', fontsize=16)
-        ax1.plot(prices[-360:], label='Last 12 Months Historical Data', color='blue')  # Last 12 months of historical data
-        ax1.plot(ema_200[-360:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA for the last 12 months
-        ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
-        ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
+    # Add daily moving average for the last 12 months
+    ax1.plot(moving_average[-360:], label='30-Day Moving Average', color='brown', linestyle='--')
 
-        # Add daily moving average for the last 12 months
-        ax1.plot(moving_average[-360:], label='30-Day Moving Average', color='brown', linestyle='--')
+    # Plot Bollinger Bands
+    ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
+    #ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='orange', linestyle='--')
+    #ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
-        # Plot Bollinger Bands
-        ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-        
-        # Plot Supertrend
-        ax1.plot(data['Supertrend'][-360:], label='Supertrend', color='purple', linestyle='--')
+    ax1.set_xlabel('Date')
+    ax1.set_ylabel('Price', color='blue')
+    ax1.tick_params(axis='y', labelcolor='blue')
+    ax1.legend(loc='upper left')
 
-        ax1.set_xlabel('Date')
-        ax1.set_ylabel('Price', color='blue')
-        ax1.tick_params(axis='y', labelcolor='blue')
-        ax1.legend(loc='upper left')
+    # Display the plot in Streamlit
+    st.pyplot(fig)
 
-        # Display the plot in Streamlit
-        st.pyplot(fig)
+    # Create a DataFrame for forecast data including confidence intervals
+    forecast_df = pd.DataFrame({
+        'Date': forecast_index,
+        'Forecasted Price': forecast_values,
+        'Lower Bound': conf_int.iloc[:, 0],
+        'Upper Bound': conf_int.iloc[:, 1]
+    })
 
-        # Create a DataFrame for forecast data including confidence intervals
-        forecast_df = pd.DataFrame({
-            'Date': forecast_index,
-            'Forecasted Price': forecast_values,
-            'Lower Bound': conf_int.iloc[:, 0],
-            'Upper Bound': conf_int.iloc[:, 1]
-        })
-
-        # Show the forecast data in a table
-        st.write(forecast_df)
+    # Show the forecast data in a table
+    st.write(forecast_df)
