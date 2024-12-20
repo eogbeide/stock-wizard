@@ -53,6 +53,9 @@ if st.button("Forecast"):
     # Calculate rolling standard deviation of Close prices
     std_dev = prices.rolling(window=30).std()
 
+    # Calculate Close / Std Dev
+    close_std_dev_ratio = prices / std_dev
+
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
     seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
@@ -95,16 +98,16 @@ if st.button("Forecast"):
     # Display the plot in Streamlit
     st.pyplot(fig)
 
-    # Step 6: Plot standard deviation in a separate figure
+    # Step 6: Plot Close / Std Dev in a separate figure
     fig2, ax2 = plt.subplots(figsize=(14, 4))
-    ax2.set_title(f'{ticker} 30-Day Rolling Standard Deviation', fontsize=16)
-    ax2.plot(std_dev[-360:], label='30-Day Rolling Std Dev', color='purple', linestyle='--')
+    ax2.set_title(f'{ticker} Close / 30-Day Rolling Std Dev', fontsize=16)
+    ax2.plot(close_std_dev_ratio[-360:], label='Close / Std Dev', color='purple', linestyle='--')
     ax2.set_xlabel('Date')
-    ax2.set_ylabel('Standard Deviation', color='purple')
+    ax2.set_ylabel('Ratio', color='purple')
     ax2.tick_params(axis='y', labelcolor='purple')
     ax2.legend(loc='upper left')
 
-    # Display the standard deviation plot in Streamlit
+    # Display the Close / Std Dev plot in Streamlit
     st.pyplot(fig2)
 
     # Create a DataFrame for forecast data including confidence intervals
