@@ -50,8 +50,9 @@ if st.button("Forecast"):
     # Calculate Bollinger Bands
     lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
 
-    # Calculate rolling variance of Close prices
+    # Calculate rolling variance and standard deviation of Close prices
     rolling_variance = prices.rolling(window=30).var()
+    rolling_std_dev = prices.rolling(window=30).std()
 
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
@@ -84,8 +85,8 @@ if st.button("Forecast"):
 
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-    #ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='black', linestyle='--')
-    #ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
+    ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='black', linestyle='--')
+    ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
@@ -95,16 +96,17 @@ if st.button("Forecast"):
     # Display the plot in Streamlit
     st.pyplot(fig)
 
-    # Step 6: Plot rolling variance in a separate figure
+    # Step 6: Plot rolling variance and standard deviation in a separate figure
     fig2, ax2 = plt.subplots(figsize=(14, 4))
-    ax2.set_title(f'{ticker} 30-Day Rolling Variance', fontsize=16)
+    ax2.set_title(f'{ticker} 30-Day Rolling Variance and Standard Deviation', fontsize=16)
     ax2.plot(rolling_variance[-360:], label='30-Day Rolling Variance', color='purple', linestyle='--')
+    ax2.plot(rolling_std_dev[-360:], label='30-Day Rolling Std Dev', color='orange', linestyle='--')
     ax2.set_xlabel('Date')
-    ax2.set_ylabel('Variance', color='purple')
+    ax2.set_ylabel('Value', color='purple')
     ax2.tick_params(axis='y', labelcolor='purple')
     ax2.legend(loc='upper left')
 
-    # Display the variance plot in Streamlit
+    # Display the variance and std dev plot in Streamlit
     st.pyplot(fig2)
 
     # Create a DataFrame for forecast data including confidence intervals
