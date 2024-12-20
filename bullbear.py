@@ -5,7 +5,6 @@ import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import timedelta
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 
 # Function to compute RSI
 def compute_rsi(data, window=14):
@@ -82,13 +81,8 @@ if st.button("Forecast"):
 
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-
-    # Set x-axis major locator to weeks
-    ax1.xaxis.set_major_locator(mdates.WeekdayLocator(interval=1))
-    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m-%d'))
-    
-    # Rotate date labels
-    plt.setp(ax1.xaxis.get_majorticklabels(), rotation=45, ha='right')
+    #ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='orange', linestyle='--')
+    #ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
