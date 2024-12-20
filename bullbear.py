@@ -50,10 +50,6 @@ if st.button("Forecast"):
     # Calculate Bollinger Bands
     lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
 
-    # Calculate Close divided by sqrt(Close)
-    sqrt_prices = np.sqrt(prices)
-    ratio = prices / sqrt_prices
-
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
     seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
@@ -74,9 +70,9 @@ if st.button("Forecast"):
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
-    ax1.set_title(f'{ticker} Price Forecast, EMA, MA, Bollinger Bands, and Price/Sqrt(Close)', fontsize=16)
+    ax1.set_title(f'{ticker} Price Forecast, EMA, MA, and Bollinger Bands', fontsize=16)
     ax1.plot(prices[-360:], label='Last 12 Months Historical Data', color='blue')  # Last 12 months of historical data
-    ax1.plot(ema_200[-360:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
+    ax1.plot(ema_200[-360:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA for the last 12 months
     ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
     ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
 
@@ -86,8 +82,10 @@ if st.button("Forecast"):
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
 
-    # Plot the ratio of Close to sqrt(Close)
-    ax1.plot(ratio[-360:], label='Close / Sqrt(Close)', color='purple', linestyle='--')
+    # Highlight points where Close is near the 200-day EMA
+    threshold = 0.05  # 5% threshold
+    near_ema = np.abs(prices[-360:] - ema_200[-360:]) / ema_200[-360:] < threshold
+    ax1.scatter(prices.index[-360:][near_ema], prices[-360:][near_ema], color='purple', label='Close Near EMA', s=50, zorder=5)
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
