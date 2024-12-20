@@ -66,7 +66,12 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
+    # Step 5: Calculate the variance and apply the multiplicative factor
+    variance = prices[-360:].var()  # Calculate variance of the last 12 months
+    multiplier = 1.1  # 10% increase
+    impacted_prices = prices[-360:] * (multiplier / variance)
+
+    # Step 6: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
@@ -82,10 +87,8 @@ if st.button("Forecast"):
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
 
-    # Plot multiplicative impact (e.g., 10% increase)
-    multiplier = 1.1  # 10% increase
-    impacted_prices = prices[-360:] * multiplier
-    ax1.plot(prices.index[-360:], impacted_prices, label='Price x 1.1', color='purple', linestyle='--')
+    # Plot the multiplicative impact adjusted by variance
+    ax1.plot(prices.index[-360:], impacted_prices, label='Price x (1.1 / Variance)', color='purple', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
