@@ -50,8 +50,9 @@ if st.button("Forecast"):
     # Calculate Bollinger Bands
     lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
 
-    # Calculate the square root of the closing prices
+    # Calculate Close divided by sqrt(Close)
     sqrt_prices = np.sqrt(prices)
+    ratio = prices / sqrt_prices
 
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
@@ -69,11 +70,11 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, EMA, daily moving average, Bollinger Bands, and square root of prices
+    # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
-    ax1.set_title(f'{ticker} Price Forecast, EMA, MA, Bollinger Bands, and Sqrt(Close)', fontsize=16)
+    ax1.set_title(f'{ticker} Price Forecast, EMA, MA, Bollinger Bands, and Price/Sqrt(Close)', fontsize=16)
     ax1.plot(prices[-360:], label='Last 12 Months Historical Data', color='blue')  # Last 12 months of historical data
     ax1.plot(ema_200[-360:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
     ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
@@ -85,8 +86,8 @@ if st.button("Forecast"):
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
 
-    # Plot square root of closing prices
-    ax1.plot(sqrt_prices[-360:], label='Sqrt(Close)', color='purple', linestyle='--')
+    # Plot the ratio of Close to sqrt(Close)
+    ax1.plot(ratio[-360:], label='Close / Sqrt(Close)', color='purple', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
