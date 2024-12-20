@@ -81,8 +81,8 @@ if st.button("Forecast"):
 
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-    ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='black', linestyle='--')
-    #ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
+    #ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='black', linestyle='--')
+    ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
