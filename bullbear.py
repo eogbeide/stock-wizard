@@ -50,8 +50,8 @@ if st.button("Forecast"):
     # Calculate Bollinger Bands
     lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
 
-    # Calculate rolling variance of Close prices
-    rolling_variance = prices.rolling(window=30).var()
+    # Calculate rolling variance of Close prices and normalize it
+    rolling_variance = prices.rolling(window=30).var() / prices
 
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
@@ -84,11 +84,11 @@ if st.button("Forecast"):
 
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-    #ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='black', linestyle='--')
-    #ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
+    ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='black', linestyle='--')
+    ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
 
-    # Plot rolling variance
-    ax1.plot(rolling_variance[-360:], label='30-Day Rolling Variance', color='purple', linestyle='--')
+    # Plot normalized rolling variance
+    ax1.plot(rolling_variance[-360:], label='30-Day Rolling Variance / Close', color='purple', linestyle='--')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
