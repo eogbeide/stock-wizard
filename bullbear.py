@@ -27,18 +27,21 @@ def compute_bollinger_bands(data, window=20, num_sd=2):
 def compute_supertrend(df, period=7, multiplier=3):
     hl = (df['High'] + df['Low']) / 2
     atr = df['Close'].rolling(window=period).apply(lambda x: x.max() - x.min(), raw=False)
-    
-    # Create Supertrend
-    upper_band = hl + (multiplier * atr)
-    lower_band = hl - (multiplier * atr)
 
+    # Initialize Supertrend
     supertrend = pd.Series(index=df.index, dtype='float64')
+    upper_band = pd.Series(index=df.index, dtype='float64')
+    lower_band = pd.Series(index=df.index, dtype='float64')
+
     for i in range(1, len(df)):
-        if df['Close'][i] <= upper_band[i-1]:
-            upper_band[i] = min(upper_band[i], upper_band[i-1])
-        
-        if df['Close'][i] >= lower_band[i-1]:
-            lower_band[i] = max(lower_band[i], lower_band[i-1])
+        upper_band[i] = hl[i] + (multiplier * atr[i])
+        lower_band[i] = hl[i] - (multiplier * atr[i])
+
+        if df['Close'][i] <= upper_band[i - 1]:
+            upper_band[i] = min(upper_band[i], upper_band[i - 1])
+
+        if df['Close'][i] >= lower_band[i - 1]:
+            lower_band[i] = max(lower_band[i], lower_band[i - 1])
 
         if df['Close'][i] <= upper_band[i]:
             supertrend[i] = lower_band[i]
