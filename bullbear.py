@@ -1,30 +1,45 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import yfinance as yf
-from statsmodels.tsa.statespace.sarimax import SARIMAX
-from datetime import timedelta
-import matplotlib.pyplot as plt
+# Function to compute ATR (Average True Range)
+def compute_atr(data, window=14):
+    high_low = data['High'] - data['Low']
+    high_close = abs(data['High'] - data['Close'].shift())
+    low_close = abs(data['Low'] - data['Close'].shift())
+    true_range = high_low.combine(high_close, max).combine(low_close, max)
+    atr = true_range.rolling(window=window).mean()
+    return atr
 
-# Function to compute RSI
-def compute_rsi(data, window=14):
-    delta = data.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+# Function to compute Supertrend
+def compute_supertrend(data, atr_multiplier=3, atr_window=14):
+    atr = compute_atr(data, window=atr_window)
+    hl2 = (data['High'] + data['Low']) / 2  # Average of High and Low (HL2)
+    
+    # Compute Supertrend bands
+    upper_band = hl2 + (atr_multiplier * atr)
+    lower_band = hl2 - (atr_multiplier * atr)
 
-# Function to calculate Bollinger Bands
-def compute_bollinger_bands(data, window=20, num_sd=2):
-    middle_band = data.rolling(window=window).mean()
-    std_dev = data.rolling(window=window).std()
-    upper_band = middle_band + (std_dev * num_sd)
-    lower_band = middle_band - (std_dev * num_sd)
-    return lower_band, middle_band, upper_band
+    # Initialize Supertrend
+    supertrend = pd.Series(index=data.index, dtype=float)
+    in_uptrend = True  # Initial trend direction
+
+    for i in range(len(data)):
+        if i == 0:
+            supertrend.iloc[i] = lower_band.iloc[i]
+            continue
+
+        # Determine Supertrend value
+        if data['Close'].iloc[i] > supertrend.iloc[i-1]:
+            in_uptrend = True
+        elif data['Close'].iloc[i] < supertrend.iloc[i-1]:
+            in_uptrend = False
+
+        if in_uptrend:
+            supertrend.iloc[i] = max(lower_band.iloc[i], supertrend.iloc[i-1])
+        else:
+            supertrend.iloc[i] = min(upper_band.iloc[i], supertrend.iloc[i-1])
+
+    return supertrend
 
 # Streamlit app title
-st.title("Stock Price Forecasting using SARIMA with EMA, MA")
+st.title("Stock Price Forecasting using SARIMA with EMA, MA, and Supertrend")
 
 # User input for stock ticker using a dropdown menu
 ticker = st.selectbox("Select Stock Ticker:", options=['AAPL', 'SPY', 'AMZN', 'TSLA', 'PLTR', 'NVDA', 'JYD', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX'])
@@ -50,6 +65,9 @@ if st.button("Forecast"):
     # Calculate Bollinger Bands
     lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
 
+    # Calculate Supertrend
+    supertrend = compute_supertrend(data)
+
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
     seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
@@ -66,11 +84,11 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
+    # Step 5: Plot historical data, forecast, EMA, daily moving average, Bollinger Bands, and Supertrend
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
-    ax1.set_title(f'{ticker} Price Forecast, EMA, MA, and Bollinger Bands', fontsize=16)
+    ax1.set_title(f'{ticker} Price Forecast, EMA, MA, Bollinger Bands, and Supertrend', fontsize=16)
     ax1.plot(prices[-360:], label='Last 12 Months Historical Data', color='blue')  # Last 12 months of historical data
     ax1.plot(ema_200[-360:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA for the last 12 months
     ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
@@ -81,8 +99,10 @@ if st.button("Forecast"):
 
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-    #ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='orange', linestyle='--')
-    #ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
+    ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
+
+    # Plot Supertrend
+    ax1.plot(supertrend[-360:], label='Supertrend', color='purple', linestyle='-')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
