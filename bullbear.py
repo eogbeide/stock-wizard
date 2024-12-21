@@ -28,7 +28,7 @@ st.title("Stock Price Forecasting using SARIMA with EMA, MA & Bollinger")
 
 # Information box at the top
 st.info(
-    "The direction of the 200-Day EMA indicates whether we are experiencing an upward or downward trend."
+    "The direction of the 200-Day EMA indicates whether we are experiencing an upward or downward trend. "
     "A favorable buying opportunity during an upward trend arises when the closing price is near, at, or below the 200 EMA line. "
     "It’s even better if the Lower Bollinger Band is close to or touches the 200 EMA. Additionally, when the price crosses above the 30-day moving average, it indicates an upward trend and a potential buy signal."
 )
