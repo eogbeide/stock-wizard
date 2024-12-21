@@ -26,6 +26,12 @@ def compute_bollinger_bands(data, window=20, num_sd=2):
 # Streamlit app title
 st.title("Stock Price Forecasting using SARIMA with EMA, MA")
 
+# Information box at the top
+st.info(
+    "A great buying opportunity in an upward trend is when the Close price is close to, at, or below the 200 EMA line. "
+    "Bonus if the Lower Bollinger is close to or touches the 200 EMA. When price crosses the 30 Day MA upward, it is an upward trend (buy opportunity)."
+)
+
 # User input for stock ticker using a dropdown menu
 ticker = st.selectbox("Select Stock Ticker:", options=[
     'AAPL', 'SPY', 'AMZN', 'NVO', 'XMTR', 'AMD', 'RGTI', 'TSLA',
