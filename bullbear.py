@@ -28,8 +28,8 @@ st.title("Stock Price Forecasting using SARIMA with EMA, MA")
 
 # Information box at the top
 st.info(
-    "A great buying opportunity in an upward trend is when the Close price is close to, at, or below the 200 EMA line. "
-    "Bonus if the Lower Bollinger is close to or touches the 200 EMA. When price crosses the 30 Day MA upward, it is an upward trend (buy opportunity)."
+    "A favorable buying opportunity during an upward trend arises when the closing price is near, at, or below the 200 EMA line. "
+    "It’s even better if the Lower Bollinger Band is close to or touches the 200 EMA. Additionally, when the price crosses above the 30-day moving average, it indicates an upward trend and a potential buy signal."
 )
 
 # User input for stock ticker using a dropdown menu
