@@ -86,10 +86,11 @@ if st.button("Forecast"):
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
 
-    # Get the current 200-day EMA value, Lower Bollinger Band value, and 30-Day MA value
-    current_ema_value = float(ema_200.iloc[-1])  # Ensure it's a float
-    current_lower_band_value = float(lower_band.iloc[-1])  # Get the current lower Bollinger Band value
-    current_moving_average_value = float(moving_average.iloc[-1])  # Get the current 30-Day MA value
+    # Get the current values
+    current_ema_value = float(ema_200.iloc[-1])  # Current 200-day EMA
+    current_lower_band_value = float(lower_band.iloc[-1])  # Current lower Bollinger Band
+    current_moving_average_value = float(moving_average.iloc[-1])  # Current 30-Day MA
+    current_close_value = float(prices.iloc[-1])  # Current Close price
 
     # Ensure that prices[-360:] is not empty and has enough data
     if len(prices) > 360:
@@ -103,6 +104,7 @@ if st.button("Forecast"):
     ax1.axhline(y=current_ema_value, color='purple', linestyle='-', label=f'Current 200-Day EMA: {current_ema_value:.2f}')
     ax1.axhline(y=current_lower_band_value, color='red', linestyle='-', label=f'Current Lower Bollinger Band: {current_lower_band_value:.2f}')
     ax1.axhline(y=current_moving_average_value, color='brown', linestyle='-', label=f'Current 30-Day MA: {current_moving_average_value:.2f}')
+    ax1.axhline(y=current_close_value, color='blue', linestyle='-', label=f'Current Close Price: {current_close_value:.2f}')
 
     # Adjust y-axis limits to ensure the lines are visible
     ax1.set_ylim(bottom=min(price_min, current_lower_band_value) * 0.95, 
