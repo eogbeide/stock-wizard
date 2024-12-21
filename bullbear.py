@@ -81,8 +81,13 @@ if st.button("Forecast"):
 
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-    #ax1.plot(middle_band[-360:], label='Bollinger Middle Band', color='black', linestyle='--')
-    #ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='pink', linestyle='--')
+
+    # Get the current 200-day EMA value
+    current_ema_value = ema_200.iloc[-1]
+    current_date = prices.index[-1]
+
+    # Add a vertical line for the current 200-day EMA price
+    ax1.axhline(y=current_ema_value, color='purple', linestyle='-', label='Current 200-Day EMA')
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
