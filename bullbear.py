@@ -125,7 +125,7 @@ if st.button("Forecast"):
     ax1.tick_params(axis='y', labelcolor='blue')
 
     # Move the legend to the bottom right corner with updated font size and style
-    ax1.legend(loc='upper right', fontsize='x-small', fancybox=True, framealpha=0.5, title='Legend', title_fontsize='small')
+    ax1.legend(loc='lower right', fontsize='x-small', fancybox=True, framealpha=0.5, title='Legend', title_fontsize='small')
 
     # Display the plot in Streamlit
     st.pyplot(fig)
