@@ -37,7 +37,7 @@ st.info(
 ticker = st.selectbox("Select Stock Ticker:", options=[
     'AAPL', 'SPY', 'AMZN', 'NVO', 'XMTR', 'AMD', 'RGTI', 'TSLA','EXAS','SQM','PSTG','QUBT','JNJ','MSTR',
     'PLTR', 'NVDA', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'BABA','DAR','SFM','AVO','SOUN','MRK','LMND',
-    'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX', 'LCID', 'IONQ','SIRI', 'PGR', 'COST', 'RGTI', 'ENPH'
+    'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX', 'LCID', 'IONQ','SIRI', 'PGR', 'COST', 'RGTI', 'YY'
 ])
 
 # Button to fetch and process data
