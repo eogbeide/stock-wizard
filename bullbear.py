@@ -35,9 +35,9 @@ st.info(
 
 # User input for stock ticker using a dropdown menu
 ticker = st.selectbox("Select Stock Ticker:", options=[
-    'AAPL', 'SPY', 'AMZN', 'NVO', 'XMTR', 'AMD', 'RGTI', 'TSLA','EXAS','SQM','PSTG','QUBT','JNJ','MSTR','ENB','JPM',
-    'PLTR', 'NVDA', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'BABA','DAR','SFM','AVO','SOUN','MRK','LMND','MO','ISRG',
-    'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX', 'LCID', 'IONQ','SIRI', 'PGR', 'COST', 'RGTI', 'DDS','EQIX', 'FTNT'
+    'AAPL', 'SPY', 'AMZN', 'NVO', 'XMTR', 'AMD', 'RGTI', 'TSLA','SITM','SQM','PSTG','QUBT','JNJ','MSTR','ENB','JPM','AFRM',
+    'PLTR', 'NVDA', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'BABA','DAR','SFM','AVO','SOUN','MRK','LMND','MO','ISRG','GUSH',
+    'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX', 'LCID', 'IONQ','SIRI', 'PGR', 'COST', 'RGTI', 'DDS','EQIX', 'FTNT','URI'
 ])
 
 # Button to fetch and process data
