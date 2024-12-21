@@ -24,7 +24,7 @@ def compute_bollinger_bands(data, window=20, num_sd=2):
     return lower_band, middle_band, upper_band
 
 # Streamlit app title
-st.title("Stock Price Forecasting using SARIMA with EMA, MA")
+st.title("Stock Price Forecasting using SARIMA with EMA, MA & Bollinger")
 
 # Information box at the top
 st.info(
