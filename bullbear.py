@@ -109,7 +109,9 @@ if st.button("Forecast"):
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
     ax1.tick_params(axis='y', labelcolor='blue')
-    ax1.legend(loc='upper left')
+    
+    # Move the legend to the bottom right corner
+    ax1.legend(loc='lower right')
 
     # Display the plot in Streamlit
     st.pyplot(fig)
