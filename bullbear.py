@@ -86,7 +86,7 @@ if st.button("Forecast"):
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
 
-    # Get the current 200-day EMA value
+    # Get the current 200-day EMA value and Lower Bollinger Band value
     current_ema_value = float(ema_200.iloc[-1])  # Ensure it's a float
     current_lower_band_value = float(lower_band.iloc[-1])  # Get the current lower Bollinger Band value
 
@@ -98,19 +98,9 @@ if st.button("Forecast"):
         price_min = float(prices.min())
         price_max = float(prices.max())
 
-    # Add a horizontal line for the current 200-day EMA price
-    ax1.axhline(y=current_ema_value, color='purple', linestyle='-', label='Current 200-Day EMA')
-
-    # Annotate the current 200-day EMA value on the plot
-    ax1.text(prices.index[-1], current_ema_value, f'{current_ema_value:.2f}', 
-             color='purple', fontsize=10, ha='right', va='bottom')
-
-    # Add a horizontal line for the current lower Bollinger Band price
-    ax1.axhline(y=current_lower_band_value, color='red', linestyle='-', label='Current Lower Bollinger Band')
-
-    # Annotate the current lower Bollinger Band value on the plot
-    ax1.text(prices.index[-1], current_lower_band_value, f'{current_lower_band_value:.2f}', 
-             color='red', fontsize=10, ha='right', va='top')
+    # Add horizontal lines for the current values
+    ax1.axhline(y=current_ema_value, color='purple', linestyle='-', label=f'Current 200-Day EMA: {current_ema_value:.2f}')
+    ax1.axhline(y=current_lower_band_value, color='red', linestyle='-', label=f'Current Lower Bollinger Band: {current_lower_band_value:.2f}')
 
     # Adjust y-axis limits to ensure the lines are visible
     ax1.set_ylim(bottom=min(price_min, current_lower_band_value) * 0.95, 
