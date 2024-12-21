@@ -100,6 +100,10 @@ if st.button("Forecast"):
     # Add a horizontal line for the current 200-day EMA price
     ax1.axhline(y=current_ema_value, color='purple', linestyle='-', label='Current 200-Day EMA')
 
+    # Annotate the current 200-day EMA value on the plot
+    ax1.text(prices.index[-1], current_ema_value, f'{current_ema_value:.2f}', 
+             color='purple', fontsize=10, ha='right', va='bottom')
+
     # Adjust y-axis limits to ensure the line is visible
     ax1.set_ylim(bottom=min(price_min, current_ema_value) * 0.95, 
                   top=max(price_max, current_ema_value) * 1.05)
