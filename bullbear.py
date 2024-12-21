@@ -89,12 +89,20 @@ if st.button("Forecast"):
     # Get the current 200-day EMA value
     current_ema_value = float(ema_200.iloc[-1])  # Ensure it's a float
 
+    # Ensure that prices[-360:] is not empty and has enough data
+    if len(prices) > 360:
+        price_min = float(prices[-360:].min())
+        price_max = float(prices[-360:].max())
+    else:
+        price_min = float(prices.min())
+        price_max = float(prices.max())
+
     # Add a horizontal line for the current 200-day EMA price
     ax1.axhline(y=current_ema_value, color='purple', linestyle='-', label='Current 200-Day EMA')
 
-    # Optional: Adjust y-axis limits to ensure the line is visible
-    ax1.set_ylim(bottom=min(prices[-360:].min(), current_ema_value) * 0.95, 
-                  top=max(prices[-360:].max(), current_ema_value) * 1.05)
+    # Adjust y-axis limits to ensure the line is visible
+    ax1.set_ylim(bottom=min(price_min, current_ema_value) * 0.95, 
+                  top=max(price_max, current_ema_value) * 1.05)
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
