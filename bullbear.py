@@ -13,16 +13,6 @@ def compute_bollinger_bands(data, window=20, num_sd=2):
     lower_band = middle_band - (std_dev * num_sd)
     return lower_band, middle_band, upper_band
 
-# Function to identify reverse points
-def identify_reverse_points(prices, threshold=0.02):
-    reversals = []
-    for i in range(1, len(prices) - 1):
-        if (prices.iloc[i] - prices.iloc[i - 1]) / prices.iloc[i - 1] > threshold and (prices.iloc[i + 1] - prices.iloc[i]) / prices.iloc[i] < -threshold:
-            reversals.append((prices.index[i], prices.iloc[i]))  # Local maxima
-        elif (prices.iloc[i] - prices.iloc[i - 1]) / prices.iloc[i - 1] < -threshold and (prices.iloc[i + 1] - prices.iloc[i]) / prices.iloc[i] > threshold:
-            reversals.append((prices.index[i], prices.iloc[i]))  # Local minima
-    return reversals
-
 # Streamlit app title
 st.title("Stock Price Forecasting using SARIMA with EMA, MA & Bollinger")
 
@@ -53,19 +43,12 @@ if st.button("Forecast"):
     forecast_index = pd.date_range(start=prices.index[-1] + timedelta(days=1), periods=forecast_steps, freq='D')
     forecast_values = forecast.predicted_mean
 
-    # Identify reverse points
-    reverse_points = identify_reverse_points(prices)
-
     # Create Plotly figure
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=prices.index, y=prices, mode='lines', name='Historical Prices'))
     fig.add_trace(go.Scatter(x=forecast_index, y=forecast_values, mode='lines', name='Forecast', line=dict(color='orange')))
     fig.add_trace(go.Scatter(x=forecast_index, y=upper_band[-1:], mode='lines', name='Upper Bollinger Band', line=dict(color='red', dash='dash')))
     fig.add_trace(go.Scatter(x=forecast_index, y=lower_band[-1:], mode='lines', name='Lower Bollinger Band', line=dict(color='green', dash='dash')))
-
-    # Mark reverse points
-    for point in reverse_points:
-        fig.add_trace(go.Scatter(x=[point[0]], y=[point[1]], mode='markers', marker=dict(color='blue', size=10), name='Reverse Point'))
 
     # Update layout
     fig.update_layout(title=f'{ticker} Price Forecast', xaxis_title='Date', yaxis_title='Price')
