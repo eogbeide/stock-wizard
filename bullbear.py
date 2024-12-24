@@ -17,10 +17,10 @@ def compute_bollinger_bands(data, window=20, num_sd=2):
 def identify_reverse_points(prices, threshold=0.02):
     reversals = []
     for i in range(1, len(prices) - 1):
-        if (prices[i] - prices[i - 1]) / prices[i - 1] > threshold and (prices[i + 1] - prices[i]) / prices[i] < -threshold:
-            reversals.append((prices.index[i], prices[i]))  # Local maxima
-        elif (prices[i] - prices[i - 1]) / prices[i - 1] < -threshold and (prices[i + 1] - prices[i]) / prices[i] > threshold:
-            reversals.append((prices.index[i], prices[i]))  # Local minima
+        if (prices.iloc[i] - prices.iloc[i - 1]) / prices.iloc[i - 1] > threshold and (prices.iloc[i + 1] - prices.iloc[i]) / prices.iloc[i] < -threshold:
+            reversals.append((prices.index[i], prices.iloc[i]))  # Local maxima
+        elif (prices.iloc[i] - prices.iloc[i - 1]) / prices.iloc[i - 1] < -threshold and (prices.iloc[i + 1] - prices.iloc[i]) / prices.iloc[i] > threshold:
+            reversals.append((prices.index[i], prices.iloc[i]))  # Local minima
     return reversals
 
 # Streamlit app title
