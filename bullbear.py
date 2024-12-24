@@ -4,7 +4,8 @@ import numpy as np
 import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import timedelta
-import matplotlib.pyplot as plt  # Ensure Matplotlib is imported
+import matplotlib.pyplot as plt
+import mplcursors  # Import the mplcursors library for interactivity
 
 # Function to compute RSI
 def compute_rsi(data, window=14):
@@ -35,9 +36,11 @@ st.info(
 
 # User input for stock ticker using a dropdown menu
 ticker = st.selectbox("Select Stock Ticker:", options=[
-    'AAPL', 'SPY', 'AMZN', 'NVO', 'XMTR', 'AMD', 'DIA', 'TSLA','SPGI','SQM','PSTG','QUBT','JNJ','MSTR','ENB','JPM','AFRM','VTWG','BLOCK','BN',
-    'PLTR', 'NVDA', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'BABA','DAR','SFM','AVO','SOUN','MRK','LMND','MO','ISRG','GUSH', 'VOO','CRM','EPD',
-    'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX', 'LCID', 'IONQ','SIRI', 'PGR', 'COST', 'RGTI', 'DDS','EQIX', 'FTNT','URI', 'ETSY', 'CNQ', 'CVS'
+    'AAPL', 'SPY', 'AMZN', 'NVO', 'XMTR', 'AMD', 'DIA', 'TSLA', 'SPGI', 'SQM', 'PSTG', 'QUBT', 'JNJ', 'MSTR', 'ENB', 
+    'JPM', 'AFRM', 'VTWG', 'BLOCK', 'BN', 'PLTR', 'NVDA', 'META', 'SITM', 'MARA', 'GOOG', 'HOOD', 'BABA', 'DAR', 
+    'SFM', 'AVO', 'SOUN', 'MRK', 'LMND', 'MO', 'ISRG', 'GUSH', 'VOO', 'CRM', 'EPD', 'UBER', 'DOW', 'AFRM', 
+    'MSFT', 'TSM', 'NFLX', 'LCID', 'IONQ', 'SIRI', 'PGR', 'COST', 'RGTI', 'DDS', 'EQIX', 'FTNT', 'URI', 
+    'ETSY', 'CNQ', 'CVS'
 ])
 
 # Button to fetch and process data
@@ -84,7 +87,7 @@ if st.button("Forecast"):
     ax1.set_title(f'{ticker} Price Forecast, EMA, MA, and Bollinger Bands', fontsize=16)
     ax1.plot(prices[-360:], label='Last 12 Months Historical Data', color='blue')  # Last 12 months of historical data
     ax1.plot(ema_200[-360:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA for the last 12 months
-    ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
+    line_forecast, = ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
     ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
 
     # Add daily moving average for the last 12 months
@@ -94,20 +97,17 @@ if st.button("Forecast"):
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
     ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='purple', linestyle='--')  # Upper Bollinger Band
 
+    # Add interactivity for hovering over the forecast line
+    mplcursors.cursor(line_forecast, hover=True).connect("add", lambda sel: sel.annotation.set_text(
+        f'Date: {forecast_index[sel.index].date()}\nForecast: {forecast_values.iloc[sel.index]:.2f}'
+    ))
+
     # Get the current values
     current_ema_value = float(ema_200.iloc[-1])  # Current 200-day EMA
     current_lower_band_value = float(lower_band.iloc[-1])  # Current lower Bollinger Band
     current_upper_band_value = float(upper_band.iloc[-1])  # Current upper Bollinger Band
     current_moving_average_value = float(moving_average.iloc[-1])  # Current 30-Day MA
     current_close_value = float(prices.iloc[-1])  # Current Close price
-
-    # Ensure that prices[-360:] is not empty and has enough data
-    if len(prices) > 360:
-        price_min = float(prices[-360:].min())
-        price_max = float(prices[-360:].max())
-    else:
-        price_min = float(prices.min())
-        price_max = float(prices.max())
 
     # Add horizontal lines for the current values
     ax1.axhline(y=current_upper_band_value, color='purple', linestyle='-', label=f'Current Upper Bollinger Band: {current_upper_band_value:.2f}')
@@ -117,8 +117,8 @@ if st.button("Forecast"):
     ax1.axhline(y=current_ema_value, color='purple', linestyle='-', label=f'Current 200-Day EMA: {current_ema_value:.2f}') 
     
     # Adjust y-axis limits to ensure the lines are visible
-    ax1.set_ylim(bottom=min(price_min, current_lower_band_value) * 0.95, 
-                  top=max(price_max, current_upper_band_value) * 1.05)
+    ax1.set_ylim(bottom=min(float(prices[-360:].min()), current_lower_band_value) * 0.95, 
+                         top=max(float(prices[-360:].max()), current_upper_band_value) * 1.05)
 
     ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
