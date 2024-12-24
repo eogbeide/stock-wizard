@@ -10,6 +10,7 @@ nltk
 urllib3
 PyPDF2
 numpy
+mplcursors
 openpyxl
 matplotlib
 statsmodels
