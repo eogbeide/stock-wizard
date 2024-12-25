@@ -58,11 +58,15 @@ if st.button("Forecast"):
     # Calculate 200-day EMA
     ema_200 = prices.ewm(span=200, adjust=False).mean()
 
-    # Calculate daily moving average (e.g., 30-day)
-    moving_average = prices.rolling(window=30).mean()
+    # Calculate daily moving averages
+    moving_average_30 = prices.rolling(window=30).mean()
+    moving_average_50 = prices.rolling(window=50).mean()  # 50-day MA
 
     # Calculate Bollinger Bands
     lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
+
+    # Calculate RSI
+    rsi = compute_rsi(prices)
 
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
@@ -80,28 +84,30 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
-    fig, ax1 = plt.subplots(figsize=(14, 7))
+    # Step 5: Plot historical data, forecast, EMA, daily moving average, Bollinger Bands, and RSI
+    fig, (ax1, ax2) = plt.subplots(nrows=2, ncols=1, figsize=(14, 10), sharex=True)
 
     # Plot price and 200-day EMA
     ax1.set_title(f'{ticker} Price Forecast, EMA, MA, and Bollinger Bands', fontsize=16)
     ax1.plot(prices[-360:], label='Last 12 Months Historical Data', color='blue')  # Last 12 months of historical data
-    ax1.plot(ema_200[-360:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA for the last 12 months
+    ax1.plot(ema_200[-360:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA
     ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
     ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
 
-    # Add daily moving average for the last 12 months
-    ax1.plot(moving_average[-360:], label='30-Day Moving Average', color='brown', linestyle='--')
+    # Plot daily moving averages
+    ax1.plot(moving_average_30[-360:], label='30-Day Moving Average', color='brown', linestyle='--')
+    ax1.plot(moving_average_50[-360:], label='50-Day Moving Average', color='purple', linestyle='--')  # 50-day MA
 
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
     ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='purple', linestyle='--')  # Upper Bollinger Band
 
-    # Get the current values
+    # Add horizontal lines for the current values
     current_ema_value = float(ema_200.iloc[-1])  # Current 200-day EMA
     current_lower_band_value = float(lower_band.iloc[-1])  # Current lower Bollinger Band
     current_upper_band_value = float(upper_band.iloc[-1])  # Current upper Bollinger Band
-    current_moving_average_value = float(moving_average.iloc[-1])  # Current 30-Day MA
+    current_moving_average_30_value = float(moving_average_30.iloc[-1])  # Current 30-Day MA
+    current_moving_average_50_value = float(moving_average_50.iloc[-1])  # Current 50-Day MA
     current_close_value = float(prices.iloc[-1])  # Current Close price
 
     # Ensure that prices[-360:] is not empty and has enough data
@@ -114,7 +120,8 @@ if st.button("Forecast"):
 
     # Add horizontal lines for the current values
     ax1.axhline(y=current_upper_band_value, color='purple', linestyle='-', label=f'Current Upper Bollinger Band: {current_upper_band_value:.2f}')
-    ax1.axhline(y=current_moving_average_value, color='brown', linestyle='-', label=f'Current 30-Day MA: {current_moving_average_value:.2f}')
+    ax1.axhline(y=current_moving_average_30_value, color='brown', linestyle='-', label=f'Current 30-Day MA: {current_moving_average_30_value:.2f}')
+    ax1.axhline(y=current_moving_average_50_value, color='purple', linestyle='-', label=f'Current 50-Day MA: {current_moving_average_50_value:.2f}')
     ax1.axhline(y=current_close_value, color='blue', linestyle='-', label=f'Current Close Price: {current_close_value:.2f}')
     ax1.axhline(y=current_lower_band_value, color='red', linestyle='-', label=f'Current Lower Bollinger Band: {current_lower_band_value:.2f}')
     ax1.axhline(y=current_ema_value, color='green', linestyle='-', label=f'Current 200-Day EMA: {current_ema_value:.2f}') 
@@ -123,12 +130,21 @@ if st.button("Forecast"):
     ax1.set_ylim(bottom=min(price_min, current_lower_band_value) * 0.95, 
                   top=max(price_max, current_upper_band_value) * 1.05)
 
-    ax1.set_xlabel('Date')
     ax1.set_ylabel('Price', color='blue')
     ax1.tick_params(axis='y', labelcolor='blue')
 
     # Move the legend to the bottom right corner with updated font size and style
     ax1.legend(loc='lower right', fontsize='x-small', fancybox=True, framealpha=0.5, title='Legend', title_fontsize='small')
+
+    # Plot RSI
+    ax2.set_title('RSI', fontsize=16)
+    ax2.plot(rsi[-360:], label='RSI', color='orange')
+    ax2.axhline(y=70, color='red', linestyle='--', label='Overbought (70)')
+    ax2.axhline(y=30, color='green', linestyle='--', label='Oversold (30)')
+    ax2.set_ylim(0, 100)
+    ax2.set_ylabel('RSI', color='orange')
+    ax2.tick_params(axis='y', labelcolor='orange')
+    ax2.legend(loc='upper right', fontsize='x-small', fancybox=True, framealpha=0.5, title='Legend', title_fontsize='small')
 
     # Display the plot in Streamlit
     st.pyplot(fig)
