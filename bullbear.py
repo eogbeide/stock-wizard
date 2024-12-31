@@ -58,8 +58,8 @@ if st.button("Forecast"):
     # Calculate 200-day EMA
     ema_200 = prices.ewm(span=200, adjust=False).mean()
 
-    # Calculate daily moving averages
-    moving_average = prices.rolling(window=30).mean()  # 30-day MA
+    # Calculate daily moving average (e.g., 30-day)
+    moving_average = prices.rolling(window=30).mean()
 
     # Calculate Bollinger Bands
     lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
@@ -80,7 +80,7 @@ if st.button("Forecast"):
     # Get confidence intervals
     conf_int = forecast.conf_int()
 
-    # Step 5: Plot historical data, forecast, EMA, daily moving averages, and Bollinger Bands
+    # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
     fig, ax1 = plt.subplots(figsize=(14, 7))
 
     # Plot price and 200-day EMA
@@ -90,20 +90,12 @@ if st.button("Forecast"):
     ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
     ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
 
-    # Plot daily moving average
+    # Add daily moving average for the last 12 months
     ax1.plot(moving_average[-360:], label='30-Day Moving Average', color='brown', linestyle='--')
 
     # Plot Bollinger Bands
     ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
     ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='purple', linestyle='--')  # Upper Bollinger Band
-
-    # Identify Buy and Sell positions
-    buy_positions = (prices > moving_average) & (prices.shift(1) <= moving_average.shift(1))
-    sell_positions = (prices < moving_average) & (prices.shift(1) >= moving_average.shift(1))
-
-    # Plot Buy and Sell positions
-    ax1.plot(prices[buy_positions], '^', markersize=10, color='green', label='Buy Signal', alpha=1)
-    ax1.plot(prices[sell_positions], 'v', markersize=10, color='red', label='Sell Signal', alpha=1)
 
     # Get the current values
     current_ema_value = float(ema_200.iloc[-1])  # Current 200-day EMA
