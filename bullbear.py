@@ -35,12 +35,12 @@ st.info(
 )
 
 # User input for stock ticker using a dropdown menu
-ticker = st.selectbox("Select Stock Ticker:", options=[
+ticker = st.selectbox("Select Stock Ticker:", options=sorted([
     'AAPL', 'SPY', 'AMZN', 'TSLA','SOFI','TSM','JPM','SPHD',
     'NVDA', 'META', 'SITM', 'SPGI','JYD', 'AVGO','PG', 'BSV', 
     'MARA', 'GOOG', 'HOOD', 'BABA', 'SMR', 'MA', 'VYM',  
     'MSFT', 'DIA', 'NFLX',  'URI', 'VOO', 'BAC', 'BJ'
-    ])
+    ]))
 
 # Button to fetch and process data
 if st.button("Forecast"):
