@@ -38,8 +38,8 @@ st.info(
 ticker = st.selectbox("Select Stock Ticker:", options=[
     'AAPL', 'SPY', 'AMZN', 'TSLA','SOFI','TSM','JPM', 
     'NVDA', 'META', 'SITM', 'SPGI','JYD', 'AVGO','PG',   
-    'MARA', 'GOOG', 'HOOD', 'BABA', 'SMR', 'MA', 'LMT', 
-    'MSFT', 'DIA', 'NFLX',  'URI', 'VOO', 'BAC', 'CL'
+    'MARA', 'GOOG', 'HOOD', 'BABA', 'SMR', 'MA', 
+    'MSFT', 'DIA', 'NFLX',  'URI', 'VOO', 'BAC', 
     ])
 
 # Button to fetch and process data
