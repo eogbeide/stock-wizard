@@ -36,7 +36,7 @@ st.info(
 
 # User input for stock ticker using a dropdown menu
 ticker = st.selectbox("Select Stock Ticker:", options=[
-    'AAPL', 'SPY', 'AMZN', 'TSLA','SOFI','TSM', ,'JPM', 
+    'AAPL', 'SPY', 'AMZN', 'TSLA','SOFI','TSM','JPM', 
     'NVDA', 'META', 'SITM', 'SPGI','JYD', 'AVGO', 
     'MARA', 'GOOG', 'HOOD', 'BABA', 'SMR', 'MA', 
     'MSFT', 'DIA', 'NFLX',  'URI', 'VOO', 'BAC'
