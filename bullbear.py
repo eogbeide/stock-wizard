@@ -35,11 +35,17 @@ st.info(
 )
 
 # User input for stock ticker using a dropdown menu
-ticker = st.selectbox("Select Stock Ticker:", options=sorted([
+#ticker = st.selectbox("Select Stock Ticker:", options=sorted([
     'AAPL', 'SPY', 'AMZN', 'TSLA', 'SOFI', 'TSM', 'JPM', 'SPHD', 'VTSAX', 'HDV',
     'NVDA', 'META', 'SITM', 'SPGI', 'JYD', 'AVGO', 'PG', 'VTWAX', 'VIG',
     'MARA', 'GOOG', 'HOOD', 'BABA', 'SMR', 'MA', 'VYM', 'VONE', 'QQQM',
     'MSFT', 'DIA', 'NFLX', 'URI', 'VOO', 'BAC', 'BJ', 'FNILX', 'RSP'
+]))
+
+# User input for stock ticker using a dropdown menu
+ticker = st.selectbox("Select Stock Ticker:", options=sorted([
+    'SPHD', 'NVDA', 'META', 'SITM', 'SPGI', 'GOOG', 'SPY', 
+    'MSFT', 'DIA', 'NFLX', 'URI'
 ]))
 
 # Button to fetch and process data
