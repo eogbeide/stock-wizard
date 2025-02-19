@@ -26,11 +26,6 @@ def compute_bollinger_bands(data, window=20, num_sd=2):
 # Streamlit app title
 st.title("Stock Price Forecasting using SARIMA with EMA, MA & Bollinger")
 
-# Information box at the top
-st.info(
-    "For certain stocks, the direction of the 200-Day EMA indicates whether we are experiencing an upward or downward trend."
-)
-
 # User input for stock ticker using a dropdown menu
 ticker = st.selectbox("Select Stock Ticker:", options=sorted([
     'AAPL', 'SPY', 'AMZN', 'TSLA', 'SOFI', 'TSM', 'JPM', 'SPHD', 'VTSAX', 'HDV',
@@ -47,95 +42,94 @@ if st.button("Forecast"):
     data = yf.download(ticker, start=start_date, end=end_date)
 
     # Step 2: Prepare the data
-    prices = data['Close']  
-    prices = prices.asfreq('D')  
-    prices.fillna(method='ffill', inplace=True)  
+    prices = data['Close'].asfreq('D').fillna(method='ffill')  # Forward fill to handle missing values
 
-    # Check if there is enough data
-    if len(prices) < 50:  # Adjust this threshold as needed
-        st.error("Not enough data to fit the model.")
-    else:
-        # Calculate 200-day EMA
-        ema_200 = prices.ewm(span=200, adjust=False).mean()
+    # Check for NaN values
+    if prices.isnull().any():
+        st.error("Data contains NaN values. Please clean your data.")
+        st.stop()
 
-        # Calculate daily moving average (e.g., 30-day)
-        moving_average = prices.rolling(window=30).mean()
+    # Ensure sufficient data points
+    if len(prices) < 50:  # Adjust as necessary
+        st.error("Not enough data to fit the SARIMA model.")
+        st.stop()
 
-        # Calculate Bollinger Bands
-        lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
+    # Calculate 200-day EMA
+    ema_200 = prices.ewm(span=200, adjust=False).mean()
 
-        # Step 3: Fit the SARIMA model
-        order = (1, 1, 1)  
-        seasonal_order = (1, 1, 1, 12)  
+    # Calculate daily moving average (e.g., 30-day)
+    moving_average = prices.rolling(window=30).mean()
 
-        try:
-            model = SARIMAX(prices, order=order, seasonal_order=seasonal_order)
-            model_fit = model.fit(disp=False)
-        except np.linalg.LinAlgError:
-            st.error("Matrix is singular. Please check your data and model parameters.")
-            st.stop()
+    # Calculate Bollinger Bands
+    lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
 
-        # Step 4: Forecast the next month (30 days)
-        forecast_steps = 30
-        forecast = model_fit.get_forecast(steps=forecast_steps)
-        forecast_index = pd.date_range(start=prices.index[-1] + timedelta(days=1), periods=forecast_steps, freq='D')
-        forecast_values = forecast.predicted_mean
+    # Step 3: Fit the SARIMA model
+    order = (1, 1, 1)  # Adjust order as needed
+    seasonal_order = (1, 1, 1, 12)  # Adjust seasonal order as needed
 
-        # Get confidence intervals
-        conf_int = forecast.conf_int()
+    try:
+        model = SARIMAX(prices, order=order, seasonal_order=seasonal_order)
+        model_fit = model.fit(disp=False)
+    except np.linalg.LinAlgError as e:
+        st.error(f"An error occurred while fitting the model: {str(e)}")
+        st.stop()
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {str(e)}")
+        st.stop()
 
-        # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
-        fig, ax1 = plt.subplots(figsize=(14, 7))
+    # Step 4: Forecast the next month (30 days)
+    forecast_steps = 30
+    forecast = model_fit.get_forecast(steps=forecast_steps)
+    forecast_index = pd.date_range(start=prices.index[-1] + timedelta(days=1), periods=forecast_steps, freq='D')
+    forecast_values = forecast.predicted_mean
 
-        ax1.set_title(f'{ticker} Price Forecast, EMA, MA, and Bollinger Bands', fontsize=16)
-        ax1.plot(prices[-360:], label='Last 12 Months Historical Data', color='blue')
-        ax1.plot(ema_200[-360:], label='200-Day EMA', color='green', linestyle='--')
-        ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
-        ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
-        ax1.plot(moving_average[-360:], label='30-Day Moving Average', color='brown', linestyle='--')
-        ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-        ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='purple', linestyle='--')
+    # Get confidence intervals
+    conf_int = forecast.conf_int()
 
-        # Current values
-        current_ema_value = float(ema_200.iloc[-1])
-        current_lower_band_value = float(lower_band.iloc[-1])
-        current_upper_band_value = float(upper_band.iloc[-1])
-        current_moving_average_value = float(moving_average.iloc[-1])
-        current_close_value = float(prices.iloc[-1])
+    # Step 5: Plot historical data, forecast, EMA, daily moving average, and Bollinger Bands
+    fig, ax1 = plt.subplots(figsize=(14, 7))
 
-        if len(prices) > 360:
-            price_min = float(prices[-360:].min())
-            price_max = float(prices[-360:].max())
-        else:
-            price_min = float(prices.min())
-            price_max = float(prices.max())
+    ax1.set_title(f'{ticker} Price Forecast, EMA, MA, and Bollinger Bands', fontsize=16)
+    ax1.plot(prices[-360:], label='Last 12 Months Historical Data', color='blue')
+    ax1.plot(ema_200[-360:], label='200-Day EMA', color='green', linestyle='--')
+    ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
+    ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
+    ax1.plot(moving_average[-360:], label='30-Day Moving Average', color='brown', linestyle='--')
+    ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
+    ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='purple', linestyle='--')
 
-        # Add horizontal lines for the current values
-        ax1.axhline(y=current_upper_band_value, color='purple', linestyle='-', label=f'Current Upper Bollinger Band: {current_upper_band_value:.2f}')
-        ax1.axhline(y=current_moving_average_value, color='brown', linestyle='-', label=f'Current 30-Day MA: {current_moving_average_value:.2f}')
-        ax1.axhline(y=current_close_value, color='blue', linestyle='-', label=f'Current Close Price: {current_close_value:.2f}')
-        ax1.axhline(y=current_lower_band_value, color='red', linestyle='-', label=f'Current Lower Bollinger Band: {current_lower_band_value:.2f}')
-        ax1.axhline(y=current_ema_value, color='green', linestyle='-', label=f'Current 200-Day EMA: {current_ema_value:.2f}') 
+    # Current values
+    current_ema_value = float(ema_200.iloc[-1])
+    current_lower_band_value = float(lower_band.iloc[-1])
+    current_upper_band_value = float(upper_band.iloc[-1])
+    current_moving_average_value = float(moving_average.iloc[-1])
+    current_close_value = float(prices.iloc[-1])
 
-        ax1.set_ylim(bottom=min(price_min, current_lower_band_value) * 0.95, 
-                      top=max(price_max, current_upper_band_value) * 1.05)
+    # Add horizontal lines for the current values
+    ax1.axhline(y=current_upper_band_value, color='purple', linestyle='-', label=f'Current Upper Bollinger Band: {current_upper_band_value:.2f}')
+    ax1.axhline(y=current_moving_average_value, color='brown', linestyle='-', label=f'Current 30-Day MA: {current_moving_average_value:.2f}')
+    ax1.axhline(y=current_close_value, color='blue', linestyle='-', label=f'Current Close Price: {current_close_value:.2f}')
+    ax1.axhline(y=current_lower_band_value, color='red', linestyle='-', label=f'Current Lower Bollinger Band: {current_lower_band_value:.2f}')
+    ax1.axhline(y=current_ema_value, color='green', linestyle='-', label=f'Current 200-Day EMA: {current_ema_value:.2f}') 
 
-        ax1.set_xlabel('Date')
-        ax1.set_ylabel('Price', color='blue')
-        ax1.tick_params(axis='y', labelcolor='blue')
+    ax1.set_ylim(bottom=0, top=max(prices.max(), current_upper_band_value) * 1.05)
 
-        ax1.legend(loc='lower right', fontsize='x-small', fancybox=True, framealpha=0.5, title='Legend', title_fontsize='small')
+    ax1.set_xlabel('Date')
+    ax1.set_ylabel('Price', color='blue')
+    ax1.tick_params(axis='y', labelcolor='blue')
 
-        # Display the plot in Streamlit
-        st.pyplot(fig)
+    ax1.legend(loc='lower right', fontsize='x-small', fancybox=True, framealpha=0.5, title='Legend', title_fontsize='small')
 
-        # Create a DataFrame for forecast data including confidence intervals
-        forecast_df = pd.DataFrame({
-            'Date': forecast_index,
-            'Forecasted Price': forecast_values,
-            'Lower Bound': conf_int.iloc[:, 0],
-            'Upper Bound': conf_int.iloc[:, 1]
-        })
+    # Display the plot in Streamlit
+    st.pyplot(fig)
 
-        # Show the forecast data in a table
-        st.write(forecast_df)
+    # Create a DataFrame for forecast data including confidence intervals
+    forecast_df = pd.DataFrame({
+        'Date': forecast_index,
+        'Forecasted Price': forecast_values,
+        'Lower Bound': conf_int.iloc[:, 0],
+        'Upper Bound': conf_int.iloc[:, 1]
+    })
+
+    # Show the forecast data in a table
+    st.write(forecast_df)
