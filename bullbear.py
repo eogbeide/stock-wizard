@@ -45,7 +45,10 @@ if st.button("Forecast"):
     prices = data['Close'].asfreq('D').fillna(method='ffill')  # Set frequency to daily and forward fill
 
     # Check for NaN and infinite values
-    if prices.isnull().any() or np.isinf(prices).any():
+    nan_check = prices.isnull().any()
+    inf_check = np.isinf(prices).any()
+
+    if nan_check or inf_check:
         st.error("Data contains NaN or infinite values. Please clean your data.")
         st.stop()
 
