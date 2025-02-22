@@ -4,18 +4,10 @@ import numpy as np
 import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import timedelta
-import matplotlib.pyplot as plt  # Ensure Matplotlib is imported
+import matplotlib.pyplot as plt
+from statsmodels.tsa.stattools import adfuller
 
-# Function to compute RSI
-def compute_rsi(data, window=14):
-    delta = data.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
-
-# Function to calculate Bollinger Bands
+# Function to compute Bollinger Bands
 def compute_bollinger_bands(data, window=20, num_sd=2):
     middle_band = data.rolling(window=window).mean()
     std_dev = data.rolling(window=window).std()
@@ -50,9 +42,23 @@ if st.button("Forecast"):
     data = yf.download(ticker, start=start_date, end=end_date)
 
     # Step 2: Prepare the data
-    prices = data['Close']  # Use the closing prices
-    prices = prices.asfreq('D')  # Set frequency to daily
-    prices.fillna(method='ffill', inplace=True)  # Forward fill to handle missing values
+    prices = data['Close'].asfreq('D').fillna(method='ffill')  # Set frequency to daily and forward fill
+
+    # Check for NaN and infinite values
+    if prices.isnull().any() or np.isinf(prices).any():
+        st.error("Data contains NaN or infinite values. Please clean your data.")
+        st.stop()
+
+    # Ensure sufficient data points
+    if len(prices) < 50:  # Adjust this threshold as needed
+        st.error("Not enough data to fit the model.")
+        st.stop()
+
+    # Check for stationarity
+    result = adfuller(prices.dropna())
+    if result[1] > 0.05:  # If p-value > 0.05, the series is non-stationary
+        st.warning("The time series is non-stationary. Consider differencing the series.")
+        prices = prices.diff().dropna()  # Simple differencing
 
     # Calculate 200-day EMA
     ema_200 = prices.ewm(span=200, adjust=False).mean()
@@ -65,10 +71,17 @@ if st.button("Forecast"):
 
     # Step 3: Fit the SARIMA model
     order = (1, 1, 1)  # Example values
-    seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
+    seasonal_order = (0, 0, 0, 0)  # Start with a simple seasonal order
 
-    model = SARIMAX(prices, order=order, seasonal_order=seasonal_order)
-    model_fit = model.fit(disp=False)
+    try:
+        model = SARIMAX(prices, order=order, seasonal_order=seasonal_order)
+        model_fit = model.fit(disp=False)
+    except np.linalg.LinAlgError as e:
+        st.error(f"LinAlgError: {str(e)}. Please check your data and model parameters.")
+        st.stop()
+    except Exception as e:
+        st.error(f"An unexpected error occurred: {str(e)}")
+        st.stop()
 
     # Step 4: Forecast the next one month (30 days)
     forecast_steps = 30
