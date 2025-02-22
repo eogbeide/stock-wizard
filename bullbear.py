@@ -57,8 +57,17 @@ if st.button("Forecast"):
     # Check for stationarity
     result = adfuller(prices.dropna())
     if result[1] > 0.05:  # If p-value > 0.05, the series is non-stationary
-        st.warning("The time series is non-stationary. Consider differencing the series.")
-        prices = prices.diff().dropna()  # Simple differencing
+        st.warning("The time series is non-stationary. Differencing the series.")
+        prices = prices.diff().dropna()  # First differencing
+        result = adfuller(prices.dropna())  # Check again
+        if result[1] > 0.05:  # If still not stationary
+            st.warning("The series is still non-stationary after first differencing. Consider further differencing.")
+            prices = prices.diff().dropna()  # Second differencing
+
+    # Ensure sufficient data points after differencing
+    if len(prices) < 50:  # Check again after differencing
+        st.error("Not enough data to fit the model after differencing.")
+        st.stop()
 
     # Calculate 200-day EMA
     ema_200 = prices.ewm(span=200, adjust=False).mean()
@@ -70,8 +79,8 @@ if st.button("Forecast"):
     lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
 
     # Step 3: Fit the SARIMA model
-    order = (1, 1, 1)  # Example values
-    seasonal_order = (0, 0, 0, 0)  # Start with a simple seasonal order
+    order = (0, 1, 1)  # Start with ARIMA(0,1,1)
+    seasonal_order = (0, 0, 0, 0)  # No seasonal component
 
     try:
         model = SARIMAX(prices, order=order, seasonal_order=seasonal_order)
