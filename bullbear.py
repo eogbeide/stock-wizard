@@ -35,12 +35,13 @@ st.info(
 )
 
 # User input for stock ticker using a dropdown menu
-ticker = st.selectbox("Select Stock Ticker:", options=sorted([
-    'AAPL', 'SPY', 'AMZN', 'DIA', 'TSLA', 'SPGI', 
-     'JPM', 'PLTR', 'NVDA', 'META', 'SITM', 
-    'MARA', 'GOOG', 'HOOD', 'BABA',  
-    'GUSH', 'VOO', 'CRM', 'EPD', 'UBER', 'DOW', 'MSFT', 'TSM', 'NFLX'
-]))
+ticker = st.selectbox("Select Stock Ticker:", options=[
+    'AAPL', 'SPY', 'AMZN', 'NVO', 'XMTR', 'AMD', 'DIA', 'TSLA', 'SPGI', 'SQM', 'PSTG', 'QUBT', 
+    'JNJ', 'MSTR', 'ENB', 'JPM', 'AFRM', 'VTWG', 'BLOCK', 'BN', 'PLTR', 'NVDA', 'META', 'SITM', 
+    'MARA', 'GOOG', 'HOOD', 'BABA', 'DAR', 'SFM', 'AVO', 'SOUN', 'MRK', 'LMND', 'MO', 'ISRG', 
+    'GUSH', 'VOO', 'CRM', 'EPD', 'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX', 'LCID', 'IONQ', 
+    'SIRI', 'PGR', 'COST', 'RGTI', 'DDS', 'EQIX', 'FTNT', 'URI', 'ETSY', 'CNQ', 'CVS'
+])
 
 # Button to fetch and process data
 if st.button("Forecast"):
