@@ -86,7 +86,7 @@ if st.button("Forecast"):
     seasonal_order = (0, 0, 0, 0)  # No seasonal component
 
     try:
-        model = SARIMAX(prices, order=order, seasonal_order=seasonal_order)
+        model = SARIMAX(prices.dropna(), order=order, seasonal_order=seasonal_order)
         model_fit = model.fit(disp=False)
     except np.linalg.LinAlgError as e:
         st.error(f"LinAlgError: {str(e)}. Please check your data and model parameters.")
