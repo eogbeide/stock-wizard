@@ -4,10 +4,18 @@ import numpy as np
 import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import timedelta
-import matplotlib.pyplot as plt
-from statsmodels.tsa.stattools import adfuller
+import matplotlib.pyplot as plt  # Ensure Matplotlib is imported
 
-# Function to compute Bollinger Bands
+# Function to compute RSI
+def compute_rsi(data, window=14):
+    delta = data.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+# Function to calculate Bollinger Bands
 def compute_bollinger_bands(data, window=20, num_sd=2):
     middle_band = data.rolling(window=window).mean()
     std_dev = data.rolling(window=window).std()
@@ -28,10 +36,10 @@ st.info(
 
 # User input for stock ticker using a dropdown menu
 ticker = st.selectbox("Select Stock Ticker:", options=sorted([
-    'AAPL', 'SPY', 'AMZN', 'TSLA', 'SOFI', 'TSM', 'JPM', 'SPHD', 'VTSAX', 'HDV',
-    'NVDA', 'META', 'SITM', 'SPGI', 'JYD', 'AVGO', 'PG', 'VTWAX', 'VIG',
-    'MARA', 'GOOG', 'HOOD', 'BABA', 'SMR', 'MA', 'VYM', 'VONE', 'QQQM',
-    'MSFT', 'DIA', 'NFLX', 'URI', 'VOO', 'BAC', 'BJ', 'FNILX', 'RSP'
+    'AAPL', 'SPY', 'AMZN', 'DIA', 'TSLA', 'SPGI', 
+     'JPM', 'PLTR', 'NVDA', 'META', 'SITM', 
+    'MARA', 'GOOG', 'HOOD', 'BABA',  
+    'GUSH', 'VOO', 'CRM', 'EPD', 'UBER', 'DOW', 'MSFT', 'TSM', 'NFLX'
 ]))
 
 # Button to fetch and process data
@@ -42,35 +50,9 @@ if st.button("Forecast"):
     data = yf.download(ticker, start=start_date, end=end_date)
 
     # Step 2: Prepare the data
-    prices = data['Close'].asfreq('D').fillna(method='ffill')  # Set frequency to daily and forward fill
-
-    # Check for NaN and infinite values
-    nan_check = prices.isnull().any()
-    inf_check = np.isinf(prices).any()
-
-    if nan_check or inf_check:
-        st.error("Data contains NaN or infinite values. Please clean your data.")
-        st.stop()
-
-    # Ensure sufficient data points
-    if len(prices) < 50:  # Adjust this threshold as needed
-        st.error("Not enough data to fit the model.")
-        st.stop()
-
-    # Check for stationarity
-    result = adfuller(prices.dropna())
-    if result[1] > 0.05:  # If p-value > 0.05, the series is non-stationary
-        st.warning("The time series is non-stationary. Differencing the series.")
-        prices = prices.diff().dropna()  # First differencing
-        result = adfuller(prices.dropna())  # Check again
-        if result[1] > 0.05:  # If still not stationary
-            st.warning("The series is still non-stationary after first differencing. Consider further differencing.")
-            prices = prices.diff().dropna()  # Second differencing
-
-    # Ensure sufficient data points after differencing
-    if len(prices) < 50:  # Check again after differencing
-        st.error("Not enough data to fit the model after differencing.")
-        st.stop()
+    prices = data['Close']  # Use the closing prices
+    prices = prices.asfreq('D')  # Set frequency to daily
+    prices.fillna(method='ffill', inplace=True)  # Forward fill to handle missing values
 
     # Calculate 200-day EMA
     ema_200 = prices.ewm(span=200, adjust=False).mean()
@@ -82,18 +64,11 @@ if st.button("Forecast"):
     lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
 
     # Step 3: Fit the SARIMA model
-    order = (0, 1, 1)  # Start with ARIMA(0,1,1)
-    seasonal_order = (0, 0, 0, 0)  # No seasonal component
+    order = (1, 1, 1)  # Example values
+    seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
 
-    try:
-        model = SARIMAX(prices.dropna(), order=order, seasonal_order=seasonal_order)
-        model_fit = model.fit(disp=False)
-    except np.linalg.LinAlgError as e:
-        st.error(f"LinAlgError: {str(e)}. Please check your data and model parameters.")
-        st.stop()
-    except Exception as e:
-        st.error(f"An unexpected error occurred: {str(e)}")
-        st.stop()
+    model = SARIMAX(prices, order=order, seasonal_order=seasonal_order)
+    model_fit = model.fit(disp=False)
 
     # Step 4: Forecast the next one month (30 days)
     forecast_steps = 30
@@ -141,10 +116,10 @@ if st.button("Forecast"):
     ax1.axhline(y=current_moving_average_value, color='brown', linestyle='-', label=f'Current 30-Day MA: {current_moving_average_value:.2f}')
     ax1.axhline(y=current_close_value, color='blue', linestyle='-', label=f'Current Close Price: {current_close_value:.2f}')
     ax1.axhline(y=current_lower_band_value, color='red', linestyle='-', label=f'Current Lower Bollinger Band: {current_lower_band_value:.2f}')
-    ax1.axhline(y=current_ema_value, color='green', linestyle='-', label=f'Current 200-Day EMA: {current_ema_value:.2f}')
+    ax1.axhline(y=current_ema_value, color='green', linestyle='-', label=f'Current 200-Day EMA: {current_ema_value:.2f}') 
 
     # Adjust y-axis limits to ensure the lines are visible
-    ax1.set_ylim(bottom=min(price_min, current_lower_band_value) * 0.95,
+    ax1.set_ylim(bottom=min(price_min, current_lower_band_value) * 0.95, 
                   top=max(price_max, current_upper_band_value) * 1.05)
 
     ax1.set_xlabel('Date')
