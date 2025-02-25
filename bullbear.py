@@ -4,7 +4,7 @@ import numpy as np
 import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import timedelta
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt  # Ensure Matplotlib is imported
 
 # Function to compute RSI
 def compute_rsi(data, window=14):
@@ -35,12 +35,13 @@ st.info(
 )
 
 # User input for stock ticker using a dropdown menu
-ticker = st.selectbox("Select Stock Ticker:", options=sorted([
-    'AAPL', 'SPY', 'AMZN', 'TSLA', 'SOFI', 'TSM', 'JPM', 'SPHD', 'VTSAX', 'HDV', 
-    'NVDA', 'META', 'SITM', 'SPGI', 'JYD', 'AVGO', 'PG', 'VTWAX', 'VIG', 
-    'MARA', 'GOOG', 'HOOD', 'BABA', 'SMR', 'MA', 'VYM', 'VONE', 'QQQM', 
-    'MSFT', 'DIA', 'NFLX', 'URI', 'VOO', 'BAC', 'BJ', 'FNILX', 'RSP'
-]))
+ticker = st.selectbox("Select Stock Ticker:", options=[
+    'AAPL', 'SPY', 'AMZN', 'NVO', 'XMTR', 'AMD', 'DIA', 'TSLA', 'SPGI', 'SQM', 'PSTG', 'QUBT', 
+    'JNJ', 'MSTR', 'ENB', 'JPM', 'AFRM', 'VTWG', 'BLOCK', 'BN', 'PLTR', 'NVDA', 'META', 'SITM', 
+    'MARA', 'GOOG', 'HOOD', 'BABA', 'DAR', 'SFM', 'AVO', 'SOUN', 'MRK', 'LMND', 'MO', 'ISRG', 
+    'GUSH', 'VOO', 'CRM', 'EPD', 'UBER', 'DOW', 'AFRM', 'MSFT', 'TSM', 'NFLX', 'LCID', 'IONQ', 
+    'SIRI', 'PGR', 'COST', 'RGTI', 'DDS', 'EQIX', 'FTNT', 'URI', 'ETSY', 'CNQ', 'CVS'
+])
 
 # Button to fetch and process data
 if st.button("Forecast"):
@@ -51,7 +52,8 @@ if st.button("Forecast"):
 
     # Step 2: Prepare the data
     prices = data['Close']  # Use the closing prices
-    prices = prices.asfreq('D').fillna(method='ffill')  # Set frequency to daily and forward fill
+    prices = prices.asfreq('D')  # Set frequency to daily
+    prices.fillna(method='ffill', inplace=True)  # Forward fill to handle missing values
 
     # Calculate 200-day EMA
     ema_200 = prices.ewm(span=200, adjust=False).mean()
@@ -115,10 +117,10 @@ if st.button("Forecast"):
     ax1.axhline(y=current_moving_average_value, color='brown', linestyle='-', label=f'Current 30-Day MA: {current_moving_average_value:.2f}')
     ax1.axhline(y=current_close_value, color='blue', linestyle='-', label=f'Current Close Price: {current_close_value:.2f}')
     ax1.axhline(y=current_lower_band_value, color='red', linestyle='-', label=f'Current Lower Bollinger Band: {current_lower_band_value:.2f}')
-    ax1.axhline(y=current_ema_value, color='green', linestyle='-', label=f'Current 200-Day EMA: {current_ema_value:.2f}')
+    ax1.axhline(y=current_ema_value, color='green', linestyle='-', label=f'Current 200-Day EMA: {current_ema_value:.2f}') 
 
     # Adjust y-axis limits to ensure the lines are visible
-    ax1.set_ylim(bottom=min(price_min, current_lower_band_value) * 0.95,
+    ax1.set_ylim(bottom=min(price_min, current_lower_band_value) * 0.95, 
                   top=max(price_max, current_upper_band_value) * 1.05)
 
     ax1.set_xlabel('Date')
