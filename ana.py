@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
-from llama_index import SimpleIndex  # Use the appropriate class available in your version
+from llama_index.core import VectorStoreIndex,SimpleDirectoryReader,ServiceContext,PromptTemplate
+from llama_index.llms.huggingface import HuggingFaceLLM
 
 # Function to fetch and read PDF from a GitHub URL
 def fetch_pdf(url):
