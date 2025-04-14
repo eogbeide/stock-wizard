@@ -17,3 +17,5 @@ statsmodels
 python-docx
 pyttsx3
 gTTS
+requests
+llama_index
