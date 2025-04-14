@@ -1,6 +1,6 @@
 import streamlit as st
 import requests
-from llama_index import GPTSimpleVectorIndex
+from llama_index import VectorStoreIndex  # Update this based on the latest class available
 
 # Function to fetch and read PDF from a GitHub URL
 def fetch_pdf(url):
@@ -21,10 +21,10 @@ def load_documents(pdf_filenames):
         pdf_url = f"{base_url}{filename.strip()}"
         pdf_path = fetch_pdf(pdf_url)
         if pdf_path:
-            # Assuming a different method to read PDF content
+            # Assuming a method to read PDF content
             with open(pdf_path, "rb") as f:
                 content = f.read()  # Read PDF content
-                documents.append(content)  # Append raw content or processed text
+                documents.append(content.decode('utf-8', errors='ignore'))  # Decode if needed
     return documents
 
 # Streamlit app
@@ -38,7 +38,7 @@ def main():
     if st.button("Load PDFs"):
         if pdf_filenames:
             documents = load_documents(pdf_filenames)
-            index = GPTSimpleVectorIndex(documents)
+            index = VectorStoreIndex(documents)  # Use the correct index class
             st.session_state.index = index  # Save index in session state
             st.success("Documents loaded successfully!")
         else:
@@ -48,7 +48,7 @@ def main():
 
     if st.button("Get Answer"):
         if 'index' in st.session_state:
-            answer = st.session_state.index.query(question)
+            answer = st.session_state.index.query(question)  # Adjust query method as needed
             st.write(answer)
         else:
             st.error("Please load PDFs first.")
