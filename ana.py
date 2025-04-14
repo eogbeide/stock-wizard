@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as sto
 import requests
 from llama_index import Document, GPTSimpleVectorIndex
 
