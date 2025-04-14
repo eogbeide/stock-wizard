@@ -1,6 +1,6 @@
 import streamlit as st
 import requests
-from llama_index import Document, GPTSimpleVectorIndex
+from llama_index import GPTSimpleVectorIndex
 
 # Function to fetch and read PDF from a GitHub URL
 def fetch_pdf(url):
@@ -16,12 +16,15 @@ def fetch_pdf(url):
 # Load PDFs from the GitHub repository
 def load_documents(pdf_filenames):
     documents = []
-    base_url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/ana.pdf'
+    base_url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/'
     for filename in pdf_filenames:
         pdf_url = f"{base_url}{filename.strip()}"
         pdf_path = fetch_pdf(pdf_url)
         if pdf_path:
-            documents.append(Document.from_pdf(pdf_path))
+            # Assuming a different method to read PDF content
+            with open(pdf_path, "rb") as f:
+                content = f.read()  # Read PDF content
+                documents.append(content)  # Append raw content or processed text
     return documents
 
 # Streamlit app
