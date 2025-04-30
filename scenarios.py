@@ -43,4 +43,6 @@ if data is not None:
         # Clickable option to show solution and source
         if st.button("Show Solution"):
             st.write(f"**Solution:** {row['solution']}")
-            st.write(f"**Source:** {row['source']}")
+            # Assuming the source is a URL; update as needed
+            source_link = row['source']  # Ensure this contains the URL
+            st.markdown(f"**Source:** [Link]({source_link})", unsafe_allow_html=True)
