@@ -51,6 +51,6 @@ if data is not None:
             if pd.notna(source_link):  # Check if the link is not NaN
                 st.markdown(f"**Source:** [Link]({source_link})", unsafe_allow_html=True)
                 # Display the Google search link
-                st.markdown(f"[Search Google for this source]({google_search_link})", unsafe_allow_html=True)
+                st.markdown(f"[Refer to source]({google_search_link})", unsafe_allow_html=True)
             else:
                 st.write("**Source:** No link provided.")
