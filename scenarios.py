@@ -19,12 +19,12 @@ def load_data():
 data = load_data()
 
 if data is not None:
-    # Welcome box at the start
-    st.markdown("<div style='padding: 20px; border: 1px solid #4CAF50; border-radius: 5px; background-color: #f9f9f9;'>"
-                "<h2 style='color: #4CAF50;'>Welcome to the ABA ORAL EXAM PRACTICE</h2>"
-                "<p>This application allows you to explore various question scenarios. "
+    # Welcome box at the start with adjusted size
+    st.markdown("<div style='padding: 10px; border: 1px solid #4CAF50; border-radius: 5px; background-color: #f9f9f9;'>"
+                "<h2 style='color: #4CAF50; margin: 0;'>Welcome to the ABA ORAL EXAM PRACTICE</h2>"
+                "<p style='margin: 0;'>This application allows you to explore various question scenarios. "
                 "You can select different categories and sections to answer specific questions related to the scenario given.</p>"
-                "<p>Please select a category and section from the dropdowns below to get started.</p>"
+                "<p style='margin: 0;'>Please select a category and section from the dropdowns below to get started.</p>"
                 "</div>", unsafe_allow_html=True)
 
     # Display scenario in an expandable box
