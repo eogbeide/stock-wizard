@@ -28,9 +28,12 @@ if data is not None:
     """
     st.markdown(formatted_scenario, unsafe_allow_html=True)
 
-    # Dropdowns for category and section
+    # Dropdown for category selection
     category = st.selectbox("Select a Category", data['category'].unique())
-    section = st.selectbox("Select a Section", data['section'].unique())
+
+    # Filter sections based on selected scenario and category
+    filtered_sections = data[data['category'] == category]['section'].unique()
+    section = st.selectbox("Select a Section", filtered_sections)
 
     # Display questions based on selections
     st.subheader("Questions")
@@ -49,7 +52,7 @@ if data is not None:
             st.write(f"**Solution:** {row['solution']}")
             # Ensure that the source is a valid URL
             if pd.notna(source_link):  # Check if the link is not NaN
-                st.markdown(f"**Source:** ({source_link})", unsafe_allow_html=True)
+                st.markdown(f"**Source:** [{source_link}]({source_link})", unsafe_allow_html=True)
                 # Display the Google search link
                 st.markdown(f"[Refer to source]({google_search_link})", unsafe_allow_html=True)
             else:
