@@ -33,7 +33,7 @@ if data is not None:
     # Welcome box at the start with black background
     st.markdown("<div style='padding: 10px; border: 1px solid #4CAF50; border-radius: 5px; background-color: black; color: white;'>"
                 "<h2 style='color: #4CAF50; margin: 0;'>Welcome to the ABA ORAL EXAM PRACTICE</h2>"
-                "<p style='margin: 0;'>This application allows you to explore various question scenarios. "
+                "<p style='margin: 0;'>This application allows you to explore various oral exam question scenarios. "
                 "You can select different topics and topic questions to answer specific questions related to the scenario given.</p>"
                 "<p style='margin: 0;'>Please select a scenario# from the side bar and topic and topic question from the dropdowns below to get started.</p>"
                 "</div>", unsafe_allow_html=True)
