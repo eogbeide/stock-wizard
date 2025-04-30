@@ -28,12 +28,12 @@ if data is not None:
                     "</div>", unsafe_allow_html=True)
 
     # Dropdown for category selection with bold and green label
-    st.markdown("<strong style='color:#4CAF50;'>Select a Category:</strong>", unsafe_allow_html=True)
+    st.markdown("<div style='margin: 0;'><strong style='color:#4CAF50;'>Select a Category:</strong></div>", unsafe_allow_html=True)
     category = st.selectbox("", data['category'].unique())
 
     # Filter sections based on selected scenario and category
     filtered_sections = data[data['category'] == category]['section'].unique()
-    st.markdown("<strong style='color:#4CAF50;'>Select a Section:</strong>", unsafe_allow_html=True)
+    st.markdown("<div style='margin: 0;'><strong style='color:#4CAF50;'>Select a Section:</strong></div>", unsafe_allow_html=True)
     section = st.selectbox("", filtered_sections)
 
     # Display questions based on selections
