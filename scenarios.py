@@ -18,16 +18,13 @@ def load_data():
 # Load the data
 data = load_data()
 if data is not None:
-    # Add a scenario number column
-    data['scenario_number'] = range(1, len(data) + 1)
-
     # Initialize session state for current scenario index
     if 'current_scenario_index' not in st.session_state:
         st.session_state.current_scenario_index = 0
 
     # Sidebar for selecting unique scenario numbers
     st.sidebar.markdown("<h3 style='color:#4CAF50;'>Select Scenario Number:</h3>", unsafe_allow_html=True)
-    scenario_options = data['scenario_number'].unique()  # Ensure unique scenario numbers
+    scenario_options = data['scenario#'].unique()  # Use the existing scenario# column
     selected_scenario_number = st.sidebar.selectbox("", scenario_options)
 
     # Update current scenario index based on selection
@@ -48,7 +45,7 @@ if data is not None:
     # Display scenario in an expandable box (not expanded by default)
     with st.expander("Scenario Overview", expanded=False):
         st.markdown(f"<div style='padding: 10px; border: 1px solid #4CAF50; border-radius: 5px; background-color: black; color: white;'>"
-                    f"<strong style='color:#4CAF50;'>Scenario {data['scenario_number'].iloc[current_index]}:</strong> {scenario}<br>"
+                    f"<strong style='color:#4CAF50;'>Scenario {data['scenario#'].iloc[current_index]}:</strong> {scenario}<br>"
                     f"This scenario covers various aspects related to the topic. Please select the category and section to explore specific questions."
                     "</div>", unsafe_allow_html=True)
 
