@@ -51,7 +51,7 @@ if data is not None:
     current_index = st.session_state.current_scenario_index
     scenario = data['scenario'].iloc[current_index]
 
-    # Display scenario in an expandable box (not expanded by default)
+    # Display only one unique scenario in an expandable box
     with st.expander("Scenario Overview", expanded=False):
         st.markdown(f"<div style='padding: 10px; border: 1px solid #4CAF50; border-radius: 5px; background-color: black; color: white;'>"
                     f"<strong style='color:#4CAF50;'>Scenario {data['scenario_number'].iloc[current_index]}:</strong> {scenario}<br>"
