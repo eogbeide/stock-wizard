@@ -1,4 +1,4 @@
-import streamlit as str
+import streamlit as st
 import pandas as pd
 import requests
 
