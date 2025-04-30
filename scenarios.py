@@ -26,9 +26,10 @@ if data is not None:
     # Streamlit app layout
     st.title("Scenario Questions")
 
-    # Display scenario as text
+    # Display scenario as formatted text
     scenario = data['scenario'].unique()[0]  # Assuming you want to display the first scenario
-    st.markdown(f"**Scenario:** {scenario}")
+    formatted_scenario = f"### Scenario Overview\n\n**Scenario:** {scenario}\n\nThis scenario covers various aspects related to the topic. Please select the category and section to explore specific questions."
+    st.markdown(formatted_scenario)
 
     # Dropdowns for category and section
     category = st.selectbox("Select a Category", data['category'].unique())
