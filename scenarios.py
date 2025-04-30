@@ -34,7 +34,7 @@ if data is not None:
     section = st.selectbox("Select a Section", filtered_sections)
 
     # Display questions based on selections
-    st.subheader("Questions")
+    st.subheader("Question")
     st.markdown("<hr>", unsafe_allow_html=True)  # Another horizontal line for separation
     filtered_data = data[(data['scenario'] == scenario) & (data['category'] == category) & (data['section'] == section)]
     
