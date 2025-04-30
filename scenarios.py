@@ -22,8 +22,8 @@ if data is not None:
     # Display scenario as formatted text with single line spacing
     scenario = data['scenario'].unique()[0]
     st.markdown(f"<h3 style='color:#4CAF50;'>Scenario Overview</h3>", unsafe_allow_html=True)
-    st.markdown(f"<p style='line-height: 1.5;'><strong>Scenario:</strong> {scenario}</p>", unsafe_allow_html=True)
-    st.markdown("<p>This scenario covers various aspects related to the topic. Please select the category and section to explore specific questions.</p>", unsafe_allow_html=True)
+    st.markdown(f"<p style='line-height: 1.2; margin: 0;'><strong>Scenario:</strong> {scenario}</p>", unsafe_allow_html=True)
+    st.markdown("<p style='line-height: 1.2; margin: 0;'>This scenario covers various aspects related to the topic. Please select the category and section to explore specific questions.</p>", unsafe_allow_html=True)
     st.markdown("<hr>", unsafe_allow_html=True)  # Horizontal line for separation
 
     # Dropdown for category selection
@@ -34,14 +34,13 @@ if data is not None:
     section = st.selectbox("Select a Section", filtered_sections)
 
     # Display questions based on selections
-    st.markdown("<h4 style='font-size: 16px;'>Question</h4>", unsafe_allow_html=True)
+    st.markdown("<h4 style='font-size: 16px; margin: 0;'>Questions</h4>", unsafe_allow_html=True)
     st.markdown("<hr>", unsafe_allow_html=True)  # Another horizontal line for separation
     filtered_data = data[(data['scenario'] == scenario) & (data['category'] == category) & (data['section'] == section)]
     
     for index, row in filtered_data.iterrows():
         question = row['question']
-        st.markdown(f"<h5 style='font-size: 14px;'>Question {index + 1}: {question}</h5>", unsafe_allow_html=True)  # Reduced font size for questions
-        st.markdown("<hr>", unsafe_allow_html=True)  # Horizontal line for each question
+        st.markdown(f"<h5 style='font-size: 14px; margin: 0;'>Question {index + 1}: {question}</h5>", unsafe_allow_html=True)  # Reduced font size for questions
         
         # Create a Google search link for the source
         source_link = row['source']
