@@ -51,7 +51,7 @@ if data is not None:
         if st.button(f"Show Solution for Question {index + 1}"):
             st.write(f"**Solution:** {row['solution']}")
             if pd.notna(source_link):
-                st.markdown(f"**Source:** [{source_link}]({source_link})", unsafe_allow_html=True)
+                st.markdown(f"**Source:** ({source_link})", unsafe_allow_html=True)
                 st.markdown(f"[Refer to source]({google_search_link})", unsafe_allow_html=True)
             else:
                 st.write("**Source:** No link provided.")
