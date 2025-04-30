@@ -44,7 +44,7 @@ if data is not None:
                 "<h2 style='color: #4CAF50; margin: 0;'>Welcome to the ABA ORAL EXAM PRACTICE</h2>"
                 "<p style='margin: 0;'>This application allows you to explore various question scenarios. "
                 "You can select different categories and sections to answer specific questions related to the scenario given.</p>"
-                "<p style='margin: 0;'>Please select a category and section from the dropdowns below to get started.</p>"
+                "<p style='margin: 0;'>Please expand the scenario for details, select a category and section from the dropdowns below to get started.</p>"
                 "</div>", unsafe_allow_html=True)
 
     # Get the current scenario
