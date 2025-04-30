@@ -17,8 +17,14 @@ def load_data():
 
 # Load the data
 data = load_data()
-
 if data is not None:
+    # Add a scenario number column
+    data['scenario_number'] = range(1, len(data) + 1)
+
+    # Initialize session state for current scenario index
+    if 'current_scenario_index' not in st.session_state:
+        st.session_state.current_scenario_index = 0
+
     # Welcome box at the start with adjusted size
     st.markdown("<div style='padding: 10px; border: 1px solid #4CAF50; border-radius: 5px; background-color: #f9f9f9;'>"
                 "<h2 style='color: #4CAF50; margin: 0;'>Welcome to the ABA ORAL EXAM PRACTICE</h2>"
@@ -27,13 +33,30 @@ if data is not None:
                 "<p style='margin: 0;'>Please select a category and section from the dropdowns below to get started.</p>"
                 "</div>", unsafe_allow_html=True)
 
+    # Get the current scenario
+    current_index = st.session_state.current_scenario_index
+    scenario = data['scenario'].iloc[current_index]
+
     # Display scenario in an expandable box (not expanded by default)
-    scenario = data['scenario'].unique()[0]
-    with st.expander("Scenario Overview", expanded=False):  # Changed to expanded=False
+    with st.expander("Scenario Overview", expanded=False):
         st.markdown(f"<div style='padding: 10px; border: 1px solid #4CAF50; border-radius: 5px; background-color: black; color: white;'>"
-                    f"<strong style='color:#4CAF50;'>Scenario:</strong> {scenario}<br>"
+                    f"<strong style='color:#4CAF50;'>Scenario {data['scenario_number'].iloc[current_index]}:</strong> {scenario}<br>"
                     f"This scenario covers various aspects related to the topic. Please select the category and section to explore specific questions."
                     "</div>", unsafe_allow_html=True)
+
+    # Navigation buttons for scenarios
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Previous Scenario"):
+            if current_index > 0:
+                st.session_state.current_scenario_index -= 1
+                st.experimental_rerun()
+
+    with col2:
+        if st.button("Next Scenario"):
+            if current_index < len(data) - 1:
+                st.session_state.current_scenario_index += 1
+                st.experimental_rerun()
 
     # Dropdown for category selection with bold and green label
     st.markdown("<div style='margin: 0;'><strong style='color:#4CAF50;'>Select a Category:</strong></div>", unsafe_allow_html=True)
