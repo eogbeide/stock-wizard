@@ -30,8 +30,8 @@ if data is not None:
     # Update current scenario index based on selection
     st.session_state.current_scenario_index = selected_scenario_number - 1  # Adjust for zero-based index
 
-    # Welcome box at the start with adjusted styling
-    st.markdown("<div style='padding: 10px; border: 1px solid #4CAF50; border-radius: 5px; background-color: #f9f9f9;'>"
+    # Welcome box at the start with black background
+    st.markdown("<div style='padding: 10px; border: 1px solid #4CAF50; border-radius: 5px; background-color: black; color: white;'>"
                 "<h2 style='color: #4CAF50; margin: 0;'>Welcome to the ABA ORAL EXAM PRACTICE</h2>"
                 "<p style='margin: 0;'>This application allows you to explore various question scenarios. "
                 "You can select different categories and sections to answer specific questions related to the scenario given.</p>"
@@ -48,20 +48,6 @@ if data is not None:
                     f"<strong style='color:#4CAF50;'>Scenario {selected_scenario_number}:</strong> {scenario}<br>"
                     f"This scenario covers various aspects related to the topic. Please select the category and section to explore specific questions."
                     "</div>", unsafe_allow_html=True)
-
-    # Navigation buttons for scenarios
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Previous Scenario"):
-            if current_index > 0:
-                st.session_state.current_scenario_index -= 1
-                st.rerun()
-
-    with col2:
-        if st.button("Next Scenario"):
-            if current_index < len(scenario_options) - 1:
-                st.session_state.current_scenario_index += 1
-                st.rerun()
 
     # Dropdown for category selection with bold and green label
     st.markdown("<div style='margin: 0;'><strong style='color:#4CAF50;'>Select a Category:</strong></div>", unsafe_allow_html=True)
