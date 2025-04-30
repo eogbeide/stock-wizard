@@ -1,16 +1,13 @@
 import streamlit as st
 import pandas as pd
 import requests
-from io import StringIO  # Import StringIO from the io module
-
 
 # Function to load data from GitHub
-@st.cache_data
 def load_data():
-    url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/scenarios.xls'  # Update with your raw URL
+    url = 'https://raw.githubusercontent.com/[username]/[repository]/main/scenarios.xls'  # Update with your raw URL
     response = requests.get(url)
     if response.status_code == 200:
-        with open('scenarios.xlsx', 'wb') as f:
+        with open('scenarios.xls', 'wb') as f:
             f.write(response.content)
         df = pd.read_excel('scenarios.xls')
         return df
@@ -22,10 +19,14 @@ def load_data():
 data = load_data()
 
 if data is not None:
+    # Debugging: Show the first few rows and the columns of the DataFrame
+    st.write(data.head())  # Check the DataFrame structure
+    st.write("Columns available:", data.columns.tolist())  # Show column names
+
     # Streamlit app layout
     st.title("Scenario Questions")
 
-    # Dropdowns for scenario, category, and section
+    # Ensure to use the exact column names from the DataFrame
     scenario = st.selectbox("Select a Scenario", data['scenario'].unique())
     category = st.selectbox("Select a Category", data['category'].unique())
     section = st.selectbox("Select a Section", data['section'].unique())
