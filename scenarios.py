@@ -43,6 +43,9 @@ if data is not None:
         # Clickable option to show solution and source
         if st.button("Show Solution"):
             st.write(f"**Solution:** {row['solution']}")
-            # Assuming the source is a URL; update as needed
-            source_link = row['source']  # Ensure this contains the URL
-            st.markdown(f"**Source:** [Link]({source_link})", unsafe_allow_html=True)
+            # Ensure that the source is a valid URL
+            source_link = row['source']  # This should contain the URL from the Excel file
+            if pd.notna(source_link):  # Check if the link is not NaN
+                st.markdown(f"**Source:** [Link]({source_link})", unsafe_allow_html=True)
+            else:
+                st.write("**Source:** No link provided.")
