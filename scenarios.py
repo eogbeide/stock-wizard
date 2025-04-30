@@ -4,7 +4,7 @@ import requests
 
 # Function to load data from GitHub
 def load_data():
-    url = 'https://raw.githubusercontent.com/[username]/[repository]/main/scenarios.xls'  # Update with your raw URL
+    url = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/scenarios.xls'  # Update with your raw URL
     response = requests.get(url)
     if response.status_code == 200:
         with open('scenarios.xls', 'wb') as f:
