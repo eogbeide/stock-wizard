@@ -21,7 +21,7 @@ data = load_data()
 if data is not None:
     # Display scenario in an expandable box
     scenario = data['scenario'].unique()[0]
-    with st.expander("Scenario Overview", expanded=True):
+    with st.expander("Scenario Overview: Click to Expand for Details", expanded=True):
         st.markdown(f"<div style='padding: 10px; border: 1px solid #4CAF50; border-radius: 5px; background-color: black; color: white;'>"
                     f"<strong style='color:#4CAF50;'>Scenario:</strong> {scenario}<br>"
                     f"This scenario covers various aspects related to the topic. Please select the category and section to explore specific questions."
