@@ -12,7 +12,7 @@ def load_data():
     if response.status_code == 200:
         with open('scenarios.xlsx', 'wb') as f:
             f.write(response.content)
-        df = pd.read_excel('scenarios.xlsx')
+        df = pd.read_excel('scenarios.xls')
         return df
     else:
         st.error("Failed to load data from GitHub.")
