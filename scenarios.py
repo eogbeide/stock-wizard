@@ -38,21 +38,30 @@ if data is not None:
     st.markdown("<h4 style='font-size: 16px; margin: 0;'>Questions</h4>", unsafe_allow_html=True)
     st.markdown("<hr>", unsafe_allow_html=True)  # Another horizontal line for separation
     filtered_data = data[(data['scenario'] == scenario) & (data['category'] == category) & (data['section'] == section)]
-    
+
+    # Initialize a variable to hold the source link
+    source_link = None
+    google_search_link = None
+
+    # Display questions and get the source link from the first question
     for index, row in filtered_data.iterrows():
         question = row['question']
         st.markdown(f"<h5 style='font-size: 14px; margin: 0;'>Question {index + 1}: {question}</h5>", unsafe_allow_html=True)  # Reduced font size for questions
         
-        # Create a Google search link for the source
-        source_link = row['source']
-        google_search_link = f"https://www.google.com/search?q={source_link.replace(' ', '+')}"
+        # Get source link only from the first question
+        if index == 0:
+            source_link = row['source']
+            google_search_link = f"https://www.google.com/search?q={source_link.replace(' ', '+')}"
 
-        # Clickable option to show solution and source
+        # Clickable option to show solution
         if st.button(f"Show Solution for Question {index + 1}"):
             st.write(f"**Solution:** {row['solution']}")
-            if pd.notna(source_link):
-                st.markdown(f"**Source:** [{source_link}]({source_link})", unsafe_allow_html=True)
-                st.markdown(f"[Refer to source]({google_search_link})", unsafe_allow_html=True)
-            else:
-                st.write("**Source:** No link provided.")
-        st.markdown("<hr>", unsafe_allow_html=True)  # Separator after each solution
+
+    # Display source link once after all questions
+    if pd.notna(source_link):
+        st.markdown(f"**Source:** [{source_link}]({source_link})", unsafe_allow_html=True)
+        st.markdown(f"[Refer to source]({google_search_link})", unsafe_allow_html=True)
+    else:
+        st.write("**Source:** No link provided.")
+
+    st.markdown("<hr>", unsafe_allow_html=True)  # Separator after the source
