@@ -25,6 +25,14 @@ if data is not None:
     if 'current_scenario_index' not in st.session_state:
         st.session_state.current_scenario_index = 0
 
+    # Dropdown for selecting scenario number
+    st.markdown("<div style='margin: 0;'><strong style='color:#4CAF50;'>Select Scenario Number:</strong></div>", unsafe_allow_html=True)
+    scenario_options = data['scenario_number'].tolist()
+    selected_scenario_number = st.selectbox("", scenario_options)
+
+    # Update current scenario index based on selection
+    st.session_state.current_scenario_index = selected_scenario_number - 1  # Adjust for zero-based index
+
     # Navigation buttons for scenarios at the top
     col1, col2 = st.columns(2)
     with col1:
