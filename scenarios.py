@@ -26,8 +26,11 @@ if data is not None:
     # Streamlit app layout
     st.title("Scenario Questions")
 
-    # Ensure to use the exact column names from the DataFrame
-    scenario = st.selectbox("Select a Scenario", data['scenario'].unique())
+    # Display scenario as text
+    scenario = data['scenario'].unique()[0]  # Assuming you want to display the first scenario
+    st.markdown(f"**Scenario:** {scenario}")
+
+    # Dropdowns for category and section
     category = st.selectbox("Select a Category", data['category'].unique())
     section = st.selectbox("Select a Section", data['section'].unique())
 
