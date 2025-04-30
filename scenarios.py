@@ -50,13 +50,13 @@ if data is not None:
         if st.button("Previous Scenario"):
             if current_index > 0:
                 st.session_state.current_scenario_index -= 1
-                st.experimental_rerun()
+                st.rerun()  # Updated to st.rerun()
 
     with col2:
         if st.button("Next Scenario"):
             if current_index < len(data) - 1:
                 st.session_state.current_scenario_index += 1
-                st.experimental_rerun()
+                st.rerun()  # Updated to st.rerun()
 
     # Dropdown for category selection with bold and green label
     st.markdown("<div style='margin: 0;'><strong style='color:#4CAF50;'>Select a Category:</strong></div>", unsafe_allow_html=True)
