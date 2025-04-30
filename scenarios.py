@@ -34,13 +34,13 @@ if data is not None:
     section = st.selectbox("Select a Section", filtered_sections)
 
     # Display questions based on selections
-    st.subheader("Question")
+    st.markdown("<h4 style='font-size: 16px;'>Questions</h4>", unsafe_allow_html=True)
     st.markdown("<hr>", unsafe_allow_html=True)  # Another horizontal line for separation
     filtered_data = data[(data['scenario'] == scenario) & (data['category'] == category) & (data['section'] == section)]
     
     for index, row in filtered_data.iterrows():
         question = row['question']
-        st.markdown(f"### Question {index + 1}: {question}")  # Display questions with a header style
+        st.markdown(f"<h5 style='font-size: 14px;'>Question {index + 1}: {question}</h5>", unsafe_allow_html=True)  # Reduced font size for questions
         st.markdown("<hr>", unsafe_allow_html=True)  # Horizontal line for each question
         
         # Create a Google search link for the source
