@@ -24,7 +24,7 @@ if data is not None:
     #st.write("Columns available:", data.columns.tolist())  # Show column names
 
     # Streamlit app layout
-    st.title("Scenario Questions")
+    #st.title("Scenario Questions")
 
     # Display scenario as formatted text
     scenario = data['scenario'].unique()[0]  # Assuming you want to display the first scenario
