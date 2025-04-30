@@ -40,12 +40,12 @@ if data is not None:
 
     # Get the current scenario
     current_index = st.session_state.current_scenario_index
-    scenario = data['scenario'].iloc[current_index]
+    scenario = data.loc[data['scenario#'] == selected_scenario_number, 'scenario'].values[0]
 
     # Display scenario in an expandable box (not expanded by default)
     with st.expander("Scenario Overview", expanded=False):
         st.markdown(f"<div style='padding: 10px; border: 1px solid #4CAF50; border-radius: 5px; background-color: black; color: white;'>"
-                    f"<strong style='color:#4CAF50;'>Scenario {data['scenario#'].iloc[current_index]}:</strong> {scenario}<br>"
+                    f"<strong style='color:#4CAF50;'>Scenario {selected_scenario_number}:</strong> {scenario}<br>"
                     f"This scenario covers various aspects related to the topic. Please select the category and section to explore specific questions."
                     "</div>", unsafe_allow_html=True)
 
@@ -59,7 +59,7 @@ if data is not None:
 
     with col2:
         if st.button("Next Scenario"):
-            if current_index < len(data) - 1:
+            if current_index < len(scenario_options) - 1:
                 st.session_state.current_scenario_index += 1
                 st.rerun()
 
@@ -75,7 +75,7 @@ if data is not None:
     # Display questions based on selections
     st.markdown("<h4 style='font-size: 16px; margin: 0;'>Questions</h4>", unsafe_allow_html=True)
     st.markdown("<hr>", unsafe_allow_html=True)  # Another horizontal line for separation
-    filtered_data = data[(data['scenario'] == scenario) & (data['category'] == category) & (data['section'] == section)]
+    filtered_data = data[(data['scenario#'] == selected_scenario_number) & (data['category'] == category) & (data['section'] == section)]
     
     for index, row in filtered_data.iterrows():
         question = row['question']
