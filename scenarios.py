@@ -19,10 +19,14 @@ def load_data():
 data = load_data()
 
 if data is not None:
-    # Display scenario as formatted text
+    # Display scenario as formatted text with single line spacing
     scenario = data['scenario'].unique()[0]  # Assuming you want to display the first scenario
-    formatted_scenario = f"### Scenario Overview\n\n**Scenario:** {scenario}\n\nThis scenario covers various aspects related to the topic. Please select the category and section to explore specific questions."
-    st.markdown(formatted_scenario)
+    formatted_scenario = f"""
+    <h3>Scenario Overview</h3>
+    <p style="line-height: 1.0;"><strong>Scenario:</strong> {scenario}</p>
+    <p style="line-height: 1.0;">This scenario covers various aspects related to the topic. Please select the category and section to explore specific questions.</p>
+    """
+    st.markdown(formatted_scenario, unsafe_allow_html=True)
 
     # Dropdowns for category and section
     category = st.selectbox("Select a Category", data['category'].unique())
