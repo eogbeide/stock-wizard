@@ -19,13 +19,6 @@ def load_data():
 data = load_data()
 
 if data is not None:
-    # Debugging: Show the first few rows and the columns of the DataFrame
-    #st.write(data.head())  # Check the DataFrame structure
-    #st.write("Columns available:", data.columns.tolist())  # Show column names
-
-    # Streamlit app layout
-    #st.title("Scenario Questions")
-
     # Display scenario as formatted text
     scenario = data['scenario'].unique()[0]  # Assuming you want to display the first scenario
     formatted_scenario = f"### Scenario Overview\n\n**Scenario:** {scenario}\n\nThis scenario covers various aspects related to the topic. Please select the category and section to explore specific questions."
@@ -36,7 +29,7 @@ if data is not None:
     section = st.selectbox("Select a Section", data['section'].unique())
 
     # Display questions based on selections
-    st.subheader("Question")
+    st.subheader("Questions")
     filtered_data = data[(data['scenario'] == scenario) & (data['category'] == category) & (data['section'] == section)]
     
     for index, row in filtered_data.iterrows():
@@ -44,6 +37,6 @@ if data is not None:
         st.write(question)
         
         # Clickable option to show solution and source
-        if st.button(f"Show solution for: {question}"):
+        if st.button("Show Solution"):
             st.write(f"**Solution:** {row['solution']}")
             st.write(f"**Source:** {row['source']}")
