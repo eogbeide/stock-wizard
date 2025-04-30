@@ -40,12 +40,17 @@ if data is not None:
         question = row['question']
         st.write(question)
         
+        # Create a Google search link for the source
+        source_link = row['source']  # This should contain the URL from the Excel file
+        google_search_link = f"https://www.google.com/search?q={source_link.replace(' ', '+')}"
+
         # Clickable option to show solution and source
         if st.button("Show Solution"):
             st.write(f"**Solution:** {row['solution']}")
             # Ensure that the source is a valid URL
-            source_link = row['source']  # This should contain the URL from the Excel file
             if pd.notna(source_link):  # Check if the link is not NaN
                 st.markdown(f"**Source:** [Link]({source_link})", unsafe_allow_html=True)
+                # Display the Google search link
+                st.markdown(f"[Search Google for this source]({google_search_link})", unsafe_allow_html=True)
             else:
                 st.write("**Source:** No link provided.")
