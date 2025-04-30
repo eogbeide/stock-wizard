@@ -36,7 +36,7 @@ if data is not None:
     section = st.selectbox("Select a Section", data['section'].unique())
 
     # Display questions based on selections
-    st.subheader("Questions")
+    st.subheader("Question")
     filtered_data = data[(data['scenario'] == scenario) & (data['category'] == category) & (data['section'] == section)]
     
     for index, row in filtered_data.iterrows():
