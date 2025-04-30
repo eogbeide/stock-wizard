@@ -20,8 +20,8 @@ data = load_data()
 
 if data is not None:
     # Debugging: Show the first few rows and the columns of the DataFrame
-    st.write(data.head())  # Check the DataFrame structure
-    st.write("Columns available:", data.columns.tolist())  # Show column names
+    #st.write(data.head())  # Check the DataFrame structure
+    #st.write("Columns available:", data.columns.tolist())  # Show column names
 
     # Streamlit app layout
     st.title("Scenario Questions")
