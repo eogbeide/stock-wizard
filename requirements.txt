@@ -19,3 +19,4 @@ pyttsx3
 gTTS
 requests
 llama_index
+xlrd
