@@ -27,12 +27,14 @@ if data is not None:
                     f"This scenario covers various aspects related to the topic. Please select the category and section to explore specific questions."
                     "</div>", unsafe_allow_html=True)
 
-    # Dropdown for category selection
-    category = st.selectbox("Select a Category", data['category'].unique())
+    # Dropdown for category selection with bold and green label
+    st.markdown("<strong style='color:#4CAF50;'>Select a Category:</strong>", unsafe_allow_html=True)
+    category = st.selectbox("", data['category'].unique())
 
     # Filter sections based on selected scenario and category
     filtered_sections = data[data['category'] == category]['section'].unique()
-    section = st.selectbox("Select a Section", filtered_sections)
+    st.markdown("<strong style='color:#4CAF50;'>Select a Section:</strong>", unsafe_allow_html=True)
+    section = st.selectbox("", filtered_sections)
 
     # Display questions based on selections
     st.markdown("<h4 style='font-size: 16px; margin: 0;'>Questions</h4>", unsafe_allow_html=True)
@@ -51,7 +53,7 @@ if data is not None:
         if st.button(f"Show Solution for Question {index + 1}"):
             st.write(f"**Solution:** {row['solution']}")
             if pd.notna(source_link):
-                st.markdown(f"**Source:** ({source_link})", unsafe_allow_html=True)
+                st.markdown(f"**Source:** [{source_link}]({source_link})", unsafe_allow_html=True)
                 st.markdown(f"[Refer to source]({google_search_link})", unsafe_allow_html=True)
             else:
                 st.write("**Source:** No link provided.")
