@@ -19,12 +19,13 @@ def load_data():
 data = load_data()
 
 if data is not None:
-    # Display scenario as formatted text with single line spacing
+    # Display scenario in an expandable box
     scenario = data['scenario'].unique()[0]
-    st.markdown(f"<h3 style='color:#4CAF50;'>Scenario Overview</h3>", unsafe_allow_html=True)
-    st.markdown(f"<p style='line-height: 1.2; margin: 0;'><strong>Scenario:</strong> {scenario}</p>", unsafe_allow_html=True)
-    st.markdown("<p style='line-height: 1.2; margin: 0;'>This scenario covers various aspects related to the topic. Please select the category and section to explore specific questions.</p>", unsafe_allow_html=True)
-    st.markdown("<hr>", unsafe_allow_html=True)  # Horizontal line for separation
+    with st.expander("Scenario Overview", expanded=True):
+        st.markdown(f"<div style='padding: 10px; border: 1px solid #4CAF50; border-radius: 5px; background-color: #f9f9f9;'>"
+                    f"<strong style='color:#4CAF50;'>Scenario:</strong> {scenario}<br>"
+                    f"This scenario covers various aspects related to the topic. Please select the category and section to explore specific questions."
+                    "</div>", unsafe_allow_html=True)
 
     # Dropdown for category selection
     category = st.selectbox("Select a Category", data['category'].unique())
