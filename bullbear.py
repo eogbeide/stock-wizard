@@ -37,7 +37,7 @@ ticker = st.selectbox("Select Stock Ticker:", options=sorted([
 # Button to fetch and process data
 if st.button("Forecast"):
     # Step 1: Download historical data from Yahoo Finance
-    start_date = '2018-01-01'
+    start_date = '2010-01-01'
     end_date = pd.to_datetime("today")
     data = yf.download(ticker, start=start_date, end=end_date)
 
