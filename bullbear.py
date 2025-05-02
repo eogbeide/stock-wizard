@@ -17,6 +17,10 @@ def compute_bollinger_bands(data, window=20, num_sd=2):
 
 # Function to check stationarity
 def check_stationarity(data):
+    if data.empty:
+        return False
+    if data.nunique() <= 1:  # Check if all values are constant
+        return False
     result = adfuller(data)
     return result[1] < 0.05  # p-value
 
@@ -44,8 +48,8 @@ if st.button("Forecast"):
 
     # Check for stationarity
     if not check_stationarity(prices):
-        st.error("The time series is not stationary. Consider differencing the data.")
-        prices_diff = prices.diff().dropna()
+        st.error("The time series is not stationary or has insufficient variation.")
+        prices_diff = prices.diff().dropna()  # Consider differencing the data if needed
     else:
         prices_diff = prices  # Use original prices if stationary
 
