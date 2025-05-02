@@ -4,7 +4,7 @@ import numpy as np
 import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import timedelta
-import matplotlib.pyplot as plt  # Ensure Matplotlib is imported
+import matplotlib.pyplot as plt
 
 # Function to compute Bollinger Bands
 def compute_bollinger_bands(data, window=20, num_sd=2):
@@ -79,8 +79,8 @@ if st.button("Forecast"):
 
             # Plot price and 200-day EMA
             ax1.set_title(f'{ticker} Price Forecast, EMA, MA, and Bollinger Bands', fontsize=16)
-            ax1.plot(prices[-360:], label='Last 12 Months Historical Data', color='blue')  # Last 12 months of historical data
-            ax1.plot(ema_200[-360:], label='200-Day EMA', color='green', linestyle='--')  # 200-day EMA for the last 12 months
+            ax1.plot(prices[-360:], label='Last 12 Months Historical Data', color='blue')
+            ax1.plot(ema_200[-360:], label='200-Day EMA', color='green', linestyle='--')
             ax1.plot(forecast_index, forecast_values, label='1 Month Forecast', color='orange')
             ax1.fill_between(forecast_index, conf_int.iloc[:, 0], conf_int.iloc[:, 1], color='orange', alpha=0.3)
 
@@ -89,14 +89,14 @@ if st.button("Forecast"):
 
             # Plot Bollinger Bands
             ax1.plot(lower_band[-360:], label='Bollinger Lower Band', color='red', linestyle='--')
-            ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='purple', linestyle='--')  # Upper Bollinger Band
+            ax1.plot(upper_band[-360:], label='Bollinger Upper Band', color='purple', linestyle='--')
 
             # Get the current values
-            current_ema_value = float(ema_200.iloc[-1])  # Current 200-day EMA
-            current_lower_band_value = float(lower_band.iloc[-1])  # Current lower Bollinger Band
-            current_upper_band_value = float(upper_band.iloc[-1])  # Current upper Bollinger Band
-            current_moving_average_value = float(moving_average.iloc[-1])  # Current 30-Day MA
-            current_close_value = float(prices.iloc[-1])  # Current Close price
+            current_ema_value = float(ema_200.iloc[-1])
+            current_lower_band_value = float(lower_band.iloc[-1])
+            current_upper_band_value = float(upper_band.iloc[-1])
+            current_moving_average_value = float(moving_average.iloc[-1])
+            current_close_value = float(prices.iloc[-1])
 
             # Ensure that prices[-360:] is not empty and has enough data
             if len(prices) > 360:
