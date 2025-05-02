@@ -6,16 +6,7 @@ from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import timedelta
 import matplotlib.pyplot as plt  # Ensure Matplotlib is imported
 
-# Function to compute RSI
-def compute_rsi(data, window=14):
-    delta = data.diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=window).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=window).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
-
-# Function to calculate Bollinger Bands
+# Function to compute Bollinger Bands
 def compute_bollinger_bands(data, window=20, num_sd=2):
     middle_band = data.rolling(window=window).mean()
     std_dev = data.rolling(window=window).std()
@@ -68,7 +59,8 @@ if st.button("Forecast"):
     order = (1, 1, 1)  # Example values
     seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
 
-    model = SARIMAX(prices, order=order, seasonal_order=seasonal_order)
+    # Fit the model with enforce_stationarity set to False
+    model = SARIMAX(prices, order=order, seasonal_order=seasonal_order, enforce_stationarity=False)
     model_fit = model.fit(disp=False)
 
     # Step 4: Forecast the next one month (30 days)
