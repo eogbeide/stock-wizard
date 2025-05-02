@@ -51,9 +51,7 @@ if st.button("Forecast"):
     data = yf.download(ticker, start=start_date, end=end_date)
 
     # Step 2: Prepare the data
-    prices = data['Close']  # Use the closing prices
-    prices = prices.asfreq('D')  # Set frequency to daily
-    prices.fillna(method='ffill', inplace=True)  # Forward fill to handle missing values
+    prices = data['Close'].asfreq('D').fillna(method='ffill')  # Daily frequency and forward fill
 
     # Calculate 200-day EMA
     ema_200 = prices.ewm(span=200, adjust=False).mean()
@@ -64,11 +62,11 @@ if st.button("Forecast"):
     # Calculate Bollinger Bands
     lower_band, middle_band, upper_band = compute_bollinger_bands(prices)
 
-    # Step 3: Fit the SARIMA model
+    # Step 3: Fit the SARIMA model with specified parameters
     order = (1, 1, 1)  # Example values
     seasonal_order = (1, 1, 1, 12)  # Example values for monthly seasonality
 
-    model = SARIMAX(prices, order=order, seasonal_order=seasonal_order)
+    model = SARIMAX(prices, order=order, seasonal_order=seasonal_order, transparams=False)
     model_fit = model.fit(disp=False)
 
     # Step 4: Forecast the next one month (30 days)
