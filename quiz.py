@@ -1,11 +1,11 @@
 import streamlit as st
 import pandas as pd
 
-# Load data from CSV on GitHub
+# Load data from Excel on GitHub
 def load_data():
-    url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/quiz.csv"
+    url = "https://github.com/eogbeide/stock-wizard/raw/main/quiz.xlsx"  # Link to the Excel file
     try:
-        quiz_data = pd.read_csv(url, encoding='ISO-8859-1')
+        quiz_data = pd.read_excel(url)
         return quiz_data
     except Exception as e:
         st.error(f"Error loading data: {e}")
