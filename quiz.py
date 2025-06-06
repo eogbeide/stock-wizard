@@ -13,7 +13,7 @@ def load_data():
     url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/quiz.csv"
     try:
         quiz_data = pd.read_csv(url, encoding='ISO-8859-1')
-        return df
+        return quiz_data
     except Exception as e:
         st.error(f"Error loading data: {e}")
         return pd.DataFrame()  # Return an empty DataFrame
