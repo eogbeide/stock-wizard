@@ -15,7 +15,7 @@ def load_data():
 quiz_data = load_data()
 
 # Debugging: Display the columns in the DataFrame
-#st.write("Columns in quiz_data:", quiz_data.columns.tolist())
+st.write("Columns in quiz_data:", quiz_data.columns.tolist())
 
 # Sidebar for subject and topic selection
 st.sidebar.title('Quiz Navigation')
@@ -48,12 +48,15 @@ if not quiz_data.empty:
                 # Display the question
                 st.write(f"### Question {index + 1}: {question_row['Question']}")
                 
-                # Radio buttons for answers
-                options = [question_row['Answer'], "Option 2", "Option 3", "Option 4"]  # Adjust options as needed
-                answer = st.radio("Select your answer:", options)
+                # Prepare options based on the Answer column
+                options = question_row['Answer'].split(';')  # Assuming answers are separated by semicolons
+                option_labels = ['A', 'B', 'C', 'D']
+                answer_options = {f"{option_labels[i]}: {options[i].strip()}" for i in range(len(options)) if i < 4}
+
+                answer = st.radio("Select your answer:", answer_options)
                 
                 if st.button('Submit'):
-                    if answer == question_row['Answer']:
+                    if answer.split(': ')[1] == question_row['Answer'].split(';')[0].strip():  # Check against the correct answer
                         st.success("Correct!")
                     else:
                         st.error("Incorrect!")
@@ -67,6 +70,12 @@ if not quiz_data.empty:
 
         # Display the current question and passage
         display_question(st.session_state.question_index)
+
+        # Next navigation button
+        if st.button('Next'):
+            st.session_state.question_index += 1
+            st.experimental_rerun()  # Refresh the app to show the next question
+
     except KeyError as e:
         st.error(f"Column not found: {e}")
 else:
