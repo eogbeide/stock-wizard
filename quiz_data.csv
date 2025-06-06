@@ -1,0 +1,19 @@
+﻿Subject,Topic,Passage,Question,Answer,Explanation
+Biochemistry,Metabolism,"Regulation of Hepatic Metabolism during Fasting and Feeding
+Hepatocytes adapt dynamically to changes in nutrient availability by altering the activity of key enzymes in glycolysis, gluconeogenesis, and lipid metabolism. During fasting, decreased insulin and elevated glucagon trigger protein kinase A (PKA)–mediated phosphorylation of several metabolic enzymes. For example, phosphorylation of phosphofructokinase-2/fructose-2,6-bisphosphatase (PFK-2/FBPase-2) shifts the enzyme’s activity toward its FBPase-2 domain, decreasing cellular levels of fructose-2,6-bisphosphate (F2,6BP). As F2,6BP is a potent allosteric activator of phosphofructokinase-1 (PFK-1, the rate-limiting enzyme of glycolysis) and an inhibitor of fructose-1,6-bisphosphatase (FBPase-1, a rate-limiting enzyme of gluconeogenesis), reduced F2,6BP levels suppress glycolysis and favor gluconeogenesis. Simultaneously, PKA phosphorylates and activates hormone-sensitive lipase in adipose tissue, increasing free fatty acid (FFA) delivery to the liver for β-oxidation and ketogenesis.",Which hormonal change primarily initiates PKA‐mediated phosphorylation of PFK‐2/FBPase‐2 in hepatocytes during fasting?,"A. Increased insulin
+B. Increased glucagon
+C. Decreased cortisol
+D. Increased epinephrine
+E. Decreased glucagon","During fasting, insulin levels fall and glucagon levels rise. Elevated glucagon activates adenylate cyclase in hepatocytes, raising cAMP, which activates PKA. PKA then phosphorylates PFK‐2/FBPase‐2.
+Choice A is incorrect: increased insulin would cause dephosphorylation, not PKA activation.
+Choice C is incorrect: cortisol rises during stress/fasting; however, the acute phosphorylation event is driven by glucagon via PKA.
+Choice D (epinephrine) can also activate PKA in some tissues, but in the liver the primary hormonal driver of this specific switch is glucagon.
+Choice E is the opposite of the correct change."
+Biochemistry,Metabolism,"Regulation of Hepatic Metabolism during Fasting and Feeding
+Hepatocytes adapt dynamically to changes in nutrient availability by altering the activity of key enzymes in glycolysis, gluconeogenesis, and lipid metabolism. During fasting, decreased insulin and elevated glucagon trigger protein kinase A (PKA)–mediated phosphorylation of several metabolic enzymes. For example, phosphorylation of phosphofructokinase-2/fructose-2,6-bisphosphatase (PFK-2/FBPase-2) shifts the enzyme’s activity toward its FBPase-2 domain, decreasing cellular levels of fructose-2,6-bisphosphate (F2,6BP). As F2,6BP is a potent allosteric activator of phosphofructokinase-1 (PFK-1, the rate-limiting enzyme of glycolysis) and an inhibitor of fructose-1,6-bisphosphatase (FBPase-1, a rate-limiting enzyme of gluconeogenesis), reduced F2,6BP levels suppress glycolysis and favor gluconeogenesis. Simultaneously, PKA phosphorylates and activates hormone-sensitive lipase in adipose tissue, increasing free fatty acid (FFA) delivery to the liver for β-oxidation and ketogenesis.","Phosphorylation of PFK‐2/FBPase‐2 shifts its activity to the FBPase‐2 domain. What is the immediate consequence of this shift on fructose‐2,6-bisphosphate (F2,6BP) levels and glycolysis?","A. ↑ F2,6BP; ↑ glycolysis
+B. ↑ F2,6BP; ↓ glycolysis
+C. ↓ F2,6BP; ↑ glycolysis
+D. ↓ F2,6BP; ↓ glycolysis
+E. No change in F2,6BP; ↑ glycolysis","PFK‐2/FBPase‐2 is a bifunctional enzyme. When PKA phosphorylates it, the FBPase‐2 (bisphosphatase) activity predominates, which hydrolyzes F2,6BP to fructose-6-phosphate. Therefore, cellular F2,6BP levels decrease.
+F2,6BP is a potent allosteric activator of PFK-1 (glycolysis) and inhibitor of FBPase-1 (gluconeogenesis). Lower F2,6BP removes stimulation of PFK-1, thereby suppressing glycolysis.
+Choices A–C and E are incorrect because they either confuse the direction of F2,6BP change or its effect on glycolysis."
