@@ -32,9 +32,13 @@ if not quiz_data.empty:
         # Further filter questions based on selected topic
         filtered_quiz = filtered_quiz[filtered_quiz['Topic'] == selected_topic]
 
-        # Initialize session state for tracking question index
+        # Initialize session state for tracking question index and answer
         if 'question_index' not in st.session_state:
             st.session_state.question_index = 0
+        if 'selected_answer' not in st.session_state:
+            st.session_state.selected_answer = None
+        if 'submitted' not in st.session_state:
+            st.session_state.submitted = False
 
         # Function to display the current question and associated passage
         def display_question(index):
@@ -53,14 +57,21 @@ if not quiz_data.empty:
                 correct_answer = options[0].strip()  # First option is the correct answer
 
                 # Show only the correct answer as a radio button
-                answer = st.radio("Select your answer:", [correct_answer])
+                answer = st.radio("Select your answer:", [correct_answer], key="answer_radio")
                 
+                # Store the selected answer
+                st.session_state.selected_answer = answer[0]
+
                 if st.button('Submit'):
-                    if answer == correct_answer:  # Check against the correct answer
+                    st.session_state.submitted = True
+                    if st.session_state.selected_answer == correct_answer:  # Check against the correct answer
                         st.success("Correct!")
                     else:
                         st.error("Incorrect!")
                     st.write(f"**Explanation:** {question_row['Explanation']}")
+                else:
+                    st.session_state.submitted = False
+                
                 return True
             else:
                 st.write("Quiz completed! Thank you for participating.")
@@ -74,11 +85,13 @@ if not quiz_data.empty:
                 if st.button('Back'):
                     if st.session_state.question_index > 0:
                         st.session_state.question_index -= 1
+                        st.session_state.selected_answer = None  # Reset selected answer
 
             with col2:
                 if st.button('Next'):
                     if st.session_state.question_index < len(filtered_quiz) - 1:
                         st.session_state.question_index += 1
+                        st.session_state.selected_answer = None  # Reset selected answer
 
     except KeyError as e:
         st.error(f"Column not found: {e}")
