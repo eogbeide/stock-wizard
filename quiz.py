@@ -48,9 +48,9 @@ if not quiz_data.empty:
             if index < len(filtered_quiz):
                 question_row = filtered_quiz.iloc[index]
                 
-                # Display the passage, formatting it into paragraphs
+                # Display the passage, formatting it into paragraphs with spacing
                 st.write("### Passage:")
-                passage = question_row['Passage'].replace('\n', '<br>')  # Replace newlines with <br> for HTML formatting
+                passage = question_row['Passage'].replace('\n', '<br><br>')  # Replace newlines with <br> for spacing
                 st.markdown(passage, unsafe_allow_html=True)  # Display formatted passage
                 
                 # Text-to-speech button
