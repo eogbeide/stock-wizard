@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+from streamlit_text_to_speech import st_text_to_speech
 
 # Load data from Excel on GitHub
 def load_data():
@@ -15,7 +16,7 @@ def load_data():
 quiz_data = load_data()
 
 # Debugging: Display the columns in the DataFrame
-#st.write("Columns in quiz_data:", quiz_data.columns.tolist())
+st.write("Columns in quiz_data:", quiz_data.columns.tolist())
 
 # Sidebar for subject and topic selection
 st.sidebar.title('Quiz Navigation')
@@ -49,6 +50,9 @@ if not quiz_data.empty:
                 st.write(f"### Passage:")
                 st.write(question_row['Passage'])  # Show the passage
                 
+                # Text-to-speech button
+                st_text_to_speech(question_row['Passage'])
+
                 # Display the question
                 st.write(f"### Question {index + 1}: {question_row['Question']}")
                 
