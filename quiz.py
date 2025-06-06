@@ -7,7 +7,7 @@ import re
 #today = datetime.datetime.now().date()
 #st.write(f"Last updated: {today}")
 
-@st.cache_data
+#@st.cache_data
 # Load data from CSV on GitHub
 def load_data():
     url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/quiz.csv"
