@@ -15,7 +15,7 @@ def load_data():
 quiz_data = load_data()
 
 # Debugging: Display the columns in the DataFrame
-#st.write("Columns in quiz_data:", quiz_data.columns.tolist())
+st.write("Columns in quiz_data:", quiz_data.columns.tolist())
 
 # Sidebar for subject and topic selection
 st.sidebar.title('Quiz Navigation')
@@ -50,13 +50,13 @@ if not quiz_data.empty:
                 
                 # Prepare options based on the Answer column
                 options = question_row['Answer'].split(';')  # Assuming answers are separated by semicolons
-                option_labels = ['A', 'B', 'C', 'D']
-                answer_options = {f"{option_labels[i]}: {options[i].strip()}" for i in range(len(options)) if i < 4}
+                correct_answer = options[0].strip()  # First option is the correct answer
 
-                answer = st.radio("Select your answer:", answer_options)
+                # Show only the correct answer as a radio button
+                answer = st.radio("Select your answer:", [correct_answer])
                 
                 if st.button('Submit'):
-                    if answer.split(': ')[1] == options[0].strip():  # Check against the correct answer
+                    if answer == correct_answer:  # Check against the correct answer
                         st.success("Correct!")
                     else:
                         st.error("Incorrect!")
