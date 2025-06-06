@@ -61,19 +61,24 @@ if not quiz_data.empty:
                     else:
                         st.error("Incorrect!")
                     st.write(f"**Explanation:** {question_row['Explanation']}")
-                    
-                    # Move to the next question
-                    st.session_state.question_index += 1
                 return True
             else:
                 st.write("Quiz completed! Thank you for participating.")
-                st.session_state.question_index = 0  # Reset for future quizzes
                 return False
 
         # Display the current question and passage
         if display_question(st.session_state.question_index):
-            if st.button('Next'):
-                st.session_state.question_index += 1  # Move to the next question
+            col1, col2 = st.columns(2)
+
+            with col1:
+                if st.button('Back'):
+                    if st.session_state.question_index > 0:
+                        st.session_state.question_index -= 1
+
+            with col2:
+                if st.button('Next'):
+                    if st.session_state.question_index < len(filtered_quiz) - 1:
+                        st.session_state.question_index += 1
 
     except KeyError as e:
         st.error(f"Column not found: {e}")
