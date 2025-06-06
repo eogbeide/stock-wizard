@@ -53,19 +53,19 @@ if not quiz_data.empty:
                 st.write(f"### Question {index + 1}: {question_row['Question']}")
                 
                 # Prepare all options from the Answer column
-                options = question_row['Answer'].strip()  # Get the entire answer text
-                answer_display = options  # Display the full answer in the radio button
+                options = question_row['Answer'].split(';')  # Assuming answers are separated by semicolons
+                options = [option.strip() for option in options]  # Clean up options
 
-                # Show the answer in a single radio button
+                # Show all options in a single radio button
                 st.write("Click to select your answer:")
-                selected_option = st.radio("Select your answer:", [answer_display], key="answer_radio")
+                selected_option = st.radio("Select your answer:", options, key="answer_radio")
 
                 # Submit button to check the answer
                 if st.button('Submit'):
                     st.session_state.submitted = True
-                    st.session_state.selected_answer = selected_option[0]  # Store selected answer
+                    st.session_state.selected_answer = selected_option  # Store selected answer
 
-                    correct_answer = options  # Assume the entire answer is the correct answer
+                    correct_answer = options[0].strip()  # First option is assumed to be the correct answer
                     if st.session_state.selected_answer == correct_answer:
                         st.success("Correct!")
                     else:
