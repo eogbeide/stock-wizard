@@ -15,7 +15,7 @@ def load_data():
 quiz_data = load_data()
 
 # Debugging: Display the columns in the DataFrame
-#st.write("Columns in quiz_data:", quiz_data.columns.tolist())
+st.write("Columns in quiz_data:", quiz_data.columns.tolist())
 
 # Sidebar for subject and topic selection
 st.sidebar.title('Quiz Navigation')
@@ -60,6 +60,18 @@ if not quiz_data.empty:
                 st.write("Click to select your answer:")
                 st.radio("Select your answer:", options, key="answer_radio")
 
+                # Submit button to check the answer
+                if st.button('Submit'):
+                    st.session_state.submitted = True
+                    st.session_state.selected_answer = st.session_state.answer_radio  # Store selected answer
+
+                    correct_answer = options[0].strip()  # First option is the correct answer
+                    if st.session_state.selected_answer == correct_answer:
+                        st.success("Correct!")
+                    else:
+                        st.error("Incorrect!")
+                    st.write(f"**Explanation:** {question_row['Explanation']}")
+
                 return True
             else:
                 st.write("Quiz completed! Thank you for participating.")
@@ -79,16 +91,7 @@ if not quiz_data.empty:
                 if st.button('Next'):
                     if st.session_state.question_index < len(filtered_quiz) - 1:
                         st.session_state.question_index += 1
-                        st.session_state.selected_answer = st.session_state.answer_radio  # Store selected answer
-
-                    # Check if the answer is correct when clicking Next
-                    if st.session_state.selected_answer:
-                        correct_answer = options[0].strip()  # First option is the correct answer
-                        if st.session_state.selected_answer == correct_answer:
-                            st.success("Correct!")
-                        else:
-                            st.error("Incorrect!")
-                        st.write(f"**Explanation:** {question_row['Explanation']}")
+                        st.session_state.selected_answer = None  # Reset selected answer
 
     except KeyError as e:
         st.error(f"Column not found: {e}")
