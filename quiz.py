@@ -1,4 +1,4 @@
-import streamlit as stb
+import streamlit as st
 import pandas as pd
 
 # Load data from Excel on GitHub
