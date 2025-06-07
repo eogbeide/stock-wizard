@@ -5,9 +5,10 @@ import tempfile
 
 # Load data from Excel on GitHub
 def load_data():
-    url = "https://github.com/eogbeide/stock-wizard/raw/main/Product.xlsx"  # Update with your actual GitHub URL
+    url = "https://raw.githubusercontent.com/yourusername/repo/branch/path/to/product.xlsx"  # Update with your actual URL
     try:
         data = pd.read_excel(url)
+        st.write(data)  # Display the DataFrame for debugging
         return data
     except Exception as e:
         st.error(f"Error loading data: {e}")
