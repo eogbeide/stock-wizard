@@ -48,22 +48,24 @@ def show_item(i: int):
     if st.button("🔊 Read Passage Aloud", key=f"tts_passage_{i}"):
         play_tts(row['Passage'])
 
-    # Q&A block
+    # Build Q&A text
     qa_text = (
-        f"Question {i+1}: {row['Question']}\n\n"
+        f"Question {i+1}: {row['Question']}\n"
         "Answers:\n" + "\n".join(f"- {opt.strip()}" for opt in row['Answer'].split(';'))
     )
     st.markdown(f"```text\n{qa_text}\n```")
-    if st.button("🔊 Read Q&A Aloud", key=f"tts_qa_{i}"):
-        play_tts(qa_text)
 
-    # Explanation
+    # Explanation (hidden until toggled)
     explanation = row.get('Explanation', '').strip()
+    if explanation and st.checkbox("Show Explanation", key=f"show_exp_{i}"):
+        st.info(explanation)
+
+    # Combined Q&A + Explanation TTS
+    full_tts_text = qa_text
     if explanation:
-        if st.checkbox("Show Explanation", key=f"show_exp_{i}"):
-            st.info(explanation)
-            if st.button("🔊 Read Explanation Aloud", key=f"tts_exp_{i}"):
-                play_tts(explanation)
+        full_tts_text += f"\nExplanation:\n{explanation}"
+    if st.button("🔊 Read Q&A + Explanation Aloud", key=f"tts_full_{i}"):
+        play_tts(full_tts_text)
 
 # Navigation
 col1, _, col2 = st.columns([1, 4, 1])
