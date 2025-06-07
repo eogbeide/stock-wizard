@@ -5,9 +5,17 @@ import tempfile
 
 # Load data from Excel on GitHub
 def load_data():
-    url = "https://github.com/eogbeide/stock-wizard/raw/main/Product.xlsx"   # Update with your actual URL
+    url = "https://github.com/eogbeide/stock-wizard/raw/main/Product.xlsx"  # Update with your actual URL
     try:
+        # Load the data
         data = pd.read_excel(url)
+        
+        # Clean the data by dropping rows with any empty cells
+        data.dropna(inplace=True)
+        
+        # Reset the index after dropping rows
+        data.reset_index(drop=True, inplace=True)
+        
         st.write(data)  # Display the DataFrame for debugging
         return data
     except Exception as e:
