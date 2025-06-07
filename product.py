@@ -5,7 +5,7 @@ import tempfile
 
 # Load data from Excel on GitHub
 def load_data():
-    url = "https://github.com/eogbeide/stock-wizard/raw/main/product.xlsx"  # Update with your actual GitHub URL
+    url = "https://github.com/eogbeide/stock-wizard/raw/main/Product.xlsx"  # Update with your actual GitHub URL
     try:
         data = pd.read_excel(url)
         return data
