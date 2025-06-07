@@ -5,10 +5,14 @@ import tempfile
 
 # Load data from Excel on GitHub
 def load_data():
-    url = "https://github.com/eogbeide/stock-wizard/raw/main/Product.xlsx"  # Update with your actual URL
+    url = "https://github.com/eogbeide/stock-wizard/raw/main/product.xlsx"  # Update with your actual URL
     try:
         # Load the data
         data = pd.read_excel(url)
+        
+        # Check the loaded data
+        st.write("Raw data loaded:")
+        st.write(data)  # Display the unprocessed DataFrame for debugging
         
         # Clean the data by dropping rows with any empty cells
         data.dropna(inplace=True)
@@ -16,7 +20,8 @@ def load_data():
         # Reset the index after dropping rows
         data.reset_index(drop=True, inplace=True)
         
-        st.write(data)  # Display the DataFrame for debugging
+        st.write("Cleaned data:")
+        st.write(data)  # Display the cleaned DataFrame for debugging
         return data
     except Exception as e:
         st.error(f"Error loading data: {e}")
