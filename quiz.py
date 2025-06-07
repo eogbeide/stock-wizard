@@ -37,31 +37,40 @@ def play_tts(text: str):
     tts = gTTS(text=text, lang='en')
     with tempfile.NamedTemporaryFile(delete=True, suffix=".mp3") as fp:
         tts.save(fp.name)
-        st.audio(fp.name)
+        st.audio(fp.name, format='audio/mp3')
 
 def show_item(i: int):
     row = filtered.iloc[i]
+
+    # Passage
     st.markdown("### Passage")
     st.markdown(row['Passage'].replace('\n', '<br><br>'), unsafe_allow_html=True)
+    if st.button("🔊 Read Passage Aloud", key=f"tts_passage_{i}"):
+        play_tts(row['Passage'])
 
-    qa_text = f"Question {i+1}: {row['Question']}\n\nAnswers:\n" + "\n".join(
-        [f"- {opt.strip()}" for opt in row['Answer'].split(';')]
+    # Q&A block
+    qa_text = (
+        f"Question {i+1}: {row['Question']}\n\n"
+        "Answers:\n" + "\n".join(f"- {opt.strip()}" for opt in row['Answer'].split(';'))
     )
     st.markdown(f"```text\n{qa_text}\n```")
-
-    if st.button("Read Q&A Aloud", key=f"tts_{i}"):
+    if st.button("🔊 Read Q&A Aloud", key=f"tts_qa_{i}"):
         play_tts(qa_text)
 
-    # Optionally show explanation below
-    if st.checkbox("Show Explanation"):
-        st.info(row.get('Explanation', 'No explanation provided.'))
+    # Explanation
+    explanation = row.get('Explanation', '').strip()
+    if explanation:
+        if st.checkbox("Show Explanation", key=f"show_exp_{i}"):
+            st.info(explanation)
+            if st.button("🔊 Read Explanation Aloud", key=f"tts_exp_{i}"):
+                play_tts(explanation)
 
 # Navigation
-col1, col2, col3 = st.columns([1,2,1])
+col1, _, col2 = st.columns([1, 4, 1])
 with col1:
     if st.button("◀️ Back") and st.session_state.idx > 0:
         st.session_state.idx -= 1
-with col3:
+with col2:
     if st.button("Next ▶️") and st.session_state.idx < len(filtered) - 1:
         st.session_state.idx += 1
 
