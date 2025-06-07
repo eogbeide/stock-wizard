@@ -1,27 +1,21 @@
-import streamlit as std
+import streamlit as st
 import pandas as pd
 from gtts import gTTS
 import tempfile
 
 # Load data from Excel on GitHub
 def load_data():
-    url = "https://github.com/eogbeide/stock-wizard/raw/main/Product.xlsx"  # Update with your actual URL
+    url = "https://github.com/eogbeide/stock-wizard/raw/main/Product.xlsx"   # Update with your actual URL
     try:
         # Load the data
         data = pd.read_excel(url)
-        
-        # Check the loaded data
-        st.write("Raw data loaded:")
-        st.write(data)  # Display the unprocessed DataFrame for debugging
         
         # Clean the data by dropping rows with any empty cells
         data.dropna(inplace=True)
         
         # Reset the index after dropping rows
         data.reset_index(drop=True, inplace=True)
-        
-        st.write("Cleaned data:")
-        st.write(data)  # Display the cleaned DataFrame for debugging
+
         return data
     except Exception as e:
         st.error(f"Error loading data: {e}")
@@ -55,22 +49,13 @@ if not product_data.empty:
             st.write(f"### Interviewer: {row['Interviewer']}")
             st.write(f"### Interviewee: {row['Interviewee']}")
 
-            # Text-to-speech for interviewer and interviewee
-            if st.button("Read Interviewer Aloud"):
-                tts = gTTS(text=row['Interviewer'], lang='en')
+            # Text-to-speech for both interviewer and interviewee
+            if st.button("Read Aloud"):
+                combined_text = f"Interviewer says: {row['Interviewer']} Interviewee replies: {row['Interviewee']}"
+                tts = gTTS(text=combined_text, lang='en')
                 with tempfile.NamedTemporaryFile(delete=True) as tmp_file:
                     tts.save(f"{tmp_file.name}.mp3")
                     st.audio(f"{tmp_file.name}.mp3")
-
-            if st.button("Read Interviewee Aloud"):
-                tts = gTTS(text=row['Interviewee'], lang='en')
-                with tempfile.NamedTemporaryFile(delete=True) as tmp_file:
-                    tts.save(f"{tmp_file.name}.mp3")
-                    st.audio(f"{tmp_file.name}.mp3")
-
-            # Dropdown for interviewee response
-            response_options = ["Select Response"] + row['Interviewee'].split(';')  # Assuming multiple responses are separated by semicolons
-            selected_response = st.selectbox('Select Interviewee Response', response_options)
 
             return True
         else:
