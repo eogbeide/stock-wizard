@@ -1,85 +1,78 @@
 import streamlit as st
 import pandas as pd
 from gtts import gTTS
+import tempfile
 import os
 
-# Main function to run the app
+def play_text(text: str):
+    """Convert text to speech, play it, then delete the temp file."""
+    tts = gTTS(text=text, lang='en')
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
+        tts.save(fp.name)
+    st.audio(fp.name, format="audio/mp3")
+    os.remove(fp.name)
+
 def main():
-    # Custom CSS to set font to Comic Sans MS and font size to 10
+    # Comic Sans + small font
     st.markdown(
         """
         <style>
-        body {
-            font-family: 'Comic Sans MS';
-            font-size: 10px;
-        }
+        body { font-family: 'Comic Sans MS'; font-size:10px; }
         </style>
         """,
         unsafe_allow_html=True
     )
-
     st.title("MCAT Labs")
 
-    # Load data from CSV on GitHub
     @st.cache_data
     def load_data():
         url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/labs.csv"
-        df = pd.read_csv(url, encoding='ISO-8859-1')  # Specify encoding here
-        return df
-    
-    # Load the data
+        return pd.read_csv(url, encoding='ISO-8859-1')
+
     df = load_data()
+    df.columns = df.columns.str.strip()
 
-    # Clean column names
-    df.columns = df.columns.str.strip()  # Remove any leading/trailing whitespace
-
-    # Sidebar for subject selection
-    if 'Subject' in df.columns:
-        subjects = df['Subject'].unique()
-        selected_subject = st.sidebar.selectbox("Select Subject:", subjects)
-
-        # Filter data based on selected subject
-        subject_data = df[df['Subject'] == selected_subject]
-
-        # Sidebar for topic selection
-        topics = subject_data['Topic'].unique()
-        selected_topic = st.sidebar.selectbox("Select Topic:", topics)
-
-        # Filter data based on selected topic
-        topic_data = subject_data[subject_data['Topic'] == selected_topic]
-
-        if not topic_data.empty:
-            # Display Description in a box
-            st.subheader("Description")
-            description = topic_data['Description'].values[0]
-            st.info(description)  # Use st.info for a box
-
-            # Clean description for TTS
-            cleaned_description = description.replace('*', '').replace('#', '').strip()
-            if st.button("Read Description Aloud"):
-                audio_stream = gTTS(text=cleaned_description, lang='en')
-                audio_stream.save("description.mp3")  # Save the audio file
-                st.audio("description.mp3")  # Play the audio file
-                os.remove("description.mp3")  # Remove the audio file after playing
-
-            # Display Questions and Answers in an expander
-            st.subheader("Questions and Answers")
-            with st.expander("View Questions and Answers"):
-                questions_answers = topic_data['Questions and Answers'].values[0]
-                st.write(questions_answers)  # Display questions and answers
-
-                # Clean questions and answers for TTS
-                cleaned_qa = questions_answers.replace('*', '').replace('#', '').strip()
-                if st.button("Read Questions and Answers Aloud"):
-                    audio_stream = gTTS(text=cleaned_qa, lang='en')
-                    audio_stream.save("qa.mp3")  # Save the audio file
-                    st.audio("qa.mp3")  # Play the audio file
-                    os.remove("qa.mp3")  # Remove the audio file after playing
-
-        else:
-            st.write("No data available for the selected topic.")
-    else:
+    if 'Subject' not in df.columns:
         st.error("The 'Subject' column is missing from the data.")
+        return
+
+    # Subject/topic selectors
+    subjects = df['Subject'].unique()
+    sel_subj = st.sidebar.selectbox("Select Subject:", subjects)
+    sub_df = df[df['Subject'] == sel_subj]
+
+    topics = sub_df['Topic'].unique()
+    sel_topic = st.sidebar.selectbox("Select Topic:", topics)
+    topic_df = sub_df[sub_df['Topic'] == sel_topic]
+
+    if topic_df.empty:
+        st.write("No data available for the selected topic.")
+        return
+
+    row = topic_df.iloc[0]
+
+    # --- Passage / Description ---
+    st.subheader("Passage")
+    desc = str(row.get('Description', '')).strip()
+    st.info(desc)
+    if st.button("🔊 Read Passage Aloud", key="tts_desc"):
+        play_text(desc)
+
+    # --- Questions & Answers ---
+    st.subheader("Questions and Answers")
+    qa = str(row.get('Questions and Answers', '')).strip()
+    with st.expander("View Questions & Answers"):
+        st.write(qa)
+    if st.button("🔊 Read Q&A Aloud", key="tts_qa"):
+        play_text(qa)
+
+    # --- Explanation (if exists) ---
+    if 'Explanation' in row.index and pd.notna(row['Explanation']):
+        st.subheader("Explanation")
+        exp = str(row['Explanation']).strip()
+        st.info(exp)
+        if st.button("🔊 Read Explanation Aloud", key="tts_exp"):
+            play_text(exp)
 
 if __name__ == "__main__":
     main()
