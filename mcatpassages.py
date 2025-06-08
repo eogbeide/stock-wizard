@@ -23,7 +23,7 @@ def main():
     # Load data from CSV on GitHub
     @st.cache_data
     def load_data():
-        url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/labs.csv"
+        url = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/mcatpassages.csv"
         df = pd.read_csv(url, encoding='ISO-8859-1')  # Specify encoding here
         return df
    
