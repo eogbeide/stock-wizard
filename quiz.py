@@ -29,8 +29,15 @@ topics = filtered['Topic'].unique()
 selected_topic = st.sidebar.selectbox('Select Topic', topics)
 filtered = filtered[filtered['Topic'] == selected_topic].reset_index(drop=True)
 
-# Session state
+# Ensure idx is within bounds
 if 'idx' not in st.session_state:
+    st.session_state.idx = 0
+# Clamp idx to [0, len(filtered)-1]
+max_idx = len(filtered) - 1
+if max_idx < 0:
+    st.warning("No questions for this Subject/Topic.")
+    st.stop()
+if st.session_state.idx > max_idx or st.session_state.idx < 0:
     st.session_state.idx = 0
 
 def play_tts(text: str):
@@ -73,7 +80,8 @@ with col1:
     if st.button("◀️ Back") and st.session_state.idx > 0:
         st.session_state.idx -= 1
 with col2:
-    if st.button("Next ▶️") and st.session_state.idx < len(filtered) - 1:
+    if st.button("Next ▶️") and st.session_state.idx < max_idx:
         st.session_state.idx += 1
 
+# Finally show current item
 show_item(st.session_state.idx)
