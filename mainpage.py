@@ -61,14 +61,11 @@ if st.button("Go to MCAT Lab Review"):
 if st.button("Go to MCAT Passage-Style Q&A"):
     st.markdown("[Open MCAT Passage-Stype Q&A](https://mcatpassages.streamlit.app/)", unsafe_allow_html=True)
 
-if st.button("Go to MCAT Scientific Reasoning Questions"):
-    st.markdown("[Open MCAT Scientific Reasoning Questions](https://mcatreasoning.streamlit.app/)", unsafe_allow_html=True)
-
 if st.button("Go to MCAT Flashcards"):
     st.markdown("[Open MCAT Flash Cards](https://mcatflashcards.streamlit.app/)", unsafe_allow_html=True)
 
 if st.button("Go to MCAT Prep Quiz"):
-    st.markdown("[Open MCAT Quiz Prep](https://mcatprep.streamlit.app/)", unsafe_allow_html=True)
+    st.markdown("[Open MCAT Quiz Prep](https://mcatquiz.streamlit.app/)", unsafe_allow_html=True)
 
 if st.button("Go to MCAT Companion ChatGPT"):
     st.markdown("[Open MCAT Companion](https://poe.com/MCATCompanion)", unsafe_allow_html=True)
