@@ -58,9 +58,6 @@ if st.button("Go to MCAT Topics"):
 if st.button("Go to MCAT Lab Review"):
     st.markdown("[Open MCAT Lab Review](https://mcatlabs.streamlit.app/)", unsafe_allow_html=True)
 
-if st.button("Go to MCAT Passage-Style Q&A"):
-    st.markdown("[Open MCAT Passage-Stype Q&A](https://mcatpassages.streamlit.app/)", unsafe_allow_html=True)
-
 if st.button("Go to MCAT Flashcards"):
     st.markdown("[Open MCAT Flash Cards](https://mcatflashcards.streamlit.app/)", unsafe_allow_html=True)
 
