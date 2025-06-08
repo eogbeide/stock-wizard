@@ -3,6 +3,8 @@ import pandas as pd
 from urllib.error import URLError
 from gtts import gTTS
 import re
+import tempfile
+import os
 
 @st.cache_data
 def read_questions_from_csv(file_path):
@@ -11,115 +13,109 @@ def read_questions_from_csv(file_path):
         return df
     except UnicodeDecodeError:
         st.error("Error decoding the CSV file. Trying a different encoding.")
-        return pd.DataFrame()  # Return an empty DataFrame on failure
+        return pd.DataFrame()
     except URLError as e:
         st.error(f"Error fetching data: {e.reason}")
-        return pd.DataFrame()  # Return an empty DataFrame on failure
+        return pd.DataFrame()
     except Exception as e:
         st.error(f"An error occurred: {e}")
-        return pd.DataFrame()  # Return an empty DataFrame on failure
+        return pd.DataFrame()
 
-# Function to clean text
-def clean_text(text):
-    # Remove unwanted characters and HTTP elements
-    text = re.sub(r'[*#]', '', text)  # Remove asterisks and hashes
-    text = re.sub(r'http\S+|www\S+|https\S+', '', text)  # Remove URLs
+def clean_text(text: str) -> str:
+    text = re.sub(r'[*#]', '', text)
+    text = re.sub(r'http\S+|www\S+|https\S+', '', text)
     return text.strip()
 
-# Main function to run the Streamlit app
+def play_text(text: str):
+    """Generate TTS, play it, then delete the temp file."""
+    t = clean_text(text)
+    if not t:
+        st.warning("Nothing to read.")
+        return
+
+    tts = gTTS(text=t, lang='en')
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
+        tts.save(fp.name)
+        st.audio(fp.name, format="audio/mp3")
+    os.remove(fp.name)
+
 def main():
-    # URL to the CSV file on GitHub
-    file_path = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/mcattopics.csv"
+    st.title("MCAT Topics Explanation with TTS")
 
-    # Read questions from the CSV file
-    df = read_questions_from_csv(file_path)
-
+    FILE_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/mcattopics.csv"
+    df = read_questions_from_csv(FILE_URL)
     if df.empty:
         st.write("No data available.")
         return
 
-    # Clean column names
-    df.columns = df.columns.str.strip().str.lower()  # Normalize case and strip spaces
-
-    # Rename columns to match expected names
+    # normalize column names
+    df.columns = df.columns.str.strip().str.lower()
     df.rename(columns={
         's/n': 'serial_number',
         'subject': 'subject',
         'topic': 'topic',
+        'passage': 'passage',           # assuming it exists
         'question': 'question',
+        'answer': 'answer',             # assuming it exists
         'explanation': 'explanation'
     }, inplace=True)
 
-    # Check if required columns are present
-    required_columns = ['subject', 'topic', 'question', 'explanation']
-    for col in required_columns:
+    required = ['subject','topic','passage','question','answer','explanation']
+    for col in required:
         if col not in df.columns:
             st.error(f"Missing column: {col}")
             return
 
-    st.title("MCAT Topics Explanation")
-
-    # Create sidebars for Subject and Topic selection
+    # Sidebar filters
     subjects = df['subject'].unique()
-    selected_subject = st.sidebar.selectbox("Select Subject:", ["All"] + list(subjects))
-
-    if selected_subject != "All":
-        df = df[df['subject'] == selected_subject]
+    subj = st.sidebar.selectbox("Subject", ["All"] + list(subjects))
+    if subj != "All":
+        df = df[df['subject']==subj]
 
     topics = df['topic'].unique()
-    selected_topic = st.sidebar.selectbox("Select Topic:", ["All"] + list(topics))
+    top = st.sidebar.selectbox("Topic", ["All"] + list(topics))
+    if top != "All":
+        df = df[df['topic']==top]
 
-    if selected_topic != "All":
-        df = df[df['topic'] == selected_topic]
-
-    # Initialize session state for question index
-    if 'question_index' not in st.session_state:
-        st.session_state.question_index = 0
-
-    total_questions = len(df)
-
-    # Adjust question index if it's out of bounds
-    if total_questions == 0:
-        st.write("No questions available for the selected subject and topic.")
+    if df.empty:
+        st.write("No questions for that selection.")
         return
 
-    # Ensure the question index is within the valid range
-    st.session_state.question_index = min(st.session_state.question_index, total_questions - 1)
+    # session state index
+    if 'idx' not in st.session_state:
+        st.session_state.idx = 0
+    n = len(df)
+    st.session_state.idx = st.session_state.idx % n  # wrap around if you like
 
-    # Display the current question in a box
-    question_to_display = df.iloc[st.session_state.question_index]
-    st.markdown("### Question")
-    st.success(question_to_display['question'])
+    row = df.iloc[st.session_state.idx]
 
-    # Display the explanation in an expander
-    with st.expander("View Explanation"):
-        st.write(question_to_display['explanation'])
-        
-        # Button to read the explanation text
-        if st.button("Read Explanation Text"):
-            explanation_text = clean_text(question_to_display['explanation'])  # Clean the explanation text
-            audio_stream = gTTS(text=explanation_text, lang='en')
-            audio_file_path = "explanation_output.mp3"
-            audio_stream.save(audio_file_path)  # Save the audio file for the explanation
-            st.success("Explanation text is being read!")
-            st.audio(audio_file_path)  # Play the audio file
+    # --- Passage ---
+    st.subheader("Passage")
+    st.write(row['passage'])
+    if st.button("🔊 Read Passage Aloud", key="read_passage"):
+        play_text(row['passage'])
 
-    st.markdown("### Navigation")
-    col1, col2 = st.columns(2)
+    # --- Q & A ---
+    qa_block = f"Q: {row['question']}\nA: {row['answer']}"
+    st.subheader("Question & Answer")
+    st.write(qa_block.replace("\n", "  \n"))  # preserve line break
+    if st.button("🔊 Read Q&A Aloud", key="read_qa"):
+        play_text(qa_block)
 
+    # --- Explanation ---
+    st.subheader("Explanation")
+    st.write(row['explanation'])
+    if st.button("🔊 Read Explanation Aloud", key="read_exp"):
+        play_text(row['explanation'])
+
+    # --- Navigation ---
+    col1, col2, col3 = st.columns([1,1,1])
     with col1:
-        if st.button("Back"):
-            if st.session_state.question_index > 0:
-                st.session_state.question_index -= 1
-
-    with col2:
-        if st.button("Next"):
-            if st.session_state.question_index < total_questions - 1:
-                st.session_state.question_index += 1
-
-    # Reset button
-    if st.button("Reset"):
-        st.session_state.question_index = 0
+        if st.button("◀ Back"):
+            st.session_state.idx = max(0, st.session_state.idx - 1)
+    with col3:
+        if st.button("Next ▶"):
+            st.session_state.idx = min(n-1, st.session_state.idx + 1)
 
 if __name__ == "__main__":
     main()
