@@ -9,17 +9,14 @@ import os
 @st.cache_data
 def read_questions_from_csv(file_path):
     try:
-        df = pd.read_csv(file_path, encoding='ISO-8859-1')
-        return df
+        return pd.read_csv(file_path, encoding='ISO-8859-1')
     except UnicodeDecodeError:
         st.error("Error decoding the CSV file. Trying a different encoding.")
-        return pd.DataFrame()
     except URLError as e:
         st.error(f"Error fetching data: {e.reason}")
-        return pd.DataFrame()
     except Exception as e:
         st.error(f"An error occurred: {e}")
-        return pd.DataFrame()
+    return pd.DataFrame()
 
 def clean_text(text: str) -> str:
     text = re.sub(r'[*#]', '', text)
@@ -27,20 +24,14 @@ def clean_text(text: str) -> str:
     return text.strip()
 
 def play_text(text: str):
-    """Generate TTS, play it, then delete the temp file."""
-    t = clean_text(text)
-    if not t:
-        st.warning("Nothing to read.")
-        return
-
-    tts = gTTS(text=t, lang='en')
+    tts = gTTS(text=clean_text(text), lang='en')
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
         tts.save(fp.name)
         st.audio(fp.name, format="audio/mp3")
     os.remove(fp.name)
 
 def main():
-    st.title("MCAT Topics Explanation with TTS")
+    st.title("MCAT Topics Explanation")
 
     FILE_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/mcattopics.csv"
     df = read_questions_from_csv(FILE_URL)
@@ -48,74 +39,78 @@ def main():
         st.write("No data available.")
         return
 
-    # normalize column names
+    # Normalize & rename
     df.columns = df.columns.str.strip().str.lower()
     df.rename(columns={
-        's/n': 'serial_number',
-        'subject': 'subject',
-        'topic': 'topic',
-        'passage': 'passage',           # assuming it exists
-        'question': 'question',
-        'answer': 'answer',             # assuming it exists
-        'explanation': 'explanation'
+        's/n':'serial_number',
+        'subject':'subject',
+        'topic':'topic',
+        'question':'question',
+        'explanation':'explanation'
     }, inplace=True)
 
-    required = ['subject','topic','passage','question','answer','explanation']
-    for col in required:
+    # Validate
+    for col in ['subject','topic','question','explanation']:
         if col not in df.columns:
             st.error(f"Missing column: {col}")
             return
 
-    # Sidebar filters
+    # Sidebar
     subjects = df['subject'].unique()
-    subj = st.sidebar.selectbox("Subject", ["All"] + list(subjects))
-    if subj != "All":
-        df = df[df['subject']==subj]
+    selected_subject = st.sidebar.selectbox("Select Subject:", ["All"] + list(subjects))
+    if selected_subject != "All":
+        df = df[df['subject']==selected_subject]
 
     topics = df['topic'].unique()
-    top = st.sidebar.selectbox("Topic", ["All"] + list(topics))
-    if top != "All":
-        df = df[df['topic']==top]
+    selected_topic = st.sidebar.selectbox("Select Topic:", ["All"] + list(topics))
+    if selected_topic != "All":
+        df = df[df['topic']==selected_topic]
 
     if df.empty:
-        st.write("No questions for that selection.")
+        st.write("No questions for that filter.")
         return
 
-    # session state index
+    # Question index state
     if 'idx' not in st.session_state:
         st.session_state.idx = 0
     n = len(df)
-    st.session_state.idx = st.session_state.idx % n  # wrap around if you like
+    st.session_state.idx = min(st.session_state.idx, n-1)
 
     row = df.iloc[st.session_state.idx]
 
-    # --- Passage ---
-    st.subheader("Passage")
-    st.write(row['passage'])
-    if st.button("🔊 Read Passage Aloud", key="read_passage"):
-        play_text(row['passage'])
+    # Render
+    st.markdown(f"**Subject:** {selected_subject}")
+    st.markdown(f"**Topic:** {selected_topic}")
 
-    # --- Q & A ---
-    qa_block = f"Q: {row['question']}\nA: {row['answer']}"
-    st.subheader("Question & Answer")
-    st.write(qa_block.replace("\n", "  \n"))  # preserve line break
-    if st.button("🔊 Read Q&A Aloud", key="read_qa"):
-        play_text(qa_block)
+    st.markdown("### Question")
+    st.success(row['question'])
 
-    # --- Explanation ---
-    st.subheader("Explanation")
-    st.write(row['explanation'])
-    if st.button("🔊 Read Explanation Aloud", key="read_exp"):
-        play_text(row['explanation'])
+    with st.expander("View Explanation"):
+        st.write(row['explanation'])
 
-    # --- Navigation ---
+    # Navigation
     col1, col2, col3 = st.columns([1,1,1])
     with col1:
         if st.button("◀ Back"):
-            st.session_state.idx = max(0, st.session_state.idx - 1)
+            st.session_state.idx = max(0, st.session_state.idx-1)
     with col3:
         if st.button("Next ▶"):
-            st.session_state.idx = min(n-1, st.session_state.idx + 1)
+            st.session_state.idx = min(n-1, st.session_state.idx+1)
+    with col2:
+        if st.button("Reset"):
+            st.session_state.idx = 0
+
+    # Build entire page text for TTS
+    page_text = "\n".join([
+        f"Subject: {selected_subject}",
+        f"Topic: {selected_topic}",
+        f"Question: {row['question']}",
+        f"Explanation: {row['explanation']}"
+    ])
+
+    st.markdown("---")
+    if st.button("🔊 Read Page Aloud"):
+        play_text(page_text)
 
 if __name__ == "__main__":
     main()
