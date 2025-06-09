@@ -7,10 +7,19 @@ import tempfile
 def load_data():
     url = "https://github.com/eogbeide/stock-wizard/raw/main/Product.xlsx"
     try:
-        data = pd.read_excel(url)
-        data.dropna(inplace=True)
-        data.reset_index(drop=True, inplace=True)
-        return data
+        df = pd.read_excel(url)
+        df.dropna(inplace=True)
+        df.reset_index(drop=True, inplace=True)
+
+        # Rename columns so you can refer to them as QuestionType / Interview
+        df.rename(
+            columns={
+                'Interviewer': 'QuestionType',
+                'Interviewee': 'Interview'
+            },
+            inplace=True
+        )
+        return df
     except Exception as e:
         st.error(f"Error loading data: {e}")
         return pd.DataFrame()
@@ -32,7 +41,7 @@ sub_df = product_data[product_data['Category'] == selected_category]
 subcategories = sub_df['Subcategory'].unique()
 selected_subcategory = st.sidebar.selectbox('Select Subcategory', subcategories)
 
-# Filtered DataFrame
+# Filter down to matching rows
 filtered_data = product_data[
     (product_data['Category'] == selected_category) &
     (product_data['Subcategory'] == selected_subcategory)
@@ -68,7 +77,7 @@ def display_entry(idx: int):
         play_aloud(f"Question type: {qtype}. Interview: {interview}")
     return True
 
-# Show current entry
+# Show the current entry
 if display_entry(st.session_state.question_index):
     col1, col2 = st.columns(2)
     with col1:
