@@ -11,8 +11,10 @@ def load_data():
         df.dropna(inplace=True)
         df.reset_index(drop=True, inplace=True)
         # Rename for clarity
-        df.rename(columns={'Interviewer': 'QuestionType',
-                           'Interviewee': 'Interview'}, inplace=True)
+        df.rename(columns={
+            'Interviewer': 'QuestionType',
+            'Interviewee': 'Interview'
+        }, inplace=True)
         return df
     except Exception as e:
         st.error(f"Error loading data: {e}")
@@ -25,16 +27,16 @@ if product_data.empty:
 
 st.sidebar.title('Interview Navigation')
 
-# 1) Category
+# 1) Category selector
 categories = product_data['Category'].unique()
 selected_category = st.sidebar.selectbox('Select Category', categories)
 
-# 2) Subcategory
+# 2) Subcategory selector
 sub_df = product_data[product_data['Category'] == selected_category]
 subcategories = sub_df['Subcategory'].unique()
 selected_subcategory = st.sidebar.selectbox('Select Subcategory', subcategories)
 
-# 3) QuestionType
+# 3) QuestionType selector
 qt_df = sub_df[sub_df['Subcategory'] == selected_subcategory]
 question_types = qt_df['QuestionType'].unique()
 selected_qtype = st.sidebar.selectbox('Select QuestionType', question_types)
@@ -46,29 +48,38 @@ filtered_data = product_data[
     (product_data['QuestionType'] == selected_qtype)
 ]
 
-if filtered_data.empty:
+# Clamp the session index to valid range
+max_idx = len(filtered_data) - 1
+if max_idx < 0:
     st.warning("No entries for that combination.")
     st.stop()
 
-# Navigation state
 if 'question_index' not in st.session_state:
     st.session_state.question_index = 0
+st.session_state.question_index = min(st.session_state.question_index, max_idx)
 
 def play_aloud(text: str):
+    """Generate TTS, play it, then delete the temp file."""
     tts = gTTS(text=text, lang='en')
     with tempfile.NamedTemporaryFile(delete=True, suffix=".mp3") as tmp:
         tts.save(tmp.name)
         st.audio(tmp.name, format="audio/mp3")
 
 def display_entry(idx: int):
+    """Render one entry at the given index."""
+    if idx < 0 or idx > max_idx:
+        st.write("End of entries.")
+        return False
+
     row = filtered_data.iloc[idx]
     st.markdown(f"### QuestionType:\n> {row['QuestionType']}")
     st.markdown(f"### Interview:\n> {row['Interview']}")
+
     if st.button("🔊 Read Aloud", key=f"read_{idx}"):
         play_aloud(f"Question type: {row['QuestionType']}. Interview: {row['Interview']}")
     return True
 
-# Show current entry and nav buttons
+# Show the current entry
 if display_entry(st.session_state.question_index):
     col1, col2 = st.columns(2)
     with col1:
@@ -77,7 +88,7 @@ if display_entry(st.session_state.question_index):
                 st.session_state.question_index -= 1
     with col2:
         if st.button("Next ▶"):
-            if st.session_state.question_index < len(filtered_data) - 1:
+            if st.session_state.question_index < max_idx:
                 st.session_state.question_index += 1
             else:
                 st.success("End of Interview. Thank you!")
