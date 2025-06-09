@@ -10,7 +10,6 @@ def load_data():
         df = pd.read_excel(url)
         df.dropna(inplace=True)
         df.reset_index(drop=True, inplace=True)
-        # Rename for clarity
         df.rename(columns={
             'Interviewer': 'QuestionType',
             'Interviewee': 'Interview'
@@ -66,16 +65,24 @@ def play_aloud(text: str):
         st.audio(tmp.name, format="audio/mp3")
 
 def display_entry(idx: int):
-    """Render one entry at the given index."""
+    """Render one entry at the given index with proper paragraph formatting."""
     if idx < 0 or idx > max_idx:
         st.write("End of entries.")
         return False
 
     row = filtered_data.iloc[idx]
-    st.markdown(f"### QuestionType:\n> {row['QuestionType']}")
-    st.markdown(f"### Interview:\n> {row['Interview']}")
+    # QuestionType as a subheader
+    st.subheader("Question Type")
+    # Render paragraphs: replace double newlines with <br> for markdown
+    qt_text = row['QuestionType'].strip().replace("\n\n", "  \n\n")
+    st.markdown(qt_text)
+
+    st.subheader("Interview")
+    int_text = row['Interview'].strip().replace("\n\n", "  \n\n")
+    st.markdown(int_text)
 
     if st.button("🔊 Read Aloud", key=f"read_{idx}"):
+        # Combine with proper sentence spacing
         play_aloud(f"Question type: {row['QuestionType']}. Interview: {row['Interview']}")
     return True
 
