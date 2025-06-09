@@ -7,10 +7,10 @@ import tempfile
 def load_data():
     url = "https://github.com/eogbeide/stock-wizard/raw/main/Product.xlsx"
     try:
-        df = pd.read_excel(url)
-        df.dropna(inplace=True)
-        df.reset_index(drop=True, inplace=True)
-        return df
+        data = pd.read_excel(url)
+        data.dropna(inplace=True)
+        data.reset_index(drop=True, inplace=True)
+        return data
     except Exception as e:
         st.error(f"Error loading data: {e}")
         return pd.DataFrame()
@@ -23,55 +23,53 @@ if product_data.empty:
 
 st.sidebar.title('Interview Navigation')
 
-# 1) Category filter
+# Category selector
 categories = product_data['Category'].unique()
 selected_category = st.sidebar.selectbox('Select Category', categories)
 
-# 2) Subcategory filter
+# Subcategory selector
 sub_df = product_data[product_data['Category'] == selected_category]
 subcategories = sub_df['Subcategory'].unique()
 selected_subcategory = st.sidebar.selectbox('Select Subcategory', subcategories)
 
-# 3) QuestionType filter
-qt_df = sub_df[sub_df['Subcategory'] == selected_subcategory]
-question_types = qt_df['QuestionType'].unique()
-selected_qtype = st.sidebar.selectbox('Select QuestionType', question_types)
-
-# Apply all three filters
+# Filtered DataFrame
 filtered_data = product_data[
     (product_data['Category'] == selected_category) &
-    (product_data['Subcategory'] == selected_subcategory) &
-    (product_data['QuestionType'] == selected_qtype)
+    (product_data['Subcategory'] == selected_subcategory)
 ]
 
 if filtered_data.empty:
-    st.warning("No interview entries for that combination.")
+    st.warning("No entries for that Category/Subcategory.")
     st.stop()
 
-# Initialize navigation state
+# Navigation state
 if 'question_index' not in st.session_state:
     st.session_state.question_index = 0
 
 def play_aloud(text: str):
     tts = gTTS(text=text, lang='en')
-    with tempfile.NamedTemporaryFile(delete=True, suffix=".mp3") as tmp_file:
-        tts.save(tmp_file.name)
-        st.audio(tmp_file.name, format="audio/mp3")
+    with tempfile.NamedTemporaryFile(delete=True, suffix=".mp3") as tmp:
+        tts.save(tmp.name)
+        st.audio(tmp.name, format="audio/mp3")
 
-def display_interview(idx: int):
+def display_entry(idx: int):
+    if idx >= len(filtered_data):
+        st.write("End of entries.")
+        return False
+
     row = filtered_data.iloc[idx]
-    interviewer = row['Interviewer']
-    interviewee = row['Interviewee']
+    qtype = row['QuestionType']
+    interview = row['Interview']
 
-    st.markdown(f"#### Interviewer:\n> {interviewer}")
-    st.markdown(f"#### Interviewee:\n> {interviewee}")
+    st.markdown(f"### QuestionType:\n> {qtype}")
+    st.markdown(f"### Interview:\n> {interview}")
 
     if st.button("🔊 Read Aloud", key=f"read_{idx}"):
-        play_aloud(f"Interviewer says: {interviewer}. Interviewee replies: {interviewee}")
+        play_aloud(f"Question type: {qtype}. Interview: {interview}")
     return True
 
-# Show current interview segment
-if display_interview(st.session_state.question_index):
+# Show current entry
+if display_entry(st.session_state.question_index):
     col1, col2 = st.columns(2)
     with col1:
         if st.button("◀ Back"):
