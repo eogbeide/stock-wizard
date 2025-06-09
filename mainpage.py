@@ -64,6 +64,9 @@ if st.button("Go to MCAT Flashcards"):
 if st.button("Go to MCAT Prep Quiz"):
     st.markdown("[Open MCAT Quiz Prep](https://mcatquiz.streamlit.app/)", unsafe_allow_html=True)
 
+if st.button("Go to MCAT Prep Content Reviews"):
+    st.markdown("[Open MCAT Quiz Prep](https://subjectreviews.streamlit.app/)", unsafe_allow_html=True)
+
 if st.button("Go to MCAT Companion ChatGPT"):
     st.markdown("[Open MCAT Companion](https://poe.com/MCATCompanion)", unsafe_allow_html=True)
 
