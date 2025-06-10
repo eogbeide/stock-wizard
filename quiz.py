@@ -1,91 +1,107 @@
 import streamlit as st
 import pandas as pd
+from gtts import gTTS
+import tempfile
 import re
-import streamlit.components.v1 as components
 
-# URL of the Excel file
-URL = "https://github.com/eogbeide/stock-wizard/raw/main/quiz.xlsx"
-
+# Load data from Excel on GitHub
 @st.cache_data
 def load_data():
+    url = "https://github.com/eogbeide/stock-wizard/raw/main/quiz.xlsx"
     try:
-        return pd.read_excel(URL)
+        return pd.read_excel(url)
     except Exception as e:
         st.error(f"Error loading data: {e}")
         return pd.DataFrame()
 
+quiz_data = load_data()
+
+st.sidebar.title('Quiz Navigation')
+if quiz_data.empty:
+    st.warning("No quiz data available.")
+    st.stop()
+
+# Subject/topic selection
+subjects = quiz_data['Subject'].unique()
+selected_subject = st.sidebar.selectbox('Select Subject', subjects)
+filtered = quiz_data[quiz_data['Subject'] == selected_subject]
+
+topics = filtered['Topic'].unique()
+selected_topic = st.sidebar.selectbox('Select Topic', topics)
+filtered = filtered[filtered['Topic'] == selected_topic].reset_index(drop=True)
+
+# Ensure idx is within bounds
+if 'idx' not in st.session_state:
+    st.session_state.idx = 0
+max_idx = len(filtered) - 1
+if max_idx < 0:
+    st.warning("No questions for this Subject/Topic.")
+    st.stop()
+st.session_state.idx = max(0, min(st.session_state.idx, max_idx))
+
 def format_html(text: str) -> str:
-    paragraphs = re.split(r'\n\s*\n', text.strip())
-    return ''.join(f"<p>{p.replace('\n', '<br>')}</p>" for p in paragraphs)
+    """Convert raw text into HTML-formatted paragraphs with line breaks."""
+    text = str(text).strip()
+    paragraphs = re.split(r'\n\s*\n', text)
+    formatted = ''.join(f"<p>{p.strip().replace('\n', '<br>')}</p>" for p in paragraphs)
+    return formatted
 
-def browser_tts(text: str, label: str, key: str):
-    safe = text.replace("`", "'").replace("\\", "\\\\")
-    html = f"""
-    <button id="{key}">{label}</button>
-    <script>
-      document.getElementById("{key}").onclick = () => {{
-        const msg = new SpeechSynthesisUtterance(`{safe}`);
-        window.speechSynthesis.speak(msg);
-      }};
-    </script>
-    """
-    components.html(html, height=60)
+def generate_audio_bytes(text: str):
+    """Generate TTS audio as a bytes buffer."""
+    tts = gTTS(text=text, lang='en')
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
+        tts.save(fp.name)
+        with open(fp.name, 'rb') as audio_file:
+            audio_bytes = audio_file.read()
+    return audio_bytes
 
-def main():
-    st.set_page_config(layout="centered")
-    st.title("📘 Test Explanations with Browser TTS")
+def show_item(i: int):
+    row = filtered.iloc[i]
 
-    df = load_data()
-    if df.empty:
-        return
+    # --- Format content ---
+    passage = str(row['Passage']).strip()
+    formatted_passage = format_html(passage)
 
-    st.sidebar.title("Quiz Navigation")
-    # 1) Subject picker
-    subjects = df['Subject'].unique()
-    subject = st.sidebar.selectbox("Subject", subjects)
-    filtered = df[df['Subject'] == subject]
+    answers = [opt.strip() for opt in str(row['Answer']).split(';')]
+    question = f"Question {i+1}: {row['Question']}"
+    qa_text = f"{question}\nAnswers:\n" + "\n".join(f"- {a}" for a in answers)
 
-    # 2) Optional Topic picker
-    if 'Topic' in filtered.columns:
-        topics = filtered['Topic'].unique()
-        topic = st.sidebar.selectbox("Topic", topics)
-        filtered = filtered[filtered['Topic'] == topic]
-    filtered = filtered.reset_index(drop=True)
+    raw_exp = row.get('Explanation', '')
+    explanation = str(raw_exp).strip() if pd.notna(raw_exp) else ''
+    full_tts_text = f"{question}\n" + "\n".join(answers)
+    if explanation:
+        full_tts_text += f"\nExplanation:\n{explanation}"
 
-    if filtered.empty:
-        st.sidebar.warning("No items for this selection.")
-        return
+    # --- Generate audio once ---
+    passage_audio = generate_audio_bytes(passage)
+    full_audio = generate_audio_bytes(full_tts_text)
 
-    # Manage index
-    key = (subject, filtered.index.name if 'Topic' not in df.columns else (subject, topic))
-    if 'idx' not in st.session_state or st.session_state.get('last') != key:
-        st.session_state.idx = 0
-        st.session_state.last = key
+    # --- Sidebar audio controls ---
+    st.sidebar.markdown("### 🔊 Audio Player (Sidebar)")
+    st.sidebar.audio(passage_audio, format='audio/mp3', start_time=0)
+    st.sidebar.audio(full_audio, format='audio/mp3', start_time=0)
 
-    idx = st.session_state.idx
-    max_idx = len(filtered) - 1
+    # --- Main UI ---
+    st.markdown("### 📘 Passage")
+    st.markdown(formatted_passage, unsafe_allow_html=True)
 
-    row = filtered.iloc[idx]
-    explanation = str(row['Explanation'])
-    formatted = format_html(explanation)
+    st.markdown("### 🔊 Audio Player (Top)")
+    st.audio(passage_audio, format='audio/mp3', start_time=0)
+    st.audio(full_audio, format='audio/mp3', start_time=0)
 
-    # Main display
-    st.subheader(f"{subject} (Item {idx+1} of {max_idx+1})")
-    st.markdown(formatted, unsafe_allow_html=True)
-    browser_tts(explanation, "🔊 Play Explanation", f"tts_main_{idx}")
+    st.markdown(f"```text\n{qa_text}\n```")
 
-    # Sidebar TTS
-    st.sidebar.markdown("### 🔊 Audio")
-    browser_tts(explanation, "▶ Play (Sidebar)", f"tts_side_{idx}")
+    if explanation and st.checkbox("Show Explanation", key=f"show_exp_{i}"):
+        st.markdown("### 📝 Explanation")
+        st.markdown(format_html(explanation), unsafe_allow_html=True)
 
-    # Navigation
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("◀ Back") and idx > 0:
-            st.session_state.idx -= 1
-    with col2:
-        if st.button("Next ▶") and idx < max_idx:
-            st.session_state.idx += 1
+# Navigation Buttons
+col1, _, col2 = st.columns([1, 4, 1])
+with col1:
+    if st.button("◀️ Back") and st.session_state.idx > 0:
+        st.session_state.idx -= 1
+with col2:
+    if st.button("Next ▶️") and st.session_state.idx < max_idx:
+        st.session_state.idx += 1
 
-if __name__ == "__main__":
-    main()
+show_item(st.session_state.idx)
