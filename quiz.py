@@ -1,8 +1,6 @@
 import streamlit as st
 import pandas as pd
 import re
-import io
-from gtts import gTTS
 import streamlit.components.v1 as components
 
 # --- Load & cache data ---
@@ -48,7 +46,6 @@ components.html("""
   .question strong { font-size: 1.1em; }
   .question ul { margin-top: 0.2em; padding-left: 1.2em; }
   .explanation { margin-top: 1em; color: #555; font-style: italic; }
-  .audio-controls { margin: 0.5em 0; }
 </style>
 """, height=0)
 
@@ -56,47 +53,114 @@ def format_html(text: str) -> str:
     paras = re.split(r'\n\s*\n', text.strip())
     return ''.join(f"<p>{p.replace('\n','<br>')}</p>" for p in paras)
 
-def make_audio_buffer(text: str) -> io.BytesIO:
-    buf = io.BytesIO()
-    tts = gTTS(text=text, lang='en')
-    tts.write_to_fp(buf)
-    buf.seek(0)
-    return buf
+def inject_tts_controls(text: str, key: str, label: str):
+    """
+    Inject Play/Pause/Resume/Stop controls using the browser SpeechSynthesis API.
+    Soft female voice at 80% speed, paragraph pauses.
+    """
+    safe = text.replace("\\", "\\\\").replace("`", "'").replace("\n", "\\n")
+    html = f'''
+    <div class="audio-controls">
+      <strong>{label}</strong><br>
+      <button id="{key}_play">▶️ Play</button>
+      <button id="{key}_pause" disabled>⏸️ Pause</button>
+      <button id="{key}_resume" disabled>⏯️ Resume</button>
+      <button id="{key}_stop" disabled>⏹️ Stop</button>
+    </div>
+    <script>
+      const paras = `{safe}`.split(/\\n\\s*\\n/);
+      const utter = paras.map(p => {{
+        const u = new SpeechSynthesisUtterance(p);
+        u.rate = 0.8;
+        return u;
+      }});
+      function pickVoice() {{
+        const vs = speechSynthesis.getVoices();
+        return vs.find(v => /zira|samantha|victoria|female/i.test(v.name))
+               || vs.find(v => v.lang.startsWith('en'));
+      }}
+      function setup() {{
+        const v = pickVoice();
+        if(v) utter.forEach(u => u.voice = v);
+      }}
+      if (speechSynthesis.getVoices().length) setup();
+      else speechSynthesis.onvoiceschanged = setup;
 
-# --- Display content + audio controls ---
+      let idx = 0;
+      const play = document.getElementById("{key}_play");
+      const pause = document.getElementById("{key}_pause");
+      const resume = document.getElementById("{key}_resume");
+      const stop = document.getElementById("{key}_stop");
+
+      function speakNext() {{
+        if (idx >= utter.length) return finish();
+        const u = utter[idx++];
+        u.onend = () => setTimeout(speakNext, 600);
+        speechSynthesis.speak(u);
+      }}
+      function start() {{
+        speechSynthesis.cancel();
+        idx = 0;
+        speakNext();
+        play.disabled = true;
+        pause.disabled = false;
+        stop.disabled = false;
+      }}
+      function finish() {{
+        play.disabled = false;
+        pause.disabled = true;
+        resume.disabled = true;
+        stop.disabled = true;
+      }}
+
+      play.onclick = start;
+      pause.onclick = () => {{
+        speechSynthesis.pause();
+        pause.disabled = true;
+        resume.disabled = false;
+      }};
+      resume.onclick = () => {{
+        speechSynthesis.resume();
+        resume.disabled = true;
+        pause.disabled = false;
+      }};
+      stop.onclick = () => {{
+        speechSynthesis.cancel();
+        finish();
+      }};
+      utter[utter.length - 1].onend = finish;
+    </script>
+    '''
+    components.html(html, height=100)
+
+# --- Prepare texts ---
 row = filtered.iloc[i]
 passage = str(row['Passage']).strip()
 answers = [a.strip() for a in str(row['Answer']).split(';')]
 question = f"Question {i+1}: {row['Question']}"
-qa_text = question + "\n" + "\n".join(f"- {a}" for a in answers)
+qa = question + "\n" + "\n".join(f"- {a}" for a in answers)
 explanation = str(row.get('Explanation','') or '').strip()
+full = passage + "\\n\\n" + qa + (("\\n\\nExplanation:\\n" + explanation) if explanation else "")
 
-# prepare buffers
-passage_buf = make_audio_buffer(passage)
-full_buf = make_audio_buffer(qa_text + ("\n\nExplanation:\n"+explanation if explanation else ""))
-
-# --- Top audio players ---
+# --- Top controls ---
 st.markdown("### 🔊 Audio Controls (Top)")
-st.audio(passage_buf, format="audio/mp3", start_time=0)
-st.audio(full_buf, format="audio/mp3", start_time=0)
+inject_tts_controls(passage, f"top_passage_{i}", "Passage")
+inject_tts_controls(full, f"top_full_{i}", "Q&A + Explanation")
 
-# --- Main content ---
+# --- Content ---
 st.markdown(f"## {subject} ({i+1} of {max_idx+1})")
-
 st.markdown(f'<div class="passage">{format_html(passage)}</div>', unsafe_allow_html=True)
-
 st.markdown('<div class="question"><strong>' + question + '</strong><ul>' +
             ''.join(f'<li>{a}</li>' for a in answers) +
             '</ul></div>', unsafe_allow_html=True)
-
 if explanation:
     if st.checkbox("Show Explanation"):
         st.markdown('<div class="explanation">' + format_html(explanation) + '</div>', unsafe_allow_html=True)
 
-# --- Sidebar audio players ---
+# --- Sidebar controls ---
 st.sidebar.markdown("### 🔊 Audio Controls (Sidebar)")
-st.sidebar.audio(passage_buf, format="audio/mp3", start_time=0)
-st.sidebar.audio(full_buf, format="audio/mp3", start_time=0)
+inject_tts_controls(passage, f"sb_passage_{i}", "Passage")
+inject_tts_controls(full, f"sb_full_{i}", "Q&A + Explanation")
 
 # --- Navigation ---
 col1, col2 = st.columns(2)
