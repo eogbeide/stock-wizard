@@ -1,8 +1,9 @@
 import streamlit as st
 import pandas as pd
 from gtts import gTTS
-import io
+import tempfile
 import re
+import os
 
 # URL of the Excel file
 URL = "https://github.com/eogbeide/stock-wizard/raw/main/tests.xlsx"
@@ -18,39 +19,26 @@ def load_data():
         return pd.DataFrame()
 
 def format_passage(text):
-    """Convert plain text into safe HTML paragraph format with line breaks."""
+    """Convert plain text into HTML-formatted paragraphs with line breaks."""
     text = str(text).strip()
-    # Replace multiple newlines with double <br> and wrap in <p> tags
     paragraphs = re.split(r'\n\s*\n', text)
     html_passage = ''.join(f"<p>{p.strip().replace('\n', '<br>')}</p>" for p in paragraphs)
     return html_passage
 
 def play_text(text: str):
-    """Convert text to speech and play via in-memory buffer (uses default gTTS female voice)."""
+    """Convert text to speech and serve audio file (iOS/mobile compatible)."""
     if not text:
         st.warning("No explanation to read.")
         return
-    buffer = io.BytesIO()
-    tts = gTTS(text=text, lang='en')  # gTTS does not support voice gender selection
-    tts.write_to_fp(buffer)
-    buffer.seek(0)
-    st.audio(buffer, format="audio/mp3")
-
-# Optional: use Google Cloud TTS for male voice (commented out)
-# def play_text_male(text: str):
-#     from google.cloud import texttospeech
-#     client = texttospeech.TextToSpeechClient()
-#     synthesis_input = texttospeech.SynthesisInput(text=text)
-#     voice = texttospeech.VoiceSelectionParams(
-#         language_code="en-US", name="en-US-Wavenet-D", ssml_gender=texttospeech.SsmlVoiceGender.MALE
-#     )
-#     audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
-#     response = client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
-#     st.audio(response.audio_content, format='audio/mp3')
+    tts = gTTS(text=text, lang='en')
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
+        tts.save(fp.name)
+        audio_path = fp.name
+    st.audio(audio_path, format="audio/mp3")
 
 def main():
-    st.set_page_config(layout="wide")
-    st.title("Test Explanations with TTS")
+    st.set_page_config(layout="centered")
+    st.title("📘 Test Explanations with TTS")
 
     # Load data
     df = load_data()
@@ -68,7 +56,7 @@ def main():
         st.warning("No explanations found for this subject.")
         st.stop()
 
-    # Initialize or reset index when subject changes
+    # Reset index if subject changes
     if 'idx' not in st.session_state or st.session_state.get('last_subject') != selected_subject:
         st.session_state.idx = 0
         st.session_state.last_subject = selected_subject
@@ -76,19 +64,23 @@ def main():
     max_idx = len(filtered) - 1
     idx = st.session_state.idx
 
-    # Display current explanation with HTML formatting
+    # Current explanation
     explanation = str(filtered.loc[idx, 'Explanation']).strip()
     formatted_explanation = format_passage(explanation)
+
     st.subheader(f"{selected_subject} (Explanation {idx+1} of {max_idx+1})")
     st.markdown(formatted_explanation, unsafe_allow_html=True)
 
-    # Play aloud buttons
-    if st.button("🔊 Play Explanation"):
-        play_text(explanation)
-    if st.sidebar.button("🔊 Play Explanation (Sidebar)"):
+    # TTS Buttons
+    st.markdown("#### 🔊 Listen")
+    if st.button("▶ Play Explanation"):
         play_text(explanation)
 
-    # Navigation buttons
+    st.sidebar.markdown("### 🔊 Listen")
+    if st.sidebar.button("▶ Play Explanation (Sidebar)"):
+        play_text(explanation)
+
+    # Navigation
     col1, col2 = st.columns(2)
     with col1:
         if st.button("◀ Back") and idx > 0:
