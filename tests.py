@@ -19,48 +19,65 @@ def format_html(text: str) -> str:
     return ''.join(f"<p>{p.replace('\n', '<br>')}</p>" for p in paragraphs)
 
 def browser_tts(text: str, label: str, key: str):
+    """Renders a button that speaks text in a male slower voice via the Web Speech API."""
     safe = text.replace("`", "'").replace("\\", "\\\\")
     html = f"""
     <button id="{key}">{label}</button>
     <script>
-      document.getElementById("{key}").onclick = () => {{
-        const msg = new SpeechSynthesisUtterance(`{safe}`);
-        window.speechSynthesis.speak(msg);
-      }};
+      const btn = document.getElementById("{key}");
+      btn.addEventListener("click", () => {{
+        // Wait for voices to be loaded
+        let attempt = 0;
+        function speak() {{
+          const msg = new SpeechSynthesisUtterance(`{safe}`);
+          msg.rate = 0.8;  // slower
+          const voices = window.speechSynthesis.getVoices();
+          // pick a male English voice if available
+          const male = voices.find(v => 
+            v.lang.startsWith('en') 
+            && /male/i.test(v.name)
+          ) || voices.find(v => v.lang.startsWith('en'));
+          if (male) msg.voice = male;
+          window.speechSynthesis.speak(msg);
+        }}
+        if (window.speechSynthesis.getVoices().length > 0) {{
+          speak();
+        }} else {{
+          window.speechSynthesis.onvoiceschanged = () => {{
+            if (attempt++ < 5) speak();
+          }};
+        }}
+      }});
     </script>
     """
     components.html(html, height=60)
 
 def main():
     st.set_page_config(layout="centered")
-    st.title("📘 Test Explanations with Browser TTS")
+    st.title("📘 Test Explanations with Male Slower Voice")
 
     df = load_data()
     if df.empty:
         return
 
     st.sidebar.title("Quiz Navigation")
-    # 1) Subject picker
     subjects = df['Subject'].unique()
     subject = st.sidebar.selectbox("Subject", subjects)
-    filtered = df[df['Subject'] == subject]
+    filtered = df[df['Subject'] == subject].copy()
 
-    # 2) Optional Topic picker
     if 'Topic' in filtered.columns:
         topics = filtered['Topic'].unique()
         topic = st.sidebar.selectbox("Topic", topics)
         filtered = filtered[filtered['Topic'] == topic]
-    filtered = filtered.reset_index(drop=True)
 
+    filtered = filtered.reset_index(drop=True)
     if filtered.empty:
-        st.sidebar.warning("No items for this selection.")
+        st.sidebar.warning("No items here.")
         return
 
-    # Manage index
-    key = (subject, filtered.index.name if 'Topic' not in df.columns else (subject, topic))
-    if 'idx' not in st.session_state or st.session_state.get('last') != key:
+    if 'idx' not in st.session_state or st.session_state.get('last') != (subject, filtered.index.name if 'Topic' not in df.columns else (subject, topic)):
         st.session_state.idx = 0
-        st.session_state.last = key
+        st.session_state.last = (subject, filtered.index.name if 'Topic' not in df.columns else (subject, topic))
 
     idx = st.session_state.idx
     max_idx = len(filtered) - 1
@@ -69,16 +86,13 @@ def main():
     explanation = str(row['Explanation'])
     formatted = format_html(explanation)
 
-    # Main display
-    st.subheader(f"{subject} (Item {idx+1} of {max_idx+1})")
+    st.subheader(f"{subject} ({idx+1} of {max_idx+1})")
     st.markdown(formatted, unsafe_allow_html=True)
-    browser_tts(explanation, "🔊 Play Explanation", f"tts_main_{idx}")
+    browser_tts(explanation, "🔊 Play (Top)", f"tts_main_{idx}")
 
-    # Sidebar TTS
     st.sidebar.markdown("### 🔊 Audio")
     browser_tts(explanation, "▶ Play (Sidebar)", f"tts_side_{idx}")
 
-    # Navigation
     col1, col2 = st.columns(2)
     with col1:
         if st.button("◀ Back") and idx > 0:
