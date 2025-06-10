@@ -1,4 +1,4 @@
-import streamlit as st
+import streamlit as sts
 import pandas as pd
 import requests
 from io import StringIO  # Import StringIO from the io module
