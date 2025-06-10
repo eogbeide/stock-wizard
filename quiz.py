@@ -1,11 +1,9 @@
 import streamlit as st
 import pandas as pd
-from gtts import gTTS
-import tempfile
 import re
-import os
+import streamlit.components.v1 as components
 
-# Load data from Excel on GitHub
+# Load data from GitHub
 @st.cache_data
 def load_data():
     url = "https://github.com/eogbeide/stock-wizard/raw/main/quiz.xlsx"
@@ -15,98 +13,152 @@ def load_data():
         st.error(f"Error loading data: {e}")
         return pd.DataFrame()
 
-quiz_data = load_data()
-
-st.sidebar.title('Quiz Navigation')
-if quiz_data.empty:
-    st.warning("No quiz data available.")
-    st.stop()
-
-# Subject/topic selection
-subjects = quiz_data['Subject'].unique()
-selected_subject = st.sidebar.selectbox('Select Subject', subjects)
-filtered = quiz_data[quiz_data['Subject'] == selected_subject]
-
-topics = filtered['Topic'].unique()
-selected_topic = st.sidebar.selectbox('Select Topic', topics)
-filtered = filtered[filtered['Topic'] == selected_topic].reset_index(drop=True)
-
-# Ensure idx is within bounds
-if 'idx' not in st.session_state:
-    st.session_state.idx = 0
-max_idx = len(filtered) - 1
-if max_idx < 0:
-    st.warning("No questions for this Subject/Topic.")
-    st.stop()
-st.session_state.idx = max(0, min(st.session_state.idx, max_idx))
-
 def format_html(text: str) -> str:
-    """Convert raw text into HTML-formatted paragraphs with line breaks."""
-    text = str(text).strip()
-    paragraphs = re.split(r'\n\s*\n', text)
-    return ''.join(f"<p>{p.strip().replace('\n', '<br>')}</p>" for p in paragraphs)
+    # Wrap paragraphs and line breaks in HTML
+    paras = re.split(r'\n\s*\n', text.strip())
+    return ''.join(f"<p>{p.replace('\n', '<br>')}</p>" for p in paras)
 
-def play_tts(text: str):
-    """Convert text to speech and serve audio file (mobile-safe)."""
-    if not text:
-        st.warning("No text to read.")
-        return
+def inject_tts_controls(text: str, key: str):
+    """Inject JS TTS controls using the browser SpeechSynthesis API."""
+    safe = text.replace("\\", "\\\\").replace("`", "'").replace("\n", "\\n")
+    html = f'''
+    <div style="margin: 0.5em 0;">
+      <button id="{key}_play">▶️ Play</button>
+      <button id="{key}_pause" disabled>⏸️ Pause</button>
+      <button id="{key}_resume" disabled>⏯️ Resume</button>
+      <button id="{key}_stop" disabled>⏹️ Stop</button>
+    </div>
+    <script>
+      // Split into paragraphs
+      const paras = `{safe}`.split(/\\n\\s*\\n/);
+      const utter = paras.map(p => {{
+        const u = new SpeechSynthesisUtterance(p);
+        u.rate = 0.8;
+        return u;
+      }});
+      // pick soft female voice
+      function pickVoice() {{
+        const vs = speechSynthesis.getVoices();
+        return vs.find(v => /female|zira|samantha|victoria/i.test(v.name)) 
+               || vs.find(v => v.lang.startsWith('en'));
+      }}
+      function setup() {{
+        const v = pickVoice();
+        if(v) utter.forEach(u => u.voice = v);
+      }}
+      if(speechSynthesis.getVoices().length) setup();
+      else speechSynthesis.onvoiceschanged = setup;
 
-    tts = gTTS(text=text, lang='en')
-    # create a temp file that persists until we delete it
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
-    tmp_name = tmp.name
-    tmp.close()
+      let idx = 0;
+      const play = document.getElementById("{key}_play");
+      const pause = document.getElementById("{key}_pause");
+      const resume = document.getElementById("{key}_resume");
+      const stop = document.getElementById("{key}_stop");
 
-    tts.save(tmp_name)
-    # Safari/iOS requires the file to still exist when st.audio is rendered
-    st.audio(tmp_name, format='audio/mp3', start_time=0)
+      function speakNext() {{
+        if(idx >= utter.length) return endAll();
+        const u = utter[idx++];
+        u.onend = () => setTimeout(speakNext, 600);
+        speechSynthesis.speak(u);
+      }}
+      function startAll() {{
+        speechSynthesis.cancel();
+        idx = 0;
+        speakNext();
+        play.disabled = true;
+        pause.disabled = false;
+        stop.disabled = false;
+      }}
+      function endAll() {{
+        play.disabled = false;
+        pause.disabled = true;
+        resume.disabled = true;
+        stop.disabled = true;
+      }}
 
-    # Optionally clean up after a short delay (won't affect playback)
-    # os.remove(tmp_name)
+      play.onclick = startAll;
+      pause.onclick = () => {{
+        speechSynthesis.pause();
+        pause.disabled = true;
+        resume.disabled = false;
+      }};
+      resume.onclick = () => {{
+        speechSynthesis.resume();
+        resume.disabled = true;
+        pause.disabled = false;
+      }};
+      stop.onclick = () => {{
+        speechSynthesis.cancel();
+        endAll();
+      }};
+      utter[utter.length-1].onend = endAll;
+    </script>
+    '''
+    components.html(html, height=80)
 
-def show_item(i: int):
-    row = filtered.iloc[i]
+def main():
+    st.set_page_config(layout="centered")
+    st.title("📘 Mobile-Safe Story-Style TTS")
 
-    passage = str(row['Passage']).strip()
-    formatted_passage = format_html(passage)
+    df = load_data()
+    if df.empty:
+        st.stop()
 
-    answers = [opt.strip() for opt in str(row['Answer']).split(';')]
-    question = f"Question {i+1}: {row['Question']}"
-    qa_text = f"{question}\nAnswers:\n" + "\n".join(f"- {a}" for a in answers)
+    st.sidebar.title("Quiz Navigation")
+    subjects = df['Subject'].unique()
+    subj = st.sidebar.selectbox("Subject", subjects)
+    data = df[df['Subject']==subj]
 
-    raw_exp = row.get('Explanation', '')
-    explanation = str(raw_exp).strip() if pd.notna(raw_exp) else ''
-    full_tts_text = qa_text + (f"\nExplanation:\n{explanation}" if explanation else "")
+    if 'Topic' in data.columns:
+        topics = data['Topic'].unique()
+        top = st.sidebar.selectbox("Topic", topics)
+        data = data[data['Topic']==top]
 
-    # Sidebar audio controls
-    st.sidebar.markdown("### 🔊 Audio Controls")
-    if st.sidebar.button("▶️ Play Passage (Sidebar)", key=f"sb_passage_{i}"):
-        play_tts(passage)
-    if st.sidebar.button("▶️ Play Full (Sidebar)", key=f"sb_full_{i}"):
-        play_tts(full_tts_text)
+    data = data.reset_index(drop=True)
+    if data.empty:
+        st.sidebar.warning("No items here.")
+        st.stop()
 
-    # Main UI
-    st.markdown("### 📘 Passage")
-    st.markdown(formatted_passage, unsafe_allow_html=True)
-    if st.button("🔊 Read Passage Aloud", key=f"tts_passage_{i}"):
-        play_tts(passage)
+    key_state = (subj, top) if 'Topic' in df.columns else (subj, None)
+    if 'idx' not in st.session_state or st.session_state.last!=key_state:
+        st.session_state.idx = 0
+        st.session_state.last = key_state
 
-    st.markdown(f"```text\n{qa_text}\n```")
-    if explanation and st.checkbox("Show Explanation", key=f"show_exp_{i}"):
-        st.markdown("### 📝 Explanation")
-        st.markdown(format_html(explanation), unsafe_allow_html=True)
+    i = st.session_state.idx
+    end = len(data)-1
+    row = data.iloc[i]
 
-    if st.button("🔊 Read Q&A + Explanation Aloud", key=f"tts_full_{i}"):
-        play_tts(full_tts_text)
+    # Prepare texts
+    passage = str(row['Passage'])
+    qa = f"Question {i+1}: {row['Question']}. " + "; ".join(str(a).strip() for a in row['Answer'].split(';'))
+    exp = row.get('Explanation','') or ''
+    full = passage + "\\n\\n" + qa + ("\\n\\nExplanation: "+exp if exp else "")
 
-# Navigation Buttons
-col1, _, col2 = st.columns([1, 4, 1])
-with col1:
-    if st.button("◀️ Back") and st.session_state.idx > 0:
-        st.session_state.idx -= 1
-with col2:
-    if st.button("Next ▶️") and st.session_state.idx < max_idx:
-        st.session_state.idx += 1
+    # Controls above
+    inject_tts_controls(full, f"above_{i}")
 
-show_item(st.session_state.idx)
+    st.subheader(f"{subj} ({i+1} of {end+1})")
+    st.markdown(format_html(passage), unsafe_allow_html=True)
+    st.markdown(f"**Q&A:** {qa}")
+    if exp:
+        if st.checkbox("Show Explanation"):
+            st.markdown(format_html(exp), unsafe_allow_html=True)
+
+    # Controls below
+    inject_tts_controls(full, f"below_{i}")
+
+    # Sidebar controls
+    st.sidebar.markdown("### 🔊 Audio")
+    inject_tts_controls(full, f"side_{i}")
+
+    # Navigation
+    c1,c2 = st.columns(2)
+    with c1:
+        if st.button("◀ Back") and i>0:
+            st.session_state.idx -=1
+    with c2:
+        if st.button("Next ▶") and i<end:
+            st.session_state.idx +=1
+
+if __name__=="__main__":
+    main()
