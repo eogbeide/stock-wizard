@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 from gtts import gTTS
 import tempfile
-import os
+import re
 
 # Load data from Excel on GitHub
 @st.cache_data
@@ -34,51 +34,59 @@ filtered = filtered[filtered['Topic'] == selected_topic].reset_index(drop=True)
 if 'idx' not in st.session_state:
     st.session_state.idx = 0
 max_idx = len(filtered) - 1
+if max_idx < 0:
+    st.warning("No questions for this Subject/Topic.")
+    st.stop()
 st.session_state.idx = max(0, min(st.session_state.idx, max_idx))
 
-# TTS with mobile compatibility (do not delete before playback)
+def format_passage_html(text: str) -> str:
+    """Convert raw text into HTML-formatted paragraphs with line breaks."""
+    text = str(text).strip()
+    paragraphs = re.split(r'\n\s*\n', text)
+    formatted = ''.join(f"<p>{p.strip().replace('\n', '<br>')}</p>" for p in paragraphs)
+    return formatted
+
 def play_tts(text: str):
     tts = gTTS(text=text, lang='en')
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
+    with tempfile.NamedTemporaryFile(delete=True, suffix=".mp3") as fp:
         tts.save(fp.name)
         st.audio(fp.name, format='audio/mp3')
-    os.remove(fp.name)
 
 def show_item(i: int):
     row = filtered.iloc[i]
 
-    # Display passage
+    # Formatted Passage
     st.markdown("### 📘 Passage")
-    st.markdown(row['Passage'].replace('\n', '<br><br>'), unsafe_allow_html=True)
+    passage_html = format_passage_html(row['Passage'])
+    st.markdown(passage_html, unsafe_allow_html=True)
     if st.button("🔊 Read Passage Aloud", key=f"tts_passage_{i}"):
         play_tts(str(row['Passage']))
 
-    # Display question and options
+    # Question & Answers
     answers = [opt.strip() for opt in str(row['Answer']).split(';')]
-    qa_text = f"**Question {i+1}:** {row['Question']}\n\n" + "\n".join(f"- {a}" for a in answers)
-    st.markdown(qa_text)
+    qa_text = f"Question {i+1}: {row['Question']}\nAnswers:\n" + "\n".join(f"- {a}" for a in answers)
+    st.markdown(f"```text\n{qa_text}\n```")
 
-    # Show explanation toggle
+    # Explanation
     raw_exp = row.get('Explanation', '')
     explanation = str(raw_exp).strip() if pd.notna(raw_exp) else ''
     if explanation and st.checkbox("Show Explanation", key=f"show_exp_{i}"):
-        st.markdown(f"📝 **Explanation:**\n\n{explanation}")
+        st.info(explanation)
 
-    # TTS for full block
-    full_tts_text = f"Question: {row['Question']}. Options: {'; '.join(answers)}"
+    # Combined TTS
+    full_tts_text = qa_text
     if explanation:
-        full_tts_text += f". Explanation: {explanation}"
-    if st.button("🔊 Read Q&A + Explanation", key=f"tts_full_{i}"):
+        full_tts_text += f"\nExplanation:\n{explanation}"
+    if st.button("🔊 Read Q&A + Explanation Aloud", key=f"tts_full_{i}"):
         play_tts(full_tts_text)
 
-# Navigation buttons for mobile (stacked vertically)
-st.markdown("---")
-if st.button("⬅️ Previous Question"):
-    if st.session_state.idx > 0:
+# Navigation Buttons
+col1, _, col2 = st.columns([1, 4, 1])
+with col1:
+    if st.button("◀️ Back") and st.session_state.idx > 0:
         st.session_state.idx -= 1
-if st.button("Next Question ➡️"):
-    if st.session_state.idx < max_idx:
+with col2:
+    if st.button("Next ▶️") and st.session_state.idx < max_idx:
         st.session_state.idx += 1
-st.markdown("---")
 
 show_item(st.session_state.idx)
