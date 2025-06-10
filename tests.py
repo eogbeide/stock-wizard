@@ -26,15 +26,21 @@ def format_passage(text):
     return html_passage
 
 def play_text(text: str):
-    """Convert text to speech and serve audio file (iOS/mobile compatible)."""
+    """Convert text to speech and serve audio file (mobile/iOS compatible) with error handling."""
     if not text:
         st.warning("No explanation to read.")
         return
-    tts = gTTS(text=text, lang='en')
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
-        tts.save(fp.name)
-        audio_path = fp.name
-    st.audio(audio_path, format="audio/mp3")
+
+    try:
+        tts = gTTS(text=text, lang='en')
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
+            tts.save(fp.name)
+            audio_path = fp.name
+        st.audio(audio_path, format="audio/mp3")
+    except Exception as e:
+        st.error("🔊 Text-to-speech failed. Please check your internet connection or try again later.")
+        # Optional: log error for debugging (remove in production)
+        # st.exception(e)
 
 def main():
     st.set_page_config(layout="centered")
