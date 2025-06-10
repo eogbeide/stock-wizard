@@ -39,7 +39,7 @@ if max_idx < 0:
     st.stop()
 st.session_state.idx = max(0, min(st.session_state.idx, max_idx))
 
-def format_passage_html(text: str) -> str:
+def format_html(text: str) -> str:
     """Convert raw text into HTML-formatted paragraphs with line breaks."""
     text = str(text).strip()
     paragraphs = re.split(r'\n\s*\n', text)
@@ -57,7 +57,7 @@ def show_item(i: int):
 
     # Formatted Passage
     st.markdown("### 📘 Passage")
-    passage_html = format_passage_html(row['Passage'])
+    passage_html = format_html(row['Passage'])
     st.markdown(passage_html, unsafe_allow_html=True)
     if st.button("🔊 Read Passage Aloud", key=f"tts_passage_{i}"):
         play_tts(str(row['Passage']))
@@ -67,11 +67,13 @@ def show_item(i: int):
     qa_text = f"Question {i+1}: {row['Question']}\nAnswers:\n" + "\n".join(f"- {a}" for a in answers)
     st.markdown(f"```text\n{qa_text}\n```")
 
-    # Explanation
+    # Explanation (formatted)
     raw_exp = row.get('Explanation', '')
     explanation = str(raw_exp).strip() if pd.notna(raw_exp) else ''
     if explanation and st.checkbox("Show Explanation", key=f"show_exp_{i}"):
-        st.info(explanation)
+        st.markdown("### 📝 Explanation")
+        explanation_html = format_html(explanation)
+        st.markdown(explanation_html, unsafe_allow_html=True)
 
     # Combined TTS
     full_tts_text = qa_text
