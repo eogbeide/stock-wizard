@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from gtts import gTTS
 import tempfile
+import re
 
 # Load data from Excel on GitHub
 @st.cache_data
@@ -36,8 +37,14 @@ max_idx = len(filtered) - 1
 if max_idx < 0:
     st.warning("No questions for this Subject/Topic.")
     st.stop()
-# clamp
 st.session_state.idx = max(0, min(st.session_state.idx, max_idx))
+
+def format_passage_html(text: str) -> str:
+    """Convert raw text into HTML-formatted paragraphs with line breaks."""
+    text = str(text).strip()
+    paragraphs = re.split(r'\n\s*\n', text)
+    formatted = ''.join(f"<p>{p.strip().replace('\n', '<br>')}</p>" for p in paragraphs)
+    return formatted
 
 def play_tts(text: str):
     tts = gTTS(text=text, lang='en')
@@ -48,32 +55,33 @@ def play_tts(text: str):
 def show_item(i: int):
     row = filtered.iloc[i]
 
-    # Passage
-    st.markdown("### Passage")
-    st.markdown(row['Passage'].replace('\n', '<br><br>'), unsafe_allow_html=True)
+    # Formatted Passage
+    st.markdown("### 📘 Passage")
+    passage_html = format_passage_html(row['Passage'])
+    st.markdown(passage_html, unsafe_allow_html=True)
     if st.button("🔊 Read Passage Aloud", key=f"tts_passage_{i}"):
         play_tts(str(row['Passage']))
 
-    # Build Q&A text
+    # Question & Answers
     answers = [opt.strip() for opt in str(row['Answer']).split(';')]
     qa_text = f"Question {i+1}: {row['Question']}\nAnswers:\n" + "\n".join(f"- {a}" for a in answers)
     st.markdown(f"```text\n{qa_text}\n```")
 
-    # Safely coerce explanation to string and strip
+    # Explanation
     raw_exp = row.get('Explanation', '')
     explanation = str(raw_exp).strip() if pd.notna(raw_exp) else ''
     if explanation and st.checkbox("Show Explanation", key=f"show_exp_{i}"):
         st.info(explanation)
 
-    # Combined Q&A + Explanation TTS
+    # Combined TTS
     full_tts_text = qa_text
     if explanation:
         full_tts_text += f"\nExplanation:\n{explanation}"
     if st.button("🔊 Read Q&A + Explanation Aloud", key=f"tts_full_{i}"):
         play_tts(full_tts_text)
 
-# Navigation
-col1, _, col2 = st.columns([1,4,1])
+# Navigation Buttons
+col1, _, col2 = st.columns([1, 4, 1])
 with col1:
     if st.button("◀️ Back") and st.session_state.idx > 0:
         st.session_state.idx -= 1
