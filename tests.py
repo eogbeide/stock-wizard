@@ -23,25 +23,21 @@ def browser_tts_controls(text: str, key_prefix: str):
     Renders Play/Pause/Resume/Stop buttons that speak `text`
     paragraph-by-paragraph at 80% speed with a soft female voice.
     """
-    # Escape backticks & linebreaks for JS
     safe = text.replace("\\", "\\\\").replace("`", "'").replace("\n", "\\n")
     html = f"""
-    <div id="{key_prefix}_controls">
+    <div id="{key_prefix}_controls" style="margin: 5px 0;">
       <button id="{key_prefix}_play">▶️ Play</button>
       <button id="{key_prefix}_pause" disabled>⏸️ Pause</button>
       <button id="{key_prefix}_resume" disabled>⏯️ Resume</button>
       <button id="{key_prefix}_stop" disabled>⏹️ Stop</button>
     </div>
     <script>
-      // Split into paragraphs on blank lines
       const paras = `{safe}`.split(/\\n\\s*\\n/);
-      // Build utterances array
       const utterances = paras.map(p => {{
         const u = new SpeechSynthesisUtterance(p);
         u.rate = 0.8;
         return u;
       }});
-      // Select a soft female English voice
       function selectVoice() {{
         const voices = window.speechSynthesis.getVoices();
         return voices.find(v =>
@@ -51,9 +47,9 @@ def browser_tts_controls(text: str, key_prefix: str):
       }}
       function setupVoices() {{
         const chosen = selectVoice();
-        if(chosen) utterances.forEach(u => u.voice = chosen);
+        if (chosen) utterances.forEach(u => u.voice = chosen);
       }}
-      if(window.speechSynthesis.getVoices().length) {{
+      if (window.speechSynthesis.getVoices().length) {{
         setupVoices();
       }} else {{
         window.speechSynthesis.onvoiceschanged = setupVoices;
@@ -66,9 +62,9 @@ def browser_tts_controls(text: str, key_prefix: str):
       const stopBtn = document.getElementById("{key_prefix}_stop");
 
       function speakNext() {{
-        if(current >= utterances.length) return finishPlayback();
+        if (current >= utterances.length) return finishPlayback();
         const u = utterances[current++];
-        u.onend = () => setTimeout(speakNext, 600);  // 600 ms pause
+        u.onend = () => setTimeout(speakNext, 600);
         window.speechSynthesis.speak(u);
       }}
 
@@ -102,8 +98,6 @@ def browser_tts_controls(text: str, key_prefix: str):
         window.speechSynthesis.cancel();
         finishPlayback();
       }};
-
-      // When all utterances finish naturally
       utterances[utterances.length - 1].onend = finishPlayback;
     </script>
     """
@@ -142,17 +136,22 @@ def main():
 
     row = filtered.iloc[idx]
     explanation = str(row['Explanation'])
-    st.subheader(f"{subject} ({idx+1} of {max_idx+1})")
-    st.markdown(format_html(explanation), unsafe_allow_html=True)
+    formatted = format_html(explanation)
 
-    # Inline controls
-    browser_tts_controls(explanation, f"main_{idx}")
+    # Controls above
+    browser_tts_controls(explanation, f"above_{idx}")
+
+    st.subheader(f"{subject} ({idx+1} of {max_idx+1})")
+    st.markdown(formatted, unsafe_allow_html=True)
+
+    # Controls below
+    browser_tts_controls(explanation, f"below_{idx}")
 
     # Sidebar controls
     st.sidebar.markdown("### 🔊 Audio Controls")
     browser_tts_controls(explanation, f"side_{idx}")
 
-    # Navigation buttons
+    # Navigation
     col1, col2 = st.columns(2)
     with col1:
         if st.button("◀ Back") and idx > 0:
