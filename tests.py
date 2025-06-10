@@ -20,10 +20,11 @@ def format_html(text: str) -> str:
 
 def browser_tts_controls(text: str, key_prefix: str):
     """
-    Injects Play / Pause / Resume / Stop controls using the browser SpeechSynthesis API,
-    with a softer female voice at 80% speed.
+    Renders Play/Pause/Resume/Stop buttons that speak `text`
+    paragraph-by-paragraph at 80% speed with a soft female voice.
     """
-    safe = text.replace("`", "'").replace("\\", "\\\\")
+    # Escape backticks & linebreaks for JS
+    safe = text.replace("\\", "\\\\").replace("`", "'").replace("\n", "\\n")
     html = f"""
     <div id="{key_prefix}_controls">
       <button id="{key_prefix}_play">▶️ Play</button>
@@ -32,42 +33,61 @@ def browser_tts_controls(text: str, key_prefix: str):
       <button id="{key_prefix}_stop" disabled>⏹️ Stop</button>
     </div>
     <script>
-      const utter_{key_prefix} = new SpeechSynthesisUtterance(`{safe}`);
-      utter_{key_prefix}.rate = 0.8;  // 80% speed
-      
-      // pick a soft female English voice if possible
+      // Split into paragraphs on blank lines
+      const paras = `{safe}`.split(/\\n\\s*\\n/);
+      // Build utterances array
+      const utterances = paras.map(p => {{
+        const u = new SpeechSynthesisUtterance(p);
+        u.rate = 0.8;
+        return u;
+      }});
+      // Select a soft female English voice
       function selectVoice() {{
         const voices = window.speechSynthesis.getVoices();
-        return voices.find(v => 
+        return voices.find(v =>
           v.lang.startsWith('en') &&
           /female|zira|samantha|victoria/i.test(v.name)
         ) || voices.find(v => v.lang.startsWith('en'));
       }}
-
-      function setupVoice() {{
-        const v = selectVoice();
-        if (v) utter_{key_prefix}.voice = v;
+      function setupVoices() {{
+        const chosen = selectVoice();
+        if(chosen) utterances.forEach(u => u.voice = chosen);
       }}
-
-      // Setup voice once voices are loaded
-      if (window.speechSynthesis.getVoices().length) {{
-        setupVoice();
+      if(window.speechSynthesis.getVoices().length) {{
+        setupVoices();
       }} else {{
-        window.speechSynthesis.onvoiceschanged = setupVoice;
+        window.speechSynthesis.onvoiceschanged = setupVoices;
       }}
 
+      let current = 0;
       const playBtn = document.getElementById("{key_prefix}_play");
       const pauseBtn = document.getElementById("{key_prefix}_pause");
       const resumeBtn = document.getElementById("{key_prefix}_resume");
       const stopBtn = document.getElementById("{key_prefix}_stop");
 
-      playBtn.onclick = () => {{
+      function speakNext() {{
+        if(current >= utterances.length) return finishPlayback();
+        const u = utterances[current++];
+        u.onend = () => setTimeout(speakNext, 600);  // 600 ms pause
+        window.speechSynthesis.speak(u);
+      }}
+
+      function startPlayback() {{
         window.speechSynthesis.cancel();
-        window.speechSynthesis.speak(utter_{key_prefix});
+        current = 0;
+        speakNext();
         playBtn.disabled = true;
         pauseBtn.disabled = false;
         stopBtn.disabled = false;
-      }};
+      }}
+      function finishPlayback() {{
+        playBtn.disabled = false;
+        pauseBtn.disabled = true;
+        resumeBtn.disabled = true;
+        stopBtn.disabled = true;
+      }}
+
+      playBtn.onclick = startPlayback;
       pauseBtn.onclick = () => {{
         window.speechSynthesis.pause();
         pauseBtn.disabled = true;
@@ -80,24 +100,18 @@ def browser_tts_controls(text: str, key_prefix: str):
       }};
       stopBtn.onclick = () => {{
         window.speechSynthesis.cancel();
-        playBtn.disabled = false;
-        pauseBtn.disabled = true;
-        resumeBtn.disabled = true;
-        stopBtn.disabled = true;
+        finishPlayback();
       }};
-      utter_{key_prefix}.onend = () => {{
-        playBtn.disabled = false;
-        pauseBtn.disabled = true;
-        resumeBtn.disabled = true;
-        stopBtn.disabled = true;
-      }};
+
+      // When all utterances finish naturally
+      utterances[utterances.length - 1].onend = finishPlayback;
     </script>
     """
-    components.html(html, height=60)
+    components.html(html, height=80)
 
 def main():
     st.set_page_config(layout="centered")
-    st.title("📘 Test Explanations with Softer Female Voice at 80% Speed")
+    st.title("📘 Story-Style TTS Playback")
 
     df = load_data()
     if df.empty:
@@ -128,15 +142,17 @@ def main():
 
     row = filtered.iloc[idx]
     explanation = str(row['Explanation'])
-    formatted = format_html(explanation)
-
     st.subheader(f"{subject} ({idx+1} of {max_idx+1})")
-    st.markdown(formatted, unsafe_allow_html=True)
+    st.markdown(format_html(explanation), unsafe_allow_html=True)
+
+    # Inline controls
     browser_tts_controls(explanation, f"main_{idx}")
 
+    # Sidebar controls
     st.sidebar.markdown("### 🔊 Audio Controls")
     browser_tts_controls(explanation, f"side_{idx}")
 
+    # Navigation buttons
     col1, col2 = st.columns(2)
     with col1:
         if st.button("◀ Back") and idx > 0:
