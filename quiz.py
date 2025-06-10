@@ -33,7 +33,7 @@ def inject_tts_controls(text: str, key: str):
       const paras = `{safe}`.split(/\\n\\s*\\n/);
       const utter = paras.map(p => {{
         const u = new SpeechSynthesisUtterance(p);
-        u.rate = 0.8;
+        u.rate = 0.6;
         return u;
       }});
       // pick soft female voice
