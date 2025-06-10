@@ -52,6 +52,12 @@ today = datetime.datetime.now().date()
 st.write(f"Last updated: {today}")
 
 # Create buttons to navigate to the external apps
+if st.button("Go to MCAT Prep Content Reviews"):
+    st.markdown("[Open MCAT Quiz Prep](https://subjectreviews.streamlit.app/)", unsafe_allow_html=True)
+
+if st.button("Go to MCAT Prep Quiz"):
+    st.markdown("[Open MCAT Quiz Prep](https://mcatquiz.streamlit.app/)", unsafe_allow_html=True)
+
 if st.button("Go to MCAT Topics"):
     st.markdown("[Open MCAT Topics](https://mcattopics.streamlit.app/)", unsafe_allow_html=True)
 
@@ -60,12 +66,6 @@ if st.button("Go to MCAT Lab Review"):
 
 if st.button("Go to MCAT Flashcards"):
     st.markdown("[Open MCAT Flash Cards](https://mcatflashcards.streamlit.app/)", unsafe_allow_html=True)
-
-if st.button("Go to MCAT Prep Quiz"):
-    st.markdown("[Open MCAT Quiz Prep](https://mcatquiz.streamlit.app/)", unsafe_allow_html=True)
-
-if st.button("Go to MCAT Prep Content Reviews"):
-    st.markdown("[Open MCAT Quiz Prep](https://subjectreviews.streamlit.app/)", unsafe_allow_html=True)
 
 if st.button("Go to MCAT Companion ChatGPT"):
     st.markdown("[Open MCAT Companion](https://poe.com/MCATCompanion)", unsafe_allow_html=True)
