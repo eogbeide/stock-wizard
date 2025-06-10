@@ -14,39 +14,37 @@ def load_data():
         return pd.DataFrame()
 
 def format_html(text: str) -> str:
-    # Wrap paragraphs and line breaks in HTML
+    """Wrap paragraphs and line breaks in HTML."""
     paras = re.split(r'\n\s*\n', text.strip())
     return ''.join(f"<p>{p.replace('\n', '<br>')}</p>" for p in paras)
 
 def inject_tts_controls(text: str, key: str):
-    """Inject JS TTS controls using the browser SpeechSynthesis API."""
+    """Inject JS TTS controls using SpeechSynthesis API at 80% speed, soft female voice."""
     safe = text.replace("\\", "\\\\").replace("`", "'").replace("\n", "\\n")
     html = f'''
-    <div style="margin: 0.5em 0;">
+    <div style="margin:0.5em 0;">
       <button id="{key}_play">▶️ Play</button>
       <button id="{key}_pause" disabled>⏸️ Pause</button>
       <button id="{key}_resume" disabled>⏯️ Resume</button>
       <button id="{key}_stop" disabled>⏹️ Stop</button>
     </div>
     <script>
-      // Split into paragraphs
       const paras = `{safe}`.split(/\\n\\s*\\n/);
       const utter = paras.map(p => {{
         const u = new SpeechSynthesisUtterance(p);
-        u.rate = 0.6;
+        u.rate = 0.8;
         return u;
       }});
-      // pick soft female voice
       function pickVoice() {{
         const vs = speechSynthesis.getVoices();
-        return vs.find(v => /female|zira|samantha|victoria/i.test(v.name)) 
+        return vs.find(v => /zira|samantha|victoria|female/i.test(v.name))
                || vs.find(v => v.lang.startsWith('en'));
       }}
       function setup() {{
         const v = pickVoice();
         if(v) utter.forEach(u => u.voice = v);
       }}
-      if(speechSynthesis.getVoices().length) setup();
+      if (speechSynthesis.getVoices().length) setup();
       else speechSynthesis.onvoiceschanged = setup;
 
       let idx = 0;
@@ -56,7 +54,7 @@ def inject_tts_controls(text: str, key: str):
       const stop = document.getElementById("{key}_stop");
 
       function speakNext() {{
-        if(idx >= utter.length) return endAll();
+        if (idx >= utter.length) return endAll();
         const u = utter[idx++];
         u.onend = () => setTimeout(speakNext, 600);
         speechSynthesis.speak(u);
@@ -98,7 +96,7 @@ def inject_tts_controls(text: str, key: str):
 
 def main():
     st.set_page_config(layout="centered")
-    st.title("📘 Mobile-Safe Story-Style TTS")
+    st.title("📘 Mobile-Safe TTS with Separate Controls")
 
     df = load_data()
     if df.empty:
@@ -119,46 +117,56 @@ def main():
         st.sidebar.warning("No items here.")
         st.stop()
 
-    key_state = (subj, top) if 'Topic' in df.columns else (subj, None)
-    if 'idx' not in st.session_state or st.session_state.last!=key_state:
+    # Session state key
+    topic_state = top if 'Topic' in data.columns else None
+    key_state = (subj, topic_state)
+    if 'idx' not in st.session_state or st.session_state.get('last') != key_state:
         st.session_state.idx = 0
-        st.session_state.last = key_state
+        st.session_state['last'] = key_state
 
     i = st.session_state.idx
-    end = len(data)-1
+    end = len(data) - 1
     row = data.iloc[i]
 
-    # Prepare texts
+    # Prepare text segments
     passage = str(row['Passage'])
-    qa = f"Question {i+1}: {row['Question']}. " + "; ".join(str(a).strip() for a in row['Answer'].split(';'))
-    exp = row.get('Explanation','') or ''
-    full = passage + "\\n\\n" + qa + ("\\n\\nExplanation: "+exp if exp else "")
+    qa = f"Question {i+1}: {row['Question']}. " + "; ".join(a.strip() for a in str(row['Answer']).split(';'))
+    exp = str(row.get('Explanation','') or '')
 
-    # Controls above
-    inject_tts_controls(full, f"above_{i}")
+    # Controls for Passage
+    st.markdown("#### Passage Audio")
+    inject_tts_controls(passage, f"passage_{i}")
 
-    st.subheader(f"{subj} ({i+1} of {end+1})")
+    # Display Passage
     st.markdown(format_html(passage), unsafe_allow_html=True)
+
+    # Controls for Q&A
+    st.markdown("#### Q&A Audio")
+    inject_tts_controls(qa, f"qa_{i}")
     st.markdown(f"**Q&A:** {qa}")
+
+    # Controls for Explanation (if present)
     if exp:
+        st.markdown("#### Explanation Audio")
+        inject_tts_controls(exp, f"exp_{i}")
         if st.checkbox("Show Explanation"):
             st.markdown(format_html(exp), unsafe_allow_html=True)
 
-    # Controls below
-    inject_tts_controls(full, f"below_{i}")
-
-    # Sidebar controls
-    st.sidebar.markdown("### 🔊 Audio")
-    inject_tts_controls(full, f"side_{i}")
+    # Sidebar controls for all three
+    st.sidebar.markdown("### 🔊 Sidebar Audio Controls")
+    inject_tts_controls(passage, f"sb_passage_{i}")
+    inject_tts_controls(qa, f"sb_qa_{i}")
+    if exp:
+        inject_tts_controls(exp, f"sb_exp_{i}")
 
     # Navigation
-    c1,c2 = st.columns(2)
+    c1, c2 = st.columns(2)
     with c1:
-        if st.button("◀ Back") and i>0:
-            st.session_state.idx -=1
+        if st.button("◀ Back") and i > 0:
+            st.session_state.idx -= 1
     with c2:
-        if st.button("Next ▶") and i<end:
-            st.session_state.idx +=1
+        if st.button("Next ▶") and i < end:
+            st.session_state.idx += 1
 
-if __name__=="__main__":
+if __name__ == "__main__":
     main()
