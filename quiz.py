@@ -1,4 +1,4 @@
-import streamlit as sts
+import streamlit as st
 import pandas as pd
 from gtts import gTTS
 import tempfile
@@ -46,41 +46,54 @@ def format_html(text: str) -> str:
     formatted = ''.join(f"<p>{p.strip().replace('\n', '<br>')}</p>" for p in paragraphs)
     return formatted
 
-def play_tts(text: str):
+def generate_audio_bytes(text: str):
+    """Generate TTS audio as a bytes buffer."""
     tts = gTTS(text=text, lang='en')
-    with tempfile.NamedTemporaryFile(delete=True, suffix=".mp3") as fp:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
         tts.save(fp.name)
-        st.audio(fp.name, format='audio/mp3')
+        with open(fp.name, 'rb') as audio_file:
+            audio_bytes = audio_file.read()
+    return audio_bytes
 
 def show_item(i: int):
     row = filtered.iloc[i]
 
-    # Formatted Passage
-    st.markdown("### 📘 Passage")
-    passage_html = format_html(row['Passage'])
-    st.markdown(passage_html, unsafe_allow_html=True)
-    if st.button("🔊 Read Passage Aloud", key=f"tts_passage_{i}"):
-        play_tts(str(row['Passage']))
+    # --- Format content ---
+    passage = str(row['Passage']).strip()
+    formatted_passage = format_html(passage)
 
-    # Question & Answers
     answers = [opt.strip() for opt in str(row['Answer']).split(';')]
-    qa_text = f"Question {i+1}: {row['Question']}\nAnswers:\n" + "\n".join(f"- {a}" for a in answers)
-    st.markdown(f"```text\n{qa_text}\n```")
+    question = f"Question {i+1}: {row['Question']}"
+    qa_text = f"{question}\nAnswers:\n" + "\n".join(f"- {a}" for a in answers)
 
-    # Explanation (formatted)
     raw_exp = row.get('Explanation', '')
     explanation = str(raw_exp).strip() if pd.notna(raw_exp) else ''
-    if explanation and st.checkbox("Show Explanation", key=f"show_exp_{i}"):
-        st.markdown("### 📝 Explanation")
-        explanation_html = format_html(explanation)
-        st.markdown(explanation_html, unsafe_allow_html=True)
-
-    # Combined TTS
-    full_tts_text = qa_text
+    full_tts_text = f"{question}\n" + "\n".join(answers)
     if explanation:
         full_tts_text += f"\nExplanation:\n{explanation}"
-    if st.button("🔊 Read Q&A + Explanation Aloud", key=f"tts_full_{i}"):
-        play_tts(full_tts_text)
+
+    # --- Generate audio once ---
+    passage_audio = generate_audio_bytes(passage)
+    full_audio = generate_audio_bytes(full_tts_text)
+
+    # --- Sidebar audio controls ---
+    st.sidebar.markdown("### 🔊 Audio Player (Sidebar)")
+    st.sidebar.audio(passage_audio, format='audio/mp3', start_time=0)
+    st.sidebar.audio(full_audio, format='audio/mp3', start_time=0)
+
+    # --- Main UI ---
+    st.markdown("### 📘 Passage")
+    st.markdown(formatted_passage, unsafe_allow_html=True)
+
+    st.markdown("### 🔊 Audio Player (Top)")
+    st.audio(passage_audio, format='audio/mp3', start_time=0)
+    st.audio(full_audio, format='audio/mp3', start_time=0)
+
+    st.markdown(f"```text\n{qa_text}\n```")
+
+    if explanation and st.checkbox("Show Explanation", key=f"show_exp_{i}"):
+        st.markdown("### 📝 Explanation")
+        st.markdown(format_html(explanation), unsafe_allow_html=True)
 
 # Navigation Buttons
 col1, _, col2 = st.columns([1, 4, 1])
