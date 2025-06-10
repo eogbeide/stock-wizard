@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 from gtts import gTTS
 import io
+import re
 
 # URL of the Excel file
 URL = "https://github.com/eogbeide/stock-wizard/raw/main/tests.xlsx"
@@ -16,18 +17,39 @@ def load_data():
         st.error(f"Error loading data: {e}")
         return pd.DataFrame()
 
+def format_passage(text):
+    """Convert plain text into safe HTML paragraph format with line breaks."""
+    text = str(text).strip()
+    # Replace multiple newlines with double <br> and wrap in <p> tags
+    paragraphs = re.split(r'\n\s*\n', text)
+    html_passage = ''.join(f"<p>{p.strip().replace('\n', '<br>')}</p>" for p in paragraphs)
+    return html_passage
+
 def play_text(text: str):
-    """Convert text to speech and play via an in-memory buffer."""
+    """Convert text to speech and play via in-memory buffer (uses default gTTS female voice)."""
     if not text:
         st.warning("No explanation to read.")
         return
     buffer = io.BytesIO()
-    tts = gTTS(text=text, lang='en')
+    tts = gTTS(text=text, lang='en')  # gTTS does not support voice gender selection
     tts.write_to_fp(buffer)
     buffer.seek(0)
     st.audio(buffer, format="audio/mp3")
 
+# Optional: use Google Cloud TTS for male voice (commented out)
+# def play_text_male(text: str):
+#     from google.cloud import texttospeech
+#     client = texttospeech.TextToSpeechClient()
+#     synthesis_input = texttospeech.SynthesisInput(text=text)
+#     voice = texttospeech.VoiceSelectionParams(
+#         language_code="en-US", name="en-US-Wavenet-D", ssml_gender=texttospeech.SsmlVoiceGender.MALE
+#     )
+#     audio_config = texttospeech.AudioConfig(audio_encoding=texttospeech.AudioEncoding.MP3)
+#     response = client.synthesize_speech(input=synthesis_input, voice=voice, audio_config=audio_config)
+#     st.audio(response.audio_content, format='audio/mp3')
+
 def main():
+    st.set_page_config(layout="wide")
     st.title("Test Explanations with TTS")
 
     # Load data
@@ -54,19 +76,16 @@ def main():
     max_idx = len(filtered) - 1
     idx = st.session_state.idx
 
-    # Get current explanation
+    # Display current explanation with HTML formatting
     explanation = str(filtered.loc[idx, 'Explanation']).strip()
-
-    # Sidebar play aloud button
-    if st.sidebar.button("🔊 Play Explanation (Sidebar)"):
-        play_text(explanation)
-
-    # Main content
+    formatted_explanation = format_passage(explanation)
     st.subheader(f"{selected_subject} (Explanation {idx+1} of {max_idx+1})")
-    st.write(explanation)
+    st.markdown(formatted_explanation, unsafe_allow_html=True)
 
-    # Main play aloud button
+    # Play aloud buttons
     if st.button("🔊 Play Explanation"):
+        play_text(explanation)
+    if st.sidebar.button("🔊 Play Explanation (Sidebar)"):
         play_text(explanation)
 
     # Navigation buttons
