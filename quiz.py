@@ -1,10 +1,10 @@
 import streamlit as st
 import pandas as pd
-from gtts import gTTS
-import tempfile
 import re
+import io
+from gtts import gTTS
 
-# Load data from Excel on GitHub
+# Load data from GitHub
 @st.cache_data
 def load_data():
     url = "https://github.com/eogbeide/stock-wizard/raw/main/quiz.xlsx"
@@ -18,7 +18,7 @@ quiz_data = load_data()
 
 st.sidebar.title('Quiz Navigation')
 if quiz_data.empty:
-    st.warning("No quiz data available.")
+    st.sidebar.warning("No quiz data available.")
     st.stop()
 
 # Subject/topic selection
@@ -35,68 +35,54 @@ if 'idx' not in st.session_state:
     st.session_state.idx = 0
 max_idx = len(filtered) - 1
 if max_idx < 0:
-    st.warning("No questions for this Subject/Topic.")
+    st.sidebar.warning("No questions for this Subject/Topic.")
     st.stop()
 st.session_state.idx = max(0, min(st.session_state.idx, max_idx))
 
 def format_html(text: str) -> str:
-    """Convert raw text into HTML-formatted paragraphs with line breaks."""
-    text = str(text).strip()
-    paragraphs = re.split(r'\n\s*\n', text)
-    formatted = ''.join(f"<p>{p.strip().replace('\n', '<br>')}</p>" for p in paragraphs)
-    return formatted
+    paras = re.split(r'\n\s*\n', text.strip())
+    return ''.join(f"<p>{p.replace('\n', '<br>')}</p>" for p in paras)
 
-def generate_audio_bytes(text: str):
-    """Generate TTS audio as a bytes buffer."""
+def make_audio_buffer(text: str) -> io.BytesIO:
+    """Generate TTS audio into a BytesIO buffer."""
     tts = gTTS(text=text, lang='en')
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
-        tts.save(fp.name)
-        with open(fp.name, 'rb') as audio_file:
-            audio_bytes = audio_file.read()
-    return audio_bytes
+    buf = io.BytesIO()
+    tts.write_to_fp(buf)
+    buf.seek(0)
+    return buf
 
 def show_item(i: int):
     row = filtered.iloc[i]
 
-    # --- Format content ---
+    # Passage
     passage = str(row['Passage']).strip()
-    formatted_passage = format_html(passage)
+    st.markdown("### 📘 Passage")
+    st.markdown(format_html(passage), unsafe_allow_html=True)
 
+    # Q&A
     answers = [opt.strip() for opt in str(row['Answer']).split(';')]
     question = f"Question {i+1}: {row['Question']}"
     qa_text = f"{question}\nAnswers:\n" + "\n".join(f"- {a}" for a in answers)
-
-    raw_exp = row.get('Explanation', '')
-    explanation = str(raw_exp).strip() if pd.notna(raw_exp) else ''
-    full_tts_text = f"{question}\n" + "\n".join(answers)
-    if explanation:
-        full_tts_text += f"\nExplanation:\n{explanation}"
-
-    # --- Generate audio once ---
-    passage_audio = generate_audio_bytes(passage)
-    full_audio = generate_audio_bytes(full_tts_text)
-
-    # --- Sidebar audio controls ---
-    st.sidebar.markdown("### 🔊 Audio Player (Sidebar)")
-    st.sidebar.audio(passage_audio, format='audio/mp3', start_time=0)
-    st.sidebar.audio(full_audio, format='audio/mp3', start_time=0)
-
-    # --- Main UI ---
-    st.markdown("### 📘 Passage")
-    st.markdown(formatted_passage, unsafe_allow_html=True)
-
-    st.markdown("### 🔊 Audio Player (Top)")
-    st.audio(passage_audio, format='audio/mp3', start_time=0)
-    st.audio(full_audio, format='audio/mp3', start_time=0)
-
     st.markdown(f"```text\n{qa_text}\n```")
 
-    if explanation and st.checkbox("Show Explanation", key=f"show_exp_{i}"):
-        st.markdown("### 📝 Explanation")
-        st.markdown(format_html(explanation), unsafe_allow_html=True)
+    # Explanation (optional)
+    explanation = str(row.get('Explanation','')).strip()
+    if explanation:
+        if st.checkbox("Show Explanation", key=f"exp_{i}"):
+            st.markdown("### 📝 Explanation")
+            st.markdown(format_html(explanation), unsafe_allow_html=True)
+
+    # Sidebar audio players
+    st.sidebar.markdown("### 🔊 Audio Controls")
+    passage_buf = make_audio_buffer(passage)
+    st.sidebar.audio(passage_buf, format="audio/mp3", start_time=0)
+
+    full_text = qa_text + (f"\nExplanation:\n{explanation}" if explanation else "")
+    full_buf = make_audio_buffer(full_text)
+    st.sidebar.audio(full_buf, format="audio/mp3", start_time=0)
 
 # Navigation Buttons
-col1, _, col2 = st.columns([1, 4, 1])
+col1, col2 = st.columns(2)
 with col1:
     if st.button("◀️ Back") and st.session_state.idx > 0:
         st.session_state.idx -= 1
