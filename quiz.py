@@ -1,10 +1,9 @@
 import streamlit as st
 import pandas as pd
-from gtts import gTTS
-import tempfile
 import re
+import streamlit.components.v1 as components
 
-# Load data from Excel on GitHub
+# --- Load & cache data ---
 @st.cache_data
 def load_data():
     url = "https://github.com/eogbeide/stock-wizard/raw/main/quiz.xlsx"
@@ -15,93 +14,137 @@ def load_data():
         return pd.DataFrame()
 
 quiz_data = load_data()
-
-st.sidebar.title('Quiz Navigation')
 if quiz_data.empty:
-    st.warning("No quiz data available.")
+    st.sidebar.warning("No quiz data available.")
     st.stop()
 
-# Subject/topic selection
+# --- Sidebar navigation ---
+st.sidebar.title("Quiz Navigation")
 subjects = quiz_data['Subject'].unique()
-selected_subject = st.sidebar.selectbox('Select Subject', subjects)
-filtered = quiz_data[quiz_data['Subject'] == selected_subject]
+subject = st.sidebar.selectbox("Subject", subjects)
+filtered = quiz_data[quiz_data['Subject'] == subject]
 
 topics = filtered['Topic'].unique()
-selected_topic = st.sidebar.selectbox('Select Topic', topics)
-filtered = filtered[filtered['Topic'] == selected_topic].reset_index(drop=True)
+topic = st.sidebar.selectbox("Topic", topics)
+filtered = filtered[filtered['Topic'] == topic].reset_index(drop=True)
 
-# Ensure idx is within bounds
+# --- Session state for index ---
 if 'idx' not in st.session_state:
     st.session_state.idx = 0
 max_idx = len(filtered) - 1
 if max_idx < 0:
-    st.warning("No questions for this Subject/Topic.")
+    st.sidebar.warning("No questions here.")
     st.stop()
 st.session_state.idx = max(0, min(st.session_state.idx, max_idx))
+i = st.session_state.idx
 
+# --- Helper to format HTML paragraphs ---
 def format_html(text: str) -> str:
-    """Convert raw text into HTML-formatted paragraphs with line breaks."""
-    text = str(text).strip()
-    paragraphs = re.split(r'\n\s*\n', text)
-    formatted = ''.join(f"<p>{p.strip().replace('\n', '<br>')}</p>" for p in paragraphs)
-    return formatted
+    paras = re.split(r'\n\s*\n', text.strip())
+    return ''.join(f"<p>{p.replace('\n','<br>')}</p>" for p in paras)
 
-def generate_audio_bytes(text: str):
-    """Generate TTS audio as a bytes buffer."""
-    tts = gTTS(text=text, lang='en')
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
-        tts.save(fp.name)
-        with open(fp.name, 'rb') as audio_file:
-            audio_bytes = audio_file.read()
-    return audio_bytes
+# --- Inject JS TTS controls ---
+def inject_tts(text: str, key: str, label: str):
+    """
+    Renders Play/Pause/Resume/Stop controls that speak `text`
+    paragraph-by-paragraph at 70% speed with a soft female voice.
+    """
+    safe = text.replace("\\","\\\\").replace("`","'").replace("\n","\\n")
+    components.html(f"""
+<div style="margin:8px 0;">
+  <strong>{label}</strong><br>
+  <button id="{key}_play">▶️ Play</button>
+  <button id="{key}_pause" disabled>⏸️ Pause</button>
+  <button id="{key}_resume" disabled>⏯️ Resume</button>
+  <button id="{key}_stop" disabled>⏹️ Stop</button>
+</div>
+<script>
+  const text = `{safe}`;
+  const paras = text.split(/\\n\\s*\\n/);
+  const utterances = paras.map(p => {{
+    const u = new SpeechSynthesisUtterance(p);
+    u.rate = 0.7;  // slower
+    return u;
+  }});
+  function pickVoice() {{
+    const voices = speechSynthesis.getVoices();
+    return voices.find(v => /zira|samantha|victoria|female/i.test(v.name))
+        || voices.find(v => v.lang.startsWith('en'));
+  }}
+  function setup() {{
+    const v = pickVoice();
+    if (v) utterances.forEach(u => u.voice = v);
+  }}
+  if (speechSynthesis.getVoices().length) setup();
+  else speechSynthesis.onvoiceschanged = setup;
 
-def show_item(i: int):
-    row = filtered.iloc[i]
+  let idx = 0;
+  const playBtn = document.getElementById("{key}_play");
+  const pauseBtn = document.getElementById("{key}_pause");
+  const resumeBtn = document.getElementById("{key}_resume");
+  const stopBtn = document.getElementById("{key}_stop");
 
-    # --- Format content ---
-    passage = str(row['Passage']).strip()
-    formatted_passage = format_html(passage)
+  function speakNext() {{
+    if (idx >= utterances.length) return finish();
+    const u = utterances[idx++];
+    u.onend = () => setTimeout(speakNext, 600);
+    speechSynthesis.speak(u);
+  }}
+  function start() {{
+    speechSynthesis.cancel();
+    idx = 0;
+    speakNext();
+    playBtn.disabled = true;
+    pauseBtn.disabled = false;
+    stopBtn.disabled = false;
+  }}
+  function finish() {{
+    playBtn.disabled = false;
+    pauseBtn.disabled = true;
+    resumeBtn.disabled = true;
+    stopBtn.disabled = true;
+  }}
 
-    answers = [opt.strip() for opt in str(row['Answer']).split(';')]
-    question = f"Question {i+1}: {row['Question']}"
-    qa_text = f"{question}\nAnswers:\n" + "\n".join(f"- {a}" for a in answers)
+  playBtn.onclick = start;
+  pauseBtn.onclick = () => {{
+    speechSynthesis.pause();
+    pauseBtn.disabled = true;
+    resumeBtn.disabled = false;
+  }};
+  resumeBtn.onclick = () => {{
+    speechSynthesis.resume();
+    resumeBtn.disabled = true;
+    pauseBtn.disabled = false;
+  }};
+  stopBtn.onclick = () => {{
+    speechSynthesis.cancel();
+    finish();
+  }};
+  utterances[utterances.length - 1].onend = finish;
+</script>
+""", height=100)
 
-    raw_exp = row.get('Explanation', '')
-    explanation = str(raw_exp).strip() if pd.notna(raw_exp) else ''
-    full_tts_text = f"{question}\n" + "\n".join(answers)
-    if explanation:
-        full_tts_text += f"\nExplanation:\n{explanation}"
+# --- Display current item ---
+row = filtered.iloc[i]
+passage = str(row['Passage']).strip()
 
-    # --- Generate audio once ---
-    passage_audio = generate_audio_bytes(passage)
-    full_audio = generate_audio_bytes(full_tts_text)
+# Top controls
+st.markdown("### 🔊 Audio Controls (Top)")
+inject_tts(passage, f"top_{i}", "Passage")
 
-    # --- Sidebar audio controls ---
-    st.sidebar.markdown("### 🔊 Audio Player (Sidebar)")
-    st.sidebar.audio(passage_audio, format='audio/mp3', start_time=0)
-    st.sidebar.audio(full_audio, format='audio/mp3', start_time=0)
+# Passage
+st.markdown(f"## {subject} ({i+1} of {max_idx+1})")
+st.markdown(format_html(passage), unsafe_allow_html=True)
 
-    # --- Main UI ---
-    st.markdown("### 📘 Passage")
-    st.markdown(formatted_passage, unsafe_allow_html=True)
+# Sidebar controls
+st.sidebar.markdown("### 🔊 Audio Controls (Sidebar)")
+inject_tts(passage, f"side_{i}", "Passage")
 
-    st.markdown("### 🔊 Audio Player (Top)")
-    st.audio(passage_audio, format='audio/mp3', start_time=0)
-    st.audio(full_audio, format='audio/mp3', start_time=0)
-
-    st.markdown(f"```text\n{qa_text}\n```")
-
-    if explanation and st.checkbox("Show Explanation", key=f"show_exp_{i}"):
-        st.markdown("### 📝 Explanation")
-        st.markdown(format_html(explanation), unsafe_allow_html=True)
-
-# Navigation Buttons
-col1, _, col2 = st.columns([1, 4, 1])
+# Navigation
+col1, col2 = st.columns(2)
 with col1:
-    if st.button("◀️ Back") and st.session_state.idx > 0:
+    if st.button("◀ Back") and i > 0:
         st.session_state.idx -= 1
 with col2:
-    if st.button("Next ▶️") and st.session_state.idx < max_idx:
+    if st.button("Next ▶") and i < max_idx:
         st.session_state.idx += 1
-
-show_item(st.session_state.idx)
