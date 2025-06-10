@@ -20,3 +20,4 @@ gTTS
 requests
 llama_index
 xlrd
+google.cloud
