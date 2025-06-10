@@ -3,6 +3,7 @@ import pandas as pd
 from gtts import gTTS
 import tempfile
 import re
+import os
 
 # Load data from Excel on GitHub
 @st.cache_data
@@ -43,19 +44,30 @@ def format_html(text: str) -> str:
     """Convert raw text into HTML-formatted paragraphs with line breaks."""
     text = str(text).strip()
     paragraphs = re.split(r'\n\s*\n', text)
-    formatted = ''.join(f"<p>{p.strip().replace('\n', '<br>')}</p>" for p in paragraphs)
-    return formatted
+    return ''.join(f"<p>{p.strip().replace('\n', '<br>')}</p>" for p in paragraphs)
 
 def play_tts(text: str):
+    """Convert text to speech and serve audio file (mobile-safe)."""
+    if not text:
+        st.warning("No text to read.")
+        return
+
     tts = gTTS(text=text, lang='en')
-    with tempfile.NamedTemporaryFile(delete=True, suffix=".mp3") as fp:
-        tts.save(fp.name)
-        st.audio(fp.name, format='audio/mp3')
+    # create a temp file that persists until we delete it
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp3")
+    tmp_name = tmp.name
+    tmp.close()
+
+    tts.save(tmp_name)
+    # Safari/iOS requires the file to still exist when st.audio is rendered
+    st.audio(tmp_name, format='audio/mp3', start_time=0)
+
+    # Optionally clean up after a short delay (won't affect playback)
+    # os.remove(tmp_name)
 
 def show_item(i: int):
     row = filtered.iloc[i]
 
-    # --- Format content ---
     passage = str(row['Passage']).strip()
     formatted_passage = format_html(passage)
 
@@ -65,25 +77,22 @@ def show_item(i: int):
 
     raw_exp = row.get('Explanation', '')
     explanation = str(raw_exp).strip() if pd.notna(raw_exp) else ''
-    full_tts_text = f"{question}\n" + "\n".join(answers)
-    if explanation:
-        full_tts_text += f"\nExplanation:\n{explanation}"
+    full_tts_text = qa_text + (f"\nExplanation:\n{explanation}" if explanation else "")
 
-    # --- Sidebar TTS buttons ---
+    # Sidebar audio controls
     st.sidebar.markdown("### 🔊 Audio Controls")
     if st.sidebar.button("▶️ Play Passage (Sidebar)", key=f"sb_passage_{i}"):
         play_tts(passage)
-    if st.sidebar.button("▶️ Play Q&A + Explanation (Sidebar)", key=f"sb_qa_{i}"):
+    if st.sidebar.button("▶️ Play Full (Sidebar)", key=f"sb_full_{i}"):
         play_tts(full_tts_text)
 
-    # --- Main UI ---
+    # Main UI
     st.markdown("### 📘 Passage")
     st.markdown(formatted_passage, unsafe_allow_html=True)
     if st.button("🔊 Read Passage Aloud", key=f"tts_passage_{i}"):
         play_tts(passage)
 
     st.markdown(f"```text\n{qa_text}\n```")
-
     if explanation and st.checkbox("Show Explanation", key=f"show_exp_{i}"):
         st.markdown("### 📝 Explanation")
         st.markdown(format_html(explanation), unsafe_allow_html=True)
