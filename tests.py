@@ -21,12 +21,10 @@ def play_text(text: str):
     if not text:
         st.warning("No explanation to read.")
         return
-    # generate TTS into a bytes buffer
     buffer = io.BytesIO()
     tts = gTTS(text=text, lang='en')
     tts.write_to_fp(buffer)
     buffer.seek(0)
-    # Streamlit will serve the audio blob directly
     st.audio(buffer, format="audio/mp3")
 
 def main():
@@ -56,12 +54,18 @@ def main():
     max_idx = len(filtered) - 1
     idx = st.session_state.idx
 
-    # Display current explanation
+    # Get current explanation
     explanation = str(filtered.loc[idx, 'Explanation']).strip()
+
+    # Sidebar play aloud button
+    if st.sidebar.button("🔊 Play Explanation (Sidebar)"):
+        play_text(explanation)
+
+    # Main content
     st.subheader(f"{selected_subject} (Explanation {idx+1} of {max_idx+1})")
     st.write(explanation)
 
-    # Play aloud button
+    # Main play aloud button
     if st.button("🔊 Play Explanation"):
         play_text(explanation)
 
