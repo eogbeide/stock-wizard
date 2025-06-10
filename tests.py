@@ -15,14 +15,13 @@ def load_data():
         return pd.DataFrame()
 
 def format_html(text: str) -> str:
-    """Wrap paragraphs and line breaks in HTML."""
     paragraphs = re.split(r'\n\s*\n', text.strip())
     return ''.join(f"<p>{p.replace('\n', '<br>')}</p>" for p in paragraphs)
 
 def browser_tts_controls(text: str, key_prefix: str):
     """
-    Inject HTML+JS to create Play/Pause/Resume/Stop buttons that speak `text`
-    via the Web Speech API with full control.
+    Injects Play / Pause / Resume / Stop controls using the browser SpeechSynthesis API,
+    with a softer female voice at 80% speed.
     """
     safe = text.replace("`", "'").replace("\\", "\\\\")
     html = f"""
@@ -34,10 +33,28 @@ def browser_tts_controls(text: str, key_prefix: str):
     </div>
     <script>
       const utter_{key_prefix} = new SpeechSynthesisUtterance(`{safe}`);
-      utter_{key_prefix}.rate = 1; // normal speed
-      // pick the first default english voice
-      utter_{key_prefix}.voice = window.speechSynthesis.getVoices()
-        .find(v=>v.lang.startsWith('en')) || null;
+      utter_{key_prefix}.rate = 0.8;  // 80% speed
+      
+      // pick a soft female English voice if possible
+      function selectVoice() {{
+        const voices = window.speechSynthesis.getVoices();
+        return voices.find(v => 
+          v.lang.startsWith('en') &&
+          /female|zira|samantha|victoria/i.test(v.name)
+        ) || voices.find(v => v.lang.startsWith('en'));
+      }}
+
+      function setupVoice() {{
+        const v = selectVoice();
+        if (v) utter_{key_prefix}.voice = v;
+      }}
+
+      // Setup voice once voices are loaded
+      if (window.speechSynthesis.getVoices().length) {{
+        setupVoice();
+      }} else {{
+        window.speechSynthesis.onvoiceschanged = setupVoice;
+      }}
 
       const playBtn = document.getElementById("{key_prefix}_play");
       const pauseBtn = document.getElementById("{key_prefix}_pause");
@@ -45,7 +62,7 @@ def browser_tts_controls(text: str, key_prefix: str):
       const stopBtn = document.getElementById("{key_prefix}_stop");
 
       playBtn.onclick = () => {{
-        window.speechSynthesis.cancel(); // reset any ongoing
+        window.speechSynthesis.cancel();
         window.speechSynthesis.speak(utter_{key_prefix});
         playBtn.disabled = true;
         pauseBtn.disabled = false;
@@ -68,26 +85,19 @@ def browser_tts_controls(text: str, key_prefix: str):
         resumeBtn.disabled = true;
         stopBtn.disabled = true;
       }};
-      // Re-enable Play when speech ends naturally
       utter_{key_prefix}.onend = () => {{
         playBtn.disabled = false;
         pauseBtn.disabled = true;
         resumeBtn.disabled = true;
         stopBtn.disabled = true;
       }};
-      // Load voices asynchronously
-      window.speechSynthesis.onvoiceschanged = () => {{
-        const v = window.speechSynthesis.getVoices()
-                  .find(v=>v.lang.startsWith('en'));
-        if(v) utter_{key_prefix}.voice = v;
-      }};
     </script>
     """
-    components.html(html, height=50)
+    components.html(html, height=60)
 
 def main():
     st.set_page_config(layout="centered")
-    st.title("📘 Test Explanations with Full Audio Controls")
+    st.title("📘 Test Explanations with Softer Female Voice at 80% Speed")
 
     df = load_data()
     if df.empty:
@@ -98,7 +108,6 @@ def main():
     subject = st.sidebar.selectbox("Subject", subjects)
     filtered = df[df['Subject'] == subject]
 
-    # Handle optional Topic column
     if 'Topic' in filtered.columns:
         topics = filtered['Topic'].unique()
         topic = st.sidebar.selectbox("Topic", topics)
@@ -109,7 +118,6 @@ def main():
         st.sidebar.warning("No items here.")
         return
 
-    # Index management
     key = (subject, topic) if 'Topic' in df.columns else (subject, None)
     if 'idx' not in st.session_state or st.session_state.get('last') != key:
         st.session_state.idx = 0
@@ -122,16 +130,13 @@ def main():
     explanation = str(row['Explanation'])
     formatted = format_html(explanation)
 
-    # Main content
     st.subheader(f"{subject} ({idx+1} of {max_idx+1})")
     st.markdown(formatted, unsafe_allow_html=True)
     browser_tts_controls(explanation, f"main_{idx}")
 
-    # Sidebar controls
     st.sidebar.markdown("### 🔊 Audio Controls")
     browser_tts_controls(explanation, f"side_{idx}")
 
-    # Navigation
     col1, col2 = st.columns(2)
     with col1:
         if st.button("◀ Back") and idx > 0:
