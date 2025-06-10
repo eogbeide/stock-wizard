@@ -1,9 +1,10 @@
 import streamlit as st
 import pandas as pd
-import re
-import streamlit.components.v1 as components
+from gtts import gTTS
+import tempfile
+import os
 
-# --- Load & cache data ---
+# Load data from Excel on GitHub
 @st.cache_data
 def load_data():
     url = "https://github.com/eogbeide/stock-wizard/raw/main/quiz.xlsx"
@@ -14,159 +15,70 @@ def load_data():
         return pd.DataFrame()
 
 quiz_data = load_data()
+
+st.sidebar.title('Quiz Navigation')
 if quiz_data.empty:
-    st.sidebar.warning("No quiz data available.")
+    st.warning("No quiz data available.")
     st.stop()
 
-# --- Sidebar navigation ---
-st.sidebar.title("Quiz Navigation")
+# Subject/topic selection
 subjects = quiz_data['Subject'].unique()
-subject = st.sidebar.selectbox("Subject", subjects)
-filtered = quiz_data[quiz_data['Subject'] == subject]
+selected_subject = st.sidebar.selectbox('Select Subject', subjects)
+filtered = quiz_data[quiz_data['Subject'] == selected_subject]
 
 topics = filtered['Topic'].unique()
-topic = st.sidebar.selectbox("Topic", topics)
-filtered = filtered[filtered['Topic'] == topic].reset_index(drop=True)
+selected_topic = st.sidebar.selectbox('Select Topic', topics)
+filtered = filtered[filtered['Topic'] == selected_topic].reset_index(drop=True)
 
-# --- Session state for index ---
+# Ensure idx is within bounds
 if 'idx' not in st.session_state:
     st.session_state.idx = 0
 max_idx = len(filtered) - 1
-if max_idx < 0:
-    st.sidebar.warning("No questions for this selection.")
-    st.stop()
 st.session_state.idx = max(0, min(st.session_state.idx, max_idx))
-i = st.session_state.idx
 
-# --- Style snippet ---
-components.html("""
-<style>
-  .passage { padding: 0.5em; background: #f9f9f9; border-radius: 4px; }
-  .question { margin-top: 1em; }
-  .question strong { font-size: 1.1em; }
-  .question ul { margin-top: 0.2em; padding-left: 1.2em; }
-  .explanation { margin-top: 1em; color: #555; font-style: italic; }
-</style>
-""", height=0)
+# TTS with mobile compatibility (do not delete before playback)
+def play_tts(text: str):
+    tts = gTTS(text=text, lang='en')
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
+        tts.save(fp.name)
+        st.audio(fp.name, format='audio/mp3')
+    os.remove(fp.name)
 
-def format_html(text: str) -> str:
-    paras = re.split(r'\n\s*\n', text.strip())
-    return ''.join(f"<p>{p.replace('\n','<br>')}</p>" for p in paras)
+def show_item(i: int):
+    row = filtered.iloc[i]
 
-def inject_tts_controls(text: str, key: str, label: str):
-    """
-    Inject Play/Pause/Resume/Stop controls using the browser SpeechSynthesis API.
-    Soft female voice at 80% speed, paragraph pauses.
-    """
-    safe = text.replace("\\", "\\\\").replace("`", "'").replace("\n", "\\n")
-    html = f'''
-    <div class="audio-controls">
-      <strong>{label}</strong><br>
-      <button id="{key}_play">▶️ Play</button>
-      <button id="{key}_pause" disabled>⏸️ Pause</button>
-      <button id="{key}_resume" disabled>⏯️ Resume</button>
-      <button id="{key}_stop" disabled>⏹️ Stop</button>
-    </div>
-    <script>
-      const paras = `{safe}`.split(/\\n\\s*\\n/);
-      const utter = paras.map(p => {{
-        const u = new SpeechSynthesisUtterance(p);
-        u.rate = 0.8;
-        return u;
-      }});
-      function pickVoice() {{
-        const vs = speechSynthesis.getVoices();
-        return vs.find(v => /zira|samantha|victoria|female/i.test(v.name))
-               || vs.find(v => v.lang.startsWith('en'));
-      }}
-      function setup() {{
-        const v = pickVoice();
-        if(v) utter.forEach(u => u.voice = v);
-      }}
-      if (speechSynthesis.getVoices().length) setup();
-      else speechSynthesis.onvoiceschanged = setup;
+    # Display passage
+    st.markdown("### 📘 Passage")
+    st.markdown(row['Passage'].replace('\n', '<br><br>'), unsafe_allow_html=True)
+    if st.button("🔊 Read Passage Aloud", key=f"tts_passage_{i}"):
+        play_tts(str(row['Passage']))
 
-      let idx = 0;
-      const play = document.getElementById("{key}_play");
-      const pause = document.getElementById("{key}_pause");
-      const resume = document.getElementById("{key}_resume");
-      const stop = document.getElementById("{key}_stop");
+    # Display question and options
+    answers = [opt.strip() for opt in str(row['Answer']).split(';')]
+    qa_text = f"**Question {i+1}:** {row['Question']}\n\n" + "\n".join(f"- {a}" for a in answers)
+    st.markdown(qa_text)
 
-      function speakNext() {{
-        if (idx >= utter.length) return finish();
-        const u = utter[idx++];
-        u.onend = () => setTimeout(speakNext, 600);
-        speechSynthesis.speak(u);
-      }}
-      function start() {{
-        speechSynthesis.cancel();
-        idx = 0;
-        speakNext();
-        play.disabled = true;
-        pause.disabled = false;
-        stop.disabled = false;
-      }}
-      function finish() {{
-        play.disabled = false;
-        pause.disabled = true;
-        resume.disabled = true;
-        stop.disabled = true;
-      }}
+    # Show explanation toggle
+    raw_exp = row.get('Explanation', '')
+    explanation = str(raw_exp).strip() if pd.notna(raw_exp) else ''
+    if explanation and st.checkbox("Show Explanation", key=f"show_exp_{i}"):
+        st.markdown(f"📝 **Explanation:**\n\n{explanation}")
 
-      play.onclick = start;
-      pause.onclick = () => {{
-        speechSynthesis.pause();
-        pause.disabled = true;
-        resume.disabled = false;
-      }};
-      resume.onclick = () => {{
-        speechSynthesis.resume();
-        resume.disabled = true;
-        pause.disabled = false;
-      }};
-      stop.onclick = () => {{
-        speechSynthesis.cancel();
-        finish();
-      }};
-      utter[utter.length - 1].onend = finish;
-    </script>
-    '''
-    components.html(html, height=100)
+    # TTS for full block
+    full_tts_text = f"Question: {row['Question']}. Options: {'; '.join(answers)}"
+    if explanation:
+        full_tts_text += f". Explanation: {explanation}"
+    if st.button("🔊 Read Q&A + Explanation", key=f"tts_full_{i}"):
+        play_tts(full_tts_text)
 
-# --- Prepare texts ---
-row = filtered.iloc[i]
-passage = str(row['Passage']).strip()
-answers = [a.strip() for a in str(row['Answer']).split(';')]
-question = f"Question {i+1}: {row['Question']}"
-qa = question + "\n" + "\n".join(f"- {a}" for a in answers)
-explanation = str(row.get('Explanation','') or '').strip()
-full = passage + "\\n\\n" + qa + (("\\n\\nExplanation:\\n" + explanation) if explanation else "")
-
-# --- Top controls ---
-st.markdown("### 🔊 Audio Controls (Top)")
-inject_tts_controls(passage, f"top_passage_{i}", "Passage")
-inject_tts_controls(full, f"top_full_{i}", "Q&A + Explanation")
-
-# --- Content ---
-st.markdown(f"## {subject} ({i+1} of {max_idx+1})")
-st.markdown(f'<div class="passage">{format_html(passage)}</div>', unsafe_allow_html=True)
-st.markdown('<div class="question"><strong>' + question + '</strong><ul>' +
-            ''.join(f'<li>{a}</li>' for a in answers) +
-            '</ul></div>', unsafe_allow_html=True)
-if explanation:
-    if st.checkbox("Show Explanation"):
-        st.markdown('<div class="explanation">' + format_html(explanation) + '</div>', unsafe_allow_html=True)
-
-# --- Sidebar controls ---
-st.sidebar.markdown("### 🔊 Audio Controls (Sidebar)")
-inject_tts_controls(passage, f"sb_passage_{i}", "Passage")
-inject_tts_controls(full, f"sb_full_{i}", "Q&A + Explanation")
-
-# --- Navigation ---
-col1, col2 = st.columns(2)
-with col1:
-    if st.button("◀ Back") and i > 0:
+# Navigation buttons for mobile (stacked vertically)
+st.markdown("---")
+if st.button("⬅️ Previous Question"):
+    if st.session_state.idx > 0:
         st.session_state.idx -= 1
-with col2:
-    if st.button("Next ▶") and i < max_idx:
+if st.button("Next Question ➡️"):
+    if st.session_state.idx < max_idx:
         st.session_state.idx += 1
+st.markdown("---")
+
+show_item(st.session_state.idx)
