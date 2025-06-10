@@ -3,7 +3,7 @@ import re
 import tempfile
 
 import pandas as pd
-import streamlit as sts
+import streamlit as st
 from google.cloud import texttospeech
 
 # Make sure your service account JSON key file path is in this env var
