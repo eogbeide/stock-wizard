@@ -2,8 +2,8 @@ import os
 import re
 import tempfile
 
-import pandas as pds
-import streamlit as st
+import pandas as pd
+import streamlit as sts
 from google.cloud import texttospeech
 
 # Make sure your service account JSON key file path is in this env var
