@@ -2,7 +2,7 @@ import os
 import re
 import tempfile
 
-import pandas as pd
+import pandas as pds
 import streamlit as st
 from google.cloud import texttospeech
 
