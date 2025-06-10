@@ -55,30 +55,39 @@ def play_tts(text: str):
 def show_item(i: int):
     row = filtered.iloc[i]
 
-    # Formatted Passage
-    st.markdown("### 📘 Passage")
-    passage_html = format_html(row['Passage'])
-    st.markdown(passage_html, unsafe_allow_html=True)
-    if st.button("🔊 Read Passage Aloud", key=f"tts_passage_{i}"):
-        play_tts(str(row['Passage']))
+    # --- Format content ---
+    passage = str(row['Passage']).strip()
+    formatted_passage = format_html(passage)
 
-    # Question & Answers
     answers = [opt.strip() for opt in str(row['Answer']).split(';')]
-    qa_text = f"Question {i+1}: {row['Question']}\nAnswers:\n" + "\n".join(f"- {a}" for a in answers)
-    st.markdown(f"```text\n{qa_text}\n```")
+    question = f"Question {i+1}: {row['Question']}"
+    qa_text = f"{question}\nAnswers:\n" + "\n".join(f"- {a}" for a in answers)
 
-    # Explanation (formatted)
     raw_exp = row.get('Explanation', '')
     explanation = str(raw_exp).strip() if pd.notna(raw_exp) else ''
-    if explanation and st.checkbox("Show Explanation", key=f"show_exp_{i}"):
-        st.markdown("### 📝 Explanation")
-        explanation_html = format_html(explanation)
-        st.markdown(explanation_html, unsafe_allow_html=True)
-
-    # Combined TTS
-    full_tts_text = qa_text
+    full_tts_text = f"{question}\n" + "\n".join(answers)
     if explanation:
         full_tts_text += f"\nExplanation:\n{explanation}"
+
+    # --- Sidebar TTS buttons ---
+    st.sidebar.markdown("### 🔊 Audio Controls")
+    if st.sidebar.button("▶️ Play Passage (Sidebar)", key=f"sb_passage_{i}"):
+        play_tts(passage)
+    if st.sidebar.button("▶️ Play Q&A + Explanation (Sidebar)", key=f"sb_qa_{i}"):
+        play_tts(full_tts_text)
+
+    # --- Main UI ---
+    st.markdown("### 📘 Passage")
+    st.markdown(formatted_passage, unsafe_allow_html=True)
+    if st.button("🔊 Read Passage Aloud", key=f"tts_passage_{i}"):
+        play_tts(passage)
+
+    st.markdown(f"```text\n{qa_text}\n```")
+
+    if explanation and st.checkbox("Show Explanation", key=f"show_exp_{i}"):
+        st.markdown("### 📝 Explanation")
+        st.markdown(format_html(explanation), unsafe_allow_html=True)
+
     if st.button("🔊 Read Q&A + Explanation Aloud", key=f"tts_full_{i}"):
         play_tts(full_tts_text)
 
