@@ -1,4 +1,4 @@
-import streamlit as sta
+import streamlit as st
 import pandas as pd
 from gtts import gTTS
 import tempfile
