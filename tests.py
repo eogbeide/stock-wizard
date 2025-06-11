@@ -1,147 +1,78 @@
 import streamlit as st
 import pandas as pd
-import re
-import streamlit.components.v1 as components
+from gtts import gTTS
+import io
 
-# --- Load & cache data ---
+# URL of the Excel file
+URL = "https://github.com/eogbeide/stock-wizard/raw/main/tests.xlsx"
+
 @st.cache_data
 def load_data():
-    url = "https://github.com/eogbeide/stock-wizard/raw/main/quiz.xlsx"
+    """Load test explanations from GitHub."""
     try:
-        return pd.read_excel(url)
+        df = pd.read_excel(URL)
+        return df
     except Exception as e:
-        st.sidebar.error(f"Error loading data: {e}")
+        st.error(f"Error loading data: {e}")
         return pd.DataFrame()
 
-quiz_data = load_data()
-if quiz_data.empty:
-    st.sidebar.warning("No quiz data available.")
-    st.stop()
+def play_text(text: str):
+    """Convert text to speech and play via an in-memory buffer."""
+    if not text:
+        st.warning("No explanation to read.")
+        return
+    # generate TTS into a bytes buffer
+    buffer = io.BytesIO()
+    tts = gTTS(text=text, lang='en')
+    tts.write_to_fp(buffer)
+    buffer.seek(0)
+    # Streamlit will serve the audio blob directly
+    st.audio(buffer, format="audio/mp3")
 
-# --- Sidebar navigation ---
-st.sidebar.title("Quiz Navigation")
-subjects = quiz_data["Subject"].unique()
-subject = st.sidebar.selectbox("Subject", subjects)
-filtered = quiz_data[quiz_data["Subject"] == subject]
+def main():
+    st.title("Test Explanations with TTS")
 
-topics = filtered["Topic"].unique()
-topic = st.sidebar.selectbox("Topic", topics)
-filtered = filtered[filtered["Topic"] == topic].reset_index(drop=True)
+    # Load data
+    df = load_data()
+    if df.empty:
+        st.stop()
 
-# --- Session state for index ---
-if "idx" not in st.session_state:
-    st.session_state.idx = 0
-max_idx = len(filtered) - 1
-if max_idx < 0:
-    st.sidebar.warning("No questions here.")
-    st.stop()
-st.session_state.idx = max(0, min(st.session_state.idx, max_idx))
-i = st.session_state.idx
+    # Sidebar: Subject selection
+    st.sidebar.title("Select Subject")
+    subjects = df['Subject'].unique()
+    selected_subject = st.sidebar.selectbox("Subject", subjects)
 
-# --- Helper: HTML paragraph formatting ---
-def format_html(text: str) -> str:
-    paras = re.split(r"\n\s*\n", text.strip())
-    return "".join(f"<p>{p.replace('\n','<br>')}</p>" for p in paras)
+    # Filter explanations for the selected subject
+    filtered = df[df['Subject'] == selected_subject].reset_index(drop=True)
+    if filtered.empty:
+        st.warning("No explanations found for this subject.")
+        st.stop()
 
-# --- Helper: inject browser TTS controls ---
-def inject_tts(text: str, key: str, label: str):
-    safe = text.replace("\\","\\\\").replace("`","'").replace("\n","\\n")
-    components.html(f"""
-<div style="margin:8px 0;"><strong>{label}</strong><br>
-  <button id="{key}_play">▶️ Play</button>
-  <button id="{key}_pause" disabled>⏸️ Pause</button>
-  <button id="{key}_resume" disabled>⏯️ Resume</button>
-  <button id="{key}_stop" disabled>⏹️ Stop</button>
-</div>
-<script>
-  const paras = `{safe}`.split(/\\n\\s*\\n/);
-  const utterances = paras.map(p => {{
-    let u = new SpeechSynthesisUtterance(p);
-    u.rate = 0.7;
-    return u;
-  }});
-  function pickVoice() {{
-    let vs = speechSynthesis.getVoices();
-    return vs.find(v=>/samantha|victoria|zira|female/i.test(v.name))
-        || vs.find(v=>v.lang.startsWith("en"));
-  }}
-  function setup() {{
-    let v = pickVoice();
-    if(v) utterances.forEach(u=>u.voice=v);
-  }}
-  if(speechSynthesis.getVoices().length) setup();
-  else speechSynthesis.onvoiceschanged = setup;
+    # Initialize or reset index when subject changes
+    if 'idx' not in st.session_state or st.session_state.get('last_subject') != selected_subject:
+        st.session_state.idx = 0
+        st.session_state.last_subject = selected_subject
 
-  let idx=0;
-  const play = document.getElementById("{key}_play");
-  const pause = document.getElementById("{key}_pause");
-  const resume = document.getElementById("{key}_resume");
-  const stop = document.getElementById("{key}_stop");
+    max_idx = len(filtered) - 1
+    idx = st.session_state.idx
 
-  function speakNext() {{
-    if(idx>=utterances.length) return finish();
-    let u = utterances[idx++];
-    u.onend = ()=>setTimeout(speakNext,600);
-    speechSynthesis.speak(u);
-  }}
-  function start() {{
-    speechSynthesis.cancel();
-    idx=0;
-    speakNext();
-    play.disabled=true;
-    pause.disabled=false;
-    stop.disabled=false;
-  }}
-  function finish() {{
-    play.disabled=false;
-    pause.disabled=true;
-    resume.disabled=true;
-    stop.disabled=true;
-  }}
-  play.onclick=start;
-  pause.onclick=()=>{{ speechSynthesis.pause(); pause.disabled=true; resume.disabled=false; }};
-  resume.onclick=()=>{{ speechSynthesis.resume(); resume.disabled=true; pause.disabled=false; }};
-  stop.onclick=()=>{{ speechSynthesis.cancel(); finish(); }};
-  utterances[utterances.length-1].onend=finish;
-</script>
-""", height=120)
+    # Display current explanation
+    explanation = str(filtered.loc[idx, 'Explanation']).strip()
+    st.subheader(f"{selected_subject} (Explanation {idx+1} of {max_idx+1})")
+    st.write(explanation)
 
-# --- Current row and texts ---
-row = filtered.iloc[i]
-passage = str(row["Passage"]).strip()
-answer_list = [a.strip() for a in str(row["Answer"]).split(";")]
-question = f"Question {i+1}: {row['Question']}"
-explanation = str(row.get("Explanation","") or "").strip()
+    # Play aloud button
+    if st.button("🔊 Play Explanation"):
+        play_text(explanation)
 
-# --- Top controls for Passage & Explanation ---
-st.markdown("### 🔊 Audio Controls (Top)")
-inject_tts(passage, f"top_passage_{i}", "Read Passage")
-if explanation:
-    inject_tts(explanation, f"top_exp_{i}", "Read Explanation")
+    # Navigation buttons
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("◀ Back") and idx > 0:
+            st.session_state.idx = idx - 1
+    with col2:
+        if st.button("Next ▶") and idx < max_idx:
+            st.session_state.idx = idx + 1
 
-# --- Display Passage ---
-st.markdown(f"<div>{format_html(passage)}</div>", unsafe_allow_html=True)
-
-# --- Q&A display ---
-st.markdown(f"**{question}**")
-st.markdown("\n".join(f"- {a}" for a in answer_list))
-
-# --- Explanation section ---
-if explanation:
-    if st.checkbox("Show Explanation"):
-        st.markdown(f"<div style='margin-top:1em;color:#555;font-style:italic;'>{format_html(explanation)}</div>", unsafe_allow_html=True)
-
-# --- Sidebar controls ---
-st.sidebar.markdown("### 🔊 Audio Controls (Sidebar)")
-inject_tts(passage, f"side_passage_{i}", "Read Passage")
-if explanation:
-    inject_tts(explanation, f"side_exp_{i}", "Read Explanation")
-
-# --- Navigation ---
-col1, col2 = st.columns(2)
-with col1:
-    if st.button("◀ Back") and i > 0:
-        st.session_state.idx -= 1
-with col2:
-    if st.button("Next ▶") and i < max_idx:
-        st.session_state.idx += 1
+if __name__ == "__main__":
+    main()
