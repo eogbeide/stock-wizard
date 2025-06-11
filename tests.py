@@ -6,7 +6,7 @@ import streamlit.components.v1 as components
 # --- Load & cache data ---
 @st.cache_data
 def load_data():
-    url = "https://github.com/eogbeide/stock-wizard/raw/main/tests.xlsx"
+    url = "https://github.com/eogbeide/stock-wizard/raw/main/quiz.xlsx"
     try:
         return pd.read_excel(url)
     except Exception as e:
@@ -15,27 +15,28 @@ def load_data():
 
 df = load_data()
 if df.empty:
-    st.sidebar.warning("No data.")
+    st.sidebar.warning("No quiz data available.")
     st.stop()
 
 # --- Sidebar navigation ---
 st.sidebar.title("Quiz Navigation")
-subjects = df['Subject'].unique()
-subject = st.sidebar.selectbox("Subject", subjects)
-subset = df[df['Subject']==subject]
+subject = st.sidebar.selectbox("Subject", df["Subject"].unique())
+subset = df[df["Subject"] == subject]
 
-topics = subset['Topic'].unique()
-topic = st.sidebar.selectbox("Topic", topics)
-subset = subset[subset['Topic']==topic].reset_index(drop=True)
+if "Topic" in subset.columns:
+    topic = st.sidebar.selectbox("Topic", subset["Topic"].unique())
+    subset = subset[subset["Topic"] == topic].reset_index(drop=True)
+else:
+    subset = subset.reset_index(drop=True)
 
-# --- Index state ---
-if 'idx' not in st.session_state:
+# --- Session state for index ---
+if "idx" not in st.session_state:
     st.session_state.idx = 0
-max_idx = len(subset)-1
+max_idx = len(subset) - 1
 if max_idx < 0:
-    st.sidebar.warning("No items.")
+    st.sidebar.warning("No items here.")
     st.stop()
-st.session_state.idx = min(max(st.session_state.idx, 0), max_idx)
+st.session_state.idx = max(0, min(st.session_state.idx, max_idx))
 i = st.session_state.idx
 
 # --- HTML paragraph formatting ---
@@ -47,7 +48,7 @@ def format_html(text: str) -> str:
 def inject_tts(text: str, key: str, label: str):
     safe = text.replace("\\","\\\\").replace("`","'").replace("\n","\\n")
     components.html(f"""
-<div style="margin:0.5em 0;"><strong>{label}</strong><br>
+<div style="margin:8px 0;"><strong>{label}</strong><br>
   <button id="{key}_play">▶️ Play</button>
   <button id="{key}_pause" disabled>⏸️ Pause</button>
   <button id="{key}_resume" disabled>⏯️ Resume</button>
@@ -81,39 +82,36 @@ def inject_tts(text: str, key: str, label: str):
   function speakNext() {{
     if(idx>=utterances.length) return finish();
     let u=utterances[idx++];
-    u.onend = ()=> setTimeout(speakNext,600);
+    u.onend = ()=>setTimeout(speakNext,600);
     speechSynthesis.speak(u);
   }}
-  function start() {{
+  function start(){{
     speechSynthesis.cancel();
     idx=0;
     speakNext();
-    playBtn.disabled = true;
-    pauseBtn.disabled = false;
-    stopBtn.disabled = false;
+    playBtn.disabled=true; pauseBtn.disabled=false; stopBtn.disabled=false;
   }}
-  function finish() {{
-    playBtn.disabled = false;
-    pauseBtn.disabled = true;
-    resumeBtn.disabled = true;
-    stopBtn.disabled = true;
+  function finish(){{
+    playBtn.disabled=false; pauseBtn.disabled=true; resumeBtn.disabled=true; stopBtn.disabled=true;
   }}
-  playBtn.onclick = start;
-  pauseBtn.onclick = ()=>{{ speechSynthesis.pause(); pauseBtn.disabled=true; resumeBtn.disabled=false; }};
-  resumeBtn.onclick = ()=>{{ speechSynthesis.resume(); resumeBtn.disabled=true; pauseBtn.disabled=false; }};
-  stopBtn.onclick = ()=>{{ speechSynthesis.cancel(); finish(); }};
-  utterances[utterances.length-1].onend = finish;
+  playBtn.onclick=start;
+  pauseBtn.onclick=()=>{{ speechSynthesis.pause(); pauseBtn.disabled=true; resumeBtn.disabled=false; }};
+  resumeBtn.onclick=()=>{{ speechSynthesis.resume(); resumeBtn.disabled=true; pauseBtn.disabled=false; }};
+  stopBtn.onclick=()=>{{ speechSynthesis.cancel(); finish(); }};
+  utterances[utterances.length-1].onend=finish;
 </script>
 """, height=120)
 
-# --- Display content ---
+# --- Render page ---
 row = subset.iloc[i]
-text = str(row['Explanation']).strip()
+text = str(row.get("Passage", "")).strip()
 
 st.title(f"{subject} ({i+1}/{max_idx+1})")
 
-# Top controls and passage
+# Top controls
 inject_tts(text, f"top_{i}", "Read Passage")
+
+# Passage content
 st.markdown(format_html(text), unsafe_allow_html=True)
 
 # Sidebar controls
@@ -121,10 +119,10 @@ st.sidebar.markdown("### 🔊 Audio Controls")
 inject_tts(text, f"side_{i}", "Read Passage")
 
 # Navigation
-c1, c2 = st.columns(2)
-with c1:
-    if st.button("◀ Back") and i>0:
-        st.session_state.idx -=1
-with c2:
-    if st.button("Next ▶") and i<max_idx:
-        st.session_state.idx +=1
+col1, col2 = st.columns(2)
+with col1:
+    if st.button("◀ Back") and i > 0:
+        st.session_state.idx -= 1
+with col2:
+    if st.button("Next ▶") and i < max_idx:
+        st.session_state.idx += 1
