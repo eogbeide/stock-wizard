@@ -3,162 +3,161 @@ import pandas as pd
 import re
 import streamlit.components.v1 as components
 
-# URL of the Excel file
-URL = "https://github.com/eogbeide/stock-wizard/raw/main/tests.xlsx"
-
+# --- Load & cache data ---
 @st.cache_data
 def load_data():
+    url = "https://github.com/eogbeide/stock-wizard/raw/main/tests.xlsx"
     try:
-        return pd.read_excel(URL)
+        return pd.read_excel(url)
     except Exception as e:
-        st.error(f"Error loading data: {e}")
+        st.sidebar.error(f"Error loading data: {e}")
         return pd.DataFrame()
 
+df = load_data()
+if df.empty:
+    st.sidebar.warning("No quiz data available.")
+    st.stop()
+
+# --- Sidebar navigation ---
+st.sidebar.title("Quiz Navigation")
+subject = st.sidebar.selectbox("Subject", df["Subject"].unique())
+sub = df[df["Subject"] == subject]
+
+if "Topic" in sub.columns:
+    topic = st.sidebar.selectbox("Topic", sub["Topic"].unique())
+    sub = sub[sub["Topic"] == topic].reset_index(drop=True)
+else:
+    sub = sub.reset_index(drop=True)
+
+# --- Session index ---
+if "idx" not in st.session_state:
+    st.session_state.idx = 0
+max_idx = len(sub) - 1
+if max_idx < 0:
+    st.sidebar.warning("No items here.")
+    st.stop()
+st.session_state.idx = min(max(st.session_state.idx, 0), max_idx)
+i = st.session_state.idx
+
+# --- Helper: HTML paragraph formatting ---
 def format_html(text: str) -> str:
-    paragraphs = re.split(r'\n\s*\n', text.strip())
-    return ''.join(f"<p>{p.replace('\n', '<br>')}</p>" for p in paragraphs)
+    paras = re.split(r"\n\s*\n", text.strip())
+    return "".join(f"<p>{p.replace('\n','<br>')}</p>" for p in paras)
 
-def browser_tts_controls(text: str, key_prefix: str):
-    """
-    Renders Play/Pause/Resume/Stop buttons that speak `text`
-    paragraph-by-paragraph at 80% speed with a soft female voice.
-    """
-    safe = text.replace("\\", "\\\\").replace("`", "'").replace("\n", "\\n")
-    html = f"""
-    <div id="{key_prefix}_controls" style="margin: 5px 0;">
-      <button id="{key_prefix}_play">▶️ Play</button>
-      <button id="{key_prefix}_pause" disabled>⏸️ Pause</button>
-      <button id="{key_prefix}_resume" disabled>⏯️ Resume</button>
-      <button id="{key_prefix}_stop" disabled>⏹️ Stop</button>
-    </div>
-    <script>
-      const paras = `{safe}`.split(/\\n\\s*\\n/);
-      const utterances = paras.map(p => {{
-        const u = new SpeechSynthesisUtterance(p);
-        u.rate = 0.8;
-        return u;
-      }});
-      function selectVoice() {{
-        const voices = window.speechSynthesis.getVoices();
-        return voices.find(v =>
-          v.lang.startsWith('en') &&
-          /female|zira|samantha|victoria/i.test(v.name)
-        ) || voices.find(v => v.lang.startsWith('en'));
-      }}
-      function setupVoices() {{
-        const chosen = selectVoice();
-        if (chosen) utterances.forEach(u => u.voice = chosen);
-      }}
-      if (window.speechSynthesis.getVoices().length) {{
-        setupVoices();
-      }} else {{
-        window.speechSynthesis.onvoiceschanged = setupVoices;
-      }}
+# --- Helper: Inject browser TTS controls with explicit female voice ---
+def inject_tts(text: str, key: str, label: str):
+    safe = text.replace("\\","\\\\").replace("`","'").replace("\n","\\n")
+    components.html(f"""
+<div style="margin:8px 0;"><strong>{label}</strong><br>
+  <button id="{key}_play">▶️ Play</button>
+  <button id="{key}_pause" disabled>⏸️ Pause</button>
+  <button id="{key}_resume" disabled>⏯️ Resume</button>
+  <button id="{key}_stop" disabled>⏹️ Stop</button>
+</div>
+<script>
+  // Split into paragraphs
+  const paras = `{safe}`.split(/\\n\\s*\\n/);
 
-      let current = 0;
-      const playBtn = document.getElementById("{key_prefix}_play");
-      const pauseBtn = document.getElementById("{key_prefix}_pause");
-      const resumeBtn = document.getElementById("{key_prefix}_resume");
-      const stopBtn = document.getElementById("{key_prefix}_stop");
+  // Build utterances with 80% speed
+  const utterances = paras.map(p => {{
+    const u = new SpeechSynthesisUtterance(p);
+    u.rate = 0.8;
+    return u;
+  }});
 
-      function speakNext() {{
-        if (current >= utterances.length) return finishPlayback();
-        const u = utterances[current++];
-        u.onend = () => setTimeout(speakNext, 600);
-        window.speechSynthesis.speak(u);
-      }}
+  // Explicitly pick the first female English voice available
+  function pickFemaleVoice() {{
+    const vs = window.speechSynthesis.getVoices();
+    // common female voice names
+    const female = vs.find(v =>
+      v.lang.startsWith('en') &&
+      /samantha|victoria|zira|female/i.test(v.name)
+    );
+    return female || vs.find(v => v.lang.startsWith('en'));
+  }}
 
-      function startPlayback() {{
-        window.speechSynthesis.cancel();
-        current = 0;
-        speakNext();
-        playBtn.disabled = true;
-        pauseBtn.disabled = false;
-        stopBtn.disabled = false;
-      }}
-      function finishPlayback() {{
-        playBtn.disabled = false;
-        pauseBtn.disabled = true;
-        resumeBtn.disabled = true;
-        stopBtn.disabled = true;
-      }}
+  function setupVoices() {{
+    const voice = pickFemaleVoice();
+    if (voice) utterances.forEach(u => u.voice = voice);
+  }}
 
-      playBtn.onclick = startPlayback;
-      pauseBtn.onclick = () => {{
-        window.speechSynthesis.pause();
-        pauseBtn.disabled = true;
-        resumeBtn.disabled = false;
-      }};
-      resumeBtn.onclick = () => {{
-        window.speechSynthesis.resume();
-        resumeBtn.disabled = true;
-        pauseBtn.disabled = false;
-      }};
-      stopBtn.onclick = () => {{
-        window.speechSynthesis.cancel();
-        finishPlayback();
-      }};
-      utterances[utterances.length - 1].onend = finishPlayback;
-    </script>
-    """
-    components.html(html, height=80)
+  if (speechSynthesis.getVoices().length) {{
+    setupVoices();
+  }} else {{
+    speechSynthesis.onvoiceschanged = setupVoices;
+  }}
 
-def main():
-    st.set_page_config(layout="centered")
-    st.title("📘 Story-Style TTS Playback")
+  let idx = 0;
+  const playBtn = document.getElementById("{key}_play");
+  const pauseBtn = document.getElementById("{key}_pause");
+  const resumeBtn = document.getElementById("{key}_resume");
+  const stopBtn = document.getElementById("{key}_stop");
 
-    df = load_data()
-    if df.empty:
-        return
+  function speakNext() {{
+    if (idx >= utterances.length) return finish();
+    const u = utterances[idx++];
+    u.onend = () => setTimeout(speakNext, 600);
+    window.speechSynthesis.speak(u);
+  }}
 
-    st.sidebar.title("Quiz Navigation")
-    subjects = df['Subject'].unique()
-    subject = st.sidebar.selectbox("Subject", subjects)
-    filtered = df[df['Subject'] == subject]
+  function start() {{
+    window.speechSynthesis.cancel();
+    idx = 0;
+    speakNext();
+    playBtn.disabled = true;
+    pauseBtn.disabled = false;
+    stopBtn.disabled = false;
+  }}
 
-    if 'Topic' in filtered.columns:
-        topics = filtered['Topic'].unique()
-        topic = st.sidebar.selectbox("Topic", topics)
-        filtered = filtered[filtered['Topic'] == topic]
+  function finish() {{
+    playBtn.disabled = false;
+    pauseBtn.disabled = true;
+    resumeBtn.disabled = true;
+    stopBtn.disabled = true;
+  }}
 
-    filtered = filtered.reset_index(drop=True)
-    if filtered.empty:
-        st.sidebar.warning("No items here.")
-        return
+  playBtn.onclick = start;
+  pauseBtn.onclick = () => {{
+    window.speechSynthesis.pause();
+    pauseBtn.disabled = true;
+    resumeBtn.disabled = false;
+  }};
+  resumeBtn.onclick = () => {{
+    window.speechSynthesis.resume();
+    resumeBtn.disabled = true;
+    pauseBtn.disabled = false;
+  }};
+  stopBtn.onclick = () => {{
+    window.speechSynthesis.cancel();
+    finish();
+  }};
 
-    key = (subject, topic) if 'Topic' in df.columns else (subject, None)
-    if 'idx' not in st.session_state or st.session_state.get('last') != key:
-        st.session_state.idx = 0
-        st.session_state.last = key
+  // When done naturally
+  utterances[utterances.length - 1].onend = finish;
+</script>
+""", height=140)
 
-    idx = st.session_state.idx
-    max_idx = len(filtered) - 1
+# --- Render page ---
+row = sub.iloc[i]
+text = str(row.get("Explanation", "") or "").strip()
 
-    row = filtered.iloc[idx]
-    explanation = str(row['Explanation'])
-    formatted = format_html(explanation)
+st.title(f"{subject} ({i+1} of {max_idx+1})")
 
-    # Controls above
-    browser_tts_controls(explanation, f"above_{idx}")
+# Top TTS controls
+inject_tts(text, f"top_{i}", "Read Explanation")
 
-    st.subheader(f"{subject} ({idx+1} of {max_idx+1})")
-    st.markdown(formatted, unsafe_allow_html=True)
+# Explanation display
+st.markdown(format_html(text), unsafe_allow_html=True)
 
-    # Controls below
-    browser_tts_controls(explanation, f"below_{idx}")
+# Sidebar TTS controls
+st.sidebar.markdown("### 🔊 Audio Controls")
+inject_tts(text, f"side_{i}", "Read Explanation")
 
-    # Sidebar controls
-    st.sidebar.markdown("### 🔊 Audio Controls")
-    browser_tts_controls(explanation, f"side_{idx}")
-
-    # Navigation
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("◀ Back") and idx > 0:
-            st.session_state.idx -= 1
-    with col2:
-        if st.button("Next ▶") and idx < max_idx:
-            st.session_state.idx += 1
-
-if __name__ == "__main__":
-    main()
+# Navigation
+col1, col2 = st.columns(2)
+with col1:
+    if st.button("◀ Back") and i > 0:
+        st.session_state.idx -= 1
+with col2:
+    if st.button("Next ▶") and i < max_idx:
+        st.session_state.idx += 1
