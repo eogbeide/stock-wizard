@@ -29,15 +29,9 @@ topics = filtered['Topic'].unique()
 selected_topic = st.sidebar.selectbox('Select Topic', topics)
 filtered = filtered[filtered['Topic'] == selected_topic].reset_index(drop=True)
 
-# Ensure idx is within bounds
+# Session state
 if 'idx' not in st.session_state:
     st.session_state.idx = 0
-max_idx = len(filtered) - 1
-if max_idx < 0:
-    st.warning("No questions for this Subject/Topic.")
-    st.stop()
-# clamp
-st.session_state.idx = max(0, min(st.session_state.idx, max_idx))
 
 def play_tts(text: str):
     tts = gTTS(text=text, lang='en')
@@ -52,16 +46,17 @@ def show_item(i: int):
     st.markdown("### Passage")
     st.markdown(row['Passage'].replace('\n', '<br><br>'), unsafe_allow_html=True)
     if st.button("🔊 Read Passage Aloud", key=f"tts_passage_{i}"):
-        play_tts(str(row['Passage']))
+        play_tts(row['Passage'])
 
     # Build Q&A text
-    answers = [opt.strip() for opt in str(row['Answer']).split(';')]
-    qa_text = f"Question {i+1}: {row['Question']}\nAnswers:\n" + "\n".join(f"- {a}" for a in answers)
+    qa_text = (
+        f"Question {i+1}: {row['Question']}\n"
+        "Answers:\n" + "\n".join(f"- {opt.strip()}" for opt in row['Answer'].split(';'))
+    )
     st.markdown(f"```text\n{qa_text}\n```")
 
-    # Safely coerce explanation to string and strip
-    raw_exp = row.get('Explanation', '')
-    explanation = str(raw_exp).strip() if pd.notna(raw_exp) else ''
+    # Explanation (hidden until toggled)
+    explanation = row.get('Explanation', '').strip()
     if explanation and st.checkbox("Show Explanation", key=f"show_exp_{i}"):
         st.info(explanation)
 
@@ -73,12 +68,12 @@ def show_item(i: int):
         play_tts(full_tts_text)
 
 # Navigation
-col1, _, col2 = st.columns([1,4,1])
+col1, _, col2 = st.columns([1, 4, 1])
 with col1:
     if st.button("◀️ Back") and st.session_state.idx > 0:
         st.session_state.idx -= 1
 with col2:
-    if st.button("Next ▶️") and st.session_state.idx < max_idx:
+    if st.button("Next ▶️") and st.session_state.idx < len(filtered) - 1:
         st.session_state.idx += 1
 
 show_item(st.session_state.idx)
