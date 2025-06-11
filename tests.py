@@ -2,78 +2,62 @@ import streamlit as st
 import pandas as pd
 from gtts import gTTS
 import tempfile
+import os
 
-# Load data from Excel on GitHub
+# Load data from the Excel file URL
 @st.cache_data
 def load_data():
-    url = "https://github.com/eogbeide/stock-wizard/raw/main/quiz.xlsx"
+    url = "https://github.com/eogbeide/stock-wizard/raw/main/tests.xlsx"
     try:
-        return pd.read_excel(url)
+        df = pd.read_excel(url)
+        df = df.dropna(subset=['Subject', 'Explanation'])
+        df.reset_index(drop=True, inplace=True)
+        return df
     except Exception as e:
         st.error(f"Error loading data: {e}")
         return pd.DataFrame()
 
-quiz_data = load_data()
-
-st.sidebar.title('Quiz Navigation')
-if quiz_data.empty:
-    st.warning("No quiz data available.")
-    st.stop()
-
-# Subject/topic selection
-subjects = quiz_data['Subject'].unique()
-selected_subject = st.sidebar.selectbox('Select Subject', subjects)
-filtered = quiz_data[quiz_data['Subject'] == selected_subject]
-
-topics = filtered['Topic'].unique()
-selected_topic = st.sidebar.selectbox('Select Topic', topics)
-filtered = filtered[filtered['Topic'] == selected_topic].reset_index(drop=True)
-
-# Session state
-if 'idx' not in st.session_state:
-    st.session_state.idx = 0
-
-def play_tts(text: str):
+# Convert explanation to audio
+def play_text(text: str):
+    if not text:
+        st.warning("No explanation to read.")
+        return
     tts = gTTS(text=text, lang='en')
-    with tempfile.NamedTemporaryFile(delete=True, suffix=".mp3") as fp:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
         tts.save(fp.name)
-        st.audio(fp.name, format='audio/mp3')
+        st.audio(fp.name, format="audio/mp3")
+        os.remove(fp.name)
 
-def show_item(i: int):
-    row = filtered.iloc[i]
+def main():
+    st.title("Subject Explanations (Text to Voice Enabled)")
 
-    # Passage
-    st.markdown("### Passage")
-    st.markdown(row['Passage'].replace('\n', '<br><br>'), unsafe_allow_html=True)
-    if st.button("🔊 Read Passage Aloud", key=f"tts_passage_{i}"):
-        play_tts(row['Passage'])
+    df = load_data()
+    if df.empty:
+        st.warning("No data available.")
+        return
 
-    # Build Q&A text
-    qa_text = (
-        f"Question {i+1}: {row['Question']}\n"
-        "Answers:\n" + "\n".join(f"- {opt.strip()}" for opt in row['Answer'].split(';'))
-    )
-    st.markdown(f"```text\n{qa_text}\n```")
+    subjects = df['Subject'].unique().tolist()
+    selected_subject = st.sidebar.selectbox("Choose a Subject", subjects)
 
-    # Explanation (hidden until toggled)
-    explanation = row.get('Explanation', '').strip()
-    if explanation and st.checkbox("Show Explanation", key=f"show_exp_{i}"):
-        st.info(explanation)
+    subject_df = df[df['Subject'] == selected_subject].reset_index(drop=True)
 
-    # Combined Q&A + Explanation TTS
-    full_tts_text = qa_text
-    if explanation:
-        full_tts_text += f"\nExplanation:\n{explanation}"
-    if st.button("🔊 Read Q&A + Explanation Aloud", key=f"tts_full_{i}"):
-        play_tts(full_tts_text)
+    if 'index' not in st.session_state:
+        st.session_state.index = 0
 
-# Navigation
-col1, _, col2 = st.columns([1, 4, 1])
-with col1:
-    if st.button("◀️ Back") and st.session_state.idx > 0:
-        st.session_state.idx -= 1
-with col2:
-    if st.button("Next ▶️") and st.session_state.idx < len(filtered) - 1:
-        st.session_state.idx += 1
+    col1, col2, col3 = st.columns([1, 4, 1])
+    with col1:
+        if st.button("Back"):
+            st.session_state.index = max(0, st.session_state.index - 1)
+    with col3:
+        if st.button("Next"):
+            st.session_state.index = min(len(subject_df) - 1, st.session_state.index + 1)
 
-show_item(st.session_state.idx)
+    current_row = subject_df.iloc[st.session_state.index]
+    st.markdown(f"### Explanation {st.session_state.index + 1} of {len(subject_df)}")
+    st.write(current_row['Explanation'])
+
+    if st.button("🔊 Read Aloud"):
+        play_text(current_row['Explanation'])
+
+if __name__ == "__main__":
+    main()
