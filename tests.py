@@ -1,130 +1,85 @@
 import streamlit as st
 import pandas as pd
-import re
-import streamlit.components.v1 as components
+from gtts import gTTS
+import tempfile
+import os
 
-# --- Load & cache data ---
+# URL of the Excel file
+URL = "https://github.com/eogbeide/stock-wizard/raw/main/tests.xlsx"
+
 @st.cache_data
 def load_data():
-    url = "https://github.com/eogbeide/stock-wizard/raw/main/tests.xlsx"
+    """Load test explanations from GitHub."""
     try:
-        return pd.read_excel(url)
+        return pd.read_excel(URL)
     except Exception as e:
-        st.sidebar.error(f"Error loading data: {e}")
+        st.error(f"Error loading data: {e}")
         return pd.DataFrame()
 
-df = load_data()
-if df.empty:
-    st.sidebar.warning("No data.")
-    st.stop()
+def play_text(text: str):
+    """Convert text to speech, play it, then delete the temp file."""
+    if not text:
+        st.warning("No explanation to read.")
+        return
 
-# --- Sidebar navigation ---
-st.sidebar.title("Quiz Navigation")
-subjects = df['Subject'].unique()
-subject = st.sidebar.selectbox("Subject", subjects)
-subset = df[df['Subject']==subject]
+    try:
+        tts = gTTS(text=text, lang='en')
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
+            tts.save(fp.name)
+        st.audio(fp.name, format="audio/mp3")
+    except Exception:
+        st.error("🔊 Text-to-speech failed. Please try again later.")
+    finally:
+        # Clean up the file if it was created
+        try:
+            os.remove(fp.name)
+        except Exception:
+            pass
 
-topics = subset['Topic'].unique()
-topic = st.sidebar.selectbox("Topic", topics)
-subset = subset[subset['Topic']==topic].reset_index(drop=True)
+def main():
+    st.title("Test Explanations with TTS")
 
-# --- Index state ---
-if 'idx' not in st.session_state:
-    st.session_state.idx = 0
-max_idx = len(subset)-1
-if max_idx < 0:
-    st.sidebar.warning("No items.")
-    st.stop()
-st.session_state.idx = min(max(st.session_state.idx, 0), max_idx)
-i = st.session_state.idx
+    # Load data
+    df = load_data()
+    if df.empty:
+        st.stop()
 
-# --- HTML paragraph formatting ---
-def format_html(text: str) -> str:
-    paras = re.split(r"\n\s*\n", text.strip())
-    return "".join(f"<p>{p.replace('\n','<br>')}</p>" for p in paras)
+    # Sidebar: Subject selection
+    st.sidebar.title("Select Subject")
+    subjects = df['Subject'].unique()
+    selected_subject = st.sidebar.selectbox("Subject", subjects)
 
-# --- Inject browser TTS controls ---
-def inject_tts(text: str, key: str, label: str):
-    safe = text.replace("\\","\\\\").replace("`","'").replace("\n","\\n")
-    components.html(f"""
-<div style="margin:0.5em 0;"><strong>{label}</strong><br>
-  <button id="{key}_play">▶️ Play</button>
-  <button id="{key}_pause" disabled>⏸️ Pause</button>
-  <button id="{key}_resume" disabled>⏯️ Resume</button>
-  <button id="{key}_stop" disabled>⏹️ Stop</button>
-</div>
-<script>
-  const paras = `{safe}`.split(/\\n\\s*\\n/);
-  const utterances = paras.map(p=> {{
-    let u = new SpeechSynthesisUtterance(p);
-    u.rate = 0.8;
-    return u;
-  }});
-  function pickVoice() {{
-    let vs = speechSynthesis.getVoices();
-    return vs.find(v=>/samantha|victoria|zira|female/i.test(v.name))
-      || vs.find(v=>v.lang.startsWith("en"));
-  }}
-  function setup() {{
-    let v = pickVoice();
-    if(v) utterances.forEach(u=>u.voice=v);
-  }}
-  if(speechSynthesis.getVoices().length) setup();
-  else speechSynthesis.onvoiceschanged = setup;
+    # Filter explanations for the selected subject
+    filtered = df[df['Subject'] == selected_subject].reset_index(drop=True)
+    if filtered.empty:
+        st.warning("No explanations found for this subject.")
+        st.stop()
 
-  let idx=0;
-  const playBtn = document.getElementById("{key}_play");
-  const pauseBtn = document.getElementById("{key}_pause");
-  const resumeBtn = document.getElementById("{key}_resume");
-  const stopBtn = document.getElementById("{key}_stop");
+    # Initialize or reset index when subject changes
+    if 'idx' not in st.session_state or st.session_state.get('last_subject') != selected_subject:
+        st.session_state.idx = 0
+        st.session_state.last_subject = selected_subject
 
-  function speakNext() {{
-    if(idx>=utterances.length) return finish();
-    let u=utterances[idx++];
-    u.onend = ()=> setTimeout(speakNext,600);
-    speechSynthesis.speak(u);
-  }}
-  function start() {{
-    speechSynthesis.cancel();
-    idx=0;
-    speakNext();
-    playBtn.disabled = true;
-    pauseBtn.disabled = false;
-    stopBtn.disabled = false;
-  }}
-  function finish() {{
-    playBtn.disabled = false;
-    pauseBtn.disabled = true;
-    resumeBtn.disabled = true;
-    stopBtn.disabled = true;
-  }}
-  playBtn.onclick = start;
-  pauseBtn.onclick = ()=>{{ speechSynthesis.pause(); pauseBtn.disabled=true; resumeBtn.disabled=false; }};
-  resumeBtn.onclick = ()=>{{ speechSynthesis.resume(); resumeBtn.disabled=true; pauseBtn.disabled=false; }};
-  stopBtn.onclick = ()=>{{ speechSynthesis.cancel(); finish(); }};
-  utterances[utterances.length-1].onend = finish;
-</script>
-""", height=120)
+    max_idx = len(filtered) - 1
+    idx = st.session_state.idx
 
-# --- Display content ---
-row = subset.iloc[i]
-text = str(row['Explanation']).strip()
+    # Display current explanation
+    explanation = str(filtered.loc[idx, 'Explanation']).strip()
+    st.subheader(f"{selected_subject} (Explanation {idx+1} of {max_idx+1})")
+    st.write(explanation)
 
-st.title(f"{subject} ({i+1}/{max_idx+1})")
+    # Play aloud button
+    if st.button("🔊 Play Explanation"):
+        play_text(explanation)
 
-# Top controls and passage
-inject_tts(text, f"top_{i}", "Read Passage")
-st.markdown(format_html(text), unsafe_allow_html=True)
+    # Navigation buttons
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("◀ Back") and idx > 0:
+            st.session_state.idx = idx - 1
+    with col2:
+        if st.button("Next ▶") and idx < max_idx:
+            st.session_state.idx = idx + 1
 
-# Sidebar controls
-st.sidebar.markdown("### 🔊 Audio Controls")
-inject_tts(text, f"side_{i}", "Read Passage")
-
-# Navigation
-c1, c2 = st.columns(2)
-with c1:
-    if st.button("◀ Back") and i>0:
-        st.session_state.idx -=1
-with c2:
-    if st.button("Next ▶") and i<max_idx:
-        st.session_state.idx +=1
+if __name__ == "__main__":
+    main()
