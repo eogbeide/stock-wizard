@@ -2,10 +2,8 @@ import streamlit as st
 import pandas as pd
 from gtts import gTTS
 import tempfile
-import os
-import re
 
-# Load data from GitHub
+# Load data from Excel on GitHub
 @st.cache_data
 def load_data():
     url = "https://github.com/eogbeide/stock-wizard/raw/main/quiz.xlsx"
@@ -16,85 +14,71 @@ def load_data():
         return pd.DataFrame()
 
 quiz_data = load_data()
+
+st.sidebar.title('Quiz Navigation')
 if quiz_data.empty:
-    st.sidebar.warning("No quiz data available.")
+    st.warning("No quiz data available.")
     st.stop()
 
-# Sidebar navigation
-st.sidebar.title('Quiz Navigation')
-subject = st.sidebar.selectbox('Select Subject', quiz_data['Subject'].unique())
-filtered = quiz_data[quiz_data['Subject'] == subject]
+# Subject/topic selection
+subjects = quiz_data['Subject'].unique()
+selected_subject = st.sidebar.selectbox('Select Subject', subjects)
+filtered = quiz_data[quiz_data['Subject'] == selected_subject]
 
-topic = st.sidebar.selectbox('Select Topic', filtered['Topic'].unique())
-filtered = filtered[filtered['Topic'] == topic].reset_index(drop=True)
+topics = filtered['Topic'].unique()
+selected_topic = st.sidebar.selectbox('Select Topic', topics)
+filtered = filtered[filtered['Topic'] == selected_topic].reset_index(drop=True)
 
-# Session index
+# Ensure idx is within bounds
 if 'idx' not in st.session_state:
     st.session_state.idx = 0
 max_idx = len(filtered) - 1
+if max_idx < 0:
+    st.warning("No questions for this Subject/Topic.")
+    st.stop()
+# clamp
 st.session_state.idx = max(0, min(st.session_state.idx, max_idx))
-i = st.session_state.idx
 
-# Helper to format paragraphs
-def format_html_paragraphs(text: str) -> str:
-    paras = re.split(r'\n\s*\n', text.strip())
-    return ''.join(f"<p>{p.replace('\n','<br>')}</p>" for p in paras)
-
-# Play TTS
 def play_tts(text: str):
-    if not text:
-        st.warning("No text to read.")
-        return
-    try:
-        tts = gTTS(text=text, lang='en')
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
-            tts.save(fp.name)
-        st.audio(fp.name, format="audio/mp3")
-    except Exception:
-        st.error("🔊 Text-to-speech failed.")
-    finally:
-        try: os.remove(fp.name)
-        except: pass
+    tts = gTTS(text=text, lang='en')
+    with tempfile.NamedTemporaryFile(delete=True, suffix=".mp3") as fp:
+        tts.save(fp.name)
+        st.audio(fp.name, format='audio/mp3')
 
-def show_item(idx: int):
-    row = filtered.iloc[idx]
+def show_item(i: int):
+    row = filtered.iloc[i]
+
     # Passage
-    st.markdown("### 📘 Passage")
-    passage_html = format_html_paragraphs(str(row['Passage']))
-    st.markdown(passage_html, unsafe_allow_html=True)
-    if st.button("🔊 Read Passage Aloud", key=f"play_passage_{idx}"):
-        play_tts(row['Passage'])
+    st.markdown("### Passage")
+    st.markdown(row['Passage'].replace('\n', '<br><br>'), unsafe_allow_html=True)
+    if st.button("🔊 Read Passage Aloud", key=f"tts_passage_{i}"):
+        play_tts(str(row['Passage']))
 
-    # Question & Answers
-    st.markdown("### ❓ Question")
-    question_html = f"<p><strong>Question {idx+1}:</strong> {row['Question']}</p>"
-    options = [opt.strip() for opt in str(row['Answer']).split(';')]
-    options_html = "<ul>" + "".join(f"<li>{opt}</li>" for opt in options) + "</ul>"
-    st.markdown(question_html + options_html, unsafe_allow_html=True)
+    # Build Q&A text
+    answers = [opt.strip() for opt in str(row['Answer']).split(';')]
+    qa_text = f"Question {i+1}: {row['Question']}\nAnswers:\n" + "\n".join(f"- {a}" for a in answers)
+    st.markdown(f"```text\n{qa_text}\n```")
 
-    # Explanation
-    explanation = str(row.get('Explanation','') or '').strip()
+    # Safely coerce explanation to string and strip
+    raw_exp = row.get('Explanation', '')
+    explanation = str(raw_exp).strip() if pd.notna(raw_exp) else ''
+    if explanation and st.checkbox("Show Explanation", key=f"show_exp_{i}"):
+        st.info(explanation)
+
+    # Combined Q&A + Explanation TTS
+    full_tts_text = qa_text
     if explanation:
-        if st.checkbox("Show Explanation", key=f"show_exp_{idx}"):
-            st.markdown("### 📝 Explanation")
-            exp_html = format_html_paragraphs(explanation)
-            st.markdown(exp_html, unsafe_allow_html=True)
+        full_tts_text += f"\nExplanation:\n{explanation}"
+    if st.button("🔊 Read Q&A + Explanation Aloud", key=f"tts_full_{i}"):
+        play_tts(full_tts_text)
 
-    # Full TTS
-    full_text = f"{row['Passage']}\n\nQuestion: {row['Question']}. Options: {'; '.join(options)}"
-    if explanation:
-        full_text += f"\n\nExplanation: {explanation}"
-    if st.button("🔊 Read Q&A + Explanation", key=f"play_full_{idx}"):
-        play_tts(full_text)
-
-# Top controls
-st.markdown("---")
-if st.button("⬅️ Previous Question"):
-    if i > 0:
+# Navigation
+col1, _, col2 = st.columns([1,4,1])
+with col1:
+    if st.button("◀️ Back") and st.session_state.idx > 0:
         st.session_state.idx -= 1
-if st.button("Next Question ➡️"):
-    if i < max_idx:
+with col2:
+    if st.button("Next ▶️") and st.session_state.idx < max_idx:
         st.session_state.idx += 1
-st.markdown("---")
 
-show_item(i)
+show_item(st.session_state.idx)
