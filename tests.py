@@ -3,7 +3,7 @@ import pandas as pd
 import re
 import streamlit.components.v1 as components
 
-# --- Load and cache quiz data ---
+# --- Load & cache data ---
 @st.cache_data
 def load_data():
     url = "https://github.com/eogbeide/stock-wizard/raw/main/quiz.xlsx"
@@ -38,14 +38,14 @@ if max_idx < 0:
 st.session_state.idx = max(0, min(st.session_state.idx, max_idx))
 i = st.session_state.idx
 
-# --- Helper for HTML paragraph spacing ---
+# --- Helper: HTML paragraph formatting ---
 def format_html(text: str) -> str:
     paras = re.split(r"\n\s*\n", text.strip())
     return "".join(f"<p>{p.replace('\n','<br>')}</p>" for p in paras)
 
-# --- Inject browser TTS controls ---
+# --- Helper: inject browser TTS controls ---
 def inject_tts(text: str, key: str, label: str):
-    safe = text.replace("\\", "\\\\").replace("`", "'").replace("\n", "\\n")
+    safe = text.replace("\\","\\\\").replace("`","'").replace("\n","\\n")
     components.html(f"""
 <div style="margin:8px 0;"><strong>{label}</strong><br>
   <button id="{key}_play">▶️ Play</button>
@@ -61,80 +61,83 @@ def inject_tts(text: str, key: str, label: str):
     return u;
   }});
   function pickVoice() {{
-    let v = speechSynthesis.getVoices()
-      .find(v => /samantha|victoria|zira|female/i.test(v.name));
-    return v || speechSynthesis.getVoices().find(v=>v.lang.startsWith("en"));
+    let vs = speechSynthesis.getVoices();
+    return vs.find(v=>/samantha|victoria|zira|female/i.test(v.name))
+        || vs.find(v=>v.lang.startsWith("en"));
   }}
   function setup() {{
-    let voice = pickVoice();
-    if(voice) utterances.forEach(u => u.voice=voice);
+    let v = pickVoice();
+    if(v) utterances.forEach(u=>u.voice=v);
   }}
-  if (speechSynthesis.getVoices().length) setup();
+  if(speechSynthesis.getVoices().length) setup();
   else speechSynthesis.onvoiceschanged = setup;
 
-  let idx = 0;
-  const playBtn = document.getElementById("{key}_play");
-  const pauseBtn = document.getElementById("{key}_pause");
-  const resumeBtn = document.getElementById("{key}_resume");
-  const stopBtn = document.getElementById("{key}_stop");
+  let idx=0;
+  const play = document.getElementById("{key}_play");
+  const pause = document.getElementById("{key}_pause");
+  const resume = document.getElementById("{key}_resume");
+  const stop = document.getElementById("{key}_stop");
 
   function speakNext() {{
-    if (idx >= utterances.length) return finish();
+    if(idx>=utterances.length) return finish();
     let u = utterances[idx++];
-    u.onend = () => setTimeout(speakNext, 600);
+    u.onend = ()=>setTimeout(speakNext,600);
     speechSynthesis.speak(u);
   }}
   function start() {{
     speechSynthesis.cancel();
-    idx = 0;
+    idx=0;
     speakNext();
-    playBtn.disabled = true;
-    pauseBtn.disabled = false;
-    stopBtn.disabled = false;
+    play.disabled=true;
+    pause.disabled=false;
+    stop.disabled=false;
   }}
   function finish() {{
-    playBtn.disabled = false;
-    pauseBtn.disabled = true;
-    resumeBtn.disabled = true;
-    stopBtn.disabled = true;
+    play.disabled=false;
+    pause.disabled=true;
+    resume.disabled=true;
+    stop.disabled=true;
   }}
-
-  playBtn.onclick = start;
-  pauseBtn.onclick = () => {{
-    speechSynthesis.pause();
-    pauseBtn.disabled = true;
-    resumeBtn.disabled = false;
-  }};
-  resumeBtn.onclick = () => {{
-    speechSynthesis.resume();
-    resumeBtn.disabled = true;
-    pauseBtn.disabled = false;
-  }};
-  stopBtn.onclick = () => {{
-    speechSynthesis.cancel();
-    finish();
-  }};
-  // When done
-  utterances[utterances.length-1].onend = finish;
+  play.onclick=start;
+  pause.onclick=()=>{{ speechSynthesis.pause(); pause.disabled=true; resume.disabled=false; }};
+  resume.onclick=()=>{{ speechSynthesis.resume(); resume.disabled=true; pause.disabled=false; }};
+  stop.onclick=()=>{{ speechSynthesis.cancel(); finish(); }};
+  utterances[utterances.length-1].onend=finish;
 </script>
 """, height=120)
 
-# --- Display the current question ---
+# --- Current row and texts ---
 row = filtered.iloc[i]
 passage = str(row["Passage"]).strip()
+answer_list = [a.strip() for a in str(row["Answer"]).split(";")]
+question = f"Question {i+1}: {row['Question']}"
+explanation = str(row.get("Explanation","") or "").strip()
 
-# Top TTS controls
+# --- Top controls for Passage & Explanation ---
 st.markdown("### 🔊 Audio Controls (Top)")
-inject_tts(passage, f"top_{i}", "Read Passage")
+inject_tts(passage, f"top_passage_{i}", "Read Passage")
+if explanation:
+    inject_tts(explanation, f"top_exp_{i}", "Read Explanation")
 
-# Passage HTML
+# --- Display Passage ---
 st.markdown(f"<div>{format_html(passage)}</div>", unsafe_allow_html=True)
 
-# Sidebar TTS controls
-st.sidebar.markdown("### 🔊 Audio Controls (Sidebar)")
-inject_tts(passage, f"side_{i}", "Read Passage")
+# --- Q&A display ---
+st.markdown(f"**{question}**")
+st.markdown("\n".join(f"- {a}" for a in answer_list))
 
-# Navigation
+# --- Explanation section ---
+if explanation:
+    if st.checkbox("Show Explanation"):
+        st.markdown(f"<div style='margin-top:1em;color:#555;font-style:italic;'>{format_html(explanation)}</div>", unsafe_allow_html=True)
+
+# --- Sidebar controls ---
+st.sidebar.markdown("### 🔊 Audio Controls (Sidebar)")
+inject_tts(passage, f"side_passage_{i}", "Read Passage")
+if explanation:
+    inject_tts(explanation, f"side_exp_{i}", "Read Explanation")
+
+# --- Navigation ---
 col1, col2 = st.columns(2)
 with col1:
     if st.button("◀ Back") and i > 0:
