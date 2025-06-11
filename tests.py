@@ -1,63 +1,78 @@
 import streamlit as st
 import pandas as pd
 from gtts import gTTS
-import tempfile
-import os
+import io
 
-# Load data from the Excel file URL
+# URL of the Excel file
+URL = "https://github.com/eogbeide/stock-wizard/raw/main/tests.xlsx"
+
 @st.cache_data
 def load_data():
-    url = "https://github.com/eogbeide/stock-wizard/raw/main/tests.xlsx"
+    """Load test explanations from GitHub."""
     try:
-        df = pd.read_excel(url)
-        df = df.dropna(subset=['Subject', 'Explanation'])
-        df.reset_index(drop=True, inplace=True)
+        df = pd.read_excel(URL)
         return df
     except Exception as e:
         st.error(f"Error loading data: {e}")
         return pd.DataFrame()
 
-# Convert explanation to audio
 def play_text(text: str):
+    """Convert text to speech and play via an in-memory buffer."""
     if not text:
         st.warning("No explanation to read.")
         return
+    # generate TTS into a bytes buffer
+    buffer = io.BytesIO()
     tts = gTTS(text=text, lang='en')
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
-        tts.save(fp.name)
-        st.audio(fp.name, format="audio/mp3")
-        os.remove(fp.name)
+    tts.write_to_fp(buffer)
+    buffer.seek(0)
+    # Streamlit will serve the audio blob directly
+    st.audio(buffer, format="audio/mp3")
 
 def main():
-    st.title("Subject Explanations (Text to Voice Enabled)")
+    st.title("Test Explanations with TTS")
 
+    # Load data
     df = load_data()
     if df.empty:
-        st.warning("No data available.")
-        return
+        st.stop()
 
-    subjects = df['Subject'].unique().tolist()
-    selected_subject = st.sidebar.selectbox("Choose a Subject", subjects)
+    # Sidebar: Subject selection
+    st.sidebar.title("Select Subject")
+    subjects = df['Subject'].unique()
+    selected_subject = st.sidebar.selectbox("Subject", subjects)
 
-    subject_df = df[df['Subject'] == selected_subject].reset_index(drop=True)
+    # Filter explanations for the selected subject
+    filtered = df[df['Subject'] == selected_subject].reset_index(drop=True)
+    if filtered.empty:
+        st.warning("No explanations found for this subject.")
+        st.stop()
 
-    if 'index' not in st.session_state:
-        st.session_state.index = 0
+    # Initialize or reset index when subject changes
+    if 'idx' not in st.session_state or st.session_state.get('last_subject') != selected_subject:
+        st.session_state.idx = 0
+        st.session_state.last_subject = selected_subject
 
-    col1, col2, col3 = st.columns([1, 4, 1])
+    max_idx = len(filtered) - 1
+    idx = st.session_state.idx
+
+    # Display current explanation
+    explanation = str(filtered.loc[idx, 'Explanation']).strip()
+    st.subheader(f"{selected_subject} (Explanation {idx+1} of {max_idx+1})")
+    st.write(explanation)
+
+    # Play aloud button
+    if st.button("🔊 Play Explanation"):
+        play_text(explanation)
+
+    # Navigation buttons
+    col1, col2 = st.columns(2)
     with col1:
-        if st.button("Back"):
-            st.session_state.index = max(0, st.session_state.index - 1)
-    with col3:
-        if st.button("Next"):
-            st.session_state.index = min(len(subject_df) - 1, st.session_state.index + 1)
-
-    current_row = subject_df.iloc[st.session_state.index]
-    st.markdown(f"### Explanation {st.session_state.index + 1} of {len(subject_df)}")
-    st.write(current_row['Explanation'])
-
-    if st.button("🔊 Read Aloud"):
-        play_text(current_row['Explanation'])
+        if st.button("◀ Back") and idx > 0:
+            st.session_state.idx = idx - 1
+    with col2:
+        if st.button("Next ▶") and idx < max_idx:
+            st.session_state.idx = idx + 1
 
 if __name__ == "__main__":
     main()
