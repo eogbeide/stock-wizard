@@ -11,7 +11,8 @@ URL = "https://github.com/eogbeide/stock-wizard/raw/main/tests.xlsx"
 def load_data():
     """Load test explanations from GitHub."""
     try:
-        return pd.read_excel(URL)
+        df = pd.read_excel(URL)
+        return df
     except Exception as e:
         st.error(f"Error loading data: {e}")
         return pd.DataFrame()
@@ -21,20 +22,11 @@ def play_text(text: str):
     if not text:
         st.warning("No explanation to read.")
         return
-
-    try:
-        tts = gTTS(text=text, lang='en')
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
-            tts.save(fp.name)
-        st.audio(fp.name, format="audio/mp3")
-    except Exception:
-        st.error("🔊 Text-to-speech failed. Please try again later.")
-    finally:
-        # Clean up the file if it was created
-        try:
-            os.remove(fp.name)
-        except Exception:
-            pass
+    tts = gTTS(text=text, lang='en')
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
+        tts.save(fp.name)
+    st.audio(fp.name, format="audio/mp3")
+    os.remove(fp.name)
 
 def main():
     st.title("Test Explanations with TTS")
