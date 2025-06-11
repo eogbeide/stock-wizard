@@ -39,14 +39,14 @@ if max_idx < 0:
 st.session_state.idx = min(max(st.session_state.idx, 0), max_idx)
 i = st.session_state.idx
 
-# --- Helper: HTML paragraph formatting ---
+# --- HTML paragraph formatter ---
 def format_html(text: str) -> str:
     paras = re.split(r"\n\s*\n", text.strip())
     return "".join(f"<p>{p.replace('\n','<br>')}</p>" for p in paras)
 
-# --- Helper: Inject browser TTS controls with explicit female voice ---
+# --- Inject client-side TTS controls with slower rate and longer pauses ---
 def inject_tts(text: str, key: str, label: str):
-    safe = text.replace("\\","\\\\").replace("`","'").replace("\n","\\n")
+    safe = text.replace("\\", "\\\\").replace("`", "'").replace("\n", "\\n")
     components.html(f"""
 <div style="margin:8px 0;"><strong>{label}</strong><br>
   <button id="{key}_play">▶️ Play</button>
@@ -55,32 +55,29 @@ def inject_tts(text: str, key: str, label: str):
   <button id="{key}_stop" disabled>⏹️ Stop</button>
 </div>
 <script>
-  // Split into paragraphs
+  // Split passage into paragraphs
   const paras = `{safe}`.split(/\\n\\s*\\n/);
-
-  // Build utterances with 80% speed
+  
+  // Create utterances at 60% speed
   const utterances = paras.map(p => {{
     const u = new SpeechSynthesisUtterance(p);
-    u.rate = 0.8;
+    u.rate = 0.6;
     return u;
   }});
 
-  // Explicitly pick the first female English voice available
+  // Pick a soft female voice if available
   function pickFemaleVoice() {{
-    const vs = window.speechSynthesis.getVoices();
-    // common female voice names
-    const female = vs.find(v =>
-      v.lang.startsWith('en') &&
-      /samantha|victoria|zira|female/i.test(v.name)
-    );
-    return female || vs.find(v => v.lang.startsWith('en'));
+    const vs = speechSynthesis.getVoices();
+    return vs.find(v => /samantha|victoria|zira|female/i.test(v.name))
+        || vs.find(v => v.lang.startsWith("en"));
   }}
 
   function setupVoices() {{
-    const voice = pickFemaleVoice();
-    if (voice) utterances.forEach(u => u.voice = voice);
+    const v = pickFemaleVoice();
+    if (v) utterances.forEach(u => u.voice = v);
   }}
 
+  // Wait for voices to load
   if (speechSynthesis.getVoices().length) {{
     setupVoices();
   }} else {{
@@ -96,12 +93,12 @@ def inject_tts(text: str, key: str, label: str):
   function speakNext() {{
     if (idx >= utterances.length) return finish();
     const u = utterances[idx++];
-    u.onend = () => setTimeout(speakNext, 600);
-    window.speechSynthesis.speak(u);
+    u.onend = () => setTimeout(speakNext, 1000);  // 1 second pause
+    speechSynthesis.speak(u);
   }}
 
   function start() {{
-    window.speechSynthesis.cancel();
+    speechSynthesis.cancel();
     idx = 0;
     speakNext();
     playBtn.disabled = true;
@@ -118,21 +115,21 @@ def inject_tts(text: str, key: str, label: str):
 
   playBtn.onclick = start;
   pauseBtn.onclick = () => {{
-    window.speechSynthesis.pause();
+    speechSynthesis.pause();
     pauseBtn.disabled = true;
     resumeBtn.disabled = false;
   }};
   resumeBtn.onclick = () => {{
-    window.speechSynthesis.resume();
+    speechSynthesis.resume();
     resumeBtn.disabled = true;
     pauseBtn.disabled = false;
   }};
   stopBtn.onclick = () => {{
-    window.speechSynthesis.cancel();
+    speechSynthesis.cancel();
     finish();
   }};
 
-  // When done naturally
+  // When final utterance ends naturally
   utterances[utterances.length - 1].onend = finish;
 </script>
 """, height=140)
@@ -146,10 +143,10 @@ st.title(f"{subject} ({i+1} of {max_idx+1})")
 # Top TTS controls
 inject_tts(text, f"top_{i}", "Read Explanation")
 
-# Explanation display
+# Content
 st.markdown(format_html(text), unsafe_allow_html=True)
 
-# Sidebar TTS controls
+# Sidebar controls
 st.sidebar.markdown("### 🔊 Audio Controls")
 inject_tts(text, f"side_{i}", "Read Explanation")
 
