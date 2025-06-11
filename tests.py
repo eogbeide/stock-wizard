@@ -1,78 +1,130 @@
 import streamlit as st
 import pandas as pd
-from gtts import gTTS
-import io
+import re
+import streamlit.components.v1 as components
 
-# URL of the Excel file
-URL = "https://github.com/eogbeide/stock-wizard/raw/main/tests.xlsx"
-
+# --- Load & cache data ---
 @st.cache_data
 def load_data():
-    """Load test explanations from GitHub."""
+    url = "https://github.com/eogbeide/stock-wizard/raw/main/tests.xlsx"
     try:
-        df = pd.read_excel(URL)
-        return df
+        return pd.read_excel(url)
     except Exception as e:
-        st.error(f"Error loading data: {e}")
+        st.sidebar.error(f"Error loading data: {e}")
         return pd.DataFrame()
 
-def play_text(text: str):
-    """Convert text to speech and play via an in-memory buffer."""
-    if not text:
-        st.warning("No explanation to read.")
-        return
-    # generate TTS into a bytes buffer
-    buffer = io.BytesIO()
-    tts = gTTS(text=text, lang='en')
-    tts.write_to_fp(buffer)
-    buffer.seek(0)
-    # Streamlit will serve the audio blob directly
-    st.audio(buffer, format="audio/mp3")
+df = load_data()
+if df.empty:
+    st.sidebar.warning("No data.")
+    st.stop()
 
-def main():
-    st.title("Test Explanations with TTS")
+# --- Sidebar navigation ---
+st.sidebar.title("Quiz Navigation")
+subjects = df['Subject'].unique()
+subject = st.sidebar.selectbox("Subject", subjects)
+subset = df[df['Subject']==subject]
 
-    # Load data
-    df = load_data()
-    if df.empty:
-        st.stop()
+topics = subset['Topic'].unique()
+topic = st.sidebar.selectbox("Topic", topics)
+subset = subset[subset['Topic']==topic].reset_index(drop=True)
 
-    # Sidebar: Subject selection
-    st.sidebar.title("Select Subject")
-    subjects = df['Subject'].unique()
-    selected_subject = st.sidebar.selectbox("Subject", subjects)
+# --- Index state ---
+if 'idx' not in st.session_state:
+    st.session_state.idx = 0
+max_idx = len(subset)-1
+if max_idx < 0:
+    st.sidebar.warning("No items.")
+    st.stop()
+st.session_state.idx = min(max(st.session_state.idx, 0), max_idx)
+i = st.session_state.idx
 
-    # Filter explanations for the selected subject
-    filtered = df[df['Subject'] == selected_subject].reset_index(drop=True)
-    if filtered.empty:
-        st.warning("No explanations found for this subject.")
-        st.stop()
+# --- HTML paragraph formatting ---
+def format_html(text: str) -> str:
+    paras = re.split(r"\n\s*\n", text.strip())
+    return "".join(f"<p>{p.replace('\n','<br>')}</p>" for p in paras)
 
-    # Initialize or reset index when subject changes
-    if 'idx' not in st.session_state or st.session_state.get('last_subject') != selected_subject:
-        st.session_state.idx = 0
-        st.session_state.last_subject = selected_subject
+# --- Inject browser TTS controls ---
+def inject_tts(text: str, key: str, label: str):
+    safe = text.replace("\\","\\\\").replace("`","'").replace("\n","\\n")
+    components.html(f"""
+<div style="margin:0.5em 0;"><strong>{label}</strong><br>
+  <button id="{key}_play">▶️ Play</button>
+  <button id="{key}_pause" disabled>⏸️ Pause</button>
+  <button id="{key}_resume" disabled>⏯️ Resume</button>
+  <button id="{key}_stop" disabled>⏹️ Stop</button>
+</div>
+<script>
+  const paras = `{safe}`.split(/\\n\\s*\\n/);
+  const utterances = paras.map(p=> {{
+    let u = new SpeechSynthesisUtterance(p);
+    u.rate = 0.8;
+    return u;
+  }});
+  function pickVoice() {{
+    let vs = speechSynthesis.getVoices();
+    return vs.find(v=>/samantha|victoria|zira|female/i.test(v.name))
+      || vs.find(v=>v.lang.startsWith("en"));
+  }}
+  function setup() {{
+    let v = pickVoice();
+    if(v) utterances.forEach(u=>u.voice=v);
+  }}
+  if(speechSynthesis.getVoices().length) setup();
+  else speechSynthesis.onvoiceschanged = setup;
 
-    max_idx = len(filtered) - 1
-    idx = st.session_state.idx
+  let idx=0;
+  const playBtn = document.getElementById("{key}_play");
+  const pauseBtn = document.getElementById("{key}_pause");
+  const resumeBtn = document.getElementById("{key}_resume");
+  const stopBtn = document.getElementById("{key}_stop");
 
-    # Display current explanation
-    explanation = str(filtered.loc[idx, 'Explanation']).strip()
-    st.subheader(f"{selected_subject} (Explanation {idx+1} of {max_idx+1})")
-    st.write(explanation)
+  function speakNext() {{
+    if(idx>=utterances.length) return finish();
+    let u=utterances[idx++];
+    u.onend = ()=> setTimeout(speakNext,600);
+    speechSynthesis.speak(u);
+  }}
+  function start() {{
+    speechSynthesis.cancel();
+    idx=0;
+    speakNext();
+    playBtn.disabled = true;
+    pauseBtn.disabled = false;
+    stopBtn.disabled = false;
+  }}
+  function finish() {{
+    playBtn.disabled = false;
+    pauseBtn.disabled = true;
+    resumeBtn.disabled = true;
+    stopBtn.disabled = true;
+  }}
+  playBtn.onclick = start;
+  pauseBtn.onclick = ()=>{{ speechSynthesis.pause(); pauseBtn.disabled=true; resumeBtn.disabled=false; }};
+  resumeBtn.onclick = ()=>{{ speechSynthesis.resume(); resumeBtn.disabled=true; pauseBtn.disabled=false; }};
+  stopBtn.onclick = ()=>{{ speechSynthesis.cancel(); finish(); }};
+  utterances[utterances.length-1].onend = finish;
+</script>
+""", height=120)
 
-    # Play aloud button
-    if st.button("🔊 Play Explanation"):
-        play_text(explanation)
+# --- Display content ---
+row = subset.iloc[i]
+text = str(row['Explanation']).strip()
 
-    # Navigation buttons
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("◀ Back") and idx > 0:
-            st.session_state.idx = idx - 1
-    with col2:
-        if st.button("Next ▶") and idx < max_idx:
-            st.session_state.idx = idx + 1
+st.title(f"{subject} ({i+1}/{max_idx+1})")
 
-if __name__ == "__main__":
-    main()
+# Top controls and passage
+inject_tts(text, f"top_{i}", "Read Passage")
+st.markdown(format_html(text), unsafe_allow_html=True)
+
+# Sidebar controls
+st.sidebar.markdown("### 🔊 Audio Controls")
+inject_tts(text, f"side_{i}", "Read Passage")
+
+# Navigation
+c1, c2 = st.columns(2)
+with c1:
+    if st.button("◀ Back") and i>0:
+        st.session_state.idx -=1
+with c2:
+    if st.button("Next ▶") and i<max_idx:
+        st.session_state.idx +=1
