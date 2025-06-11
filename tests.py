@@ -1,7 +1,8 @@
 import streamlit as st
 import pandas as pd
 from gtts import gTTS
-import io
+import tempfile
+import os
 
 # URL of the Excel file
 URL = "https://github.com/eogbeide/stock-wizard/raw/main/tests.xlsx"
@@ -17,17 +18,15 @@ def load_data():
         return pd.DataFrame()
 
 def play_text(text: str):
-    """Convert text to speech and play via an in-memory buffer."""
+    """Convert text to speech, play it, then delete the temp file."""
     if not text:
         st.warning("No explanation to read.")
         return
-    # generate TTS into a bytes buffer
-    buffer = io.BytesIO()
     tts = gTTS(text=text, lang='en')
-    tts.write_to_fp(buffer)
-    buffer.seek(0)
-    # Streamlit will serve the audio blob directly
-    st.audio(buffer, format="audio/mp3")
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
+        tts.save(fp.name)
+    st.audio(fp.name, format="audio/mp3")
+    os.remove(fp.name)
 
 def main():
     st.title("Test Explanations with TTS")
