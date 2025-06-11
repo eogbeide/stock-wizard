@@ -1,4 +1,4 @@
-import streamlit as stg
+import streamlit as stgg
 import pandas as pd
 from gtts import gTTS
 import io
