@@ -1,4 +1,4 @@
-import streamlit as sts
+import streamlit as stss
 import pandas as pd
 import re
 import tempfile
