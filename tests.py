@@ -27,16 +27,21 @@ components.html("""
     background: #eef6ff;
     border-left: 4px solid #0050b3;
   }
-  .question-block p { margin: 0; }
-  .options-block { margin: 0.5em 0 1em 1em; }
-  .options-block li { margin-bottom: 0.5em; }
+  .options-block {
+    margin: 0.5em 0 1em 1em;
+  }
+  .options-block li {
+    margin-bottom: 0.5em;
+  }
   .explanation-block {
     margin: 1em 0;
     padding: 1em;
     background: #f5f5f5;
     border-left: 4px solid #0078d4;
   }
-  .explanation-block p { margin-bottom: 1em; }
+  .explanation-block p {
+    margin-bottom: 1em;
+  }
 </style>
 """, height=0)
 
@@ -51,15 +56,13 @@ if count == 0:
     st.stop()
 
 labels = [f"Item {n+1}" for n in range(count)]
-# Clamp default index into [0, count-1]
 default = st.session_state.get("idx", 0)
-default = max(0, min(default, count-1))
-
+default = max(0, min(default, count - 1))
 sel = st.sidebar.selectbox("Go to item", labels, index=default)
 st.session_state.idx = labels.index(sel)
 i = st.session_state.idx
 
-# --- Helper to wrap text into paragraphs ---
+# --- Helper: split text into paragraphs ---
 def to_para_html(text: str) -> str:
     parts = re.split(r"\n\s*\n", text.strip())
     return "".join(f"<p>{p.replace(chr(10), '<br>')}</p>" for p in parts if p)
@@ -70,8 +73,7 @@ row = subset.iloc[i]
 # Question
 question = str(row.get("Question","") or "").strip()
 if question:
-    html_q = to_para_html(question)
-    st.markdown(f'<div class="question-block">{html_q}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="question-block">{to_para_html(question)}</div>', unsafe_allow_html=True)
 
 # Options
 answers = [a.strip() for a in str(row.get("Answer","") or "").split(";")]
@@ -82,16 +84,13 @@ if answers and answers != ['']:
 # Explanation
 exp = str(row.get("Explanation","") or "").strip()
 if exp:
-    html_e = to_para_html(exp)
-    st.markdown(f'<div class="explanation-block">{html_e}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="explanation-block">{to_para_html(exp)}</div>', unsafe_allow_html=True)
 
 # --- Navigation buttons ---
 col1, col2 = st.columns(2)
 with col1:
     if st.button("◀ Back") and i > 0:
         st.session_state.idx = i - 1
-        st.experimental_rerun()
 with col2:
     if st.button("Next ▶") and i < count - 1:
         st.session_state.idx = i + 1
-        st.experimental_rerun()
