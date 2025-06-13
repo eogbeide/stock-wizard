@@ -21,33 +21,26 @@ if quiz_data.empty:
     st.sidebar.warning("No quiz data available.")
     st.stop()
 
-# --- Global CSS for HTML formatting ---
+# --- Global CSS ---
 components.html("""
 <style>
   .passage { 
-    padding: 1em; 
-    background: #f5f5f5; 
-    border-left: 4px solid #0078d4; 
-    margin-bottom: 1em;
+    padding: 1em; background: #f9f9f9; border-left: 4px solid #0078d4; margin-bottom: 1em;
   }
-  .question { 
-    margin-top: 1em; 
-    font-weight: bold; 
+  .question-block {
+    margin: 1em 0; padding: 0.5em; background: #eef; border-left: 4px solid #004080;
   }
   .options {
-    margin-left: 1em;
+    margin: 0.5em 0 1em 1.5em;
     list-style-type: disc;
   }
-  .explanation { 
-    margin-top: 1em; 
-    padding: 0.8em; 
-    background: #e8f4fd; 
-    border-left: 4px solid #00a3e0;
+  .explanation-block { 
+    margin: 1em 0; padding: 1em; background: #f0f9e8; border-left: 4px solid #40a860;
   }
 </style>
 """, height=0)
 
-# --- Sidebar navigation & question selector ---
+# --- Sidebar Navigation & Question Selector ---
 st.sidebar.title("Quiz Navigation")
 subject = st.sidebar.selectbox("Subject", quiz_data["Subject"].unique())
 filtered = quiz_data[quiz_data["Subject"] == subject]
@@ -55,20 +48,18 @@ filtered = quiz_data[quiz_data["Subject"] == subject]
 topic = st.sidebar.selectbox("Topic", filtered["Topic"].unique())
 filtered = filtered[filtered["Topic"] == topic].reset_index(drop=True)
 
-# Compute max index
 max_idx = len(filtered) - 1
 if max_idx < 0:
     st.sidebar.warning("No questions here.")
     st.stop()
 
-# Question dropdown
-question_options = [f"Question {j+1}" for j in range(max_idx+1)]
+question_labels = [f"Question {j+1}" for j in range(max_idx+1)]
 default_idx = st.session_state.get("idx", 0)
-selected_q = st.sidebar.selectbox("Go to question", question_options, index=default_idx)
-st.session_state.idx = question_options.index(selected_q)
+selected = st.sidebar.selectbox("Go to question", question_labels, index=default_idx)
+st.session_state.idx = question_labels.index(selected)
 i = st.session_state.idx
 
-# --- Helper to play TTS ---
+# --- TTS Helper ---
 def play_tts(text: str):
     if not text:
         st.warning("No text to read.")
@@ -81,52 +72,44 @@ def play_tts(text: str):
     except Exception:
         st.error("🔊 Text-to-speech failed.")
     finally:
-        try:
-            os.remove(fp.name)
-        except:
-            pass
+        try: os.remove(fp.name)
+        except: pass
 
-# --- Render current item ---
+# --- Show Current Item ---
 row = filtered.iloc[i]
-passage = str(row["Passage"]).strip()
-answers = [a.strip() for a in str(row["Answer"]).split(";")]
-question_html = f"Question {i+1}: {row['Question']}"
+passage = str(row["Passage"] or "").strip()
+question = str(row["Question"] or "").strip()
+answers = [a.strip() for a in str(row["Answer"] or "").split(";")]
 explanation = str(row.get("Explanation","") or "").strip()
 
+st.title(f"{subject} — {question_labels[i]} ({i+1}/{max_idx+1})")
+
 # Passage
-st.markdown(
-    '<div class="passage">{}</div>'.format(
-        "<br><br>".join(re.split(r"\n\s*\n", passage.replace("\n","<br>")))
-    ), 
-    unsafe_allow_html=True
-)
+st.markdown(f'<div class="passage">{passage.replace("\\n","<br>")}</div>', unsafe_allow_html=True)
 if st.button("🔊 Read Passage Aloud"):
     play_tts(passage)
 
-# Question & Options
-st.markdown(f'<div class="question">{question_html}</div>', unsafe_allow_html=True)
-st.markdown(
-    f'<ul class="options">{"".join(f"<li>{opt}</li>" for opt in answers)}</ul>',
-    unsafe_allow_html=True
-)
+# Question
+st.markdown(f'<div class="question-block"><strong>Question:</strong><br>{question}</div>', unsafe_allow_html=True)
+
+# Options
+st.markdown(f'<ul class="options">{"".join(f"<li>{opt}</li>" for opt in answers)}</ul>', unsafe_allow_html=True)
 
 # Explanation
-if explanation and st.checkbox("Show Explanation"):
-    st.markdown(
-        '<div class="explanation">{}</div>'.format(
-            "<br><br>".join(re.split(r"\n\s*\n", explanation.replace("\n","<br>")))
-        ),
-        unsafe_allow_html=True
-    )
+if explanation:
+    if st.checkbox("Show Explanation"):
+        st.markdown(f'<div class="explanation-block">{explanation.replace("\\n","<br><br>")}</div>', unsafe_allow_html=True)
+    if st.button("🔊 Read Explanation"):
+        play_tts(explanation)
 
 # Read full Q&A + Explanation
-full_text = passage + "\n\n" + question_html + "\n" + "\n".join(f"- {opt}" for opt in answers)
+full_text = "\n\n".join([passage, f"Question: {question}", "Answers: " + "; ".join(answers)])
 if explanation:
     full_text += "\n\nExplanation:\n" + explanation
 if st.button("🔊 Read Q&A + Explanation Aloud"):
     play_tts(full_text)
 
-# Navigation buttons
+# Navigation Buttons
 col1, col2 = st.columns(2)
 with col1:
     if st.button("◀️ Back") and i > 0:
