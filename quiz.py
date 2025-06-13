@@ -1,9 +1,9 @@
 import streamlit as st
 import pandas as pd
-from gtts import gTTS
+import re
 import tempfile
 import os
-import re
+from gtts import gTTS
 import streamlit.components.v1 as components
 
 # --- Load & cache data ---
@@ -13,7 +13,7 @@ def load_data():
     try:
         return pd.read_excel(url)
     except Exception as e:
-        st.error(f"Error loading data: {e}")
+        st.sidebar.error(f"Error loading data: {e}")
         return pd.DataFrame()
 
 quiz_data = load_data()
@@ -47,7 +47,7 @@ components.html("""
 </style>
 """, height=0)
 
-# --- Sidebar navigation ---
+# --- Sidebar navigation & question selector ---
 st.sidebar.title("Quiz Navigation")
 subject = st.sidebar.selectbox("Subject", quiz_data["Subject"].unique())
 filtered = quiz_data[quiz_data["Subject"] == subject]
@@ -55,14 +55,22 @@ filtered = quiz_data[quiz_data["Subject"] == subject]
 topic = st.sidebar.selectbox("Topic", filtered["Topic"].unique())
 filtered = filtered[filtered["Topic"] == topic].reset_index(drop=True)
 
-# --- Session index ---
-if "idx" not in st.session_state:
-    st.session_state.idx = 0
+# Compute max index
 max_idx = len(filtered) - 1
 if max_idx < 0:
     st.sidebar.warning("No questions here.")
     st.stop()
-st.session_state.idx = max(0, min(st.session_state.idx, max_idx))
+
+# Question slider
+current_q = st.sidebar.slider(
+    "Go to question",
+    min_value=1,
+    max_value=max_idx + 1,
+    value=st.session_state.get("idx", 0) + 1,
+    format="Question %d"
+)
+# Update session index
+st.session_state.idx = current_q - 1
 i = st.session_state.idx
 
 # --- Helper to play TTS ---
@@ -87,7 +95,7 @@ def play_tts(text: str):
 row = filtered.iloc[i]
 passage = str(row["Passage"]).strip()
 answers = [a.strip() for a in str(row["Answer"]).split(";")]
-question = f"Question {i+1}: {row['Question']}"
+question_html = f"Question {i+1}: {row['Question']}"
 explanation = str(row.get("Explanation","") or "").strip()
 
 # Passage
@@ -97,30 +105,30 @@ st.markdown('<div class="passage">{}</div>'.format(
 if st.button("🔊 Read Passage Aloud"):
     play_tts(passage)
 
-# Question + Options
-st.markdown(f'<div class="question">{question}</div>', unsafe_allow_html=True)
-opt_html = "".join(f"<li>{opt}</li>" for opt in answers)
-st.markdown(f'<ul class="options">{opt_html}</ul>', unsafe_allow_html=True)
+# Question & Options
+st.markdown(f'<div class="question">{question_html}</div>', unsafe_allow_html=True)
+st.markdown(f'<ul class="options">{"".join(f"<li>{opt}</li>" for opt in answers)}</ul>', unsafe_allow_html=True)
 
 # Explanation
-if explanation:
-    if st.checkbox("Show Explanation"):
-        st.markdown('<div class="explanation">{}</div>'.format(
-            "<br><br>".join(re.split(r"\n\s*\n", explanation.replace("\n","<br>")))
-        ), unsafe_allow_html=True)
+if explanation and st.checkbox("Show Explanation"):
+    st.markdown('<div class="explanation">{}</div>'.format(
+        "<br><br>".join(re.split(r"\n\s*\n", explanation.replace("\n","<br>")))
+    ), unsafe_allow_html=True)
 
 # Read full Q&A + Explanation
-full_text = passage + "\n\n" + question + "\n" + "\n".join(f"- {opt}" for opt in answers)
+full_text = passage + "\n\n" + question_html + "\n" + "\n".join(f"- {opt}" for opt in answers)
 if explanation:
     full_text += "\n\nExplanation:\n" + explanation
 if st.button("🔊 Read Q&A + Explanation Aloud"):
     play_tts(full_text)
 
-# Navigation
+# Navigation buttons
 col1, col2 = st.columns(2)
 with col1:
     if st.button("◀️ Back") and i > 0:
         st.session_state.idx -= 1
+        st.experimental_rerun()
 with col2:
     if st.button("Next ▶️") and i < max_idx:
         st.session_state.idx += 1
+        st.experimental_rerun()
