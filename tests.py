@@ -39,6 +39,9 @@ if max_idx < 0:
 st.session_state.idx = min(max(st.session_state.idx, 0), max_idx)
 i = st.session_state.idx
 
+# **NEW**: show question progress in sidebar
+st.sidebar.markdown(f"**Question {i+1} of {max_idx+1}**")
+
 # --- HTML paragraph formatter ---
 def format_html(text: str) -> str:
     paras = re.split(r"\n\s*\n", text.strip())
@@ -55,48 +58,37 @@ def inject_tts(text: str, key: str, label: str):
   <button id="{key}_stop" disabled>⏹️ Stop</button>
 </div>
 <script>
-  // Split passage into paragraphs
   const paras = `{safe}`.split(/\\n\\s*\\n/);
-  
-  // Create utterances at 60% speed
   const utterances = paras.map(p => {{
     const u = new SpeechSynthesisUtterance(p);
     u.rate = 0.6;
     return u;
   }});
-
-  // Pick a soft female voice if available
   function pickFemaleVoice() {{
     const vs = speechSynthesis.getVoices();
     return vs.find(v => /samantha|victoria|zira|female/i.test(v.name))
         || vs.find(v => v.lang.startsWith("en"));
   }}
-
   function setupVoices() {{
     const v = pickFemaleVoice();
     if (v) utterances.forEach(u => u.voice = v);
   }}
-
-  // Wait for voices to load
   if (speechSynthesis.getVoices().length) {{
     setupVoices();
   }} else {{
     speechSynthesis.onvoiceschanged = setupVoices;
   }}
-
-  let idx = 0;
+  let idx=0;
   const playBtn = document.getElementById("{key}_play");
   const pauseBtn = document.getElementById("{key}_pause");
   const resumeBtn = document.getElementById("{key}_resume");
   const stopBtn = document.getElementById("{key}_stop");
-
   function speakNext() {{
     if (idx >= utterances.length) return finish();
     const u = utterances[idx++];
-    u.onend = () => setTimeout(speakNext, 1000);  // 1 second pause
+    u.onend = () => setTimeout(speakNext, 1000);
     speechSynthesis.speak(u);
   }}
-
   function start() {{
     speechSynthesis.cancel();
     idx = 0;
@@ -105,14 +97,12 @@ def inject_tts(text: str, key: str, label: str):
     pauseBtn.disabled = false;
     stopBtn.disabled = false;
   }}
-
   function finish() {{
     playBtn.disabled = false;
     pauseBtn.disabled = true;
     resumeBtn.disabled = true;
     stopBtn.disabled = true;
   }}
-
   playBtn.onclick = start;
   pauseBtn.onclick = () => {{
     speechSynthesis.pause();
@@ -128,9 +118,7 @@ def inject_tts(text: str, key: str, label: str):
     speechSynthesis.cancel();
     finish();
   }};
-
-  // When final utterance ends naturally
-  utterances[utterances.length - 1].onend = finish;
+  utterances[utterances.length-1].onend = finish;
 </script>
 """, height=140)
 
@@ -146,7 +134,7 @@ inject_tts(text, f"top_{i}", "Read Explanation")
 # Content
 st.markdown(format_html(text), unsafe_allow_html=True)
 
-# Sidebar controls
+# Sidebar TTS controls
 st.sidebar.markdown("### 🔊 Audio Controls")
 inject_tts(text, f"side_{i}", "Read Explanation")
 
