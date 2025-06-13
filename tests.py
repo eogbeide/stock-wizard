@@ -18,9 +18,24 @@ if df.empty:
     st.sidebar.warning("No data available.")
     st.stop()
 
-# --- Global CSS for formatting ---
+# --- Global CSS ---
 components.html("""
 <style>
+  .question-block {
+    margin: 1em 0;
+    padding: 0.75em;
+    background: #eef6ff;
+    border-left: 4px solid #0050b3;
+  }
+  .question-block p {
+    margin: 0;
+  }
+  .options-block {
+    margin: 0.5em 0 1em 1em;
+  }
+  .options-block li {
+    margin-bottom: 0.5em;
+  }
   .explanation-block {
     margin: 1em 0;
     padding: 1em;
@@ -33,15 +48,14 @@ components.html("""
 </style>
 """, height=0)
 
-# --- Sidebar: Subject selector ---
+# --- Sidebar: Subject & Item selector ---
 st.sidebar.title("Quiz Navigation")
 subject = st.sidebar.selectbox("Subject", df["Subject"].unique())
 subset = df[df["Subject"] == subject].reset_index(drop=True)
 
-# --- Sidebar: Item selector ---
 count = len(subset)
 if count == 0:
-    st.sidebar.warning("No explanations for this subject.")
+    st.sidebar.warning("No items for this subject.")
     st.stop()
 
 labels = [f"Item {i+1}" for i in range(count)]
@@ -50,83 +64,31 @@ sel = st.sidebar.selectbox("Go to item", labels, index=default)
 st.session_state.idx = labels.index(sel)
 i = st.session_state.idx
 
-# --- TTS controls injection ---
-def inject_tts(text: str, key: str, label: str):
-    safe = text.replace("\\", "\\\\").replace("`", "'").replace("\n", "\\n")
-    components.html(f"""
-<div style="margin:8px 0;"><strong>{label}</strong><br>
-  <button id="{key}_play">▶️ Play</button>
-  <button id="{key}_pause" disabled>⏸️ Pause</button>
-  <button id="{key}_resume" disabled>⏯️ Resume</button>
-  <button id="{key}_stop" disabled>⏹️ Stop</button>
-</div>
-<script>
-  const paras = `{safe}`.split(/\\n\\s*\\n/);
-  const utterances = paras.map(p => {{
-    let u = new SpeechSynthesisUtterance(p);
-    u.rate = 0.6;
-    return u;
-  }});
-  function pickVoice() {{
-    const vs = speechSynthesis.getVoices();
-    return vs.find(v => /samantha|victoria|zira|female/i.test(v.name))
-        || vs.find(v => v.lang.startsWith("en"));
-  }}
-  function setup() {{
-    const v = pickVoice();
-    if (v) utterances.forEach(u => u.voice = v);
-  }}
-  if (speechSynthesis.getVoices().length) setup();
-  else speechSynthesis.onvoiceschanged = setup;
-
-  let idxUt=0;
-  const playBtn = document.getElementById("{key}_play");
-  const pauseBtn = document.getElementById("{key}_pause");
-  const resumeBtn = document.getElementById("{key}_resume");
-  const stopBtn = document.getElementById("{key}_stop");
-
-  function speakNext() {{
-    if (idxUt >= utterances.length) return finish();
-    let u = utterances[idxUt++];
-    u.onend = () => setTimeout(speakNext, 1000);
-    speechSynthesis.speak(u);
-  }}
-  function start() {{
-    speechSynthesis.cancel();
-    idxUt = 0;
-    speakNext();
-    playBtn.disabled = true;
-    pauseBtn.disabled = false;
-    stopBtn.disabled = false;
-  }}
-  function finish() {{
-    playBtn.disabled = false;
-    pauseBtn.disabled = true;
-    resumeBtn.disabled = true;
-    stopBtn.disabled = true;
-  }}
-
-  playBtn.onclick = start;
-  pauseBtn.onclick = () => {{ speechSynthesis.pause(); pauseBtn.disabled = true; resumeBtn.disabled = false; }};
-  resumeBtn.onclick = () => {{ speechSynthesis.resume(); resumeBtn.disabled = true; pauseBtn.disabled = false; }};
-  stopBtn.onclick = () => {{ speechSynthesis.cancel(); finish(); }};
-  utterances[utterances.length - 1].onend = finish;
-</script>
-""", height=140)
+# --- Helper to wrap text into paragraphs ---
+def to_para_html(text: str) -> str:
+    parts = re.split(r"\n\s*\n", text.strip())
+    return "".join(f"<p>{p.replace(chr(10), '<br>')}</p>" for p in parts if p)
 
 # --- Render selected item ---
 row = subset.iloc[i]
-exp = str(row["Explanation"]).strip()
 
-st.title(f"{subject} — Item {i+1} of {count}")
+# Question
+question = str(row.get("Question","") or "").strip()
+if question:
+    html_q = to_para_html(question)
+    st.markdown(f'<div class="question-block">{html_q}</div>', unsafe_allow_html=True)
 
-# Explanation block
-html_exp = "".join(f"<p>{p}</p>" for p in exp.split("\n\n"))
-st.markdown(f'<div class="explanation-block">{html_exp}</div>', unsafe_allow_html=True)
+# Options
+answers = [a.strip() for a in str(row.get("Answer","") or "").split(";")]
+if answers and answers != ['']:
+    opts_html = "".join(f"<li>{opt}</li>" for opt in answers)
+    st.markdown(f'<ul class="options-block">{opts_html}</ul>', unsafe_allow_html=True)
 
-# Sidebar TTS
-st.sidebar.markdown("### 🔊 Audio Controls")
-inject_tts(exp, f"exp{i}", "Read Explanation")
+# Explanation
+exp = str(row.get("Explanation","") or "").strip()
+if exp:
+    html_e = to_para_html(exp)
+    st.markdown(f'<div class="explanation-block">{html_e}</div>', unsafe_allow_html=True)
 
 # --- Navigation buttons ---
 c1, c2 = st.columns(2)
@@ -135,6 +97,6 @@ with c1:
         st.session_state.idx = i - 1
         st.experimental_rerun()
 with c2:
-    if st.button("Next ▶") and i < count-1:
+    if st.button("Next ▶") and i < count - 1:
         st.session_state.idx = i + 1
         st.experimental_rerun()
