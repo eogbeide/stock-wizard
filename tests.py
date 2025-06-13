@@ -21,11 +21,14 @@ if df.empty:
 # --- Global CSS for formatting ---
 components.html("""
 <style>
-  .explanation-block { 
-    margin: 1em 0; 
-    padding: 1em; 
-    background: #f5f5f5; 
+  .explanation-block {
+    margin: 1em 0;
+    padding: 1em;
+    background: #f5f5f5;
     border-left: 4px solid #0078d4;
+  }
+  .explanation-block p {
+    margin-bottom: 1em;
   }
 </style>
 """, height=0)
@@ -35,19 +38,19 @@ st.sidebar.title("Quiz Navigation")
 subject = st.sidebar.selectbox("Subject", df["Subject"].unique())
 subset = df[df["Subject"] == subject].reset_index(drop=True)
 
-# --- Sidebar: Question selector (dropdown) ---
-max_idx = len(subset) - 1
-if max_idx < 0:
+# --- Sidebar: Item selector ---
+count = len(subset)
+if count == 0:
     st.sidebar.warning("No explanations for this subject.")
     st.stop()
 
-question_labels = [f"Item {j+1}" for j in range(max_idx + 1)]
+labels = [f"Item {i+1}" for i in range(count)]
 default = st.session_state.get("idx", 0)
-selected = st.sidebar.selectbox("Go to item", question_labels, index=default)
-st.session_state.idx = question_labels.index(selected)
+sel = st.sidebar.selectbox("Go to item", labels, index=default)
+st.session_state.idx = labels.index(sel)
 i = st.session_state.idx
 
-# --- Browser TTS controls helper ---
+# --- TTS controls injection ---
 def inject_tts(text: str, key: str, label: str):
     safe = text.replace("\\", "\\\\").replace("`", "'").replace("\n", "\\n")
     components.html(f"""
@@ -60,7 +63,7 @@ def inject_tts(text: str, key: str, label: str):
 <script>
   const paras = `{safe}`.split(/\\n\\s*\\n/);
   const utterances = paras.map(p => {{
-    const u = new SpeechSynthesisUtterance(p);
+    let u = new SpeechSynthesisUtterance(p);
     u.rate = 0.6;
     return u;
   }});
@@ -69,14 +72,14 @@ def inject_tts(text: str, key: str, label: str):
     return vs.find(v => /samantha|victoria|zira|female/i.test(v.name))
         || vs.find(v => v.lang.startsWith("en"));
   }}
-  function setupVoices() {{
-    const voice = pickVoice();
-    if (voice) utterances.forEach(u => u.voice = voice);
+  function setup() {{
+    const v = pickVoice();
+    if (v) utterances.forEach(u => u.voice = v);
   }}
-  if (speechSynthesis.getVoices().length) setupVoices();
-  else speechSynthesis.onvoiceschanged = setupVoices;
+  if (speechSynthesis.getVoices().length) setup();
+  else speechSynthesis.onvoiceschanged = setup;
 
-  let idxUt = 0;
+  let idxUt=0;
   const playBtn = document.getElementById("{key}_play");
   const pauseBtn = document.getElementById("{key}_pause");
   const resumeBtn = document.getElementById("{key}_resume");
@@ -84,7 +87,7 @@ def inject_tts(text: str, key: str, label: str):
 
   function speakNext() {{
     if (idxUt >= utterances.length) return finish();
-    const u = utterances[idxUt++];
+    let u = utterances[idxUt++];
     u.onend = () => setTimeout(speakNext, 1000);
     speechSynthesis.speak(u);
   }}
@@ -111,24 +114,27 @@ def inject_tts(text: str, key: str, label: str):
 </script>
 """, height=140)
 
-# --- Render the selected explanation ---
+# --- Render selected item ---
 row = subset.iloc[i]
-exp_text = str(row["Explanation"]).strip()
+exp = str(row["Explanation"]).strip()
 
-st.title(f"{subject} — Item {i+1} of {max_idx+1}")
+st.title(f"{subject} — Item {i+1} of {count}")
 
-st.markdown(f'<div class="explanation-block">{exp_text.replace("\\n", "<br><br>")}</div>', unsafe_allow_html=True)
+# Explanation block
+html_exp = "".join(f"<p>{p}</p>" for p in exp.split("\n\n"))
+st.markdown(f'<div class="explanation-block">{html_exp}</div>', unsafe_allow_html=True)
 
-# TTS control
-inject_tts(exp_text, f"exp_{i}", "🔊 Read Explanation")
+# Sidebar TTS
+st.sidebar.markdown("### 🔊 Audio Controls")
+inject_tts(exp, f"exp{i}", "Read Explanation")
 
 # --- Navigation buttons ---
-col1, col2 = st.columns(2)
-with col1:
+c1, c2 = st.columns(2)
+with c1:
     if st.button("◀ Back") and i > 0:
         st.session_state.idx = i - 1
         st.experimental_rerun()
-with col2:
-    if st.button("Next ▶") and i < max_idx:
+with c2:
+    if st.button("Next ▶") and i < count-1:
         st.session_state.idx = i + 1
         st.experimental_rerun()
