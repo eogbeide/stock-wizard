@@ -61,16 +61,11 @@ if max_idx < 0:
     st.sidebar.warning("No questions here.")
     st.stop()
 
-# Question slider
-current_q = st.sidebar.slider(
-    "Go to question",
-    min_value=1,
-    max_value=max_idx + 1,
-    value=st.session_state.get("idx", 0) + 1,
-    format="Question %d"
-)
-# Update session index
-st.session_state.idx = current_q - 1
+# Question dropdown
+question_options = [f"Question {j+1}" for j in range(max_idx+1)]
+default_idx = st.session_state.get("idx", 0)
+selected_q = st.sidebar.selectbox("Go to question", question_options, index=default_idx)
+st.session_state.idx = question_options.index(selected_q)
 i = st.session_state.idx
 
 # --- Helper to play TTS ---
@@ -99,21 +94,30 @@ question_html = f"Question {i+1}: {row['Question']}"
 explanation = str(row.get("Explanation","") or "").strip()
 
 # Passage
-st.markdown('<div class="passage">{}</div>'.format(
-    "<br><br>".join(re.split(r"\n\s*\n", passage.replace("\n","<br>")))
-), unsafe_allow_html=True)
+st.markdown(
+    '<div class="passage">{}</div>'.format(
+        "<br><br>".join(re.split(r"\n\s*\n", passage.replace("\n","<br>")))
+    ), 
+    unsafe_allow_html=True
+)
 if st.button("🔊 Read Passage Aloud"):
     play_tts(passage)
 
 # Question & Options
 st.markdown(f'<div class="question">{question_html}</div>', unsafe_allow_html=True)
-st.markdown(f'<ul class="options">{"".join(f"<li>{opt}</li>" for opt in answers)}</ul>', unsafe_allow_html=True)
+st.markdown(
+    f'<ul class="options">{"".join(f"<li>{opt}</li>" for opt in answers)}</ul>',
+    unsafe_allow_html=True
+)
 
 # Explanation
 if explanation and st.checkbox("Show Explanation"):
-    st.markdown('<div class="explanation">{}</div>'.format(
-        "<br><br>".join(re.split(r"\n\s*\n", explanation.replace("\n","<br>")))
-    ), unsafe_allow_html=True)
+    st.markdown(
+        '<div class="explanation">{}</div>'.format(
+            "<br><br>".join(re.split(r"\n\s*\n", explanation.replace("\n","<br>")))
+        ),
+        unsafe_allow_html=True
+    )
 
 # Read full Q&A + Explanation
 full_text = passage + "\n\n" + question_html + "\n" + "\n".join(f"- {opt}" for opt in answers)
