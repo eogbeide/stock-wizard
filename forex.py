@@ -75,11 +75,18 @@ if st.button("Forecast"):
     ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3, color='orange')
     ax.plot(lower_bb[-360:], linestyle='--', label='Lower BB', color='red')
     ax.plot(upper_bb[-360:], linestyle='--', label='Upper BB', color='purple')
+    
+    # Horizontal lines for current values (ensure numeric)
     for name, val in {
-        'Close': prices.iloc[-1], 'EMA200': ema_200.iloc[-1],
-        'MA30': ma_30.iloc[-1], 'LowerBB': lower_bb.iloc[-1], 'UpperBB': upper_bb.iloc[-1]
+        'Close': prices.iloc[-1],
+        'EMA200': ema_200.iloc[-1],
+        'MA30': ma_30.iloc[-1],
+        'LowerBB': lower_bb.iloc[-1],
+        'UpperBB': upper_bb.iloc[-1]
     }.items():
+        val = float(val)
         ax.axhline(y=val, linestyle='-', label=f'Current {name}: {val:.4f}')
+
     ax.set_title(f'{symbol} Daily Forecast & Indicators')
     ax.set_xlabel('Date'); ax.set_ylabel('Exchange Rate')
     ax.legend(loc='lower right', fontsize='small', framealpha=0.5)
@@ -87,17 +94,20 @@ if st.button("Forecast"):
 
     # Fetch intraday hourly data (today)
     hourly = yf.download(symbol, period='1d', interval='60m')
-    hourly_close = hourly['Close'].fillna(method='ffill')
-    hourly_ema = hourly_close.ewm(span=20, adjust=False).mean()
+    if not hourly.empty:
+        hourly_close = hourly['Close'].fillna(method='ffill')
+        hourly_ema = hourly_close.ewm(span=20, adjust=False).mean()
 
-    # Hourly plot
-    fig2, ax2 = plt.subplots(figsize=(14,5))
-    ax2.plot(hourly_close, label='Hourly Close', color='blue')
-    ax2.plot(hourly_ema, label='20-Period EMA', linestyle='--', color='green')
-    ax2.set_title(f'{symbol} Intraday Hourly Close & EMA')
-    ax2.set_xlabel('Datetime'); ax2.set_ylabel('Exchange Rate')
-    ax2.legend(loc='lower right', fontsize='small', framealpha=0.5)
-    st.pyplot(fig2)
+        # Hourly plot
+        fig2, ax2 = plt.subplots(figsize=(14,5))
+        ax2.plot(hourly_close, label='Hourly Close', color='blue')
+        ax2.plot(hourly_ema, label='20-Period EMA', linestyle='--', color='green')
+        ax2.set_title(f'{symbol} Intraday Hourly Close & EMA')
+        ax2.set_xlabel('Datetime'); ax2.set_ylabel('Exchange Rate')
+        ax2.legend(loc='lower right', fontsize='small', framealpha=0.5)
+        st.pyplot(fig2)
+    else:
+        st.warning('No intraday data available for the selected symbol.')
 
     # Display forecast table
     forecast_df = pd.DataFrame({'Date': idx, 'Forecast': fc_vals, 'Lower': ci.iloc[:,0], 'Upper': ci.iloc[:,1]}).set_index('Date')
