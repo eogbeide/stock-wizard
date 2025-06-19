@@ -34,81 +34,80 @@ st.info(
     "Additionally, a cross above the 30-day MA signals a potential buy."
 )
 
-# User input for forex pair using a dropdown menu
-symbol = st.selectbox(
+# Sidebar inputs
+symbol = st.sidebar.selectbox(
     "Select Forex Pair:",
-    options=[
-        'EURUSD=X', 'EURJPY=X', 'GBPUSD=X',
-        'USDJPY=X', 'AUDUSD=X', 'NZDUSD=X'
-    ]
+    ['EURUSD=X', 'EURJPY=X', 'GBPUSD=X', 'USDJPY=X', 'AUDUSD=X', 'NZDUSD=X']
+)
+chart_option = st.sidebar.radio(
+    "Choose chart to display:",
+    ('Daily', 'Hourly', 'Both')
 )
 
-# Button to fetch and process data
-if st.button("Forecast"):
-    # Step 1: Download historical daily data
+# Main action
+if st.button("Generate Charts"):
+    # Download daily data
     start_date = '2018-01-01'
     end_date = pd.to_datetime("today")
     data = yf.download(symbol, start=start_date, end=end_date)
-
-    # Prepare daily series
     prices = data['Close'].asfreq('D').fillna(method='ffill')
     ema_200 = prices.ewm(span=200, adjust=False).mean()
     ma_30 = prices.rolling(window=30).mean()
     lower_bb, mid_bb, upper_bb = compute_bollinger_bands(prices)
 
-    # Fit SARIMA
+    # Fit SARIMA model
     model = SARIMAX(prices, order=(1,1,1), seasonal_order=(1,1,1,12))
     fit = model.fit(disp=False)
-
-    # Forecast next 30 days
     fc = fit.get_forecast(steps=30)
-    idx = pd.date_range(prices.index[-1] + timedelta(days=1), periods=30, freq='D')
+    future_idx = pd.date_range(prices.index[-1] + timedelta(days=1), periods=30, freq='D')
     fc_vals = fc.predicted_mean
     ci = fc.conf_int()
 
-    # Daily plot
-    fig, ax = plt.subplots(figsize=(14,7))
-    ax.plot(prices[-360:], label='Last 12 Months', color='blue')
-    ax.plot(ema_200[-360:], label='200-Day EMA', linestyle='--', color='green')
-    ax.plot(ma_30[-360:], label='30-Day MA', linestyle='--', color='brown')
-    ax.plot(idx, fc_vals, label='30-Day Forecast', color='orange')
-    ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3, color='orange')
-    ax.plot(lower_bb[-360:], linestyle='--', label='Lower BB', color='red')
-    ax.plot(upper_bb[-360:], linestyle='--', label='Upper BB', color='purple')
-    
-    # Horizontal lines for current values (ensure numeric)
-    for name, val in {
-        'Close': prices.iloc[-1],
-        'EMA200': ema_200.iloc[-1],
-        'MA30': ma_30.iloc[-1],
-        'LowerBB': lower_bb.iloc[-1],
-        'UpperBB': upper_bb.iloc[-1]
-    }.items():
-        val = float(val)
-        ax.axhline(y=val, linestyle='-', label=f'Current {name}: {val:.4f}')
+    # Daily chart
+    if chart_option in ('Daily', 'Both'):
+        fig, ax = plt.subplots(figsize=(14,7))
+        ax.plot(prices[-360:], label='Last 12 Months', color='blue')
+        ax.plot(ema_200[-360:], label='200-Day EMA', linestyle='--', color='green')
+        ax.plot(ma_30[-360:], label='30-Day MA', linestyle='--', color='brown')
+        ax.plot(future_idx, fc_vals, label='30-Day Forecast', color='orange')
+        ax.fill_between(future_idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3, color='orange')
+        ax.plot(lower_bb[-360:], linestyle='--', label='Lower BB', color='red')
+        ax.plot(upper_bb[-360:], linestyle='--', label='Upper BB', color='purple')
 
-    ax.set_title(f'{symbol} Daily Forecast & Indicators')
-    ax.set_xlabel('Date'); ax.set_ylabel('Exchange Rate')
-    ax.legend(loc='lower right', fontsize='small', framealpha=0.5)
-    st.pyplot(fig)
+        for name, val in {
+            'Close': prices.iloc[-1], 'EMA200': ema_200.iloc[-1],
+            'MA30': ma_30.iloc[-1], 'LowerBB': lower_bb.iloc[-1], 'UpperBB': upper_bb.iloc[-1]
+        }.items():
+            ax.axhline(y=float(val), linestyle='-', label=f'Current {name}: {float(val):.4f}')
 
-    # Fetch intraday hourly data (today)
-    hourly = yf.download(symbol, period='1d', interval='60m')
-    if not hourly.empty:
-        hourly_close = hourly['Close'].fillna(method='ffill')
-        hourly_ema = hourly_close.ewm(span=20, adjust=False).mean()
+        ax.set_title(f'{symbol} Daily Forecast & Indicators')
+        ax.set_xlabel('Date'); ax.set_ylabel('Exchange Rate')
+        ax.legend(loc='lower right', fontsize='small', framealpha=0.5)
+        st.pyplot(fig)
 
-        # Hourly plot
-        fig2, ax2 = plt.subplots(figsize=(14,5))
-        ax2.plot(hourly_close, label='Hourly Close', color='blue')
-        ax2.plot(hourly_ema, label='20-Period EMA', linestyle='--', color='green')
-        ax2.set_title(f'{symbol} Intraday Hourly Close & EMA')
-        ax2.set_xlabel('Datetime'); ax2.set_ylabel('Exchange Rate')
-        ax2.legend(loc='lower right', fontsize='small', framealpha=0.5)
-        st.pyplot(fig2)
-    else:
-        st.warning('No intraday data available for the selected symbol.')
+    # Hourly chart for past 24 hours
+    if chart_option in ('Hourly', 'Both'):
+        hourly = yf.download(symbol, period='1d', interval='60m')
+        if not hourly.empty:
+            # Filter last 24h
+            hourly_close = hourly['Close'].fillna(method='ffill')
+            hourly_ema = hourly_close.ewm(span=20, adjust=False).mean()
 
-    # Display forecast table
-    forecast_df = pd.DataFrame({'Date': idx, 'Forecast': fc_vals, 'Lower': ci.iloc[:,0], 'Upper': ci.iloc[:,1]}).set_index('Date')
+            fig2, ax2 = plt.subplots(figsize=(14,5))
+            ax2.plot(hourly_close, label='Hourly Close', color='blue')
+            ax2.plot(hourly_ema, label='20-Period EMA', linestyle='--', color='green')
+            ax2.set_title(f'{symbol} Intraday (Last 24h) Close & EMA')
+            ax2.set_xlabel('Datetime'); ax2.set_ylabel('Exchange Rate')
+            ax2.legend(loc='lower right', fontsize='small', framealpha=0.5)
+            st.pyplot(fig2)
+        else:
+            st.warning('No intraday data available for the selected symbol.')
+
+    # Forecast table
+    forecast_df = pd.DataFrame({
+        'Date': future_idx,
+        'Forecast': fc_vals,
+        'Lower': ci.iloc[:,0],
+        'Upper': ci.iloc[:,1]
+    }).set_index('Date')
     st.write(forecast_df)
