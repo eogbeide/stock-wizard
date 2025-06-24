@@ -5,10 +5,15 @@ import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import timedelta
 import matplotlib.pyplot as plt
-from streamlit_autorefresh import st_autorefresh
+import time
 
-# Auto-refresh the app every 5 minutes (300,000 ms)
-st_autorefresh(interval=300000, limit=None, key="autorefresh")
+# Auto-refresh logic: rerun every 5 minutes
+REFRESH_INTERVAL = 300  # seconds
+if 'last_refresh' not in st.session_state:
+    st.session_state.last_refresh = time.time()
+elif time.time() - st.session_state.last_refresh > REFRESH_INTERVAL:
+    st.session_state.last_refresh = time.time()
+    st.experimental_rerun()
 
 # Function to compute RSI
 def compute_rsi(data, window=14):
