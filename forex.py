@@ -5,6 +5,10 @@ import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import timedelta
 import matplotlib.pyplot as plt
+from streamlit_autorefresh import st_autorefresh
+
+# Auto-refresh the app every 5 minutes (300,000 ms)
+st_autorefresh(interval=300000, limit=None, key="autorefresh")
 
 # Function to compute RSI
 def compute_rsi(data, window=14):
@@ -45,7 +49,7 @@ chart_option = st.sidebar.radio(
 )
 
 # Main action
-if st.button("Generate Charts"):
+if st.sidebar.button("Generate Charts"):
     # Download daily data
     start_date = '2018-01-01'
     end_date = pd.to_datetime("today")
@@ -89,14 +93,13 @@ if st.button("Generate Charts"):
     if chart_option in ('Hourly', 'Both'):
         hourly = yf.download(symbol, period='1d', interval='60m')
         if not hourly.empty:
-            # Filter last 24h
             hourly_close = hourly['Close'].fillna(method='ffill')
             hourly_ema = hourly_close.ewm(span=20, adjust=False).mean()
 
             fig2, ax2 = plt.subplots(figsize=(14,5))
             ax2.plot(hourly_close, label='Hourly Close', color='blue')
             ax2.plot(hourly_ema, label='20-Period EMA', linestyle='--', color='green')
-            ax2.set_title(f'{symbol} Intraday (Last 24h) Close & EMA')
+            ax2.set_title(f'{symbol} Intraday (Last 24h) Close & EMA (Auto-refresh every 5m)')
             ax2.set_xlabel('Datetime'); ax2.set_ylabel('Exchange Rate')
             ax2.legend(loc='lower right', fontsize='small', framealpha=0.5)
             st.pyplot(fig2)
