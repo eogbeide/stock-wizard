@@ -13,7 +13,11 @@ if 'last_refresh' not in st.session_state:
     st.session_state.last_refresh = time.time()
 elif time.time() - st.session_state.last_refresh > REFRESH_INTERVAL:
     st.session_state.last_refresh = time.time()
-    st.experimental_rerun()
+    try:
+        st.experimental_rerun()
+    except AttributeError:
+        # experimental_rerun not available; skip auto-refresh
+        pass
 
 # Function to compute RSI
 def compute_rsi(data, window=14):
