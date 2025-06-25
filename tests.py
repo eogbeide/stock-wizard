@@ -1,4 +1,4 @@
-import streamlit as stcdd
+import streamlit as stcddcc
 import pandas as pd
 import re
 import streamlit.components.v1 as components
