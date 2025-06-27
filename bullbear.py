@@ -9,7 +9,16 @@ import time
 
 # Auto-refresh logic for Forex app: rerun every 5 minutes
 REFRESH_INTERVAL = 300  # seconds
-def auto_refresh():
+def import datetime
+from zoneinfo import ZoneInfo
+
+auto_refresh()
+# Display last update time in US Pacific Time
+if 'last_refresh' in st.session_state:
+    last_dt = datetime.datetime.fromtimestamp(
+        st.session_state.last_refresh, tz=ZoneInfo('UTC')
+    ).astimezone(ZoneInfo('America/Los_Angeles'))
+    st.sidebar.write(f"Last updated: {last_dt.strftime('%Y-%m-%d %H:%M:%S %Z')}"):
     if 'last_refresh' not in st.session_state:
         st.session_state.last_refresh = time.time()
     elif time.time() - st.session_state.last_refresh > REFRESH_INTERVAL:
