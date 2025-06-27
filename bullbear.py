@@ -39,6 +39,7 @@ def compute_bollinger_bands(data, window=20, num_sd=2):
 # App selector
 app_mode = st.sidebar.selectbox("Choose App:", ["Stock Forecast", "Forex Forecast"] )
 
+auto_refresh()
 if app_mode == "Stock Forecast":
     # Original Stock Forecast App
     st.title("Stock Price Forecasting using SARIMA with EMA, MA & Bollinger")
