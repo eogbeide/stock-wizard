@@ -9,15 +9,17 @@ import time
 
 # Auto-refresh logic: rerun every 5 minutes
 REFRESH_INTERVAL = 300  # seconds
-if 'last_refresh' not in st.session_state:
-    st.session_state.last_refresh = time.time()
-elif time.time() - st.session_state.last_refresh > REFRESH_INTERVAL:
-    st.session_state.last_refresh = time.time()
-    try:
-        st.experimental_rerun()
-    except AttributeError:
-        # experimental_rerun not available; skip auto-refresh
-        pass
+def auto_refresh():
+    if 'last_refresh' not in st.session_state:
+        st.session_state.last_refresh = time.time()
+    elif time.time() - st.session_state.last_refresh > REFRESH_INTERVAL:
+        st.session_state.last_refresh = time.time()
+        try:
+            st.experimental_rerun()
+        except AttributeError:
+            pass
+
+auto_refresh()
 
 # Function to compute RSI
 def compute_rsi(data, window=14):
@@ -68,8 +70,7 @@ if st.sidebar.button("Generate Charts"):
     ma_30 = prices.rolling(window=30).mean()
     lower_bb, mid_bb, upper_bb = compute_bollinger_bands(prices)
 
-    # Fit SARIMA model
-    model = SARIMAX(prices, order=(1,1,1), seasonal_order=(1,1,1,12))
+    # Fit SARIMA model\ n    model = SARIMAX(prices, order=(1,1,1), seasonal_order=(1,1,1,12))
     fit = model.fit(disp=False)
     fc = fit.get_forecast(steps=30)
     future_idx = pd.date_range(prices.index[-1] + timedelta(days=1), periods=30, freq='D')
@@ -86,13 +87,11 @@ if st.sidebar.button("Generate Charts"):
         ax.fill_between(future_idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3, color='orange')
         ax.plot(lower_bb[-360:], linestyle='--', label='Lower BB', color='red')
         ax.plot(upper_bb[-360:], linestyle='--', label='Upper BB', color='purple')
-
         for name, val in {
             'Close': prices.iloc[-1], 'EMA200': ema_200.iloc[-1],
             'MA30': ma_30.iloc[-1], 'LowerBB': lower_bb.iloc[-1], 'UpperBB': upper_bb.iloc[-1]
         }.items():
             ax.axhline(y=float(val), linestyle='-', label=f'Current {name}: {float(val):.4f}')
-
         ax.set_title(f'{symbol} Daily Forecast & Indicators')
         ax.set_xlabel('Date'); ax.set_ylabel('Exchange Rate')
         ax.legend(loc='lower right', fontsize='small', framealpha=0.5)
@@ -100,15 +99,15 @@ if st.sidebar.button("Generate Charts"):
 
     # Hourly chart for past 24 hours
     if chart_option in ('Hourly', 'Both'):
-        hourly = yf.download(symbol, period='1d', interval='60m')
+        # Always fetch most recent hourly data
+        hourly = yf.download(symbol, period='1d', interval='60m', progress=False)
         if not hourly.empty:
             hourly_close = hourly['Close'].fillna(method='ffill')
             hourly_ema = hourly_close.ewm(span=20, adjust=False).mean()
-
             fig2, ax2 = plt.subplots(figsize=(14,5))
             ax2.plot(hourly_close, label='Hourly Close', color='blue')
             ax2.plot(hourly_ema, label='20-Period EMA', linestyle='--', color='green')
-            ax2.set_title(f'{symbol} Intraday (Last 24h) Close & EMA (Auto-refresh every 5m)')
+            ax2.set_title(f'{symbol} Intraday (Last 24h) Close & EMA')
             ax2.set_xlabel('Datetime'); ax2.set_ylabel('Exchange Rate')
             ax2.legend(loc='lower right', fontsize='small', framealpha=0.5)
             st.pyplot(fig2)
