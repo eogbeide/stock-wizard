@@ -173,4 +173,4 @@ else:
                 ax2.plot(hourly_ema, linestyle='--', label='20-Period EMA', color='green')
                 ax2.set_title(f'{symbol} Intraday (Last 24h) Close & EMA')
                 ax2.set_xlabel('Datetime'); ax2.set_ylabel('Exchange Rate')
-                ax2.legend(loc='lower right', fontsize='small', framealpha=0.5).  
+                ax2.legend(loc='lower right', fontsize='small', framealpha=0.5)  
