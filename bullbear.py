@@ -51,7 +51,7 @@ if app_mode == "Stock Forecast":
     ticker = st.selectbox("Select Stock Ticker:", options=sorted([
         'AAPL', 'SPY', 'AMZN', 'DIA', 'TSLA', 'SPGI',
         'JPM', 'VTWG', 'PLTR', 'NVDA', 'META', 'SITM',
-        'MARA', 'GOOG', 'HOOD', 'BABA',
+        'MARA', 'GOOG', 'HOOD', 'BABA',, 'IBM'
         'GUSH', 'VOO', 'MSFT', 'TSM', 'NFLX',
         'URI'
     ]))
