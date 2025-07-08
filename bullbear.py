@@ -94,7 +94,7 @@ if app_mode == "Stock Forecast":
                      top=max(price_max, current_vals['UpperBB']) * 1.05)
         ax1.set_xlabel('Date'); ax1.set_ylabel('Price')
         ax1.tick_params(axis='y', labelcolor='blue')
-        ax1.legend(loc='lower right', fontsize='x-small', fancybox=True, framealpha=0.5,
+        ax1.legend(loc='lower left', fontsize='x-small', fancybox=True, framealpha=0.5,
                    title='Legend', title_fontsize='small')
         st.pyplot(fig)
         forecast_df = pd.DataFrame({
