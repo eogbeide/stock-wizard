@@ -116,7 +116,8 @@ else:
     )
     auto_refresh()
     symbol = st.sidebar.selectbox(
-        "Select Forex Pair:", ['EURUSD=X', 'EURJPY=X', 'GBPUSD=X', 'USDJPY=X', 'AUDUSD=X', 'NZDUSD=X', 'USDCAD=X', 'USDCNY=X', 'USDCHF=X']
+        "Select Forex Pair:", ['EURUSD=X', 'EURJPY=X', 'GBPUSD=X', 'USDJPY=X', 'AUDUSD=X', 'NZDUSD=X',
+                               'USDCAD=X', 'USDCNY=X', 'USDCHF=X', 'EURGBP=X', 'USDHKD=X']
     )
     chart_option = st.sidebar.radio("Choose chart to display:", ('Daily', 'Hourly', 'Both'))
     if st.sidebar.button("Generate Charts"):
