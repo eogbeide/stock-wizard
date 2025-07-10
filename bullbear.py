@@ -52,8 +52,8 @@ if app_mode == "Stock Forecast":
         'AAPL', 'SPY', 'AMZN', 'DIA', 'TSLA', 'SPGI',
         'JPM', 'VTWG', 'PLTR', 'NVDA', 'META', 'SITM',
         'MARA', 'GOOG', 'HOOD', 'BABA', 'IBM','AVGO',
-        'GUSH', 'VOO', 'MSFT', 'TSM', 'NFLX','MFI',
-        'URI','ABVE'
+        'GUSH', 'VOO', 'MSFT', 'TSM', 'NFLX',
+        'URI'
     ]))
     if st.button("Forecast"):
         start_date = '2018-01-01'
