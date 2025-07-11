@@ -138,17 +138,11 @@ else:
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3, color='orange')
             ax.plot(lower_bb[-360:], linestyle='--', label='Lower BB', color='red')
             ax.plot(upper_bb[-360:], linestyle='--', label='Upper BB', color='purple')
-            for name, val in {
-                'Close': data.iloc[-1], 'EMA200': ema_200.iloc[-1],
-                'MA30': ma_30.iloc[-1], 'LowerBB': lower_bb.iloc[-1], 'UpperBB': upper_bb.iloc[-1]
-            }.items():
-                ax.axhline(y=float(val), linestyle='-', label=f'Current {name}: {float(val):.4f}')
-            ax.set_title(f'{symbol} Daily Forecast & Indicators')
-            ax.set_xlabel('Date'); ax.set_ylabel('Exchange Rate')
             ax.legend(loc='lower left', fontsize='small', framealpha=0.5)
             st.pyplot(fig)
         if chart_option in ('Hourly', 'Both'):
-            hourly = yf.download(symbol, period='1d', interval='60m')
+            # only this line changed to 5-minute interval:
+            hourly = yf.download(symbol, period='1d', interval='5m')
             if not hourly.empty:
                 hourly_close = hourly['Close'].fillna(method='ffill')
                 hourly_ema = hourly_close.ewm(span=20, adjust=False).mean()
