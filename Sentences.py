@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import requests
-from io import StringIO
+from io import BytesIO
 from gtts import gTTS
 import tempfile
 
@@ -10,7 +10,7 @@ import tempfile
 def load_data(url):
     resp = requests.get(url, timeout=10)
     resp.raise_for_status()
-    return pd.read_csv(StringIO(resp.text))
+    return pd.read_excel(BytesIO(resp.content))
 
 DATA_URL = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Sentences.xls'
 
