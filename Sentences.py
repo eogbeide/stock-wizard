@@ -48,11 +48,11 @@ choice = st.sidebar.selectbox(
     "🔍 Select Old Word",
     old_words,
     index=st.session_state.idx,
-    key="choice_selectbox"
+    key="choice"
 )
-st.sidebar.markdown(f"**Word {st.session_state.idx+1} of {n}**")
+st.sidebar.markdown(f"**{st.session_state.idx+1} of {n}**")
 
-# Sync session idx when user picks from sidebar
+# Sync idx if user picks directly
 st.session_state.idx = old_words.index(choice)
 
 # Top navigation
@@ -61,11 +61,11 @@ col1, col2, _ = st.columns([1,1,8])
 with col1:
     if st.button("⮜ Back"):
         st.session_state.idx = (st.session_state.idx - 1) % n
-        st.session_state.choice_selectbox = old_words[st.session_state.idx]
+        st.experimental_rerun()
 with col2:
     if st.button("Next ⮞"):
         st.session_state.idx = (st.session_state.idx + 1) % n
-        st.session_state.choice_selectbox = old_words[st.session_state.idx]
+        st.experimental_rerun()
 
 # Current choice after navigation
 choice = old_words[st.session_state.idx]
