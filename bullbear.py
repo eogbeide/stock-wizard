@@ -35,10 +35,10 @@ def compute_bollinger_bands(data, window=20, num_sd=2):
     return lower, middle, upper
 
 # Create two tabs
-tab1, tab2 = st.tabs(["Original Stock/Forex Forecast", "Enhanced Forecast with RSI & Fib"])
+tab1, tab2 = st.tabs(["Original Stock/Forex Forecast", "Enhanced Forex‑Only View"])
 
 with tab1:
-    # --- Your Original App Code ---
+    # --- Original Stock/Forex Forecast App ---
     app_mode = st.sidebar.selectbox("Choose App:", ["Stock Forecast", "Forex Forecast"] )
 
     if app_mode == "Stock Forecast":
