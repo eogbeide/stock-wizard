@@ -61,25 +61,27 @@ with col2:
     if st.button("Next ⮞"):
         st.session_state.idx = (st.session_state.idx + 1) % n
 
-# Current word after navigation
+# Current Old Word
 current = old_words[st.session_state.idx]
-row = df[df["Old Word"] == current].iloc[0]
-new_word = row["New Word"]
-sentence = row["Sentence"]
 
-# Display in two columns
-left, right = st.columns(2)
-with left:
-    st.markdown("## 🅾️ Old Word")
-    st.markdown(f"### **{current}**")
-with right:
-    st.markdown("## 🆕 New Word")
-    st.markdown(f"### **{new_word}**")
-    st.markdown("## 📖 Sentence")
-    st.markdown(f"> {sentence}")
+# Filter all matching rows
+matches = df[df["Old Word"] == current]
 
-# Text-to-speech
-tts = gTTS(text=f"{new_word}. {sentence}", lang="en")
+# Display Old Word
+st.markdown("## 🅾️ Old Word")
+st.markdown(f"### **{current}**")
+
+# Display all New Words & Sentences
+st.markdown("## 🆕 New Words & Sentences")
+for i, (_, r) in enumerate(matches.iterrows(), start=1):
+    st.markdown(f"**{i}. {r['New Word']}**")
+    st.markdown(f"> {r['Sentence']}")
+
+# Text-to-speech: read all
+text_to_speak = " ".join(
+    f"{r['New Word']}. {r['Sentence']}" for _, r in matches.iterrows()
+)
+tts = gTTS(text=text_to_speak, lang="en")
 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
     tts.save(fp.name)
     st.audio(fp.name, format="audio/mp3")
