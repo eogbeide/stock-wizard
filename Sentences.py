@@ -1,19 +1,29 @@
 import streamlit as st
 import pandas as pd
+import requests
+from io import StringIO
 from gtts import gTTS
 import tempfile
 
-# Cache the data loading
+# Cache the data loading, fetching via requests to avoid urllib HTTP errors
 @st.cache_data
 def load_data(url):
-    return pd.read_csv(url)
+    resp = requests.get(url, timeout=10)
+    resp.raise_for_status()
+    return pd.read_csv(StringIO(resp.text))
 
-DATA_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Sentences.xlsx"
-df = load_data(DATA_URL)
+DATA_URL = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Sentences.xlsx'
+
+# Load and handle errors
+try:
+    df = load_data(DATA_URL)
+except Exception as e:
+    st.error(f"Error loading data: {e}")
+    st.stop()
 
 # Sidebar selector for Old Word
 st.sidebar.title("Choose Old Word")
-old_words = df["Old Word"].unique()
+old_words = df["Old Word"].dropna().unique()
 choice = st.sidebar.selectbox("Old Word", old_words)
 
 # Look up the selected row
@@ -26,10 +36,7 @@ st.markdown(f"### New Word\n**{new_word}**")
 st.markdown(f"### Sentence\n{sentence}")
 
 # Text-to-speech
-tts_text = f"{new_word}. {sentence}"
-tts = gTTS(text=tts_text, lang="en")
-
-# Save to a temp file and play
+tts = gTTS(text=f"{new_word}. {sentence}", lang="en")
 with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as fp:
     tts.save(fp.name)
     st.audio(fp.name, format="audio/mp3")
