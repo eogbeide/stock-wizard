@@ -12,7 +12,7 @@ def load_data(url):
     resp.raise_for_status()
     return pd.read_csv(StringIO(resp.text))
 
-DATA_URL = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Sentences.xlsx'
+DATA_URL = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Sentences.xls'
 
 # Load and handle errors
 try:
