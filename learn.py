@@ -27,7 +27,7 @@ st.markdown(
 )
 
 
-st.title("Your MCAT Prep Companion")
+st.title("Your Learning Companion")
 
 def main():
     st.title("Welcome!")
