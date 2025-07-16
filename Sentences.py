@@ -28,6 +28,7 @@ def load_data(url):
 
 DATA_URL = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Sentences.xls'
 
+# Load and handle errors
 try:
     df = load_data(DATA_URL)
 except Exception as e:
@@ -38,42 +39,42 @@ except Exception as e:
 old_words = df["Old Word"].dropna().unique().tolist()
 n = len(old_words)
 
-# Initialize current choice in session state
-if 'choice' not in st.session_state:
-    st.session_state.choice = old_words[0]
+# Initialize sidebar_choice in session state
+if "sidebar_choice" not in st.session_state:
+    st.session_state.sidebar_choice = old_words[0]
 
 # Sidebar: Old Word selector
 st.sidebar.title("🔍 Select Old Word")
-st.session_state.choice = st.sidebar.selectbox(
+st.session_state.sidebar_choice = st.sidebar.selectbox(
     "",
     options=old_words,
-    index=old_words.index(st.session_state.choice),
-    key="choice"
+    index=old_words.index(st.session_state.sidebar_choice),
+    key="sidebar_choice"
 )
-st.sidebar.markdown(f"**{old_words.index(st.session_state.choice)+1} of {n}**")
+st.sidebar.markdown(f"**{old_words.index(st.session_state.sidebar_choice)+1} of {n}**")
 
 # Top navigation buttons
 st.title("📝 Word Transformer")
 col1, col2, _ = st.columns([1,1,8])
 with col1:
     if st.button("⮜ Back"):
-        idx = old_words.index(st.session_state.choice)
-        st.session_state.choice = old_words[(idx - 1) % n]
+        idx = old_words.index(st.session_state.sidebar_choice)
+        st.session_state.sidebar_choice = old_words[(idx - 1) % n]
 with col2:
     if st.button("Next ⮞"):
-        idx = old_words.index(st.session_state.choice)
-        st.session_state.choice = old_words[(idx + 1) % n]
+        idx = old_words.index(st.session_state.sidebar_choice)
+        st.session_state.sidebar_choice = old_words[(idx + 1) % n]
 
 # Fetch the row for current choice
-row = df[df["Old Word"] == st.session_state.choice].iloc[0]
+row = df[df["Old Word"] == st.session_state.sidebar_choice].iloc[0]
 new_word = row["New Word"]
 sentence = row["Sentence"]
 
-# Display content
+# Display content in two columns
 left, right = st.columns(2)
 with left:
     st.markdown("## 🅾️ Old Word")
-    st.markdown(f"### **{st.session_state.choice}**")
+    st.markdown(f"### **{st.session_state.sidebar_choice}**")
 with right:
     st.markdown("## 🆕 New Word")
     st.markdown(f"### **{new_word}**")
