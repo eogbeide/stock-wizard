@@ -45,8 +45,12 @@ def compute_bollinger_bands(data, window=20, num_sd=2):
 # Global sidebar: pick Stock or Forex
 mode = st.sidebar.selectbox("Mode:", ["Stock", "Forex"], key="global_mode")
 
-# Create two tabs
-tab1, tab2 = st.tabs(["Original Forecast", "Enhanced Forecast"])
+# Create three tabs
+tab1, tab2, tab3 = st.tabs([
+    "Original Forecast",
+    "Enhanced Forecast",
+    "🇳🇬 Nigeria Forecast"
+])
 
 with tab1:
     st.header("Original Forecast")
@@ -54,9 +58,10 @@ with tab1:
         ticker = st.selectbox(
             "Select Stock Ticker:",
             sorted([
-                'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA','META',
-                'SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO','MSFT',
-                'TSM','NFLX','MP','AAL','URI','DAL'
+                'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG',
+                'PLTR','NVDA','META','SITM','MARA','GOOG','HOOD',
+                'BABA','IBM','AVGO','GUSH','VOO','MSFT','TSM',
+                'NFLX','MP','AAL','URI','DAL'
             ]),
             key="orig_stock_ticker"
         )
@@ -74,8 +79,7 @@ with tab1:
             model = SARIMAX(df, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
             fc    = model.get_forecast(steps=30)
             idx   = pd.date_range(df.index[-1] + timedelta(1), periods=30, freq='D')
-            vals  = fc.predicted_mean
-            ci    = fc.conf_int()
+            vals  = fc.predicted_mean; ci = fc.conf_int()
 
             if chart in ('Daily', 'Both'):
                 fig, ax = plt.subplots(figsize=(14,7))
@@ -132,8 +136,7 @@ with tab1:
             model = SARIMAX(df, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
             fc    = model.get_forecast(steps=30)
             idx   = pd.date_range(df.index[-1] + timedelta(1), periods=30, freq='D')
-            vals  = fc.predicted_mean
-            ci    = fc.conf_int()
+            vals  = fc.predicted_mean; ci = fc.conf_int()
 
             if chart in ('Daily', 'Both'):
                 fig, ax = plt.subplots(figsize=(14,7))
@@ -329,6 +332,115 @@ with tab2:
                     ax4.axhline(30, linestyle='--')
                     ax4.legend()
                     st.pyplot(fig4)
+
+            st.write(pd.DataFrame({
+                'Forecast': vals,
+                'Lower':    ci.iloc[:,0],
+                'Upper':    ci.iloc[:,1]
+            }, index=idx))
+
+with tab3:
+    st.header("🇳🇬 Nigeria Stock & FX Forecast")
+    nigeria_mode = st.radio(
+        "Choose Nigeria App:",
+        ["Stock Forecast", "Forex Forecast"],
+        key="nigeria_mode"
+    )
+
+    # Nigeria mappings
+    nigeria_stocks = {
+        "Dangote Cement (DANGCEM)":   "NGX:DANGCEM",
+        "GT Bank (GTCO)":             "NGX:GTCO",
+        "Zenith Bank (ZENITHBANK)":   "NGX:ZENITHBANK",
+        "Access Corp (ACCESSCORP)":   "NGX:ACCESSCORP",
+        "UBA (UBA)":                  "NGX:UBA",
+        "MTN Nigeria (MTNN)":         "NGX:MTNN",
+        "Seplat Energy (SEPLAT)":     "NGX:SEPLAT",
+        "BUA Cement (BUACEMENT)":     "NGX:BUACEMENT",
+        "Nestle Nigeria (NESTLE)":    "NGX:NESTLE",
+        "Nigerian Breweries (NB)":    "NGX:NB"
+    }
+    nigeria_fx = {
+        "USD/NGN": "USDNGN=X",
+        "EUR/NGN": "EURNGN=X",
+        "GBP/NGN": "GBPNGN=X",
+        "CNY/NGN": "CNYNGN=X",
+        "ZAR/NGN": "ZARNGN=X"
+    }
+
+    if nigeria_mode == "Stock Forecast":
+        sel = st.selectbox("Select NGX Stock:", list(nigeria_stocks.keys()), key="nig_stock")
+        ticker = nigeria_stocks[sel]
+        if st.button("Run Nigeria Stock Forecast", key="nig_stock_btn"):
+            df = yf.download(ticker, start='2018-01-01', end=pd.to_datetime("today"))['Close'] \
+                   .asfreq('D').fillna(method='ffill')
+            ema200 = df.ewm(span=200).mean()
+            ma30   = df.rolling(30).mean()
+            lb, mb, ub = compute_bollinger_bands(df)
+            model = SARIMAX(df, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
+            fc    = model.get_forecast(steps=30)
+            idx   = pd.date_range(df.index[-1]+timedelta(1), periods=30, freq='D')
+            vals  = fc.predicted_mean; ci = fc.conf_int()
+
+            fig, ax = plt.subplots(figsize=(14,7))
+            ax.plot(df[-360:], label='History')
+            ax.plot(ema200[-360:], '--', label='200 EMA')
+            ax.plot(ma30[-360:], '--', label='30 MA')
+            ax.plot(idx, vals, label='Forecast')
+            ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
+            ax.plot(lb[-360:], '--', label='Lower BB')
+            ax.plot(ub[-360:], '--', label='Upper BB')
+            ax.set_title(f"{sel} Nigeria Forecast")
+            ax.legend(loc='lower left', framealpha=0.5)
+            st.pyplot(fig)
+
+            st.write(pd.DataFrame({
+                'Forecast': vals,
+                'Lower':    ci.iloc[:,0],
+                'Upper':    ci.iloc[:,1]
+            }, index=idx))
+
+    else:  # Nigeria Forex
+        sel = st.selectbox("Select NGN FX Pair:", list(nigeria_fx.keys()), key="nig_fx")
+        ticker = nigeria_fx[sel]
+        chart = st.radio("Chart View:", ['Daily','Hourly','Both'], key="nig_fx_chart")
+        if st.button("Run Nigeria FX Forecast", key="nig_fx_btn"):
+            df = yf.download(ticker, start='2018-01-01', end=pd.to_datetime("today"))['Close'] \
+                   .asfreq('D').fillna(method='ffill')
+            ema200 = df.ewm(span=200).mean()
+            ma30   = df.rolling(30).mean()
+            lb, mb, ub = compute_bollinger_bands(df)
+            model = SARIMAX(df, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
+            fc    = model.get_forecast(steps=30)
+            idx   = pd.date_range(df.index[-1]+timedelta(1), periods=30, freq='D')
+            vals  = fc.predicted_mean; ci = fc.conf_int()
+
+            if chart in ('Daily','Both'):
+                fig, ax = plt.subplots(figsize=(14,7))
+                ax.plot(df[-360:], label='History')
+                ax.plot(ema200[-360:], '--', label='200 EMA')
+                ax.plot(ma30[-360:], '--', label='30 MA')
+                ax.plot(idx, vals, label='Forecast')
+                ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
+                ax.plot(lb[-360:], '--', label='Lower BB')
+                ax.plot(ub[-360:], '--', label='Upper BB')
+                ax.set_title(f"{sel} Nigeria Daily FX Forecast")
+                ax.legend(loc='lower left', framealpha=0.5)
+                st.pyplot(fig)
+
+            if chart in ('Hourly','Both'):
+                intraday = yf.download(ticker, period='1d', interval='5m', progress=False)
+                if intraday.empty:
+                    st.warning("No intraday data.")
+                else:
+                    hc = intraday['Close'].ffill()
+                    he = hc.ewm(span=20).mean()
+                    fig2, ax2 = plt.subplots(figsize=(14,5))
+                    ax2.plot(hc, label='Intraday')
+                    ax2.plot(he, '--', label='20 EMA')
+                    ax2.set_title(f"{sel} Nigeria Intraday (5m)")
+                    ax2.legend(loc='lower left', framealpha=0.5)
+                    st.pyplot(fig2)
 
             st.write(pd.DataFrame({
                 'Forecast': vals,
