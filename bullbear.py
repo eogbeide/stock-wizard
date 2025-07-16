@@ -7,7 +7,7 @@ from datetime import timedelta
 import matplotlib.pyplot as plt
 import time
 
-# Auto‐refresh logic
+# Auto‑refresh logic
 REFRESH_INTERVAL = 300  # seconds
 def auto_refresh():
     if 'last_refresh' not in st.session_state:
@@ -18,6 +18,9 @@ def auto_refresh():
             st.experimental_rerun()
         except AttributeError:
             pass
+
+# **<— ADD THIS CALL HERE —>**
+auto_refresh()
 
 # Indicator functions
 def compute_rsi(data, window=14):
@@ -41,7 +44,6 @@ mode = st.sidebar.selectbox("Mode:", ["Stock", "Forex"], key="global_mode")
 tab1, tab2 = st.tabs(["Original Forecast", "Enhanced Forecast"])
 
 with tab1:
-    auto_refresh()
     if mode == "Stock":
         st.title("Stock Price Forecast (SARIMA + EMA, MA & Bollinger)")
         ticker = st.selectbox(
@@ -88,7 +90,6 @@ with tab1:
 
     else:  # Forex
         st.title("Forex Price Forecast (SARIMA + EMA, MA & Bollinger)")
-        auto_refresh()
         pair = st.selectbox(
             "Select Forex Pair:",
             ['EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X',
@@ -150,7 +151,6 @@ with tab1:
 
 
 with tab2:
-    auto_refresh()
     if mode == "Stock":
         st.title("Enhanced Stock Forecast (SARIMA + EMA, MA, Bollinger, RSI & Fibonacci)")
         ticker = st.selectbox(
@@ -242,7 +242,6 @@ with tab2:
 
     else:  # Forex
         st.title("Enhanced Forex Forecast (SARIMA + EMA, MA, Bollinger, RSI & Fibonacci)")
-        auto_refresh()
         pair = st.selectbox(
             "Select Forex Pair:",
             ['EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X',
