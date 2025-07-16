@@ -25,18 +25,33 @@ except Exception as e:
 old_words = df["Old Word"].dropna().unique().tolist()
 n = len(old_words)
 
-# Initialize navigation index
+# Initialize index in session state
 if 'idx' not in st.session_state:
     st.session_state.idx = 0
 
-# Sidebar navigation buttons
-st.sidebar.title("Navigate Words")
-if st.sidebar.button("⮜ Back"):
-    st.session_state.idx = (st.session_state.idx - 1) % n
-if st.sidebar.button("Next ⮞"):
-    st.session_state.idx = (st.session_state.idx + 1) % n
+# Sidebar: Old Word selector
+choice = st.sidebar.selectbox(
+    "Old Word",
+    old_words,
+    index=st.session_state.idx,
+    key="choice_selectbox"
+)
 
-# Current choice
+# Sync session idx when user picks from sidebar
+st.session_state.idx = old_words.index(choice)
+
+# Top-of-page navigation buttons
+col1, col2 = st.columns([1,1])
+with col1:
+    if st.button("⮜ Back"):
+        st.session_state.idx = (st.session_state.idx - 1) % n
+        st.session_state.choice_selectbox = old_words[st.session_state.idx]
+with col2:
+    if st.button("Next ⮞"):
+        st.session_state.idx = (st.session_state.idx + 1) % n
+        st.session_state.choice_selectbox = old_words[st.session_state.idx]
+
+# Current choice after navigation
 choice = old_words[st.session_state.idx]
 
 # Look up the selected row
