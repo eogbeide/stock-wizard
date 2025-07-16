@@ -362,16 +362,16 @@ with tab3:
     )
 
     nigeria_stocks = {
-        "Dangote Cement (DANGCEM)":      "DANGCEM.LG",
-        "GT Bank (GTCO)":                "GTCO.LG",
-        "Zenith Bank (ZENITHB)":         "ZENITHB.LG",
-        "Access Holdings (ACCESSCORP)":  "ACCESSCORP.LG",
-        "UBA (UBA)":                     "UBA.LG",
-        "MTN Nigeria (MTNN)":            "MTNN.LG",
-        "Seplat Energy (SEPLAT)":        "SEPLAT.LG",
-        "BUA Cement (BUACEMENT)":        "BUACEMENT.LG",
-        "Nestle Nigeria (NESTLE)":       "NESTLE.LG",
-        "Nigerian Breweries (NB)":       "NB.LG"
+        "Dangote Cement (DANGCEM)":      "DANGCEM.LAG",
+        "GT Bank (GTCO)":                "GTCO.LAG",
+        "Zenith Bank (ZENITHB)":         "ZENITHB.LAG",
+        "Access Holdings (ACCESSCORP)":  "ACCESSCORP.LAG",
+        "UBA (UBA)":                     "UBA.LAG",
+        "MTN Nigeria (MTNN)":            "MTNN.LAG",
+        "Seplat Energy (SEPLAT)":        "SEPLAT.LAG",
+        "BUA Cement (BUACEMENT)":        "BUACEMENT.LAG",
+        "Nestle Nigeria (NESTLE)":       "NESTLE.LAG",
+        "Nigerian Breweries (NB)":       "NB.LAG"
     }
     nigeria_fx = {
         "USD/NGN": "USDNGN=X",
