@@ -1,4 +1,4 @@
-import streamlit as stdx
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 import time
 
 # Auto‐refresh logic
-REFRESH_INTERVAL = 300  # seconds
+REFRESH_INTERVAL = 180  # seconds
 def auto_refresh():
     if 'last_refresh' not in st.session_state:
         st.session_state.last_refresh = time.time()
