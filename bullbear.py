@@ -27,8 +27,8 @@ st.sidebar.markdown(
 # Indicator functions
 def compute_rsi(data, window=14):
     delta = data.diff()
-    gain  = (delta.where(delta>0,0)).rolling(window).mean()
-    loss  = (-delta.where(delta<0,0)).rolling(window).mean()
+    gain  = delta.where(delta>0, 0).rolling(window).mean()
+    loss  = -delta.where(delta<0, 0).rolling(window).mean()
     rs    = gain/loss
     return 100 - (100/(1+rs))
 
@@ -37,15 +37,13 @@ def compute_bollinger_bands(data, window=20, num_sd=2):
     sd  = data.rolling(window).std()
     return mid - num_sd*sd, mid, mid + num_sd*sd
 
-# Safe SARIMAX fit helper
+# Safe SARIMAX helper
 def safe_sarimax(endog, order, seasonal_order):
     try:
         return SARIMAX(endog, order=order, seasonal_order=seasonal_order)\
                .fit(disp=False)
     except np.linalg.LinAlgError:
-        return SARIMAX(endog,
-                       order=order,
-                       seasonal_order=seasonal_order,
+        return SARIMAX(endog, order=order, seasonal_order=seasonal_order,
                        enforce_stationarity=False,
                        enforce_invertibility=False)\
                .fit(disp=False)
@@ -53,11 +51,12 @@ def safe_sarimax(endog, order, seasonal_order):
 # Sidebar mode selector
 mode = st.sidebar.selectbox("Mode:", ["Stock", "Forex"], key="global_mode")
 
-# Define three tabs
-tab1, tab2, tab3 = st.tabs([
+# Define four tabs
+tab1, tab2, tab3, tab4 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
-    "🇳🇬 Nigeria Forecast"
+    "🇳🇬 Nigeria Forecast",
+    "🇬🇧 LSE Tech & Index"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -66,17 +65,14 @@ with tab1:
     if mode == "Stock":
         ticker = st.selectbox(
             "Select Stock Ticker:",
-            sorted(['AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG',
-                    'PLTR','NVDA','META','SITM','MARA','GOOG','HOOD','BABA',
-                    'IBM','AVGO','GUSH','VOO','MSFT','TSM','NFLX','MP','AAL',
-                    'URI','DAL']),
+            sorted([
+                'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
+                'META','SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO',
+                'MSFT','TSM','NFLX','MP','AAL','URI','DAL'
+            ]),
             key="orig_stock_ticker"
         )
-        chart = st.radio(
-            "Chart View:",
-            ["Daily","Hourly","Both"],
-            key="orig_stock_chart"
-        )
+        chart = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_stock_chart")
         if st.button("Run Stock Forecast", key="orig_stock_btn"):
             df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']\
                    .asfreq("D").fillna(method="ffill")
@@ -86,7 +82,7 @@ with tab1:
 
             model = safe_sarimax(df, (1,1,1), (1,1,1,12))
             fc    = model.get_forecast(steps=30)
-            idx   = pd.date_range(df.index[-1]+timedelta(1), periods=30, freq="D")
+            idx   = pd.date_range(df.index[-1] + timedelta(1), periods=30, freq="D")
             vals, ci = fc.predicted_mean, fc.conf_int()
 
             if chart in ("Daily","Both"):
@@ -126,15 +122,11 @@ with tab1:
         pair = st.selectbox(
             "Select Forex Pair:",
             ['EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X',
-             'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','USDHKD=X',
-             'EURHKD=X','GBPHKD=X'],
+             'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X',
+             'USDHKD=X','EURHKD=X','GBPHKD=X'],
             key="orig_forex_pair"
         )
-        chart = st.radio(
-            "Chart View:",
-            ["Daily","Hourly","Both"],
-            key="orig_forex_chart"
-        )
+        chart = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_forex_chart")
         if st.button("Run Forex Forecast", key="orig_forex_btn"):
             df = yf.download(pair, start="2018-01-01", end=pd.to_datetime("today"))['Close']\
                    .asfreq("D").fillna(method="ffill")
@@ -144,11 +136,8 @@ with tab1:
 
             model = safe_sarimax(df, (1,1,1), (1,1,1,12))
             fc    = model.get_forecast(steps=30)
-            idx, vals, ci = (
-                pd.date_range(df.index[-1]+timedelta(1), periods=30, freq="D"),
-                fc.predicted_mean,
-                fc.conf_int()
-            )
+            idx   = pd.date_range(df.index[-1] + timedelta(1), periods=30, freq="D")
+            vals, ci = fc.predicted_mean, fc.conf_int()
 
             if chart in ("Daily","Both"):
                 fig, ax = plt.subplots(figsize=(14,7))
@@ -189,17 +178,14 @@ with tab2:
     if mode == "Stock":
         ticker = st.selectbox(
             "Select Stock Ticker:",
-            sorted(['AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG',
-                    'PLTR','NVDA','META','SITM','MARA','GOOG','HOOD','BABA',
-                    'IBM','AVGO','GUSH','VOO','MSFT','TSM','NFLX','MP','AAL',
-                    'URI','DAL']),
+            sorted([
+                'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
+                'META','SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO',
+                'MSFT','TSM','NFLX','MP','AAL','URI','DAL'
+            ]),
             key="enh_stock_ticker"
         )
-        view = st.radio(
-            "View:",
-            ["Daily","Intraday","Both"],
-            key="enh_stock_view"
-        )
+        view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_stock_view")
         if st.button("Run Enhanced Stock Forecast", key="enh_stock_btn"):
             daily = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']\
                        .asfreq("D").fillna(method="ffill")
@@ -210,11 +196,8 @@ with tab2:
 
             model = safe_sarimax(daily, (1,1,1), (1,1,1,12))
             fc    = model.get_forecast(steps=30)
-            idx, vals, ci = (
-                pd.date_range(daily.index[-1]+timedelta(1), periods=30, freq="D"),
-                fc.predicted_mean,
-                fc.conf_int()
-            )
+            idx   = pd.date_range(daily.index[-1] + timedelta(1), periods=30, freq="D")
+            vals, ci = fc.predicted_mean, fc.conf_int()
 
             if view in ("Daily","Both"):
                 fig, ax = plt.subplots(figsize=(14,7))
@@ -228,7 +211,7 @@ with tab2:
                 high, low = daily[-360:].max(), daily[-360:].min()
                 diff = high - low
                 for lev in (0.236,0.382,0.5,0.618):
-                    ax.hlines(high-diff*lev, daily.index[-360], daily.index[-1], linestyles="dotted")
+                    ax.hlines(high - diff*lev, daily.index[-360], daily.index[-1], linestyles="dotted")
                 ax.set_title(f"{ticker} Daily + Fib")
                 ax.legend(loc="lower left", framealpha=0.5)
                 st.pyplot(fig)
@@ -276,30 +259,23 @@ with tab2:
         pair = st.selectbox(
             "Select Forex Pair:",
             ['EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X',
-             'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','USDHKD=X',
-             'EURHKD=X','GBPHKD=X'],
+             'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X',
+             'USDHKD=X','EURHKD=X','GBPHKD=X'],
             key="enh_forex_pair"
         )
-        view = st.radio(
-            "View:",
-            ["Daily","Intraday","Both"],
-            key="enh_forex_view"
-        )
+        view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_forex_view")
         if st.button("Run Enhanced Forex Forecast", key="enh_forex_btn"):
             daily = yf.download(pair, start="2018-01-01", end=pd.to_datetime("today"))['Close']\
                        .asfreq("D").fillna(method="ffill")
             ema200 = daily.ewm(span=200).mean()
             ma30   = daily.rolling(30).mean()
             lb, mb, ub = compute_bollinger_bands(daily)
-            ri    = compute_rsi(daily)
+            ri     = compute_rsi(daily)
 
             model = safe_sarimax(daily, (1,1,1), (1,1,1,12))
             fc    = model.get_forecast(steps=30)
-            idx, vals, ci = (
-                pd.date_range(daily.index[-1]+timedelta(1), periods=30, freq="D"),
-                fc.predicted_mean,
-                fc.conf_int()
-            )
+            idx   = pd.date_range(daily.index[-1] + timedelta(1), periods=30, freq="D")
+            vals, ci = fc.predicted_mean, fc.conf_int()
 
             if view in ("Daily","Both"):
                 fig, ax = plt.subplots(figsize=(14,7))
@@ -313,7 +289,7 @@ with tab2:
                 high, low = daily[-360:].max(), daily[-360:].min()
                 diff = high - low
                 for lev in (0.236,0.382,0.5,0.618):
-                    ax.hlines(high-diff*lev, daily.index[-360], daily.index[-1], linestyles="dotted")
+                    ax.hlines(high - diff*lev, daily.index[-360], daily.index[-1], linestyles="dotted")
                 ax.set_title(f"{pair} Daily + Fib")
                 ax.legend(loc="lower left", framealpha=0.5)
                 st.pyplot(fig)
@@ -401,11 +377,8 @@ with tab3:
 
                 model = safe_sarimax(df, (1,1,1), (1,1,1,12))
                 fc    = model.get_forecast(steps=30)
-                idx, vals, ci = (
-                    pd.date_range(df.index[-1]+timedelta(1), periods=30, freq="D"),
-                    fc.predicted_mean,
-                    fc.conf_int()
-                )
+                idx   = pd.date_range(df.index[-1] + timedelta(1), periods=30, freq="D")
+                vals, ci = fc.predicted_mean, fc.conf_int()
 
                 fig, ax = plt.subplots(figsize=(14,7))
                 ax.plot(df[-360:], label="History")
@@ -424,7 +397,6 @@ with tab3:
                     "Lower":    ci.iloc[:,0],
                     "Upper":    ci.iloc[:,1]
                 }, index=idx))
-
     else:
         sel    = st.selectbox("Select NGN FX Pair:", list(nigeria_fx.keys()), key="nig_fx")
         ticker = nigeria_fx[sel]
@@ -441,11 +413,8 @@ with tab3:
 
                 model = safe_sarimax(df, (1,1,1), (1,1,1,12))
                 fc    = model.get_forecast(steps=30)
-                idx, vals, ci = (
-                    pd.date_range(df.index[-1]+timedelta(1), periods=30, freq="D"),
-                    fc.predicted_mean,
-                    fc.conf_int()
-                )
+                idx   = pd.date_range(df.index[-1] + timedelta(1), periods=30, freq="D")
+                vals, ci = fc.predicted_mean, fc.conf_int()
 
                 if chart in ("Daily","Both"):
                     fig, ax = plt.subplots(figsize=(14,7))
@@ -479,3 +448,70 @@ with tab3:
                     "Lower":    ci.iloc[:,0],
                     "Upper":    ci.iloc[:,1]
                 }, index=idx))
+
+# --- Tab 4: LSE Tech & Index ---
+with tab4:
+    st.header("🇬🇧 LSE Tech Stocks & Index ETFs")
+    lse_mode = st.radio(
+        "Choose Category:",
+        ["Tech Stocks", "Index ETFs"],
+        key="lse_mode"
+    )
+
+    lse_tech = {
+        "ARM Holdings (ARM.L)":      "ARM.L",
+        "Sage Group (SGE.L)":        "SGE.L",
+        "AVEVA Group (AVV.L)":       "AVV.L",
+        "Softcat plc (SCT.L)":       "SCT.L",
+        "Darktrace plc (DARK.L)":    "DARK.L"
+    }
+    lse_etfs = {
+        "iShares FTSE 100 UCITS ETF (ISF.L)":       "ISF.L",
+        "Vanguard FTSE 100 UCITS ETF (VUKE.L)":     "VUKE.L",
+        "iShares FTSE 250 UCITS ETF (MIDD.L)":      "MIDD.L",
+        "iShares Core FTSE 100 ETF GBP Acc (CUKX.L)": "CUKX.L",
+        "iShares Core MSCI World UCITS ETF (SWDA.L)": "SWDA.L"
+    }
+
+    if lse_mode == "Tech Stocks":
+        sel    = st.selectbox("Select Tech Stock:", list(lse_tech.keys()), key="lse_tech")
+        ticker = lse_tech[sel]
+    else:
+        sel    = st.selectbox("Select Index ETF:", list(lse_etfs.keys()), key="lse_etf")
+        ticker = lse_etfs[sel]
+
+    if st.button("Run Forecast", key="run_lse"):
+        df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']\
+               .asfreq("D").fillna(method="ffill")
+        if df.empty:
+            st.warning("No data available for this selection.")
+        else:
+            ema200 = df.ewm(span=200).mean()
+            ma30   = df.rolling(30).mean()
+            lb, mb, ub = compute_bollinger_bands(df)
+
+            model = safe_sarimax(df, (1,1,1), (1,1,1,12))
+            fc    = model.get_forecast(steps=30)
+            idx, vals, ci = (
+                pd.date_range(df.index[-1] + timedelta(1), periods=30, freq="D"),
+                fc.predicted_mean,
+                fc.conf_int()
+            )
+
+            fig, ax = plt.subplots(figsize=(14,7))
+            ax.plot(df[-360:], label="History")
+            ax.plot(ema200[-360:], "--", label="200 EMA")
+            ax.plot(ma30[-360:], "--", label="30 MA")
+            ax.plot(idx, vals, label="Forecast")
+            ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
+            ax.plot(lb[-360:], "--", label="Lower BB")
+            ax.plot(ub[-360:], "--", label="Upper BB")
+            ax.set_title(f"{sel} Forecast")
+            ax.legend(loc="lower left", framealpha=0.5)
+            st.pyplot(fig)
+
+            st.write(pd.DataFrame({
+                "Forecast": vals,
+                "Lower":    ci.iloc[:,0],
+                "Upper":    ci.iloc[:,1]
+            }, index=idx))
