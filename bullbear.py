@@ -60,14 +60,16 @@ tab1, tab2, tab3 = st.tabs([
     "🇳🇬 Nigeria Forecast"
 ])
 
+# --- Tab 1: Original Forecast ---
 with tab1:
     st.header("Original Forecast")
     if mode == "Stock":
         ticker = st.selectbox(
             "Select Stock Ticker:",
-            sorted(['AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA','META',
-                    'SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO','MSFT',
-                    'TSM','NFLX','MP','AAL','URI','DAL']),
+            sorted(['AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG',
+                    'PLTR','NVDA','META','SITM','MARA','GOOG','HOOD','BABA',
+                    'IBM','AVGO','GUSH','VOO','MSFT','TSM','NFLX','MP','AAL',
+                    'URI','DAL']),
             key="orig_stock_ticker"
         )
         chart = st.radio(
@@ -181,14 +183,16 @@ with tab1:
                 "Upper":    ci.iloc[:,1]
             }, index=idx))
 
+# --- Tab 2: Enhanced Forecast ---
 with tab2:
     st.header("Enhanced Forecast")
     if mode == "Stock":
         ticker = st.selectbox(
             "Select Stock Ticker:",
-            sorted(['AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA','META',
-                    'SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO','MSFT',
-                    'TSM','NFLX','MP','AAL','URI','DAL']),
+            sorted(['AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG',
+                    'PLTR','NVDA','META','SITM','MARA','GOOG','HOOD','BABA',
+                    'IBM','AVGO','GUSH','VOO','MSFT','TSM','NFLX','MP','AAL',
+                    'URI','DAL']),
             key="enh_stock_ticker"
         )
         view = st.radio(
@@ -353,6 +357,7 @@ with tab2:
                 "Upper":    ci.iloc[:,1]
             }, index=idx))
 
+# --- Tab 3: Nigeria Forecast ---
 with tab3:
     st.header("🇳🇬 Nigeria Stock & FX Forecast")
     nigeria_mode = st.radio(
@@ -362,16 +367,16 @@ with tab3:
     )
 
     nigeria_stocks = {
-        "Dangote Cement (DANGCEM)":      "DANGCEM",
-        "GT Bank (GTCO)":                "GTCO",
-        "Zenith Bank (ZENITHB)":         "ZENITHB",
-        "Access Holdings (ACCESSCORP)":  "ACCESSCORP",
-        "UBA (UBA)":                     "UBA",
-        "MTN Nigeria (MTNN)":            "MTNN",
-        "Seplat Energy (SEPLAT)":        "SEPLAT",
-        "BUA Cement (BUACEMENT)":        "BUACEMENT",
-        "Nestle Nigeria (NESTLE)":       "NESTLE",
-        "Nigerian Breweries (NB)":       "NB"
+        "Dangote Cement (DANGCEM)":      "DANGCEM.LG",
+        "GT Bank (GTCO)":                "GTCO.IL",
+        "Zenith Bank (ZENITHBANK)":      "ZENB.L",
+        "Access Holdings (ACCESSCORP)":  "ACCESSCORP.LG",
+        "UBA (UBA)":                     "UBA.LG",
+        "MTN Nigeria (MTNN)":            "MTN.JO",
+        "Seplat Energy (SEPLAT)":        "SEPL.L",
+        "BUA Cement (BUACEMENT)":        "BUACEMENT.LG",
+        "Nestle Nigeria (NESTLE)":       "NESTLE.LG",
+        "Nigerian Breweries (NB)":       "NB.LG"
     }
     nigeria_fx = {
         "USD/NGN": "USDNGN=X",
@@ -382,7 +387,7 @@ with tab3:
     }
 
     if nigeria_mode == "Stock Forecast":
-        sel = st.selectbox("Select NGX Stock:", list(nigeria_stocks.keys()), key="nig_stock")
+        sel    = st.selectbox("Select NGX Stock:", list(nigeria_stocks.keys()), key="nig_stock")
         ticker = nigeria_stocks[sel]
         if st.button("Run Nigeria Stock Forecast", key="nig_stock_btn"):
             df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']\
@@ -421,7 +426,7 @@ with tab3:
                 }, index=idx))
 
     else:
-        sel = st.selectbox("Select NGN FX Pair:", list(nigeria_fx.keys()), key="nig_fx")
+        sel    = st.selectbox("Select NGN FX Pair:", list(nigeria_fx.keys()), key="nig_fx")
         ticker = nigeria_fx[sel]
         chart  = st.radio("Chart View:", ["Daily","Hourly","Both"], key="nig_fx_chart")
         if st.button("Run Nigeria FX Forecast", key="nig_fx_btn"):
