@@ -5,7 +5,7 @@ from io import BytesIO
 from gtts import gTTS
 import tempfile
 
-# Cache the data loading, fetching via requests to avoid urllib HTTP errors
+# Cache the data loading
 @st.cache_data
 def load_data(url):
     resp = requests.get(url, timeout=10)
@@ -21,10 +21,23 @@ except Exception as e:
     st.error(f"Error loading data: {e}")
     st.stop()
 
-# Sidebar selector for Old Word
-st.sidebar.title("Choose Old Word")
-old_words = df["Old Word"].dropna().unique()
-choice = st.sidebar.selectbox("Old Word", old_words)
+# Prepare list of Old Words
+old_words = df["Old Word"].dropna().unique().tolist()
+n = len(old_words)
+
+# Initialize navigation index
+if 'idx' not in st.session_state:
+    st.session_state.idx = 0
+
+# Sidebar navigation buttons
+st.sidebar.title("Navigate Words")
+if st.sidebar.button("⮜ Back"):
+    st.session_state.idx = (st.session_state.idx - 1) % n
+if st.sidebar.button("Next ⮞"):
+    st.session_state.idx = (st.session_state.idx + 1) % n
+
+# Current choice
+choice = old_words[st.session_state.idx]
 
 # Look up the selected row
 row = df[df["Old Word"] == choice].iloc[0]
@@ -32,6 +45,7 @@ new_word = row["New Word"]
 sentence = row["Sentence"]
 
 # Display on main page
+st.markdown(f"## Old Word\n**{choice}**")
 st.markdown(f"### New Word\n**{new_word}**")
 st.markdown(f"### Sentence\n{sentence}")
 
