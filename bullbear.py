@@ -7,7 +7,7 @@ from datetime import timedelta
 import matplotlib.pyplot as plt
 import time
 
-# Auto-refresh logic
+# Auto‑refresh logic (rerun every 5 minutes)
 REFRESH_INTERVAL = 300  # seconds
 def auto_refresh():
     if 'last_refresh' not in st.session_state:
@@ -15,6 +15,8 @@ def auto_refresh():
     elif time.time() - st.session_state.last_refresh > REFRESH_INTERVAL:
         st.session_state.last_refresh = time.time()
         st.experimental_rerun()
+
+auto_refresh()
 
 # Indicator functions
 def compute_rsi(data, window=14):
@@ -26,81 +28,46 @@ def compute_rsi(data, window=14):
 
 def compute_bollinger_bands(data, window=20, num_sd=2):
     middle = data.rolling(window=window).mean()
-    sd = data.rolling(window=window).std()
-    upper = middle + sd * num_sd
-    lower = middle - sd * num_sd
+    sd     = data.rolling(window=window).std()
+    upper  = middle + sd * num_sd
+    lower  = middle - sd * num_sd
     return lower, middle, upper
 
 # Single sidebar dropdown for mode
-mode = st.sidebar.selectbox("Mode:", ["Stock", "Forex"], key="mode")
+mode = st.sidebar.selectbox("Mode:", ["Stock", "Forex"], key="global_mode")
 
-# Define tabs
+# Two tabs
 tab1, tab2 = st.tabs(["Original Forecast", "Enhanced Forecast"])
 
 with tab1:
-    auto_refresh()
+    st.header("Original Forecast")
     if mode == "Stock":
-        st.title("Stock Price Forecast (SARIMA + EMA, MA & Bollinger)")
-        ticker = st.selectbox(
-            "Ticker:", 
-            sorted(['AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA','META',
-                    'SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO','MSFT',
-                    'TSM','NFLX','MP','AAL','URI','DAL'])
+        ticker1 = st.sidebar.selectbox(
+            "Select Stock Ticker:",
+            sorted([
+                'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA','META',
+                'SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO','MSFT',
+                'TSM','NFLX','MP','AAL','URI','DAL'
+            ]),
+            key="tab1_stock_ticker"
         )
-        if st.button("Run Stock Forecast"):
-            df = yf.download(ticker, start='2018-01-01', end=pd.to_datetime("today"))['Close']\
+        chart1 = st.sidebar.radio(
+            "Chart:",
+            ["Daily","Hourly","Both"],
+            key="tab1_stock_chart"
+        )
+        if st.sidebar.button("Run Stock Forecast", key="tab1_stock_btn"):
+            df = yf.download(ticker1, start='2018-01-01', end=pd.to_datetime("today"))['Close'] \
                    .asfreq('D').fillna(method='ffill')
             ema200 = df.ewm(span=200).mean()
             ma30   = df.rolling(30).mean()
             lb, mb, ub = compute_bollinger_bands(df)
-
             model = SARIMAX(df, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
             fc    = model.get_forecast(steps=30)
             idx   = pd.date_range(df.index[-1]+timedelta(1), periods=30, freq='D')
             vals  = fc.predicted_mean; ci = fc.conf_int()
 
-            fig, ax = plt.subplots(figsize=(14,7))
-            ax.plot(df[-360:], label='History')
-            ax.plot(ema200[-360:], '--', label='200 EMA')
-            ax.plot(ma30[-360:], '--', label='30 MA')
-            ax.plot(idx, vals, label='Forecast')
-            ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
-            ax.plot(lb[-360:], '--', label='Lower BB')
-            ax.plot(ub[-360:], '--', label='Upper BB')
-            ax.set_title(f"{ticker} Original Forecast")
-            ax.legend(loc='lower left', framealpha=0.5)
-            st.pyplot(fig)
-
-            st.write(pd.DataFrame({
-                'Forecast': vals,
-                'Lower':    ci.iloc[:,0],
-                'Upper':    ci.iloc[:,1]
-            }, index=idx))
-
-    else:  # Forex
-        st.title("Forex Price Forecast (SARIMA + EMA, MA & Bollinger)")
-        auto_refresh()
-        pair = st.selectbox(
-            "Pair:", 
-            ['EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X',
-             'AUDUSD=X','NZDUSD=X','HKDJPY=X','USDCAD=X',
-             'USDCNY=X','USDCHF=X','EURGBP=X','USDHKD=X',
-             'EURHKD=X','GBPHKD=X']
-        )
-        chart = st.radio("Chart:", ['Daily','Hourly','Both'])
-        if st.button("Run Forex Forecast"):
-            df = yf.download(pair, start='2018-01-01', end=pd.to_datetime("today"))['Close']\
-                   .asfreq('D').fillna(method='ffill')
-            ema200 = df.ewm(span=200).mean()
-            ma30   = df.rolling(30).mean()
-            lb, mb, ub = compute_bollinger_bands(df)
-
-            model = SARIMAX(df, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
-            fc    = model.get_forecast(steps=30)
-            idx   = pd.date_range(df.index[-1]+timedelta(1), periods=30, freq='D')
-            vals  = fc.predicted_mean; ci = fc.conf_int()
-
-            if chart in ('Daily','Both'):
+            if chart1 in ("Daily", "Both"):
                 fig, ax = plt.subplots(figsize=(14,7))
                 ax.plot(df[-360:], label='History')
                 ax.plot(ema200[-360:], '--', label='200 EMA')
@@ -109,12 +76,12 @@ with tab1:
                 ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
                 ax.plot(lb[-360:], '--', label='Lower BB')
                 ax.plot(ub[-360:], '--', label='Upper BB')
-                ax.set_title(f"{pair} Daily Forecast")
+                ax.set_title(f"{ticker1} Daily Forecast")
                 ax.legend(loc='lower left', framealpha=0.5)
                 st.pyplot(fig)
 
-            if chart in ('Hourly','Both'):
-                intraday = yf.download(pair, period='1d', interval='5m', progress=False)
+            if chart1 in ("Hourly", "Both"):
+                intraday = yf.download(ticker1, period='1d', interval='5m', progress=False)
                 if intraday.empty:
                     st.warning("No intraday data.")
                 else:
@@ -123,7 +90,7 @@ with tab1:
                     fig2, ax2 = plt.subplots(figsize=(14,5))
                     ax2.plot(hc, label='Intraday')
                     ax2.plot(he, '--', label='20 EMA')
-                    ax2.set_title(f"{pair} Intraday (5m)")
+                    ax2.set_title(f"{ticker1} Intraday (5m)")
                     ax2.legend(loc='lower left', framealpha=0.5)
                     st.pyplot(fig2)
 
@@ -133,33 +100,91 @@ with tab1:
                 'Upper':    ci.iloc[:,1]
             }, index=idx))
 
+    else:  # Forex
+        symbol1 = st.sidebar.selectbox(
+            "Select Forex Pair:",
+            ['EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X',
+             'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','USDHKD=X',
+             'EURHKD=X','GBPHKD=X'],
+            key="tab1_forex_pair"
+        )
+        chart2 = st.sidebar.radio(
+            "Chart:",
+            ["Daily","Hourly","Both"],
+            key="tab1_forex_chart"
+        )
+        if st.sidebar.button("Run Forex Forecast", key="tab1_forex_btn"):
+            df = yf.download(symbol1, start='2018-01-01', end=pd.to_datetime("today"))['Close'] \
+                   .asfreq('D').fillna(method='ffill')
+            ema200 = df.ewm(span=200).mean()
+            ma30   = df.rolling(30).mean()
+            lb, mb, ub = compute_bollinger_bands(df)
+            model = SARIMAX(df, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
+            fc    = model.get_forecast(steps=30)
+            idx   = pd.date_range(df.index[-1]+timedelta(1), periods=30, freq='D')
+            vals  = fc.predicted_mean; ci = fc.conf_int()
+
+            if chart2 in ("Daily", "Both"):
+                fig, ax = plt.subplots(figsize=(14,7))
+                ax.plot(df[-360:], label='History')
+                ax.plot(ema200[-360:], '--', label='200 EMA')
+                ax.plot(ma30[-360:], '--', label='30 MA')
+                ax.plot(idx, vals, label='Forecast')
+                ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
+                ax.plot(lb[-360:], '--', label='Lower BB')
+                ax.plot(ub[-360:], '--', label='Upper BB')
+                ax.set_title(f"{symbol1} Daily Forecast")
+                ax.legend(loc='lower left', framealpha=0.5)
+                st.pyplot(fig)
+
+            if chart2 in ("Hourly", "Both"):
+                intraday = yf.download(symbol1, period='1d', interval='5m', progress=False)
+                if intraday.empty:
+                    st.warning("No intraday data.")
+                else:
+                    hc = intraday['Close'].ffill()
+                    he = hc.ewm(span=20).mean()
+                    fig2, ax2 = plt.subplots(figsize=(14,5))
+                    ax2.plot(hc, label='Intraday')
+                    ax2.plot(he, '--', label='20 EMA')
+                    ax2.set_title(f"{symbol1} Intraday (5m)")
+                    ax2.legend(loc='lower left', framealpha=0.5)
+                    st.pyplot(fig2)
+
+            st.write(pd.DataFrame({
+                'Forecast': vals,
+                'Lower':    ci.iloc[:,0],
+                'Upper':    ci.iloc[:,1]
+            }, index=idx))
 
 with tab2:
-    auto_refresh()
+    st.header("Enhanced Forecast")
     if mode == "Stock":
-        st.title("Enhanced Stock Forecast (SARIMA+EMA,MA,BB,RSI,Fib)")
-        ticker = st.selectbox(
-            "Ticker:", 
-            sorted(['AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG',
-                    'PLTR','NVDA','META','SITM','MARA','GOOG','HOOD','BABA',
-                    'IBM','AVGO','GUSH','VOO','MSFT','TSM','NFLX','MP','AAL',
-                    'URI','DAL'])
+        ticker2 = st.sidebar.selectbox(
+            "Select Stock Ticker:",
+            sorted(['AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA','META',
+                    'SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO','MSFT',
+                    'TSM','NFLX','MP','AAL','URI','DAL']),
+            key="tab2_stock_ticker"
         )
-        view = st.radio("View:", ['Daily','Intraday','Both'])
-        if st.button("Run Enhanced Stock"):
-            daily = yf.download(ticker, start='2018-01-01', end=pd.to_datetime("today"))['Close']\
+        view1 = st.sidebar.radio(
+            "View:",
+            ["Daily","Intraday","Both"],
+            key="tab2_stock_view"
+        )
+        if st.sidebar.button("Run Enhanced Stock", key="tab2_stock_btn"):
+            daily = yf.download(ticker2, start='2018-01-01', end=pd.to_datetime("today"))['Close'] \
                        .asfreq('D').fillna(method='ffill')
             ema200 = daily.ewm(span=200).mean()
             ma30   = daily.rolling(30).mean()
             lb, mb, ub = compute_bollinger_bands(daily)
-            rsi     = compute_rsi(daily)
-
+            rsi = compute_rsi(daily)
             model = SARIMAX(daily, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
             fc    = model.get_forecast(steps=30)
             idx   = pd.date_range(daily.index[-1]+timedelta(1), periods=30, freq='D')
             vals  = fc.predicted_mean; ci = fc.conf_int()
 
-            if view in ('Daily','Both'):
+            if view1 in ("Daily", "Both"):
                 fig, ax = plt.subplots(figsize=(14,7))
                 ax.plot(daily[-360:], label='Price')
                 ax.plot(ema200[-360:], '--', label='200 EMA')
@@ -168,12 +193,12 @@ with tab2:
                 ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
                 ax.plot(lb[-360:], '--', label='Lower BB')
                 ax.plot(ub[-360:], '--', label='Upper BB')
-                # Fib levels
+                # Fibonacci
                 high, low = daily[-360:].max(), daily[-360:].min()
                 diff = high - low
                 for lev in (0.236,0.382,0.5,0.618):
                     ax.hlines(high - diff*lev, daily.index[-360], daily.index[-1], linestyles='dotted')
-                ax.set_title(f"{ticker} Enhanced Daily")
+                ax.set_title(f"{ticker2} Daily Enhanced")
                 ax.legend(loc='lower left', framealpha=0.5)
                 st.pyplot(fig)
 
@@ -184,8 +209,8 @@ with tab2:
                 ax2.legend()
                 st.pyplot(fig2)
 
-            if view in ('Intraday','Both'):
-                intraday = yf.download(ticker, period='1d', interval='5m', progress=False)
+            if view1 in ("Intraday", "Both"):
+                intraday = yf.download(ticker2, period='1d', interval='5m', progress=False)
                 if intraday.empty:
                     st.warning("No intraday data.")
                 else:
@@ -199,7 +224,7 @@ with tab2:
                     ax3.plot(ie, '--', label='20 EMA')
                     ax3.plot(lb2, '--', label='Lower BB')
                     ax3.plot(ub2, '--', label='Upper BB')
-                    ax3.set_title(f"{ticker} Intraday")
+                    ax3.set_title(f"{ticker2} Intraday Enhanced")
                     ax3.legend(loc='lower left', framealpha=0.5)
                     st.pyplot(fig3)
 
@@ -216,31 +241,32 @@ with tab2:
                 'Upper':    ci.iloc[:,1]
             }, index=idx))
 
-    else:
-        st.title("Enhanced Forex Forecast (SARIMA+EMA,MA,BB,RSI,Fib)")
-        auto_refresh()
-        pair = st.selectbox(
-            "Pair:", 
-            ['EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X',
-             'AUDUSD=X','NZDUSD=X','HKDJPY=X','USDCAD=X',
-             'USDCNY=X','USDCHF=X','EURGBP=X','USDHKD=X',
-             'EURHKD=X','GBPHKD=X']
+    else:  # Forex
+        pair2 = st.sidebar.selectbox(
+            "Select Forex Pair:",
+            ['EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X',
+             'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','USDHKD=X',
+             'EURHKD=X','GBPHKD=X'],
+            key="tab2_forex_pair"
         )
-        view = st.radio("View:", ['Daily','Intraday','Both'])
-        if st.button("Run Enhanced Forex"):
-            daily = yf.download(pair, start='2018-01-01', end=pd.to_datetime("today"))['Close']\
+        view2 = st.sidebar.radio(
+            "View:",
+            ["Daily","Intraday","Both"],
+            key="tab2_forex_view"
+        )
+        if st.sidebar.button("Run Enhanced Forex", key="tab2_forex_btn"):
+            daily = yf.download(pair2, start='2018-01-01', end=pd.to_datetime("today"))['Close'] \
                        .asfreq('D').fillna(method='ffill')
             ema200 = daily.ewm(span=200).mean()
             ma30   = daily.rolling(30).mean()
             lb, mb, ub = compute_bollinger_bands(daily)
-            rsi     = compute_rsi(daily)
-
+            rsi = compute_rsi(daily)
             model = SARIMAX(daily, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
             fc    = model.get_forecast(steps=30)
             idx   = pd.date_range(daily.index[-1]+timedelta(1), periods=30, freq='D')
             vals  = fc.predicted_mean; ci = fc.conf_int()
 
-            if view in ('Daily','Both'):
+            if view2 in ("Daily", "Both"):
                 fig, ax = plt.subplots(figsize=(14,7))
                 ax.plot(daily[-360:], label='Price')
                 ax.plot(ema200[-360:], '--', label='200 EMA')
@@ -249,12 +275,12 @@ with tab2:
                 ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
                 ax.plot(lb[-360:], '--', label='Lower BB')
                 ax.plot(ub[-360:], '--', label='Upper BB')
-                # Fib
+                # Fibonacci
                 high, low = daily[-360:].max(), daily[-360:].min()
                 diff = high - low
                 for lev in (0.236,0.382,0.5,0.618):
                     ax.hlines(high - diff*lev, daily.index[-360], daily.index[-1], linestyles='dotted')
-                ax.set_title(f"{pair} Enhanced Daily")
+                ax.set_title(f"{pair2} Daily Enhanced")
                 ax.legend(loc='lower left', framealpha=0.5)
                 st.pyplot(fig)
 
@@ -265,8 +291,8 @@ with tab2:
                 ax2.legend()
                 st.pyplot(fig2)
 
-            if view in ('Intraday','Both'):
-                intraday = yf.download(pair, period='1d', interval='5m', progress=False)
+            if view2 in ("Intraday", "Both"):
+                intraday = yf.download(pair2, period='1d', interval='5m', progress=False)
                 if intraday.empty:
                     st.warning("No intraday data.")
                 else:
@@ -280,7 +306,7 @@ with tab2:
                     ax3.plot(ie, '--', label='20 EMA')
                     ax3.plot(lb2, '--', label='Lower BB')
                     ax3.plot(ub2, '--', label='Upper BB')
-                    ax3.set_title(f"{pair} Intraday")
+                    ax3.set_title(f"{pair2} Intraday Enhanced")
                     ax3.legend(loc='lower left', framealpha=0.5)
                     st.pyplot(fig3)
 
