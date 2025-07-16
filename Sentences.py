@@ -5,6 +5,20 @@ from io import BytesIO
 from gtts import gTTS
 import tempfile
 
+# Page config & CSS for a cleaner look
+st.set_page_config(page_title="📝 Word Transformer", page_icon="🔄", layout="wide")
+st.markdown("""
+    <style>
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+    .stButton>button {background-color: #4CAF50; color: white; border-radius:8px; padding:8px 16px;}
+    .stSelectbox>div>div>div>div {border-radius:8px; border:1px solid #ddd; padding:4px;}
+    .stMarkdown h2 {color: #2E86C1;}
+    .stMarkdown h3 {color: #117A65;}
+    </style>
+""", unsafe_allow_html=True)
+
 # Cache the data loading
 @st.cache_data
 def load_data(url):
@@ -31,17 +45,19 @@ if 'idx' not in st.session_state:
 
 # Sidebar: Old Word selector
 choice = st.sidebar.selectbox(
-    "Old Word",
+    "🔍 Select Old Word",
     old_words,
     index=st.session_state.idx,
     key="choice_selectbox"
 )
+st.sidebar.markdown(f"**Word {st.session_state.idx+1} of {n}**")
 
 # Sync session idx when user picks from sidebar
 st.session_state.idx = old_words.index(choice)
 
-# Top-of-page navigation buttons
-col1, col2 = st.columns([1,1])
+# Top navigation
+st.title("📝 Word Transformer")
+col1, col2, _ = st.columns([1,1,8])
 with col1:
     if st.button("⮜ Back"):
         st.session_state.idx = (st.session_state.idx - 1) % n
@@ -59,10 +75,16 @@ row = df[df["Old Word"] == choice].iloc[0]
 new_word = row["New Word"]
 sentence = row["Sentence"]
 
-# Display on main page
-st.markdown(f"## Old Word\n**{choice}**")
-st.markdown(f"### New Word\n**{new_word}**")
-st.markdown(f"### Sentence\n{sentence}")
+# Display main content in two columns
+left, right = st.columns(2)
+with left:
+    st.markdown("## 🅾️ Old Word")
+    st.markdown(f"### **{choice}**")
+with right:
+    st.markdown("## 🆕 New Word")
+    st.markdown(f"### **{new_word}**")
+    st.markdown("## 📖 Sentence")
+    st.markdown(f"> {sentence}")
 
 # Text-to-speech
 tts = gTTS(text=f"{new_word}. {sentence}", lang="en")
