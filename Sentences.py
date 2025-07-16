@@ -25,14 +25,13 @@ def load_data(url):
     return pd.read_excel(BytesIO(resp.content))
 
 DATA_URL = 'https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Sentences.xls'
-
 try:
     df = load_data(DATA_URL)
 except Exception as e:
     st.error(f"Error loading data: {e}")
     st.stop()
 
-# List of words
+# Prepare list of Old Words
 old_words = df["Old Word"].dropna().unique().tolist()
 n = len(old_words)
 
@@ -40,26 +39,27 @@ n = len(old_words)
 if "idx" not in st.session_state:
     st.session_state.idx = 0
 
-# Sidebar selector without using its own session_state key
+# Sidebar: Old Word selector
 st.sidebar.title("🔍 Select Old Word")
 choice = st.sidebar.selectbox(
-    "", old_words, index=st.session_state.idx
+    "",
+    options=old_words,
+    index=st.session_state.idx
 )
-# Sync idx to sidebar choice
-st.session_state.idx = old_words.index(choice)
-st.sidebar.markdown(f"**{st.session_state.idx+1} of {n}**")
+st.sidebar.markdown(f"**{old_words.index(choice)+1} of {n}**")
 
-# Top navigation
+# Sync idx to sidebar selection
+st.session_state.idx = old_words.index(choice)
+
+# Top navigation buttons
 st.title("📝 Word Transformer")
 col1, col2, _ = st.columns([1,1,8])
 with col1:
     if st.button("⮜ Back"):
         st.session_state.idx = (st.session_state.idx - 1) % n
-        st.experimental_rerun()
 with col2:
     if st.button("Next ⮞"):
         st.session_state.idx = (st.session_state.idx + 1) % n
-        st.experimental_rerun()
 
 # Current word after navigation
 current = old_words[st.session_state.idx]
@@ -67,7 +67,7 @@ row = df[df["Old Word"] == current].iloc[0]
 new_word = row["New Word"]
 sentence = row["Sentence"]
 
-# Display in columns
+# Display in two columns
 left, right = st.columns(2)
 with left:
     st.markdown("## 🅾️ Old Word")
