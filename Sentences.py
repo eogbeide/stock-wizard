@@ -45,25 +45,27 @@ if "sidebar_choice" not in st.session_state:
 
 # Sidebar: Old Word selector
 st.sidebar.title("🔍 Select Old Word")
-st.session_state.sidebar_choice = st.sidebar.selectbox(
+choice = st.sidebar.selectbox(
     "",
     options=old_words,
     index=old_words.index(st.session_state.sidebar_choice),
     key="sidebar_choice"
 )
-st.sidebar.markdown(f"**{old_words.index(st.session_state.sidebar_choice)+1} of {n}**")
+st.sidebar.markdown(f"**{old_words.index(choice)+1} of {n}**")
 
 # Top navigation buttons
 st.title("📝 Word Transformer")
 col1, col2, _ = st.columns([1,1,8])
 with col1:
     if st.button("⮜ Back"):
-        idx = old_words.index(st.session_state.sidebar_choice)
+        idx = old_words.index(choice)
         st.session_state.sidebar_choice = old_words[(idx - 1) % n]
+        st.experimental_rerun()
 with col2:
     if st.button("Next ⮞"):
-        idx = old_words.index(st.session_state.sidebar_choice)
+        idx = old_words.index(choice)
         st.session_state.sidebar_choice = old_words[(idx + 1) % n]
+        st.experimental_rerun()
 
 # Fetch the row for current choice
 row = df[df["Old Word"] == st.session_state.sidebar_choice].iloc[0]
