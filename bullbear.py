@@ -53,8 +53,8 @@ mode = st.sidebar.selectbox("Mode:", ["Stock", "Forex"], key="global_mode")
 
 # Define four tabs
 tab1, tab2, tab3, tab4 = st.tabs([
-    "Original Forecast",
-    "Enhanced Forecast",
+    "Original US Forecast",
+    "Enhanced US Forecast",
     "🇳🇬 Nigeria Forecast",
     "🇬🇧 LSE Tech & Index"
 ])
