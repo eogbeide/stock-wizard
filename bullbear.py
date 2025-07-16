@@ -362,7 +362,7 @@ with tab3:
     )
 
     nigeria_stocks = {
-        "Dangote Cement (DANGCEM)":  "NGX:DANGCEM",
+        "DANGCEM:LAG":  "NGX:DANGCEM",
         "GT Bank (GTCO)":             "NGX:GTCO",
         "Zenith Bank (ZENITHBANK)":   "NGX:ZENITHBANK",
         "Access Corp (ACCESSCORP)":   "NGX:ACCESSCORP",
