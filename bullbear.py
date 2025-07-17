@@ -15,7 +15,7 @@ st.set_page_config(
 )
 st.markdown("<style>#MainMenu, footer, header {visibility: hidden;}</style>", unsafe_allow_html=True)
 
-# --- Auto‐refresh logic ---
+# --- Auto‑refresh logic ---
 REFRESH_INTERVAL = 120  # seconds
 def auto_refresh():
     if 'last_refresh' not in st.session_state:
@@ -44,10 +44,10 @@ if 'run_all' not in st.session_state:
 # --- Indicator & forecasting helpers ---
 def compute_rsi(data, window=14):
     d = data.diff()
-    gain = d.where(d>0,0).rolling(window).mean()
-    loss = -d.where(d<0,0).rolling(window).mean()
-    rs = gain/loss
-    return 100 - (100/(1+rs))
+    gain = d.where(d > 0, 0).rolling(window).mean()
+    loss = -d.where(d < 0, 0).rolling(window).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
 
 def compute_bollinger_bands(data, window=20, num_sd=2):
     m = data.rolling(window).mean()
@@ -106,38 +106,33 @@ with tab1:
 
     # 3) Run forecast button + progress
     if st.button("Run Forecast", key="orig_btn"):
-        progress = st.progress(0)
+        prog = st.progress(0)
 
-        # Step 1: store selection
         st.session_state.ticker = ticker
         st.session_state.chart = chart
         st.session_state.mode = mode
-        progress.progress(10)
+        prog.progress(10)
 
-        # Step 2: historic daily series
         df_hist = (
             yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
             .asfreq("D").fillna(method="ffill")
         )
         st.session_state.df_hist = df_hist
-        progress.progress(40)
+        prog.progress(40)
 
-        # Step 3: SARIMAX fit & forecast
         model = safe_sarimax(df_hist, (1,1,1), (1,1,1,12))
         fc = model.get_forecast(steps=30)
         idx = pd.date_range(df_hist.index[-1] + timedelta(1), periods=30, freq="D")
         st.session_state.fc_idx = idx
         st.session_state.fc_vals = fc.predicted_mean
         st.session_state.fc_ci = fc.conf_int()
-        progress.progress(70)
+        prog.progress(70)
 
-        # Step 4: intraday if stock
         if mode == "Stock":
-            intraday = yf.download(ticker, period="1d", interval="5m")
-            st.session_state.intraday = intraday
+            st.session_state.intraday = yf.download(ticker, period="1d", interval="5m")
 
         st.session_state.run_all = True
-        progress.progress(100)
+        prog.progress(100)
         st.success("Forecast complete!")
 
     # 4) Display results
@@ -188,7 +183,6 @@ with tab1:
 # --- Tab 2: Enhanced US Forecast ---
 with tab2:
     st.header("🇺🇸 Enhanced US Forecast")
-
     if not st.session_state.run_all:
         st.info("Run the forecast in Tab 1 first.")
     else:
@@ -196,12 +190,12 @@ with tab2:
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
         df = st.session_state.df_hist
         ema200 = df.ewm(span=200).mean()
-        ma30   = df.rolling(30).mean()
+        ma30 = df.rolling(30).mean()
         lb, mb, ub = compute_bollinger_bands(df)
-        rsi    = compute_rsi(df)
+        rsi = compute_rsi(df)
         idx = st.session_state.fc_idx
         vals = st.session_state.fc_vals
-        ci   = st.session_state.fc_ci
+        ci = st.session_state.fc_ci
 
         if view in ("Daily","Both"):
             fig, ax = plt.subplots(figsize=(14,7))
@@ -225,7 +219,7 @@ with tab2:
             ax2.legend()
             st.pyplot(fig2)
 
-        if view in ("Intraday","Both") and st.session_state.mode == "Stock":
+        if view in ("Intraday","Both") and mode == "Stock":
             intraday = st.session_state.intraday
             if intraday.empty:
                 st.warning("No intraday data.")
@@ -260,7 +254,6 @@ with tab2:
 # --- Tab 3: Bull vs Bear Summary ---
 with tab3:
     st.header("🐂 Bull vs Bear Summary")
-
     if not st.session_state.run_all:
         st.info("Run the forecast in Tab 1 first.")
     else:
@@ -280,27 +273,23 @@ with tab3:
         c4.metric("Lookback", bb_period)
 
         st.markdown("---")
-        st.write(
-            f"Data for **{st.session_state.ticker}** over the past **{bb_period}**"
-        )
+        st.write(f"Data for **{st.session_state.ticker}** over the past **{bb_period}**")
 
 # --- Tab 4: Detailed Metrics ---
 with tab4:
     st.header("📊 Detailed Metrics")
-
     if not st.session_state.run_all:
         st.info("Run the forecast in Tab 1 first.")
     else:
-        # download & prep
         df0 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
         df0['PctChange'] = df0['Close'].pct_change()
-        df0['Bull'] = df0['PctChange'] > 0
+        df0['Bull']      = df0['PctChange'] > 0
 
-        # compute 30‑day MA
-        df0['MA30'] = df0['Close'].rolling(window=30).mean()
+        # Ensure MA30 always exists, even on short series
+        df0['MA30'] = df0['Close'].rolling(window=30, min_periods=1).mean()
 
         st.subheader("Price Chart → Close + 30‑day MA")
-        st.line_chart(df0[['Close','MA30']], use_container_width=True)
+        st.line_chart(df0[['Close', 'MA30']], use_container_width=True)
 
         st.subheader("Daily Percentage Change")
         st.line_chart(df0['PctChange'], use_container_width=True)
