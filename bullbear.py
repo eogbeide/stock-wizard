@@ -125,7 +125,7 @@ with tab1:
             [
                 'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X',
                 'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X',
-                'USDHKD=X','EURHKD=X','GBPHKD=X'
+                'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X'
             ],
             key="orig_forex_pair"
         )
