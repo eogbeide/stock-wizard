@@ -24,7 +24,6 @@ def auto_refresh():
         st.session_state.last_refresh = time.time()
         try: st.experimental_rerun()
         except: pass
-
 auto_refresh()
 st.sidebar.markdown(
     f"**Last refresh:** {datetime.fromtimestamp(st.session_state.last_refresh).strftime('%Y-%m-%d %H:%M:%S')}"
@@ -102,7 +101,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "Detailed Metrics"
 ])
 
-# --- Tab 1: Original Forecast ---
+# --- Tab 1 ---
 with tab1:
     st.header(f"Original Forecast for {ticker}")
     ema200 = df_hist.ewm(span=200).mean()
@@ -138,7 +137,7 @@ with tab1:
         "Upper":    fc_ci.iloc[:,1]
     }, index=idx))
 
-# --- Tab 2: Enhanced Forecast ---
+# --- Tab 2 ---
 with tab2:
     st.header(f"Enhanced Forecast for {ticker}")
     rsi = compute_rsi(df_hist)
@@ -192,12 +191,11 @@ with tab2:
         "Upper":    fc_ci.iloc[:,1]
     }, index=idx))
 
-# --- Tab 3: Bull vs Bear ---
+# --- Tab 3 ---
 with tab3:
     st.header(f"Bull vs Bear Summary for {ticker}")
     slice_series = slice_lookback(df_hist, bb_period).dropna()
-    slice_series.name = "Close"
-    df0 = slice_series.to_frame()
+    df0 = pd.DataFrame({"Close": slice_series})
     df0['PctChange'] = df0['Close'].pct_change()
     df0['Bull']      = df0['PctChange'] > 0
     bull = int(df0['Bull'].sum())
@@ -209,12 +207,11 @@ with tab3:
     c2.metric("Bull Days", bull, f"{bull/total*100:.1f}%")
     c3.metric("Bear Days", bear, f"{bear/total*100:.1f}%")
 
-# --- Tab 4: Detailed Metrics ---
+# --- Tab 4 ---
 with tab4:
     st.header(f"Detailed Metrics for {ticker}")
     slice_series = slice_lookback(df_hist, bb_period).dropna()
-    slice_series.name = "Close"
-    df0 = slice_series.to_frame()
+    df0 = pd.DataFrame({"Close": slice_series})
     df0['PctChange'] = df0['Close'].pct_change()
     df0['Bull']      = df0['PctChange'] > 0
     bull = int(df0['Bull'].sum())
