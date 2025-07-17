@@ -1,5 +1,5 @@
 import streamlit as st
-import pandas as pd
+import pandas as pdg
 import numpy as np
 import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
