@@ -25,7 +25,9 @@ def auto_refresh():
         try: st.experimental_rerun()
         except: pass
 auto_refresh()
-st.sidebar.markdown(f"**Last refresh:** {datetime.fromtimestamp(st.session_state.last_refresh).strftime('%Y-%m-%d %H:%M:%S')}")
+st.sidebar.markdown(
+    f"**Last refresh:** {datetime.fromtimestamp(st.session_state.last_refresh).strftime('%Y-%m-%d %H:%M:%S')}"
+)
 
 # --- Sidebar config ---
 mode      = st.sidebar.selectbox("Forecast Mode:", ["Stock","Forex"])
@@ -49,7 +51,8 @@ chart_view = st.sidebar.radio("Chart View:", ["Daily","Hourly","Both"])
 def load_history(tkr):
     return (
         yf.download(tkr, start="2018-01-01", end=pd.to_datetime("today"))['Close']
-        .asfreq("D").fillna(method="ffill")
+        .asfreq("D")
+        .fillna(method="ffill")
     )
 
 @st.cache_data
@@ -98,7 +101,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "Detailed Metrics"
 ])
 
-# --- Tab 1 ---
+# --- Tab 1: Original Forecast ---
 with tab1:
     st.header(f"Original Forecast for {ticker}")
     ema200 = df_hist.ewm(span=200).mean()
@@ -134,7 +137,7 @@ with tab1:
         "Upper":    fc_ci.iloc[:,1]
     }, index=idx))
 
-# --- Tab 2 ---
+# --- Tab 2: Enhanced Forecast ---
 with tab2:
     st.header(f"Enhanced Forecast for {ticker}")
     rsi = compute_rsi(df_hist)
@@ -188,11 +191,12 @@ with tab2:
         "Upper":    fc_ci.iloc[:,1]
     }, index=idx))
 
-# --- Tab 3 ---
+# --- Tab 3: Bull vs Bear ---
 with tab3:
     st.header(f"Bull vs Bear Summary for {ticker}")
     slice_series = slice_lookback(df_hist, bb_period).dropna()
-    df0 = slice_series.to_frame(name="Close")
+    # construct DataFrame directly
+    df0 = pd.DataFrame({'Close': slice_series})
     df0['Close'] = pd.to_numeric(df0['Close'], errors='coerce')
     df0 = df0.dropna()
     df0['PctChange'] = df0['Close'].pct_change()
@@ -206,11 +210,11 @@ with tab3:
     c2.metric("Bull Days", bull, f"{bull/total*100:.1f}%")
     c3.metric("Bear Days", bear, f"{bear/total*100:.1f}%")
 
-# --- Tab 4 ---
+# --- Tab 4: Detailed Metrics ---
 with tab4:
     st.header(f"Detailed Metrics for {ticker}")
     slice_series = slice_lookback(df_hist, bb_period).dropna()
-    df0 = slice_series.to_frame(name="Close")
+    df0 = pd.DataFrame({'Close': slice_series})
     df0['Close'] = pd.to_numeric(df0['Close'], errors='coerce')
     df0 = df0.dropna()
     df0['PctChange'] = df0['Close'].pct_change()
@@ -218,7 +222,7 @@ with tab4:
     bull = int(df0['Bull'].sum())
     bear = int((~df0['Bull']).sum())
 
-    # ensure numeric before rolling
+    # now numeric, safe to roll
     df0['MA30'] = df0['Close'].rolling(window=30, min_periods=1).mean()
 
     # Price + MA + Trend
@@ -238,6 +242,6 @@ with tab4:
     st.subheader("Bull/Bear Distribution")
     dist_df = pd.DataFrame({
         "Type": ["Bull","Bear"],
-        "Days": [bull,bear]
+        "Days": [bull, bear]
     }).set_index("Type")
     st.bar_chart(dist_df)
