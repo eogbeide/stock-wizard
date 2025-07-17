@@ -49,8 +49,7 @@ chart_view = st.sidebar.radio("Chart View:", ["Daily","Hourly","Both"])
 def load_history(tkr):
     return (
         yf.download(tkr, start="2018-01-01", end=pd.to_datetime("today"))['Close']
-        .asfreq("D")
-        .fillna(method="ffill")
+        .asfreq("D").fillna(method="ffill")
     )
 
 @st.cache_data
@@ -78,21 +77,15 @@ def compute_bollinger_bands(data, window=20, num_sd=2):
     return m - num_sd*s, m, m + num_sd*s
 
 def slice_lookback(series: pd.Series, lookback: str) -> pd.Series:
-    # compute start timestamp
     if lookback.endswith("mo"):
         months = int(lookback[:-2])
         start  = series.index[-1] - pd.DateOffset(months=months)
     else:
         years  = int(lookback[:-1])
         start  = series.index[-1] - pd.DateOffset(years=years)
-    # slice; always return Series
-    subset = series.loc[start:]
-    if not isinstance(subset, pd.Series):
-        # if scalar, wrap into Series
-        return pd.Series([subset], index=[start])
-    return subset
+    return series.loc[start:]
 
-# --- Load data once per ticker ---
+# --- Load data ---
 df_hist      = load_history(ticker)
 idx, fc_vals, fc_ci = fit_forecast(df_hist)
 intraday     = load_intraday(ticker)
@@ -105,7 +98,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "Detailed Metrics"
 ])
 
-# --- Tab 1: Original Forecast ---
+# --- Tab 1 ---
 with tab1:
     st.header(f"Original Forecast for {ticker}")
     ema200 = df_hist.ewm(span=200).mean()
@@ -141,7 +134,7 @@ with tab1:
         "Upper":    fc_ci.iloc[:,1]
     }, index=idx))
 
-# --- Tab 2: Enhanced Forecast ---
+# --- Tab 2 ---
 with tab2:
     st.header(f"Enhanced Forecast for {ticker}")
     rsi = compute_rsi(df_hist)
@@ -195,11 +188,13 @@ with tab2:
         "Upper":    fc_ci.iloc[:,1]
     }, index=idx))
 
-# --- Tab 3: Bull vs Bear ---
+# --- Tab 3 ---
 with tab3:
     st.header(f"Bull vs Bear Summary for {ticker}")
     slice_series = slice_lookback(df_hist, bb_period).dropna()
     df0 = slice_series.to_frame(name="Close")
+    df0['Close'] = pd.to_numeric(df0['Close'], errors='coerce')
+    df0 = df0.dropna()
     df0['PctChange'] = df0['Close'].pct_change()
     df0['Bull']      = df0['PctChange'] > 0
     bull = int(df0['Bull'].sum())
@@ -211,16 +206,20 @@ with tab3:
     c2.metric("Bull Days", bull, f"{bull/total*100:.1f}%")
     c3.metric("Bear Days", bear, f"{bear/total*100:.1f}%")
 
-# --- Tab 4: Detailed Metrics ---
+# --- Tab 4 ---
 with tab4:
     st.header(f"Detailed Metrics for {ticker}")
     slice_series = slice_lookback(df_hist, bb_period).dropna()
     df0 = slice_series.to_frame(name="Close")
+    df0['Close'] = pd.to_numeric(df0['Close'], errors='coerce')
+    df0 = df0.dropna()
     df0['PctChange'] = df0['Close'].pct_change()
     df0['Bull']      = df0['PctChange'] > 0
     bull = int(df0['Bull'].sum())
     bear = int((~df0['Bull']).sum())
-    df0['MA30']      = df0['Close'].rolling(window=30, min_periods=1).mean()
+
+    # ensure numeric before rolling
+    df0['MA30'] = df0['Close'].rolling(window=30, min_periods=1).mean()
 
     # Price + MA + Trend
     x = np.arange(len(df0))
