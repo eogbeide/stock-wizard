@@ -1,4 +1,4 @@
-import streamlit as std
+import streamlit as st
 import pandas as pd
 import requests
 from io import BytesIO
