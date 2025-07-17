@@ -170,7 +170,6 @@ with tab1:
             "Lower":    ci.iloc[:,0],
             "Upper":    ci.iloc[:,1]
         }, index=idx))
-
     else:
         st.info("Press **Run Forecast** above to see results here and in other tabs.")
 
@@ -284,12 +283,17 @@ with tab4:
         # 2) Compute MA30
         df0['MA30'] = df0['Close'].rolling(window=30, min_periods=1).mean()
 
-        # 3) Price Chart via matplotlib
-        st.subheader("Price Chart → Close + 30‑day MA")
+        # 3) Price Chart → Close + 30‑day MA + Trend Line
+        st.subheader("Price Chart → Close + 30‑day MA + Trend")
         fig, ax = plt.subplots(figsize=(14,5))
         ax.plot(df0.index, df0['Close'], label='Close')
         ax.plot(df0.index, df0['MA30'],  label='30‑day MA')
-        ax.set_title(f"{st.session_state.ticker} Price + 30‑day MA")
+        # trend line
+        x = np.arange(len(df0))
+        slope, intercept = np.polyfit(x, df0['Close'], 1)
+        trend = slope * x + intercept
+        ax.plot(df0.index, trend, "--", label="Trend Line")
+        ax.set_title(f"{st.session_state.ticker} Price + MA + Trend")
         ax.legend()
         st.pyplot(fig)
 
