@@ -281,16 +281,22 @@ with tab4:
     if not st.session_state.run_all:
         st.info("Run the forecast in Tab 1 first.")
     else:
-        df0 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
+        # 1) Download & prep
+        df0 = (
+            yf.download(st.session_state.ticker, period=bb_period)[['Close']]
+            .dropna()
+        )
         df0['PctChange'] = df0['Close'].pct_change()
-        df0['Bull']      = df0['PctChange'] > 0
+        df0['Bull'] = df0['PctChange'] > 0
 
-        # Ensure MA30 always exists, even on short series
+        # 2) Compute 30‑day MA (min_periods=1 ensures the column exists)
         df0['MA30'] = df0['Close'].rolling(window=30, min_periods=1).mean()
 
+        # 3) Price Chart with Close + MA30
         st.subheader("Price Chart → Close + 30‑day MA")
         st.line_chart(df0[['Close', 'MA30']], use_container_width=True)
 
+        # 4) Other charts
         st.subheader("Daily Percentage Change")
         st.line_chart(df0['PctChange'], use_container_width=True)
 
