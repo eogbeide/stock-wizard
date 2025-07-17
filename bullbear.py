@@ -37,11 +37,10 @@ mode      = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="glob
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2)
 ticker    = st.sidebar.selectbox(
     "Ticker:",
-    sorted([
-        'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
-        'META','SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO',
-        'MSFT','TSM','NFLX','MP','AAL','URI','DAL','BBAI','QUBT','AMD','SMCI'
-    ]) if mode=="Stock" else [
+    sorted(['AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
+            'META','SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO',
+            'MSFT','TSM','NFLX','MP','AAL','URI','DAL','BBAI','QUBT','AMD','SMCI'])
+    if mode=="Stock" else [
         'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X',
         'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X',
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X'
@@ -50,28 +49,27 @@ ticker    = st.sidebar.selectbox(
 )
 chart_view = st.sidebar.radio("Chart View:", ["Daily","Hourly","Both"], key="chart_view")
 
-# --- Caching data & models ---
+# --- Caching helpers ---
 @st.cache_data(show_spinner=False)
-def load_history(ticker: str):
-    df = (
+def load_history(ticker: str) -> pd.Series:
+    return (
         yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
         .asfreq("D")
         .fillna(method="ffill")
     )
-    return df
 
 @st.cache_data(show_spinner=False)
-def fit_forecast(df: pd.Series):
-    model = SARIMAX(df, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
-    fc = model.get_forecast(steps=30)
-    idx = pd.date_range(df.index[-1] + timedelta(1), periods=30, freq="D")
+def fit_forecast(series: pd.Series):
+    model = SARIMAX(series, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
+    fc    = model.get_forecast(steps=30)
+    idx   = pd.date_range(series.index[-1] + timedelta(1), periods=30, freq="D")
     return idx, fc.predicted_mean, fc.conf_int()
 
 @st.cache_data(show_spinner=False)
-def load_intraday(ticker: str):
+def load_intraday(ticker: str) -> pd.DataFrame:
     return yf.download(ticker, period="1d", interval="5m")
 
-# --- Helpers ---
+# --- Utility functions ---
 def compute_rsi(data, window=14):
     d    = data.diff()
     gain = d.where(d>0,0).rolling(window).mean()
@@ -84,6 +82,20 @@ def compute_bollinger_bands(data, window=20, num_sd=2):
     s = data.rolling(window).std()
     return m - num_sd*s, m, m + num_sd*s
 
+def slice_lookback(series: pd.Series, lookback: str) -> pd.Series:
+    if lookback.endswith("mo"):
+        months = int(lookback[:-2])
+        start  = series.index[-1] - pd.DateOffset(months=months)
+    else:  # assume years
+        years  = int(lookback[:-1])
+        start  = series.index[-1] - pd.DateOffset(years=years)
+    return series.loc[start:]
+
+# --- Load data once per ticker ---
+df_hist   = load_history(ticker)
+idx, fc_v, fc_ci = fit_forecast(df_hist)
+intraday  = load_intraday(ticker)
+
 # --- Tabs ---
 tab1, tab2, tab3, tab4 = st.tabs([
     "Original Forecast",
@@ -92,12 +104,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
     "Detailed Metrics"
 ])
 
-# --- Load & forecast once per ticker ---
-df_hist = load_history(ticker)
-idx, fc_vals, fc_ci = fit_forecast(df_hist)
-intraday = load_intraday(ticker)
-
-# --- Tab 1: Original Forecast ---
+# --- Tab 1 ---
 with tab1:
     st.header(f"Original Forecast for {ticker}")
     ema200 = df_hist.ewm(span=200).mean()
@@ -109,7 +116,7 @@ with tab1:
         ax.plot(df_hist[-360:], label="History")
         ax.plot(ema200[-360:], "--", label="200 EMA")
         ax.plot(ma30[-360:], "--", label="30 MA")
-        ax.plot(idx, fc_vals, label="Forecast")
+        ax.plot(idx, fc_v, label="Forecast")
         ax.fill_between(idx, fc_ci.iloc[:,0], fc_ci.iloc[:,1], alpha=0.3)
         ax.plot(lb[-360:], "--", label="Lower BB")
         ax.plot(ub[-360:], "--", label="Upper BB")
@@ -128,23 +135,24 @@ with tab1:
         st.pyplot(fig2)
 
     st.write(pd.DataFrame({
-        "Forecast": fc_vals,
+        "Forecast": fc_v,
         "Lower":    fc_ci.iloc[:,0],
         "Upper":    fc_ci.iloc[:,1]
     }, index=idx))
 
-# --- Tab 2: Enhanced Forecast ---
+# --- Tab 2 ---
 with tab2:
     st.header(f"Enhanced Forecast for {ticker}")
     rsi = compute_rsi(df_hist)
+
     if "Daily" in chart_view:
         fig, ax = plt.subplots(figsize=(14,6))
         ax.plot(df_hist[-360:], label="History")
         ax.plot(ema200[-360:], "--", label="200 EMA")
         ax.plot(ma30[-360:], "--", label="30 MA")
-        ax.plot(idx, fc_vals, label="Forecast")
+        ax.plot(idx, fc_v, label="Forecast")
         ax.fill_between(idx, fc_ci.iloc[:,0], fc_ci.iloc[:,1], alpha=0.3)
-        # Fibonacci
+        # fib levels
         high, low = df_hist[-360:].max(), df_hist[-360:].min()
         diff = high - low
         for lev in (0.236,0.382,0.5,0.618):
@@ -182,28 +190,31 @@ with tab2:
         st.pyplot(fig4)
 
     st.write(pd.DataFrame({
-        "Forecast": fc_vals,
+        "Forecast": fc_v,
         "Lower":    fc_ci.iloc[:,0],
         "Upper":    fc_ci.iloc[:,1]
     }, index=idx))
 
-# --- Tab 3: Bull vs Bear ---
+# --- Tab 3 ---
 with tab3:
     st.header(f"Bull vs Bear Summary for {ticker}")
-    df0 = df_hist[-pd.to_timedelta(bb_period)].to_frame().dropna()
+    slice_series = slice_lookback(df_hist, bb_period)
+    df0 = slice_series.to_frame(name="Close").dropna()
     df0['PctChange'] = df0['Close'].pct_change()
     df0['Bull']      = df0['PctChange'] > 0
     bull = int(df0['Bull'].sum())
     bear = int((~df0['Bull']).sum())
     total = bull + bear
-    st.metric("Total Days", total)
-    st.metric("Bull Days", bull, f"{bull/total*100:.1f}%")
-    st.metric("Bear Days", bear, f"{bear/total*100:.1f}%")
+    c1, c2, c3 = st.columns([1,1,1])
+    c1.metric("Total Days", total)
+    c2.metric("Bull Days", bull, f"{bull/total*100:.1f}%")
+    c3.metric("Bear Days", bear, f"{bear/total*100:.1f}%")
 
-# --- Tab 4: Detailed Metrics ---
+# --- Tab 4 ---
 with tab4:
     st.header(f"Detailed Metrics for {ticker}")
-    df0 = df_hist[-pd.to_timedelta(bb_period)].to_frame().dropna()
+    slice_series = slice_lookback(df_hist, bb_period)
+    df0 = slice_series.to_frame(name="Close").dropna()
     df0['PctChange'] = df0['Close'].pct_change()
     df0['Bull']      = df0['PctChange'] > 0
     df0['MA30']      = df0['Close'].rolling(window=30, min_periods=1).mean()
@@ -211,7 +222,7 @@ with tab4:
     # Price + MA + Trend
     x = np.arange(len(df0))
     slope, intercept = np.polyfit(x, df0['Close'], 1)
-    trend = slope * x + intercept
+    trend = slope*x + intercept
     fig, ax = plt.subplots(figsize=(14,4))
     ax.plot(df0.index, df0['Close'], label='Close')
     ax.plot(df0.index, df0['MA30'],  label='30‑day MA')
@@ -222,9 +233,9 @@ with tab4:
     st.subheader("Daily % Change")
     st.line_chart(df0['PctChange'], use_container_width=True)
 
-    st.subheader("Bull/Bear Dist.")
-    dist = pd.DataFrame({
-        "Bull": [bull],
-        "Bear": [bear]
-    })
-    st.bar_chart(dist.T)
+    st.subheader("Bull/Bear Distribution")
+    dist_df = pd.DataFrame({
+        "Type": ["Bull", "Bear"],
+        "Days": [bull, bear]
+    }).set_index("Type")
+    st.bar_chart(dist_df)
