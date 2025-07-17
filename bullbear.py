@@ -184,7 +184,7 @@ with tab2:
             sorted([
                 'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
                 'META','SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO',
-                'MSFT','TSM','NFLX','MP','AAL','URI','DAL'
+                'MSFT','TSM','NFLX','MP','AAL','URI','DAL','BBAI','QUBT','AMD','SMCI'
             ]),
             key="enh_stock_ticker"
         )
@@ -264,7 +264,7 @@ with tab2:
             [
                 'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X',
                 'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X',
-                'USDHKD=X','EURHKD=X','GBPHKD=X'
+                'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X'
             ],
             key="enh_forex_pair"
         )
