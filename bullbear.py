@@ -25,9 +25,7 @@ def auto_refresh():
         try: st.experimental_rerun()
         except: pass
 auto_refresh()
-st.sidebar.markdown(
-    f"**Last refresh:** {datetime.fromtimestamp(st.session_state.last_refresh).strftime('%Y-%m-%d %H:%M:%S')}"
-)
+st.sidebar.markdown(f"**Last refresh:** {datetime.fromtimestamp(st.session_state.last_refresh).strftime('%Y-%m-%d %H:%M:%S')}")
 
 # --- Sidebar config ---
 mode      = st.sidebar.selectbox("Forecast Mode:", ["Stock","Forex"])
@@ -86,7 +84,7 @@ def slice_lookback(series: pd.Series, lookback: str) -> pd.Series:
     else:
         years  = int(lookback[:-1])
         start  = series.index[-1] - pd.DateOffset(years=years)
-    return series.loc[start:]
+    return series[series.index >= start]
 
 # --- Load data ---
 df_hist      = load_history(ticker)
@@ -194,17 +192,13 @@ with tab2:
 # --- Tab 3: Bull vs Bear ---
 with tab3:
     st.header(f"Bull vs Bear Summary for {ticker}")
-    slice_series = slice_lookback(df_hist, bb_period).dropna()
-    # construct DataFrame directly
-    df0 = pd.DataFrame({'Close': slice_series})
-    df0['Close'] = pd.to_numeric(df0['Close'], errors='coerce')
-    df0 = df0.dropna()
+    series_slice = slice_lookback(df_hist, bb_period).dropna()
+    df0 = series_slice.to_frame(name="Close")
     df0['PctChange'] = df0['Close'].pct_change()
     df0['Bull']      = df0['PctChange'] > 0
     bull = int(df0['Bull'].sum())
     bear = int((~df0['Bull']).sum())
     total = bull + bear
-
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Days", total)
     c2.metric("Bull Days", bull, f"{bull/total*100:.1f}%")
@@ -213,19 +207,14 @@ with tab3:
 # --- Tab 4: Detailed Metrics ---
 with tab4:
     st.header(f"Detailed Metrics for {ticker}")
-    slice_series = slice_lookback(df_hist, bb_period).dropna()
-    df0 = pd.DataFrame({'Close': slice_series})
-    df0['Close'] = pd.to_numeric(df0['Close'], errors='coerce')
-    df0 = df0.dropna()
+    series_slice = slice_lookback(df_hist, bb_period).dropna()
+    df0 = series_slice.to_frame(name="Close")
     df0['PctChange'] = df0['Close'].pct_change()
     df0['Bull']      = df0['PctChange'] > 0
     bull = int(df0['Bull'].sum())
     bear = int((~df0['Bull']).sum())
+    df0['MA30']      = df0['Close'].rolling(window=30, min_periods=1).mean()
 
-    # now numeric, safe to roll
-    df0['MA30'] = df0['Close'].rolling(window=30, min_periods=1).mean()
-
-    # Price + MA + Trend
     x = np.arange(len(df0))
     slope, intercept = np.polyfit(x, df0['Close'], 1)
     trend = slope * x + intercept
