@@ -69,7 +69,7 @@ with tab1:
             sorted([
                 'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
                 'META','SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO',
-                'MSFT','TSM','NFLX','MP','AAL','URI','DAL'
+                'MSFT','TSM','NFLX','MP','AAL','URI','DAL','BBAI','QUBT','AMD','SMCI'
             ]),
             key="orig_stock_ticker"
         )
