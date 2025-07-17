@@ -1,4 +1,4 @@
-import streamlit as stbb
+import streamlit as stvx
 import pandas as pd
 import numpy as np
 import yfinance as yf
