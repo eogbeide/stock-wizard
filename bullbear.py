@@ -24,21 +24,26 @@ def auto_refresh():
         st.session_state.last_refresh = time.time()
         try: st.experimental_rerun()
         except: pass
+
 auto_refresh()
-st.sidebar.markdown(f"**Last refresh:** {datetime.fromtimestamp(st.session_state.last_refresh):%Y-%m-%d %H:%M:%S}")
+st.sidebar.markdown(
+    f"**Last refresh:** {datetime.fromtimestamp(st.session_state.last_refresh).strftime('%Y-%m-%d %H:%M:%S')}"
+)
 
 # --- Sidebar config ---
 mode      = st.sidebar.selectbox("Forecast Mode:", ["Stock","Forex"])
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo","3mo","6mo","1y"], index=2)
 ticker    = st.sidebar.selectbox(
     "Ticker:",
-    sorted(['AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
-            'META','SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO',
-            'MSFT','TSM','NFLX','MP','AAL','URI','DAL','BBAI','QUBT','AMD','SMCI'])
-    if mode=="Stock" else
-    ['EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X',
-     'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X',
-     'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X']
+    sorted([
+        'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
+        'META','SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO',
+        'MSFT','TSM','NFLX','MP','AAL','URI','DAL','BBAI','QUBT','AMD','SMCI'
+    ]) if mode=="Stock" else [
+        'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X',
+        'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X',
+        'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X'
+    ]
 )
 chart_view = st.sidebar.radio("Chart View:", ["Daily","Hourly","Both"])
 
@@ -65,8 +70,8 @@ def load_intraday(tkr):
 # --- Utilities ---
 def compute_rsi(data, window=14):
     d    = data.diff()
-    gain = d.where(d>0,0).rolling(window).mean()
-    loss = -d.where(d<0,0).rolling(window).mean()
+    gain = d.where(d>0, 0).rolling(window).mean()
+    loss = -d.where(d<0, 0).rolling(window).mean()
     rs   = gain/loss
     return 100 - (100/(1+rs))
 
@@ -84,10 +89,10 @@ def slice_lookback(series, lookback):
         start  = series.index[-1] - pd.DateOffset(years=years)
     return series.loc[start:]
 
-# --- Load data once ---
-df_hist = load_history(ticker)
+# --- Load data once per ticker ---
+df_hist      = load_history(ticker)
 idx, fc_vals, fc_ci = fit_forecast(df_hist)
-intraday = load_intraday(ticker)
+intraday     = load_intraday(ticker)
 
 # --- Tabs ---
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -190,13 +195,15 @@ with tab2:
 # --- Tab 3: Bull vs Bear ---
 with tab3:
     st.header(f"Bull vs Bear Summary for {ticker}")
-    series_slice = slice_lookback(df_hist, bb_period)
-    df0 = pd.DataFrame({'Close': series_slice}).dropna()
+    slice_series = slice_lookback(df_hist, bb_period).dropna()
+    slice_series.name = "Close"
+    df0 = slice_series.to_frame()
     df0['PctChange'] = df0['Close'].pct_change()
     df0['Bull']      = df0['PctChange'] > 0
     bull = int(df0['Bull'].sum())
     bear = int((~df0['Bull']).sum())
     total = bull + bear
+
     c1, c2, c3 = st.columns(3)
     c1.metric("Total Days", total)
     c2.metric("Bull Days", bull, f"{bull/total*100:.1f}%")
@@ -205,8 +212,9 @@ with tab3:
 # --- Tab 4: Detailed Metrics ---
 with tab4:
     st.header(f"Detailed Metrics for {ticker}")
-    series_slice = slice_lookback(df_hist, bb_period)
-    df0 = pd.DataFrame({'Close': series_slice}).dropna()
+    slice_series = slice_lookback(df_hist, bb_period).dropna()
+    slice_series.name = "Close"
+    df0 = slice_series.to_frame()
     df0['PctChange'] = df0['Close'].pct_change()
     df0['Bull']      = df0['PctChange'] > 0
     bull = int(df0['Bull'].sum())
@@ -216,7 +224,7 @@ with tab4:
     # Price + MA + Trend
     x = np.arange(len(df0))
     slope, intercept = np.polyfit(x, df0['Close'], 1)
-    trend = slope*x + intercept
+    trend = slope * x + intercept
     fig, ax = plt.subplots(figsize=(14,4))
     ax.plot(df0.index, df0['Close'], label='Close')
     ax.plot(df0.index, df0['MA30'],  label='30‑day MA')
