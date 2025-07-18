@@ -204,7 +204,6 @@ with tab2:
             ax.plot(ma30[-360:], "--", label="30 MA")
             ax.plot(idx, vals, label="Forecast")
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
-            # Fibonacci levels
             high, low = df[-360:].max(), df[-360:].min()
             diff = high - low
             for lev in (0.236, 0.382, 0.5, 0.618):
@@ -213,7 +212,6 @@ with tab2:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-            # RSI subplot
             fig2, ax2 = plt.subplots(figsize=(14,3))
             ax2.plot(rsi[-360:], label="RSI(14)")
             ax2.axhline(70, linestyle="--")
@@ -284,6 +282,7 @@ with tab4:
     if not st.session_state.run_all:
         st.info("Run the forecast in Tab 1 first.")
     else:
+        # Lookback‑period metrics
         df0 = (
             yf.download(st.session_state.ticker, period=bb_period)[['Close']]
             .dropna()
@@ -293,17 +292,17 @@ with tab4:
         df0['MA30']      = df0['Close'].rolling(window=30, min_periods=1).mean()
 
         st.subheader("Price Chart → Close + 30‑day MA + Trend")
-        x = np.arange(len(df0))
-        slope, intercept = np.polyfit(x, df0['Close'], 1)
-        trend = slope * x + intercept
+        x0 = np.arange(len(df0))
+        slope0, intercept0 = np.polyfit(x0, df0['Close'], 1)
+        trend0 = slope0 * x0 + intercept0
 
-        fig, ax = plt.subplots(figsize=(14,5))
-        ax.plot(df0.index, df0['Close'], label='Close')
-        ax.plot(df0.index, df0['MA30'],  label='30‑day MA')
-        ax.plot(df0.index, trend, "--",   label='Trend')
-        ax.set_title(f"{st.session_state.ticker} Price + MA + Trend")
-        ax.legend()
-        st.pyplot(fig)
+        fig0, ax0 = plt.subplots(figsize=(14,5))
+        ax0.plot(df0.index, df0['Close'], label='Close')
+        ax0.plot(df0.index, df0['MA30'],  label='30‑day MA')
+        ax0.plot(df0.index, trend0, "--",   label='Trend')
+        ax0.set_title(f"{st.session_state.ticker} Price + MA + Trend ({bb_period} lookback)")
+        ax0.legend()
+        st.pyplot(fig0)
 
         st.subheader("Daily Percentage Change")
         st.line_chart(df0['PctChange'], use_container_width=True)
@@ -314,3 +313,20 @@ with tab4:
             "Days": [int(df0['Bull'].sum()), int((~df0['Bull']).sum())]
         })
         st.bar_chart(dist_df.set_index("Type"), use_container_width=True)
+
+        # Full‑history daily chart
+        st.markdown("---")
+        st.subheader("Daily Chart → Full History Close + 30‑day MA + Trend")
+        df_hist = st.session_state.df_hist
+        ma30_all = df_hist.rolling(window=30, min_periods=1).mean()
+        x1 = np.arange(len(df_hist))
+        slope1, intercept1 = np.polyfit(x1, df_hist.values, 1)
+        trend1 = slope1 * x1 + intercept1
+
+        fig1, ax1 = plt.subplots(figsize=(14,5))
+        ax1.plot(df_hist.index, df_hist,     label='Close')
+        ax1.plot(df_hist.index, ma30_all,     label='30‑day MA')
+        ax1.plot(df_hist.index, trend1, "--", label='Trend')
+        ax1.set_title(f"{st.session_state.ticker} Daily Price + MA + Trend (Full History)")
+        ax1.legend(loc="lower left", framealpha=0.5)
+        st.pyplot(fig1)
