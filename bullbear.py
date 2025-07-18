@@ -282,7 +282,7 @@ with tab4:
     if not st.session_state.run_all:
         st.info("Run the forecast in Tab 1 first.")
     else:
-        # Lookback‑period metrics
+        # 1) Lookback‑period metrics
         df0 = (
             yf.download(st.session_state.ticker, period=bb_period)[['Close']]
             .dropna()
@@ -304,29 +304,35 @@ with tab4:
         ax0.legend()
         st.pyplot(fig0)
 
+        # 2) Full‑history chart but only last 3 months
+        st.markdown("---")
+        st.subheader("Daily Chart → Last 3 Months Close + 30‑day MA + Trend")
+        df_hist = st.session_state.df_hist
+        cutoff = df_hist.index.max() - pd.Timedelta(days=90)
+        df3m = df_hist[df_hist.index >= cutoff]
+
+        ma30_3m = df3m.rolling(window=30, min_periods=1).mean()
+        x2 = np.arange(len(df3m))
+        slope2, intercept2 = np.polyfit(x2, df3m.values, 1)
+        trend2 = slope2 * x2 + intercept2
+
+        fig1, ax1 = plt.subplots(figsize=(14,5))
+        ax1.plot(df3m.index, df3m,      label='Close')
+        ax1.plot(df3m.index, ma30_3m,   label='30‑day MA')
+        ax1.plot(df3m.index, trend2,   "--", label='Trend')
+        ax1.set_title(f"{st.session_state.ticker} Daily Price + MA + Trend (Last 3 Months)")
+        ax1.legend(loc="lower left", framealpha=0.5)
+        st.pyplot(fig1)
+
+        # 3) Daily Percentage Change (lookback period)
+        st.markdown("---")
         st.subheader("Daily Percentage Change")
         st.line_chart(df0['PctChange'], use_container_width=True)
 
+        # 4) Bull/Bear Distribution (lookback period)
         st.subheader("Bull/Bear Distribution")
         dist_df = pd.DataFrame({
             "Type": ["Bull", "Bear"],
             "Days": [int(df0['Bull'].sum()), int((~df0['Bull']).sum())]
         })
         st.bar_chart(dist_df.set_index("Type"), use_container_width=True)
-
-        # Full‑history daily chart
-        st.markdown("---")
-        st.subheader("Daily Chart → Full History Close + 30‑day MA + Trend")
-        df_hist = st.session_state.df_hist
-        ma30_all = df_hist.rolling(window=30, min_periods=1).mean()
-        x1 = np.arange(len(df_hist))
-        slope1, intercept1 = np.polyfit(x1, df_hist.values, 1)
-        trend1 = slope1 * x1 + intercept1
-
-        fig1, ax1 = plt.subplots(figsize=(14,5))
-        ax1.plot(df_hist.index, df_hist,     label='Close')
-        ax1.plot(df_hist.index, ma30_all,     label='30‑day MA')
-        ax1.plot(df_hist.index, trend1, "--", label='Trend')
-        ax1.set_title(f"{st.session_state.ticker} Daily Price + MA + Trend (Full History)")
-        ax1.legend(loc="lower left", framealpha=0.5)
-        st.pyplot(fig1)
