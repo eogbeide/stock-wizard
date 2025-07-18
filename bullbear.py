@@ -308,7 +308,7 @@ with tab4:
         st.markdown("---")
         st.subheader("Daily Chart → Last 3 Months Close + 30‑day MA + Trend")
         df_hist = st.session_state.df_hist
-        cutoff = df_hist.index.max() - pd.Timedelta(days=90)
+        cutoff = df_hist.index.max() - pd.Timedelta(days=180)
         df3m = df_hist[df_hist.index >= cutoff]
 
         ma30_3m = df3m.rolling(window=30, min_periods=1).mean()
