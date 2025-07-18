@@ -282,7 +282,27 @@ with tab4:
     if not st.session_state.run_all:
         st.info("Run the forecast in Tab 1 first.")
     else:
-        # 1) Lookback‑period metrics
+        # 1) Full‑history chart but only last 3 months
+        st.subheader("Daily Chart → Last 3 Months Close + 30‑day MA + Trend")
+        df_hist = st.session_state.df_hist
+        cutoff = df_hist.index.max() - pd.Timedelta(days=180)
+        df3m = df_hist[df_hist.index >= cutoff]
+
+        ma30_3m = df3m.rolling(window=30, min_periods=1).mean()
+        x2 = np.arange(len(df3m))
+        slope2, intercept2 = np.polyfit(x2, df3m.values, 1)
+        trend2 = slope2 * x2 + intercept2
+
+        fig1, ax1 = plt.subplots(figsize=(14,5))
+        ax1.plot(df3m.index, df3m,      label='Close')
+        ax1.plot(df3m.index, ma30_3m,   label='30‑day MA')
+        ax1.plot(df3m.index, trend2,   "--", label='Trend')
+        ax1.set_title(f"{st.session_state.ticker} Daily Price + MA + Trend (Last 3 Months)")
+        ax1.legend(loc="lower left", framealpha=0.5)
+        st.pyplot(fig1)
+
+        # 2) Lookback‑period metrics
+        st.markdown("---")
         df0 = (
             yf.download(st.session_state.ticker, period=bb_period)[['Close']]
             .dropna()
@@ -303,26 +323,6 @@ with tab4:
         ax0.set_title(f"{st.session_state.ticker} Price + MA + Trend ({bb_period} lookback)")
         ax0.legend()
         st.pyplot(fig0)
-
-        # 2) Full‑history chart but only last 3 months
-        st.markdown("---")
-        st.subheader("Daily Chart → Last 3 Months Close + 30‑day MA + Trend")
-        df_hist = st.session_state.df_hist
-        cutoff = df_hist.index.max() - pd.Timedelta(days=180)
-        df3m = df_hist[df_hist.index >= cutoff]
-
-        ma30_3m = df3m.rolling(window=30, min_periods=1).mean()
-        x2 = np.arange(len(df3m))
-        slope2, intercept2 = np.polyfit(x2, df3m.values, 1)
-        trend2 = slope2 * x2 + intercept2
-
-        fig1, ax1 = plt.subplots(figsize=(14,5))
-        ax1.plot(df3m.index, df3m,      label='Close')
-        ax1.plot(df3m.index, ma30_3m,   label='30‑day MA')
-        ax1.plot(df3m.index, trend2,   "--", label='Trend')
-        ax1.set_title(f"{st.session_state.ticker} Daily Price + MA + Trend (Last 3 Months)")
-        ax1.legend(loc="lower left", framealpha=0.5)
-        st.pyplot(fig1)
 
         # 3) Daily Percentage Change (lookback period)
         st.markdown("---")
