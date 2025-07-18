@@ -283,7 +283,7 @@ with tab4:
         st.info("Run the forecast in Tab 1 first.")
     else:
         # 1) Full‑history chart but only last 3 months
-        st.subheader("Daily Chart → Last 3 Months Close + 30‑day MA + Trend")
+        st.subheader("Daily Chart → Last 6 Months Close + 30‑day MA + Trend")
         df_hist = st.session_state.df_hist
         cutoff = df_hist.index.max() - pd.Timedelta(days=180)
         df3m = df_hist[df_hist.index >= cutoff]
