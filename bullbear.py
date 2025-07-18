@@ -36,7 +36,6 @@ st.sidebar.markdown(
 st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="global_mode")
 
-# universe for multi-select
 if mode == "Stock":
     universe = sorted([
         'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
@@ -112,18 +111,20 @@ with tab1:
             st.session_state.forecasts.clear()
             prog = st.progress(0)
             for i, tk in enumerate(tickers):
+                # daily history
                 df_hist = (
                     yf.download(tk, start="2018-01-01", end=pd.to_datetime("today"))['Close']
-                    .asfreq("D")
-                    .fillna(method="ffill")
+                    .asfreq("D").fillna(method="ffill")
                 )
                 st.session_state.data[tk] = df_hist
 
+                # forecast
                 model = safe_sarimax(df_hist, (1,1,1), (1,1,1,12))
                 fc = model.get_forecast(steps=30)
                 idx = pd.date_range(df_hist.index[-1] + timedelta(1), periods=30, freq="D")
                 st.session_state.forecasts[tk] = (idx, fc.predicted_mean, fc.conf_int())
 
+                # intraday
                 st.session_state.intraday[tk] = yf.download(tk, period="1d", interval="5m")
                 prog.progress(int((i+1)/len(tickers)*100))
 
@@ -255,7 +256,10 @@ with tab4:
         tk = tickers[0]
         # 1) Full‑history chart (last 3 months)
         st.subheader("Daily Chart → Last 3 Months Close + 30‑day MA + Trend")
-        df_hist = st.session_state.data[tk]
+        df_hist = (
+            yf.download(tk, start="2018-01-01", end=pd.to_datetime("today"))['Close']
+            .asfreq("D").fillna(method="ffill")
+        )
         cutoff = df_hist.index.max() - pd.Timedelta(days=90)
         df3m = df_hist[df_hist.index >= cutoff]
         ma30_3m = df3m.rolling(window=30, min_periods=1).mean()
