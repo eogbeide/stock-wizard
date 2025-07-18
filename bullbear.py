@@ -297,7 +297,7 @@ with tab4:
         ax1.plot(df3m.index, df3m,      label='Close')
         ax1.plot(df3m.index, ma30_3m,   label='30‑day MA')
         ax1.plot(df3m.index, trend2,   "--", label='Trend')
-        ax1.set_title(f"{st.session_state.ticker} Daily Price + MA + Trend (Last 3 Months)")
+        ax1.set_title(f"{st.session_state.ticker} Daily Price + MA + Trend (Last 6 Months)")
         ax1.legend(loc="lower left", framealpha=0.5)
         st.pyplot(fig1)
 
