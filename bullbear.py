@@ -37,7 +37,7 @@ st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"])
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2)
 
-# Universe lists
+# Universe for selection
 if mode == "Stock":
     universe = sorted([
         'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
@@ -51,65 +51,68 @@ else:
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X'
     ]
 
-# --- CACHED fetch & compute functions ---
-@st.cache_data(show_spinner=False)
+# --- Caching helpers ---
+@st.cache_data
 def fetch_hist(ticker: str) -> pd.Series:
-    df = (
+    return (
         yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
         .asfreq("D").fillna(method="ffill")
     )
-    return df
 
-@st.cache_data(show_spinner=False)
+@st.cache_data
 def fetch_intraday(ticker: str) -> pd.DataFrame:
     return yf.download(ticker, period="1d", interval="5m")
 
-@st.cache_data(show_spinner=False)
-def compute_sarimax_forecast(df: pd.Series):
-    # fit model & forecast 30 days
+@st.cache_data
+def compute_sarimax_forecast(series: pd.Series):
     try:
-        model = SARIMAX(df, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
+        model = SARIMAX(series, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
     except np.linalg.LinAlgError:
-        model = SARIMAX(df, order=(1,1,1), seasonal_order=(1,1,1,12),
-                        enforce_stationarity=False, enforce_invertibility=False).fit(disp=False)
+        model = SARIMAX(
+            series,
+            order=(1,1,1),
+            seasonal_order=(1,1,1,12),
+            enforce_stationarity=False,
+            enforce_invertibility=False
+        ).fit(disp=False)
     fc = model.get_forecast(steps=30)
-    idx = pd.date_range(df.index[-1] + timedelta(1), periods=30, freq="D")
+    idx = pd.date_range(series.index[-1] + timedelta(1), periods=30, freq="D")
     return idx, fc.predicted_mean, fc.conf_int()
 
 # Indicator helpers
 def compute_rsi(data, window=14):
     d = data.diff()
-    gain = d.where(d>0,0).rolling(window).mean()
-    loss = -d.where(d<0,0).rolling(window).mean()
+    gain = d.where(d > 0, 0).rolling(window).mean()
+    loss = -d.where(d < 0, 0).rolling(window).mean()
     rs = gain / loss
-    return 100 - (100/(1+rs))
+    return 100 - (100 / (1 + rs))
 
 def compute_bollinger_bands(data, window=20, num_sd=2):
     m = data.rolling(window).mean()
     s = data.rolling(window).std()
-    return m-num_sd*s, m, m+num_sd*s
+    return m - num_sd*s, m, m + num_sd*s
 
-# --- Prepare state ---
+# --- Session state init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
 
 # --- Tabs ---
 tab1, tab2, tab3, tab4 = st.tabs([
-    "🇺🇸 Original US Forecast",
-    "🇺🇸 Enhanced US Forecast",
-    "🐂 Bull vs Bear Summary",
-    "📊 Detailed Metrics"
+    "Original Forecast",
+    "Enhanced Forecast",
+    "Bull vs Bear",
+    "Metrics"
 ])
 
-# --- Tab 1: Original US Forecast ---
+# --- Tab 1: Original Forecast ---
 with tab1:
-    st.header("🇺🇸 Original US Forecast")
-    st.info("Select a ticker and click **Run Forecast** once.  Subsequent runs use cached data.")
+    st.header("Original Forecast")
+    st.info("Choose a ticker and click **Run Forecast** (results are cached).")
+
     ticker = st.selectbox("Ticker:", universe, key="orig_ticker")
     chart = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_chart")
 
-    if st.button("Run Forecast", key="orig_btn"):
-        # fetch & cache
+    if st.button("Run Forecast", key="run"):
         df_hist = fetch_hist(ticker)
         st.session_state.df_hist = df_hist
         idx, vals, ci = compute_sarimax_forecast(df_hist)
@@ -119,7 +122,7 @@ with tab1:
         st.session_state.chart = chart
         st.session_state.mode = mode
         st.session_state.run_all = True
-        st.success(f"Forecast ready for {ticker} (cached)")
+        st.success(f"Forecast ready for {ticker}")
 
     if st.session_state.run_all and st.session_state.ticker == ticker:
         df = st.session_state.df_hist
@@ -129,7 +132,7 @@ with tab1:
             ema200 = df.ewm(span=200).mean()
             ma30   = df.rolling(30).mean()
             lb, mb, ub = compute_bollinger_bands(df)
-            fig, ax = plt.subplots(figsize=(14,7))
+            fig, ax = plt.subplots(figsize=(14,6))
             ax.plot(df[-360:], label="History")
             ax.plot(ema200[-360:], "--", label="200 EMA")
             ax.plot(ma30[-360:], "--", label="30 MA")
@@ -137,8 +140,7 @@ with tab1:
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
             ax.plot(lb[-360:], "--", label="Lower BB")
             ax.plot(ub[-360:], "--", label="Upper BB")
-            ax.set_title(f"{ticker} Daily Forecast")
-            ax.legend(loc="lower left", framealpha=0.5)
+            ax.legend()
             st.pyplot(fig)
 
         if chart in ("Hourly","Both"):
@@ -148,22 +150,17 @@ with tab1:
             else:
                 hc = intraday["Close"].ffill()
                 he = hc.ewm(span=20).mean()
-                fig2, ax2 = plt.subplots(figsize=(14,5))
+                fig2, ax2 = plt.subplots(figsize=(14,4))
                 ax2.plot(hc, label="Intraday")
                 ax2.plot(he, "--", label="20 EMA")
-                ax2.set_title(f"{ticker} Intraday (5m)")
-                ax2.legend(loc="lower left", framealpha=0.5)
+                ax2.legend()
                 st.pyplot(fig2)
 
-        st.write(pd.DataFrame({
-            "Forecast": vals,
-            "Lower":    ci.iloc[:,0],
-            "Upper":    ci.iloc[:,1]
-        }, index=idx))
+        st.write(pd.DataFrame({"Forecast": vals, "Lower": ci.iloc[:,0], "Upper": ci.iloc[:,1]}, index=idx))
 
-# --- Tab 2: Enhanced US Forecast ---
+# --- Tab 2: Enhanced Forecast ---
 with tab2:
-    st.header("🇺🇸 Enhanced US Forecast")
+    st.header("Enhanced Forecast")
     if not st.session_state.run_all:
         st.info("Run Tab 1 first.")
     else:
@@ -177,18 +174,16 @@ with tab2:
 
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
         if view in ("Daily","Both"):
-            fig, ax = plt.subplots(figsize=(14,7))
+            fig, ax = plt.subplots(figsize=(14,6))
             ax.plot(df[-360:], label="History")
             ax.plot(ema200[-360:], "--", label="200 EMA")
             ax.plot(ma30[-360:], "--", label="30 MA")
             ax.plot(idx, vals, label="Forecast")
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
-            high, low = df[-360:].max(), df[-360:].min()
-            diff = high - low
             for lev in (0.236,0.382,0.5,0.618):
-                ax.hlines(high - diff*lev, df.index[-360], df.index[-1], linestyles="dotted")
-            ax.set_title(f"{ticker} Daily + Fib")
-            ax.legend(loc="lower left", framealpha=0.5)
+                ax.hlines(df[-360:].max()- (df[-360:].max()-df[-360:].min())*lev,
+                          df.index[-360], df.index[-1], linestyles="dotted")
+            ax.legend()
             st.pyplot(fig)
 
             fig2, ax2 = plt.subplots(figsize=(14,3))
@@ -201,88 +196,91 @@ with tab2:
             if intraday.empty:
                 st.warning("No intraday data.")
             else:
-                ic = intraday["Close"].ffill(); ie = ic.ewm(span=20).mean()
-                lb2, mb2, ub2 = compute_bollinger_bands(ic); ri = compute_rsi(ic)
+                ic = intraday["Close"].ffill()
+                ie = ic.ewm(span=20).mean()
+                lb2, mb2, ub2 = compute_bollinger_bands(ic)
+                ri = compute_rsi(ic)
 
-                fig3, ax3 = plt.subplots(figsize=(14,5))
-                ax3.plot(ic, label="Intraday"); ax3.plot(ie, "--", label="20 EMA")
-                ax3.plot(lb2, "--", label="Lower BB"); ax3.plot(ub2, "--", label="Upper BB")
-                ax3.set_title(f"{ticker} Intraday + Fib"); ax3.legend(loc="lower left", framealpha=0.5)
+                fig3, ax3 = plt.subplots(figsize=(14,4))
+                ax3.plot(ic, label="Intraday")
+                ax3.plot(ie, "--", label="20 EMA")
+                ax3.plot(lb2, "--", label="Lower BB")
+                ax3.plot(ub2, "--", label="Upper BB")
+                ax3.legend()
                 st.pyplot(fig3)
 
-                fig4, ax4 = plt.subplots(figsize=(14,2))
-                ax4.plot(ri, label="RSI(14)"); ax4.axhline(70, linestyle="--"); ax4.axhline(30, linestyle="--")
+                fig4, ax4 = plt.subplots(figsize=(14,3))
+                ax4.plot(ri, label="RSI(14)")
+                ax4.axhline(70, linestyle="--"); ax4.axhline(30, linestyle="--")
                 ax4.legend(); st.pyplot(fig4)
 
-        st.write(pd.DataFrame({
-            "Forecast": vals,
-            "Lower":    ci.iloc[:,0],
-            "Upper":    ci.iloc[:,1]
-        }, index=idx))
+        st.write(pd.DataFrame({"Forecast": vals, "Lower": ci.iloc[:,0], "Upper": ci.iloc[:,1]}, index=idx))
 
-# --- Tab 3: Bull vs Bear Summary ---
+# --- Tab 3: Bull vs Bear ---
 with tab3:
-    st.header("🐂 Bull vs Bear Summary")
+    st.header("Bull vs Bear Summary")
     if not st.session_state.run_all:
         st.info("Run Tab 1 first.")
     else:
         ticker = st.session_state.ticker
-        df0 = fetch_hist(ticker).to_frame("Close")  # cached
-        df0['Close'] = df0['Close'].rolling(1).mean()  # ensure series→df
-        df0 = df0.tail(0) if bb_period == "" else df0  # no change; we only need pct
-        df0 = df0 if False else df0  # placeholder
-        df0 = pd.DataFrame({'Close': fetch_hist(ticker)})[-1:]  # workaround
-        df0 = pd.DataFrame({'Close': fetch_hist(ticker)}).tail(0) if False else pd.DataFrame({'Close': fetch_hist(ticker)})
-        # Instead, use yfinance for lookback:
         df3 = yf.download(ticker, period=bb_period)[['Close']].dropna()
         df3['PctChange'] = df3['Close'].pct_change()
-        df3['Bull'] = df3['PctChange']>0
-        bull = int(df3['Bull'].sum()); bear=int((~df3['Bull']).sum())
-        total=bull+bear; bp=bull/total*100 if total else 0; brp=bear/total*100 if total else 0
-
-        c1,c2,c3,c4=st.columns(4)
+        df3['Bull'] = df3['PctChange'] > 0
+        bull, bear = int(df3['Bull'].sum()), int((~df3['Bull']).sum())
+        total = bull + bear
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total Days", total)
-        c2.metric("Bull Days", bull, f"{bp:.1f}%")
-        c3.metric("Bear Days", bear, f"{brp:.1f}%")
+        c2.metric("Bull Days", bull, f"{bull/total*100:.1f}%")
+        c3.metric("Bear Days", bear, f"{bear/total*100:.1f}%")
         c4.metric("Lookback", bb_period)
 
-# --- Tab 4: Detailed Metrics ---
+# --- Tab 4: Metrics ---
 with tab4:
-    st.header("📊 Detailed Metrics")
+    st.header("Detailed Metrics")
     if not st.session_state.run_all:
         st.info("Run Tab 1 first.")
     else:
         ticker = st.session_state.ticker
         df_hist = fetch_hist(ticker)
 
-        # 1) Full‑history (last 90d)
-        st.subheader("Daily Chart → Last 3 Months Close + 30‑day MA + Trend")
+        # Full history (last 3mo)
+        st.subheader("Last 3 Months: Close + 30‑day MA + Trend")
         cutoff = df_hist.index.max() - pd.Timedelta(days=90)
-        df3m = df_hist[df_hist.index>=cutoff]
+        df3m = df_hist[df_hist.index >= cutoff]
         ma30_3m = df3m.rolling(30, min_periods=1).mean()
-        x2=np.arange(len(df3m)); slope2,intercept2=np.polyfit(x2,df3m.values,1); trend2=slope2*x2+intercept2
-        fig1,ax1=plt.subplots(figsize=(14,5))
-        ax1.plot(df3m.index,df3m,label='Close'); ax1.plot(df3m.index,ma30_3m,label='30‑day MA')
-        ax1.plot(df3m.index,trend2,"--",label='Trend')
-        ax1.set_title(f"{ticker} Daily Price + MA + Trend (Last 3 Months)")
-        ax1.legend(loc="lower left",framealpha=0.5); st.pyplot(fig1)
+        x = np.arange(len(df3m))
+        slope, intercept = np.polyfit(x, df3m.values, 1)
+        trend = slope*x + intercept
+        fig, ax = plt.subplots(figsize=(14,5))
+        ax.plot(df3m.index, df3m, label="Close")
+        ax.plot(df3m.index, ma30_3m, label="30‑day MA")
+        ax.plot(df3m.index, trend, "--", label="Trend")
+        ax.legend(); st.pyplot(fig)
 
-        # 2) Lookback metrics
+        # Lookback metrics
         st.markdown("---")
         df0 = yf.download(ticker, period=bb_period)[['Close']].dropna()
-        df0['PctChange']=df0['Close'].pct_change(); df0['Bull']=df0['PctChange']>0
-        df0['MA30']=df0['Close'].rolling(30,min_periods=1).mean()
-        x0=np.arange(len(df0)); slope0,intercept0=np.polyfit(x0,df0['Close'],1); trend0=slope0*x0+intercept0
-        fig0,ax0=plt.subplots(figsize=(14,5))
-        ax0.plot(df0.index,df0['Close'],label='Close'); ax0.plot(df0.index,df0['MA30'],label='30‑day MA')
-        ax0.plot(df0.index,trend0,"--",label='Trend')
-        ax0.set_title(f"{ticker} Price + MA + Trend ({bb_period})"); ax0.legend(); st.pyplot(fig0)
+        df0['PctChange'] = df0['Close'].pct_change()
+        df0['Bull'] = df0['PctChange'] > 0
+        df0['MA30'] = df0['Close'].rolling(30, min_periods=1).mean()
 
-        # 3) % Change
-        st.markdown("---"); st.subheader("Daily Percentage Change")
+        st.subheader("Close + 30‑day MA + Trend")
+        x0 = np.arange(len(df0))
+        slope0, intercept0 = np.polyfit(x0, df0['Close'], 1)
+        trend0 = slope0*x0 + intercept0
+        fig0, ax0 = plt.subplots(figsize=(14,5))
+        ax0.plot(df0.index, df0['Close'], label="Close")
+        ax0.plot(df0.index, df0['MA30'], label="30‑day MA")
+        ax0.plot(df0.index, trend0, "--", label="Trend")
+        ax0.legend(); st.pyplot(fig0)
+
+        st.markdown("---")
+        st.subheader("Daily % Change")
         st.line_chart(df0['PctChange'], use_container_width=True)
 
-        # 4) Bull/Bear distribution
         st.subheader("Bull/Bear Distribution")
-        dist_df=pd.DataFrame({"Type":["Bull","Bear"],"Days":[int(df0['Bull'].sum()),int((~df0['Bull']).sum())]})
-        st.bar_chart(dist_df.set_index("Type"), use_container_width=True)
+        dist = pd.DataFrame({
+            "Type": ["Bull", "Bear"],
+            "Days": [int(df0['Bull'].sum()), int((~df0['Bull']).sum())]
+        }).set_index("Type")
+        st.bar_chart(dist, use_container_width=True)
