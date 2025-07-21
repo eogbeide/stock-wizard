@@ -149,10 +149,16 @@ with tab1:
                 st.warning("No intraday data.")
             else:
                 hc = intraday["Close"].ffill()
+                # compute hourly trendline
+                xh = np.arange(len(hc))
+                slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
+                trend_h = slope_h * xh + intercept_h
+
                 he = hc.ewm(span=20).mean()
                 fig2, ax2 = plt.subplots(figsize=(14,4))
-                ax2.plot(hc, label="Intraday")
-                ax2.plot(he, "--", label="20 EMA")
+                ax2.plot(hc.index, hc, label="Intraday")
+                ax2.plot(hc.index, trend_h, "--", label="Trend")
+                ax2.plot(hc.index, he, "--", label="20 EMA")
                 ax2.legend()
                 st.pyplot(fig2)
 
@@ -181,10 +187,9 @@ with tab2:
             ax.plot(idx, vals, label="Forecast")
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
             for lev in (0.236,0.382,0.5,0.618):
-                ax.hlines(df[-360:].max()- (df[-360:].max()-df[-360:].min())*lev,
+                ax.hlines(df[-360:].max() - (df[-360:].max()-df[-360:].min())*lev,
                           df.index[-360], df.index[-1], linestyles="dotted")
-            ax.legend()
-            st.pyplot(fig)
+            ax.legend(); st.pyplot(fig)
 
             fig2, ax2 = plt.subplots(figsize=(14,3))
             ax2.plot(rsi[-360:], label="RSI(14)")
@@ -197,19 +202,20 @@ with tab2:
                 st.warning("No intraday data.")
             else:
                 ic = intraday["Close"].ffill()
-                ie = ic.ewm(span=20).mean()
-                lb2, mb2, ub2 = compute_bollinger_bands(ic)
-                ri = compute_rsi(ic)
+                # hourly trend
+                xi = np.arange(len(ic))
+                slope_i, intercept_i = np.polyfit(xi, ic.values, 1)
+                trend_i = slope_i * xi + intercept_i
 
+                ie = ic.ewm(span=20).mean()
                 fig3, ax3 = plt.subplots(figsize=(14,4))
-                ax3.plot(ic, label="Intraday")
-                ax3.plot(ie, "--", label="20 EMA")
-                ax3.plot(lb2, "--", label="Lower BB")
-                ax3.plot(ub2, "--", label="Upper BB")
-                ax3.legend()
-                st.pyplot(fig3)
+                ax3.plot(ic.index, ic, label="Intraday")
+                ax3.plot(ic.index, trend_i, "--", label="Trend")
+                ax3.plot(ic.index, ie, "--", label="20 EMA")
+                ax3.legend(); st.pyplot(fig3)
 
                 fig4, ax4 = plt.subplots(figsize=(14,3))
+                ri = compute_rsi(ic)
                 ax4.plot(ri, label="RSI(14)")
                 ax4.axhline(70, linestyle="--"); ax4.axhline(30, linestyle="--")
                 ax4.legend(); st.pyplot(fig4)
@@ -250,7 +256,7 @@ with tab4:
         ma30_3m = df3m.rolling(30, min_periods=1).mean()
         x = np.arange(len(df3m))
         slope, intercept = np.polyfit(x, df3m.values, 1)
-        trend = slope*x + intercept
+        trend = slope * x + intercept
         fig, ax = plt.subplots(figsize=(14,5))
         ax.plot(df3m.index, df3m, label="Close")
         ax.plot(df3m.index, ma30_3m, label="30‑day MA")
@@ -267,7 +273,7 @@ with tab4:
         st.subheader("Close + 30‑day MA + Trend")
         x0 = np.arange(len(df0))
         slope0, intercept0 = np.polyfit(x0, df0['Close'], 1)
-        trend0 = slope0*x0 + intercept0
+        trend0 = slope0 * x0 + intercept0
         fig0, ax0 = plt.subplots(figsize=(14,5))
         ax0.plot(df0.index, df0['Close'], label="Close")
         ax0.plot(df0.index, df0['MA30'], label="30‑day MA")
