@@ -6,6 +6,7 @@ from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import timedelta, datetime
 import matplotlib.pyplot as plt
 import time
+import pytz
 
 # --- Page config & CSS ---
 st.set_page_config(
@@ -17,6 +18,8 @@ st.markdown("<style>#MainMenu, footer, header {visibility: hidden;}</style>", un
 
 # --- Auto‑refresh logic ---
 REFRESH_INTERVAL = 120  # seconds
+PACIFIC = pytz.timezone("US/Pacific")
+
 def auto_refresh():
     if 'last_refresh' not in st.session_state:
         st.session_state.last_refresh = time.time()
@@ -28,9 +31,9 @@ def auto_refresh():
             pass
 
 auto_refresh()
-st.sidebar.markdown(
-    f"**Last refresh:** {datetime.fromtimestamp(st.session_state.last_refresh).strftime('%Y-%m-%d %H:%M:%S')}"
-)
+# show last refresh in PST
+pst_dt = datetime.fromtimestamp(st.session_state.last_refresh, tz=PACIFIC)
+st.sidebar.markdown(f"**Last refresh:** {pst_dt.strftime('%Y-%m-%d %H:%M:%S')} PST")
 
 # --- Sidebar config ---
 st.sidebar.title("Configuration")
@@ -61,7 +64,12 @@ def fetch_hist(ticker: str) -> pd.Series:
 
 @st.cache_data
 def fetch_intraday(ticker: str) -> pd.DataFrame:
-    return yf.download(ticker, period="1d", interval="5m")
+    df = yf.download(ticker, period="1d", interval="5m")
+    # convert index from UTC to PST
+    if df.index.tz is None:
+        df = df.tz_localize('UTC')
+    df = df.tz_convert(PACIFIC)
+    return df
 
 @st.cache_data
 def compute_sarimax_forecast(series: pd.Series):
@@ -76,7 +84,7 @@ def compute_sarimax_forecast(series: pd.Series):
             enforce_invertibility=False
         ).fit(disp=False)
     fc = model.get_forecast(steps=30)
-    idx = pd.date_range(series.index[-1] + timedelta(1), periods=30, freq="D")
+    idx = pd.date_range(series.index[-1] + timedelta(1), periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
 
 # Indicator helpers
@@ -114,9 +122,13 @@ with tab1:
 
     if st.button("Run Forecast", key="run"):
         df_hist = fetch_hist(ticker)
+        # localize daily index to PST
+        df_hist = df_hist.tz_localize(PACIFIC)
         st.session_state.df_hist = df_hist
+
         idx, vals, ci = compute_sarimax_forecast(df_hist)
         st.session_state.fc_idx, st.session_state.fc_vals, st.session_state.fc_ci = idx, vals, ci
+
         st.session_state.intraday = fetch_intraday(ticker)
         st.session_state.ticker = ticker
         st.session_state.chart = chart
@@ -132,6 +144,7 @@ with tab1:
             ema200 = df.ewm(span=200).mean()
             ma30   = df.rolling(30).mean()
             lb, mb, ub = compute_bollinger_bands(df)
+
             fig, ax = plt.subplots(figsize=(14,6))
             ax.plot(df[-360:], label="History")
             ax.plot(ema200[-360:], "--", label="200 EMA")
@@ -140,6 +153,7 @@ with tab1:
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
             ax.plot(lb[-360:], "--", label="Lower BB")
             ax.plot(ub[-360:], "--", label="Upper BB")
+            ax.set_xlabel("Date (PST)")
             ax.legend()
             st.pyplot(fig)
 
@@ -149,7 +163,6 @@ with tab1:
                 st.warning("No intraday data.")
             else:
                 hc = intraday["Close"].ffill()
-                # compute hourly trendline
                 xh = np.arange(len(hc))
                 slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
                 trend_h = slope_h * xh + intercept_h
@@ -159,6 +172,7 @@ with tab1:
                 ax2.plot(hc.index, hc, label="Intraday")
                 ax2.plot(hc.index, trend_h, "--", label="Trend")
                 ax2.plot(hc.index, he, "--", label="20 EMA")
+                ax2.set_xlabel("Time (PST)")
                 ax2.legend()
                 st.pyplot(fig2)
 
@@ -171,7 +185,7 @@ with tab2:
         st.info("Run Tab 1 first.")
     else:
         ticker = st.session_state.ticker
-        df = st.session_state.df_hist
+        df = st.session_state.df_hist.copy()
         ema200 = df.ewm(span=200).mean()
         ma30   = df.rolling(30).mean()
         lb, mb, ub = compute_bollinger_bands(df)
@@ -187,13 +201,17 @@ with tab2:
             ax.plot(idx, vals, label="Forecast")
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
             for lev in (0.236,0.382,0.5,0.618):
-                ax.hlines(df[-360:].max() - (df[-360:].max()-df[-360:].min())*lev,
-                          df.index[-360], df.index[-1], linestyles="dotted")
+                ax.hlines(
+                    df[-360:].max() - (df[-360:].max()-df[-360:].min())*lev,
+                    df.index[-360], df.index[-1], linestyles="dotted"
+                )
+            ax.set_xlabel("Date (PST)")
             ax.legend(); st.pyplot(fig)
 
             fig2, ax2 = plt.subplots(figsize=(14,3))
             ax2.plot(rsi[-360:], label="RSI(14)")
             ax2.axhline(70, linestyle="--"); ax2.axhline(30, linestyle="--")
+            ax2.set_xlabel("Date (PST)")
             ax2.legend(); st.pyplot(fig2)
 
         if view in ("Intraday","Both"):
@@ -202,7 +220,6 @@ with tab2:
                 st.warning("No intraday data.")
             else:
                 ic = intraday["Close"].ffill()
-                # hourly trend
                 xi = np.arange(len(ic))
                 slope_i, intercept_i = np.polyfit(xi, ic.values, 1)
                 trend_i = slope_i * xi + intercept_i
@@ -212,12 +229,14 @@ with tab2:
                 ax3.plot(ic.index, ic, label="Intraday")
                 ax3.plot(ic.index, trend_i, "--", label="Trend")
                 ax3.plot(ic.index, ie, "--", label="20 EMA")
+                ax3.set_xlabel("Time (PST)")
                 ax3.legend(); st.pyplot(fig3)
 
                 fig4, ax4 = plt.subplots(figsize=(14,3))
                 ri = compute_rsi(ic)
                 ax4.plot(ri, label="RSI(14)")
                 ax4.axhline(70, linestyle="--"); ax4.axhline(30, linestyle="--")
+                ax4.set_xlabel("Time (PST)")
                 ax4.legend(); st.pyplot(fig4)
 
         st.write(pd.DataFrame({"Forecast": vals, "Lower": ci.iloc[:,0], "Upper": ci.iloc[:,1]}, index=idx))
@@ -247,7 +266,7 @@ with tab4:
         st.info("Run Tab 1 first.")
     else:
         ticker = st.session_state.ticker
-        df_hist = fetch_hist(ticker)
+        df_hist = fetch_hist(ticker).tz_localize(PACIFIC)
 
         # Full history (last 3mo)
         st.subheader("Last 3 Months: Close + 30‑day MA + Trend")
@@ -261,6 +280,7 @@ with tab4:
         ax.plot(df3m.index, df3m, label="Close")
         ax.plot(df3m.index, ma30_3m, label="30‑day MA")
         ax.plot(df3m.index, trend, "--", label="Trend")
+        ax.set_xlabel("Date (PST)")
         ax.legend(); st.pyplot(fig)
 
         # Lookback metrics
@@ -278,6 +298,7 @@ with tab4:
         ax0.plot(df0.index, df0['Close'], label="Close")
         ax0.plot(df0.index, df0['MA30'], label="30‑day MA")
         ax0.plot(df0.index, trend0, "--", label="Trend")
+        ax0.set_xlabel("Date (PST)")
         ax0.legend(); st.pyplot(fig0)
 
         st.markdown("---")
