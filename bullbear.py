@@ -77,11 +77,8 @@ def compute_sarimax_forecast(series: pd.Series):
         model = SARIMAX(series, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
     except np.linalg.LinAlgError:
         model = SARIMAX(
-            series,
-            order=(1,1,1),
-            seasonal_order=(1,1,1,12),
-            enforce_stationarity=False,
-            enforce_invertibility=False
+            series, order=(1,1,1), seasonal_order=(1,1,1,12),
+            enforce_stationarity=False, enforce_invertibility=False
         ).fit(disp=False)
     fc = model.get_forecast(steps=30)
     idx = pd.date_range(series.index[-1] + timedelta(1),
@@ -128,14 +125,14 @@ with tab1:
         idx, vals, ci = compute_sarimax_forecast(df_hist)
         intraday = fetch_intraday(selected)
 
-        st.session_state.df_hist = df_hist
-        st.session_state.fc_idx = idx
-        st.session_state.fc_vals = vals
-        st.session_state.fc_ci = ci
-        st.session_state.intraday = intraday
-        st.session_state.ticker = selected
-        st.session_state.chart = chart
-        st.session_state.run_all = True
+        st.session_state.df_hist   = df_hist
+        st.session_state.fc_idx     = idx
+        st.session_state.fc_vals    = vals
+        st.session_state.fc_ci      = ci
+        st.session_state.intraday   = intraday
+        st.session_state.ticker     = selected
+        st.session_state.chart      = chart
+        st.session_state.run_all    = True
 
     if st.session_state.run_all and st.session_state.ticker == selected:
         df   = st.session_state.df_hist
@@ -147,17 +144,20 @@ with tab1:
             ema200 = df.ewm(span=200).mean()
             ma30   = df.rolling(30).mean()
             lb, mb, ub = compute_bollinger_bands(df)
+            # new: 30‑day rolling high = resistance
+            resistance = df.rolling(window=30, min_periods=1).max()
 
             fig, ax = plt.subplots(figsize=(14,6))
             ax.plot(df[-360:], label="History")
             ax.plot(ema200[-360:], "--", label="200 EMA")
             ax.plot(ma30[-360:], "--", label="30 MA")
+            ax.plot(resistance[-360:], ":", label="30‑day Resistance")
             ax.plot(idx, vals, label="Forecast")
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
             ax.plot(lb[-360:], "--", label="Lower BB")
             ax.plot(ub[-360:], "--", label="Upper BB")
             ax.set_xlabel("Date (PST)")
-            ax.legend()
+            ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
         if chart in ("Hourly","Both"):
@@ -166,13 +166,16 @@ with tab1:
             slope, intercept = np.polyfit(xh, hc.values, 1)
             trend = slope * xh + intercept
             he = hc.ewm(span=20).mean()
+            # hourly resistance = rolling max over last 60 bars (~5h)
+            resistance_h = hc.rolling(window=60, min_periods=1).max()
 
             fig2, ax2 = plt.subplots(figsize=(14,4))
             ax2.plot(hc.index, hc, label="Intraday")
-            ax2.plot(hc.index, trend, "--", label="Trend")
             ax2.plot(hc.index, he, "--", label="20 EMA")
+            ax2.plot(hc.index, resistance_h, ":", label="Resistance")
+            ax2.plot(hc.index, trend, "--", label="Trend")
             ax2.set_xlabel("Time (PST)")
-            ax2.legend()
+            ax2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig2)
 
         st.write(pd.DataFrame({
@@ -195,6 +198,7 @@ with tab2:
         idx, vals, ci = (st.session_state.fc_idx,
                          st.session_state.fc_vals,
                          st.session_state.fc_ci)
+        resistance = df.rolling(window=30, min_periods=1).max()
 
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
         if view in ("Daily","Both"):
@@ -202,6 +206,7 @@ with tab2:
             ax.plot(df[-360:], label="History")
             ax.plot(ema200[-360:], "--", label="200 EMA")
             ax.plot(ma30[-360:], "--", label="30 MA")
+            ax.plot(resistance[-360:], ":", label="Resistance")
             ax.plot(idx, vals, label="Forecast")
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
             for lev in (0.236,0.382,0.5,0.618):
@@ -211,15 +216,14 @@ with tab2:
                     linestyles="dotted"
                 )
             ax.set_xlabel("Date (PST)")
-            ax.legend()
+            ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
             fig2, ax2 = plt.subplots(figsize=(14,3))
             ax2.plot(rsi[-360:], label="RSI(14)")
             ax2.axhline(70, linestyle="--"); ax2.axhline(30, linestyle="--")
             ax2.set_xlabel("Date (PST)")
-            ax2.legend()
-            st.pyplot(fig2)
+            ax2.legend(); st.pyplot(fig2)
 
         if view in ("Intraday","Both"):
             ic = st.session_state.intraday["Close"].ffill()
@@ -227,13 +231,15 @@ with tab2:
             slope, intercept = np.polyfit(xi, ic.values, 1)
             trend = slope * xi + intercept
             ie = ic.ewm(span=20).mean()
+            resistance_h = ic.rolling(window=60, min_periods=1).max()
 
             fig3, ax3 = plt.subplots(figsize=(14,4))
             ax3.plot(ic.index, ic, label="Intraday")
-            ax3.plot(ic.index, trend, "--", label="Trend")
             ax3.plot(ic.index, ie, "--", label="20 EMA")
+            ax3.plot(ic.index, resistance_h, ":", label="Resistance")
+            ax3.plot(ic.index, trend, "--", label="Trend")
             ax3.set_xlabel("Time (PST)")
-            ax3.legend()
+            ax3.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig3)
 
             fig4, ax4 = plt.subplots(figsize=(14,3))
@@ -241,8 +247,7 @@ with tab2:
             ax4.plot(ri, label="RSI(14)")
             ax4.axhline(70, linestyle="--"); ax4.axhline(30, linestyle="--")
             ax4.set_xlabel("Time (PST)")
-            ax4.legend()
-            st.pyplot(fig4)
+            ax4.legend(); st.pyplot(fig4)
 
         st.write(pd.DataFrame({
             "Forecast": vals,
@@ -283,9 +288,12 @@ with tab4:
         x = np.arange(len(df3m))
         slope, intercept = np.polyfit(x, df3m.values, 1)
         trend = slope * x + intercept
+        resistance = df3m.rolling(window=30, min_periods=1).max()
+
         fig, ax = plt.subplots(figsize=(14,5))
         ax.plot(df3m.index, df3m, label="Close")
         ax.plot(df3m.index, ma30_3m, label="30‑day MA")
+        ax.plot(df3m.index, resistance, ":", label="Resistance")
         ax.plot(df3m.index, trend, "--", label="Trend")
         ax.set_xlabel("Date (PST)")
         ax.legend()
@@ -301,9 +309,12 @@ with tab4:
         x0 = np.arange(len(df0))
         slope0, intercept0 = np.polyfit(x0, df0['Close'], 1)
         trend0 = slope0 * x0 + intercept0
+        resistance0 = df0.rolling(window=30, min_periods=1).max()
+
         fig0, ax0 = plt.subplots(figsize=(14,5))
         ax0.plot(df0.index, df0['Close'], label="Close")
         ax0.plot(df0.index, df0['MA30'], label="30‑day MA")
+        ax0.plot(df0.index, resistance0, ":", label="Resistance")
         ax0.plot(df0.index, trend0, "--", label="Trend")
         ax0.set_xlabel("Date (PST)")
         ax0.legend()
