@@ -16,7 +16,7 @@ st.set_page_config(
 )
 st.markdown("<style>#MainMenu, footer, header {visibility: hidden;}</style>", unsafe_allow_html=True)
 
-# --- Auto‑refresh logic ---
+# --- Auto-refresh logic ---
 REFRESH_INTERVAL = 120  # seconds
 PACIFIC = pytz.timezone("US/Pacific")
 
@@ -117,7 +117,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # --- Tab 1: Original Forecast ---
 with tab1:
     st.header("Original Forecast")
-    st.info("Pick a ticker; initial run fetches live data, then cached for 15 minutes.")
+    st.info("Pick a ticker; initial run fetches live data, then cached for 15 minutes.")
 
     sel = st.selectbox("Ticker:", universe, key="orig_ticker")
     chart = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_chart")
@@ -139,7 +139,7 @@ with tab1:
         })
 
     if st.session_state.run_all and st.session_state.ticker == sel:
-        df   = st.session_state.df_hist
+        df = st.session_state.df_hist
         idx, vals, ci = (st.session_state.fc_idx,
                          st.session_state.fc_vals,
                          st.session_state.fc_ci)
@@ -147,6 +147,7 @@ with tab1:
         p_up   = np.mean(vals.values > last)
         p_down = 1 - p_up
 
+        # Daily + forecast
         if chart in ("Daily","Both"):
             ema200 = df.ewm(span=200).mean()
             ma30   = df.rolling(30).mean()
@@ -154,22 +155,23 @@ with tab1:
             resistance = df.rolling(30, min_periods=1).max()
             support    = df.rolling(30, min_periods=1).min()
 
-            title = f"{sel} Daily ↑{p_up:.1%} ↓{p_down:.1%}"
+            title = f"{sel} Daily  ↑{p_up:.1%}  ↓{p_down:.1%}"
             fig, ax = plt.subplots(figsize=(14,6))
             ax.set_title(title)
             ax.plot(df[-360:], label="History")
-            ax.plot(ema200[-360:], "--", label="200 EMA")
-            ax.plot(ma30[-360:], "--", label="30 MA")
-            ax.plot(resistance[-360:], ":", label="30 Resist")
-            ax.plot(support[-360:], ":", label="30 Support")
+            ax.plot(ema200[-360:], "--", label="200 EMA")
+            ax.plot(ma30[-360:], "--", label="30 MA")
+            ax.plot(resistance[-360:], ":", label="30 Resist")
+            ax.plot(support[-360:], ":", label="30 Support")
             ax.plot(idx, vals, label="Forecast")
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
-            ax.plot(lb[-360:], "--", label="Lower BB")
-            ax.plot(ub[-360:], "--", label="Upper BB")
+            ax.plot(lb[-360:], "--", label="Lower BB")
+            ax.plot(ub[-360:], "--", label="Upper BB")
             ax.set_xlabel("Date (PST)")
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
+        # Intraday + trend
         if chart in ("Hourly","Both"):
             hc = st.session_state.intraday["Close"].ffill()
             he = hc.ewm(span=20).mean()
@@ -179,18 +181,19 @@ with tab1:
             resistance_h = hc.rolling(60, min_periods=1).max()
             support_h    = hc.rolling(60, min_periods=1).min()
 
-            title_h = f"{sel} Intraday ↑{p_up:.1%} ↓{p_down:.1%}"
+            title_h = f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_down:.1%}"
             fig2, ax2 = plt.subplots(figsize=(14,4))
             ax2.set_title(title_h)
             ax2.plot(hc.index, hc, label="Intraday")
-            ax2.plot(hc.index, he, "--", label="20 EMA")
+            ax2.plot(hc.index, he, "--", label="20 EMA")
             ax2.plot(hc.index, resistance_h, ":", label="Resist")
             ax2.plot(hc.index, support_h, ":", label="Support")
             ax2.plot(hc.index, trend, "--", label="Trend")
-            ax2.set_xlabel("Time (PST)")‍‍
+            ax2.set_xlabel("Time (PST)")
             ax2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig2)
 
+        # Forecast table
         st.write(pd.DataFrame({
             "Forecast": st.session_state.fc_vals,
             "Lower":    st.session_state.fc_ci.iloc[:,0],
@@ -219,12 +222,12 @@ with tab2:
 
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
         if view in ("Daily","Both"):
-            title = f"{st.session_state.ticker} Daily ↑{p_up:.1%} ↓{p_down:.1%}"
+            title = f"{st.session_state.ticker} Daily  ↑{p_up:.1%}  ↓{p_down:.1%}"
             fig, ax = plt.subplots(figsize=(14,6))
             ax.set_title(title)
             ax.plot(df[-360:], label="History")
-            ax.plot(ema200[-360:], "--", label="200 EMA")
-            ax.plot(ma30[-360:], "--", label="30 MA")
+            ax.plot(ema200[-360:], "--", label="200 EMA")
+            ax.plot(ma30[-360:], "--", label="30 MA")
             ax.plot(resistance[-360:], ":", label="Resist")
             ax.plot(support[-360:], ":", label="Support")
             ax.plot(idx, vals, label="Forecast")
@@ -254,11 +257,11 @@ with tab2:
             resistance_h = ic.rolling(60, min_periods=1).max()
             support_h    = ic.rolling(60, min_periods=1).min()
 
-            title_h = f"{st.session_state.ticker} Intraday ↑{p_up:.1%} ↓{p_down:.1%}"
+            title_h = f"{st.session_state.ticker} Intraday  ↑{p_up:.1%}  ↓{p_down:.1%}"
             fig3, ax3 = plt.subplots(figsize=(14,4))
             ax3.set_title(title_h)
             ax3.plot(ic.index, ic, label="Intraday")
-            ax3.plot(ic.index, ie, "--", label="20 EMA")
+            ax3.plot(ic.index, ie, "--", label="20 EMA")
             ax3.plot(ic.index, resistance_h, ":", label="Resist")
             ax3.plot(ic.index, support_h, ":", label="Support")
             ax3.plot(ic.index, trend, "--", label="Trend")
@@ -309,10 +312,10 @@ with tab4:
         p_up   = np.mean(vals.values > last)
         p_down = 1 - p_up
 
-        st.subheader(f"Last 3 Months ↑{p_up:.1%} ↓{p_down:.1%}")
+        st.subheader(f"Last 3 Months  ↑{p_up:.1%}  ↓{p_down:.1%}")
         cutoff = df_hist.index.max() - pd.Timedelta(days=90)
         df3m = df_hist[df_hist.index >= cutoff]
-        ma30_3m = df3m.rolling(30, min_periods=1).mean()
+        ma30_3m   = df3m.rolling(30, min_periods=1).mean()
         resistance = df3m.rolling(30, min_periods=1).max()
         support    = df3m.rolling(30, min_periods=1).min()
         x = np.arange(len(df3m))
@@ -321,7 +324,7 @@ with tab4:
 
         fig, ax = plt.subplots(figsize=(14,5))
         ax.plot(df3m.index, df3m, label="Close")
-        ax.plot(df3m.index, ma30_3m, label="30 MA")
+        ax.plot(df3m.index, ma30_3m, label="30 MA")
         ax.plot(df3m.index, resistance, ":", label="Resistance")
         ax.plot(df3m.index, support,    ":", label="Support")
         ax.plot(df3m.index, trend, "--", label="Trend")
@@ -335,7 +338,7 @@ with tab4:
         df0['Bull'] = df0['PctChange'] > 0
         df0['MA30'] = df0['Close'].rolling(30, min_periods=1).mean()
 
-        st.subheader("Close + 30‑day MA + Trend")
+        st.subheader("Close + 30-day MA + Trend")
         x0 = np.arange(len(df0))
         slope0, intercept0 = np.polyfit(x0, df0['Close'], 1)
         trend0 = slope0*x0 + intercept0
@@ -344,7 +347,7 @@ with tab4:
 
         fig0, ax0 = plt.subplots(figsize=(14,5))
         ax0.plot(df0.index, df0['Close'], label="Close")
-        ax0.plot(df0.index, df0['MA30'], label="30 MA")
+        ax0.plot(df0.index, df0['MA30'], label="30 MA")
         ax0.plot(df0.index, resistance0, ":", label="Resistance")
         ax0.plot(df0.index, support0,    ":", label="Support")
         ax0.plot(df0.index, trend0, "--", label="Trend")
