@@ -144,7 +144,7 @@ with tab1:
                          st.session_state.fc_vals,
                          st.session_state.fc_ci)
         last = df.iloc[-1]
-        p_up   = np.mean(vals > last)
+        p_up   = np.mean(vals.values > last)
         p_down = 1 - p_up
 
         if chart in ("Daily","Both"):
@@ -187,7 +187,7 @@ with tab1:
             ax2.plot(hc.index, resistance_h, ":", label="Resist")
             ax2.plot(hc.index, support_h, ":", label="Support")
             ax2.plot(hc.index, trend, "--", label="Trend")
-            ax2.set_xlabel("Time (PST)")
+            ax2.set_xlabel("Time (PST)")‍‍
             ax2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig2)
 
@@ -212,7 +212,7 @@ with tab2:
                          st.session_state.fc_vals,
                          st.session_state.fc_ci)
         last = df.iloc[-1]
-        p_up   = np.mean(vals > last)
+        p_up   = np.mean(vals.values > last)
         p_down = 1 - p_up
         resistance = df.rolling(30, min_periods=1).max()
         support    = df.rolling(30, min_periods=1).min()
@@ -306,7 +306,7 @@ with tab4:
         df_hist = fetch_hist(st.session_state.ticker)
         last = df_hist.iloc[-1]
         idx, vals, ci = compute_sarimax_forecast(df_hist)
-        p_up   = np.mean(vals > last)
+        p_up   = np.mean(vals.values > last)
         p_down = 1 - p_up
 
         st.subheader(f"Last 3 Months ↑{p_up:.1%} ↓{p_down:.1%}")
