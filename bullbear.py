@@ -13,7 +13,7 @@ st.set_page_config(
     page_title="📊 Dashboard & Forecasts",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded"   # ensure sidebar is expanded by default
+    initial_sidebar_state="expanded"
 )
 
 st.markdown("""
@@ -23,16 +23,8 @@ st.markdown("""
 
   /* on small screens, override Streamlit's default so sidebar stays visible */
   @media (max-width: 600px) {
-    .css-18e3th9 {  /* sidebar container */
-      transform: none !important;
-      visibility: visible !important;
-      width: 100% !important;
-      position: relative !important;
-      margin-bottom: 1rem;
-    }
-    .css-1v3fvcr {  /* main content area */
-      margin-left: 0 !important;
-    }
+    .css-18e3th9 {transform: none !important; visibility: visible !important; width: 100% !important; position: relative !important; margin-bottom: 1rem;}
+    .css-1v3fvcr {margin-left: 0 !important;}
   }
 </style>
 """, unsafe_allow_html=True)
@@ -106,11 +98,11 @@ def compute_sarimax_forecast(series: pd.Series):
                         periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
 
-# Indicator helpers
+# --- Indicator helpers ---
 def compute_rsi(data, window=14):
     d = data.diff()
-    gain = d.where(d>0,0).rolling(window).mean()
-    loss = -d.where(d<0,0).rolling(window).mean()
+    gain = d.where(d > 0, 0).rolling(window).mean()
+    loss = -d.where(d < 0, 0).rolling(window).mean()
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
@@ -118,6 +110,14 @@ def compute_bb(data, window=20, num_sd=2):
     m = data.rolling(window).mean()
     s = data.rolling(window).std()
     return m - num_sd*s, m, m + num_sd*s
+
+def compute_macd(data, fast=12, slow=26, signal=9):
+    fast_ema = data.ewm(span=fast, adjust=False).mean()
+    slow_ema = data.ewm(span=slow, adjust=False).mean()
+    macd_line = fast_ema - slow_ema
+    signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+    histogram = macd_line - signal_line
+    return macd_line, signal_line, histogram
 
 # Session state init
 if 'run_all' not in st.session_state:
@@ -168,10 +168,7 @@ with tab1:
         p_up = np.mean(vals.to_numpy() > last_price)
         p_dn = 1 - p_up
 
-        x_fc = np.arange(len(vals))
-        slope_fc, intercept_fc = np.polyfit(x_fc, vals.to_numpy(), 1)
-        trend_fc = slope_fc * x_fc + intercept_fc
-
+        # Daily
         if chart in ("Daily","Both"):
             ema200 = df.ewm(span=200).mean()
             ma30   = df.rolling(30).mean()
@@ -187,7 +184,7 @@ with tab1:
             ax.plot(res[-360:], ":", label="30 Resistance")
             ax.plot(sup[-360:], ":", label="30 Support")
             ax.plot(idx, vals, label="Forecast")
-            ax.plot(idx, trend_fc, "--", label="Forecast Trend", linewidth=2)
+            ax.plot(idx, np.polyfit(np.arange(len(vals)), vals.to_numpy(), 1)[0]*np.arange(len(vals)) + np.polyfit(np.arange(len(vals)), vals.to_numpy(), 1)[1], "--", label="Forecast Trend")
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
             ax.plot(lb[-360:], "--", label="Lower BB")
             ax.plot(ub[-360:], "--", label="Upper BB")
@@ -195,12 +192,12 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
+        # Intraday
         if chart in ("Hourly","Both"):
             hc = st.session_state.intraday["Close"].ffill()
             he = hc.ewm(span=20).mean()
-            xh = np.arange(len(hc))
-            slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
-            trend_h = slope_h * xh + intercept_h
+            slope_h, intercept_h = np.polyfit(np.arange(len(hc)), hc.values, 1)
+            trend_h = slope_h * np.arange(len(hc)) + intercept_h
             res_h = hc.rolling(60, min_periods=1).max()
             sup_h = hc.rolling(60, min_periods=1).min()
 
@@ -215,6 +212,7 @@ with tab1:
             ax2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig2)
 
+        # Data table
         st.write(pd.DataFrame({
             "Forecast": st.session_state.fc_vals,
             "Lower":    st.session_state.fc_ci.iloc[:,0],
@@ -244,9 +242,12 @@ with tab2:
         sup = df.rolling(30, min_periods=1).min()
 
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
+
+        # --- Daily Enhanced ---
         if view in ("Daily","Both"):
+            # Price + Forecast
             fig, ax = plt.subplots(figsize=(14,6))
-            ax.set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax.set_title(f"{st.session_state.ticker} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
             ax.plot(df[-360:], label="History")
             ax.plot(ema200[-360:], "--", label="200 EMA")
             ax.plot(ma30[-360:], "--", label="30 MA")
@@ -254,6 +255,7 @@ with tab2:
             ax.plot(sup[-360:], ":", label="Support")
             ax.plot(idx, vals, label="Forecast")
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
+            # Fibonacci levels
             for lev in (0.236,0.382,0.5,0.618):
                 ax.hlines(
                     df[-360:].max() - (df[-360:].max() - df[-360:].min())*lev,
@@ -264,41 +266,67 @@ with tab2:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
+            # RSI subplot
             fig2, ax2 = plt.subplots(figsize=(14,3))
             ax2.plot(rsi[-360:], label="RSI(14)")
-            ax2.axhline(70, linestyle="--"); ax2.axhline(30, linestyle="--")
+            ax2.axhline(70, linestyle="--")
+            ax2.axhline(30, linestyle="--")
             ax2.set_xlabel("Date (PST)")
             ax2.legend()
             st.pyplot(fig2)
 
+            # MACD subplot
+            macd_line, signal_line, hist = compute_macd(df)
+            fig3, ax3 = plt.subplots(figsize=(14,3))
+            ax3.plot(macd_line[-360:], label="MACD")
+            ax3.plot(signal_line[-360:], label="Signal")
+            ax3.bar(macd_line.index[-360:], hist[-360:], alpha=0.3, label="Histogram")
+            ax3.set_xlabel("Date (PST)")
+            ax3.legend(loc="upper left", framealpha=0.5)
+            st.pyplot(fig3)
+
+        # --- Intraday Enhanced ---
         if view in ("Intraday","Both"):
             ic = st.session_state.intraday["Close"].ffill()
             ie = ic.ewm(span=20).mean()
-            xi = np.arange(len(ic))
-            slope_i, intercept_i = np.polyfit(xi, ic.values, 1)
-            trend_i = slope_i * xi + intercept_i
+            slope_i, intercept_i = np.polyfit(np.arange(len(ic)), ic.values, 1)
+            trend_i = slope_i * np.arange(len(ic)) + intercept_i
             res_i = ic.rolling(60, min_periods=1).max()
             sup_i = ic.rolling(60, min_periods=1).min()
 
-            fig3, ax3 = plt.subplots(figsize=(14,4))
-            ax3.set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}")
-            ax3.plot(ic.index, ic, label="Intraday")
-            ax3.plot(ic.index, ie, "--", label="20 EMA")
-            ax3.plot(ic.index, res_i, ":", label="Resistance")
-            ax3.plot(ic.index, sup_i, ":", label="Support")
-            ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
-            ax3.set_xlabel("Time (PST)")
-            ax3.legend(loc="lower left", framealpha=0.5)
-            st.pyplot(fig3)
-
-            fig4, ax4 = plt.subplots(figsize=(14,3))
-            ri = compute_rsi(ic)
-            ax4.plot(ri, label="RSI(14)")
-            ax4.axhline(70, linestyle="--"); ax4.axhline(30, linestyle="--")
+            # Price intraday
+            fig4, ax4 = plt.subplots(figsize=(14,4))
+            ax4.set_title(f"{st.session_state.ticker} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax4.plot(ic.index, ic, label="Intraday")
+            ax4.plot(ic.index, ie, "--", label="20 EMA")
+            ax4.plot(ic.index, res_i, ":", label="Resistance")
+            ax4.plot(ic.index, sup_i, ":", label="Support")
+            ax4.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
             ax4.set_xlabel("Time (PST)")
-            ax4.legend()
+            ax4.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig4)
 
+            # RSI intraday
+            ri = compute_rsi(ic)
+            fig5, ax5 = plt.subplots(figsize=(14,3))
+            ax5.plot(ri, label="RSI(14)")
+            ax5.axhline(70, linestyle="--")
+            ax5.axhline(30, linestyle="--")
+            ax5.set_xlabel("Time (PST)")
+            ax5.legend()
+            st.pyplot(fig5)
+
+            # MACD intraday
+            ic_macd, ic_signal, ic_hist = compute_macd(ic)
+            fig6, ax6 = plt.subplots(figsize=(14,3))
+            ax6.plot(ic_macd, label="MACD")
+            ax6.plot(ic_signal, label="Signal")
+            ax6.bar(ic_macd.index, ic_hist, alpha=0.3, label="Histogram")
+            ax6.set_xlabel("Time (PST)")
+            ax6.legend(loc="upper left", framealpha=0.5)
+            st.pyplot(fig6)
+
+        # Data table
         st.write(pd.DataFrame({
             "Forecast": vals,
             "Lower":    ci.iloc[:,0],
@@ -341,9 +369,8 @@ with tab4:
         ma30_3m = df3m.rolling(30, min_periods=1).mean()
         res3m = df3m.rolling(30, min_periods=1).max()
         sup3m = df3m.rolling(30, min_periods=1).min()
-        x3m = np.arange(len(df3m))
-        slope3m, intercept3m = np.polyfit(x3m, df3m.values, 1)
-        trend3m = slope3m * x3m + intercept3m
+        slope3m, intercept3m = np.polyfit(np.arange(len(df3m)), df3m.values, 1)
+        trend3m = slope3m * np.arange(len(df3m)) + intercept3m
 
         fig, ax = plt.subplots(figsize=(14,5))
         ax.plot(df3m.index, df3m, label="Close")
@@ -356,6 +383,7 @@ with tab4:
         st.pyplot(fig)
 
         st.markdown("---")
+
         df0 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
         df0['PctChange'] = df0['Close'].pct_change()
         df0['Bull'] = df0['PctChange'] > 0
