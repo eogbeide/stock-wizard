@@ -12,9 +12,30 @@ import pytz
 st.set_page_config(
     page_title="📊 Dashboard & Forecasts",
     page_icon="📈",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="expanded"   # ensure sidebar is expanded by default
 )
-st.markdown("<style>#MainMenu, footer, header {visibility: hidden;}</style>", unsafe_allow_html=True)
+
+st.markdown("""
+<style>
+  /* hide Streamlit menu, header, footer */
+  #MainMenu, header, footer {visibility: hidden;}
+
+  /* on small screens, override Streamlit's default so sidebar stays visible */
+  @media (max-width: 600px) {
+    .css-18e3th9 {  /* sidebar container */
+      transform: none !important;
+      visibility: visible !important;
+      width: 100% !important;
+      position: relative !important;
+      margin-bottom: 1rem;
+    }
+    .css-1v3fvcr {  /* main content area */
+      margin-left: 0 !important;
+    }
+  }
+</style>
+""", unsafe_allow_html=True)
 
 # --- Auto-refresh logic ---
 REFRESH_INTERVAL = 120  # seconds
@@ -143,18 +164,14 @@ with tab1:
             st.session_state.fc_ci
         )
 
-        # last known
         last_price = float(df.iloc[-1])
-        # pct of forecasts above last
         p_up = np.mean(vals.to_numpy() > last_price)
         p_dn = 1 - p_up
 
-        # forecast trend line
         x_fc = np.arange(len(vals))
         slope_fc, intercept_fc = np.polyfit(x_fc, vals.to_numpy(), 1)
         trend_fc = slope_fc * x_fc + intercept_fc
 
-        # --- Daily Chart ---
         if chart in ("Daily","Both"):
             ema200 = df.ewm(span=200).mean()
             ma30   = df.rolling(30).mean()
@@ -178,7 +195,6 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # --- Intraday Chart ---
         if chart in ("Hourly","Both"):
             hc = st.session_state.intraday["Close"].ffill()
             he = hc.ewm(span=20).mean()
@@ -199,7 +215,6 @@ with tab1:
             ax2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig2)
 
-        # Forecast table
         st.write(pd.DataFrame({
             "Forecast": st.session_state.fc_vals,
             "Lower":    st.session_state.fc_ci.iloc[:,0],
@@ -253,7 +268,8 @@ with tab2:
             ax2.plot(rsi[-360:], label="RSI(14)")
             ax2.axhline(70, linestyle="--"); ax2.axhline(30, linestyle="--")
             ax2.set_xlabel("Date (PST)")
-            ax2.legend(); st.pyplot(fig2)
+            ax2.legend()
+            st.pyplot(fig2)
 
         if view in ("Intraday","Both"):
             ic = st.session_state.intraday["Close"].ffill()
@@ -280,7 +296,8 @@ with tab2:
             ax4.plot(ri, label="RSI(14)")
             ax4.axhline(70, linestyle="--"); ax4.axhline(30, linestyle="--")
             ax4.set_xlabel("Time (PST)")
-            ax4.legend(); st.pyplot(fig4)
+            ax4.legend()
+            st.pyplot(fig4)
 
         st.write(pd.DataFrame({
             "Forecast": vals,
