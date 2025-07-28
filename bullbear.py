@@ -4,6 +4,7 @@ import numpy as np
 import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import timedelta, datetime
+import time
 import pytz
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
@@ -29,26 +30,30 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # --- Auto-refresh logic ---
-REFRESH_INTERVAL = 120
+REFRESH_INTERVAL = 120  # seconds
 PACIFIC = pytz.timezone("US/Pacific")
+
 def auto_refresh():
     if 'last_refresh' not in st.session_state:
         st.session_state.last_refresh = time.time()
     elif time.time() - st.session_state.last_refresh > REFRESH_INTERVAL:
         st.session_state.last_refresh = time.time()
-        try: st.experimental_rerun()
-        except: pass
+        try:
+            st.experimental_rerun()
+        except:
+            pass
+
 auto_refresh()
 pst_dt = datetime.fromtimestamp(st.session_state.last_refresh, tz=PACIFIC)
 st.sidebar.markdown(f"**Last refresh:** {pst_dt.strftime('%Y-%m-%d %H:%M:%S')} PST")
 
 # --- Sidebar config ---
 st.sidebar.title("Configuration")
-mode = st.sidebar.selectbox("Forecast Mode:", ["Stock","Forex"])
-bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo","3mo","6mo","1y"], index=2)
+mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"])
+bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2)
 
-# Universe
-if mode=="Stock":
+# Universe for selection
+if mode == "Stock":
     universe = sorted([
         'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
         'META','SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO',
@@ -71,8 +76,10 @@ def fetch_hist(ticker):
 @st.cache_data(ttl=900)
 def fetch_intraday(ticker):
     df = yf.download(ticker, period="2d", interval="5m")
-    try: df = df.tz_localize('UTC')
-    except: pass
+    try:
+        df = df.tz_localize('UTC')
+    except:
+        pass
     return df.tz_convert(PACIFIC)
 
 @st.cache_data(ttl=900)
@@ -80,10 +87,13 @@ def compute_sarimax(series):
     try:
         m = SARIMAX(series, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
     except np.linalg.LinAlgError:
-        m = SARIMAX(series, order=(1,1,1), seasonal_order=(1,1,1,12),
-                    enforce_stationarity=False, enforce_invertibility=False).fit(disp=False)
+        m = SARIMAX(
+            series, order=(1,1,1), seasonal_order=(1,1,1,12),
+            enforce_stationarity=False, enforce_invertibility=False
+        ).fit(disp=False)
     f = m.get_forecast(steps=30)
-    idx = pd.date_range(series.index[-1] + timedelta(1), periods=30, freq="D", tz=PACIFIC)
+    idx = pd.date_range(series.index[-1] + timedelta(1),
+                        periods=30, freq="D", tz=PACIFIC)
     return idx, f.predicted_mean, f.conf_int()
 
 def compute_bb(s, window=20, num_sd=2):
@@ -92,7 +102,7 @@ def compute_bb(s, window=20, num_sd=2):
     return m - num_sd*sd, m, m + num_sd*sd
 
 def compute_atr(df, window=14):
-    h,l,c = df['High'], df['Low'], df['Close']
+    h, l, c = df['High'], df['Low'], df['Close']
     pc = c.shift(1)
     tr = pd.concat([h-l, (h-pc).abs(), (l-pc).abs()], axis=1).max(axis=1)
     return tr.rolling(window).mean()
@@ -101,33 +111,42 @@ def compute_atr(df, window=14):
 if 'run_all' not in st.session_state:
     st.session_state.update(run_all=False, ticker=None)
 
-tab1,tab2,tab3,tab4 = st.tabs(["Original Forecast","Enhanced Forecast","Bull vs Bear","Metrics"])
+# Layout tabs
+tab1, tab2, tab3, tab4 = st.tabs([
+    "Original Forecast",
+    "Enhanced Forecast",
+    "Bull vs Bear",
+    "Metrics"
+])
 
-# --- Tab1: Original Forecast ---
+# --- Tab 1: Original Forecast ---
 with tab1:
     st.header("Original Forecast")
     sel = st.selectbox("Ticker:", universe, key="orig_ticker")
-    chart = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_chart")
-    auto = st.session_state.run_all and sel!=st.session_state.ticker
+    chart = st.radio("Chart View:", ["Daily", "Hourly", "Both"], key="orig_chart")
+    auto = st.session_state.run_all and sel != st.session_state.ticker
 
     if st.button("Run Forecast") or auto:
         dfh = fetch_hist(sel)
         dfi = fetch_intraday(sel)
         idx, vals, ci = compute_sarimax(dfh['Close'])
-        st.session_state.update(df_hist=dfh, intraday=dfi,
-                                fc_idx=idx, fc_vals=vals, fc_ci=ci,
-                                ticker=sel, chart=chart, run_all=True)
+        st.session_state.update(
+            df_hist=dfh, intraday=dfi,
+            fc_idx=idx, fc_vals=vals, fc_ci=ci,
+            ticker=sel, chart=chart, run_all=True
+        )
 
-    if st.session_state.run_all and st.session_state.ticker==sel:
+    if st.session_state.run_all and st.session_state.ticker == sel:
         dfh = st.session_state.df_hist
         dfi = st.session_state.intraday
-        idx, vals, ci = st.session_state.fc_idx, st.session_state.fc_vals, st.session_state.fc_ci
+        idx, vals, ci = \
+            st.session_state.fc_idx, st.session_state.fc_vals, st.session_state.fc_ci
         last = dfh['Close'].iloc[-1]
-        p_up = np.mean(vals>last)
-        p_dn = 1-p_up
+        p_up = np.mean(vals > last)
+        p_dn = 1 - p_up
 
         # Daily interactive
-        if chart in ("Daily","Both"):
+        if chart in ("Daily", "Both"):
             price = dfh['Close'][-360:]
             ema200 = price.ewm(span=200).mean()
             ma30 = price.rolling(30).mean()
@@ -137,43 +156,58 @@ with tab1:
             sup = dfh['Close'].rolling(30).min()[-360:]
             atr = compute_atr(dfh)[-360:]
 
-            fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                                row_heights=[0.7,0.3], vertical_spacing=0.05)
+            fig = make_subplots(
+                rows=2, cols=1, shared_xaxes=True,
+                row_heights=[0.7, 0.3], vertical_spacing=0.05
+            )
+            # Price + forecast
             fig.add_trace(go.Scatter(x=price.index, y=price, name="Close"), row=1, col=1)
             fig.add_trace(go.Scatter(x=ema200.index, y=ema200, name="200 EMA", line=dict(dash="dash")),1,1)
             fig.add_trace(go.Scatter(x=ma30.index, y=ma30, name="30 MA", line=dict(dash="dash")),1,1)
             fig.add_trace(go.Scatter(x=res.index, y=res, name="Resistance", line=dict(dash="dot")),1,1)
             fig.add_trace(go.Scatter(x=sup.index, y=sup, name="Support", line=dict(dash="dot")),1,1)
             fig.add_trace(go.Scatter(x=idx, y=vals, name="Forecast"),1,1)
-            trend = np.polyval(np.polyfit(np.arange(len(vals)), vals,1), np.arange(len(vals)))
+            trend = np.polyval(np.polyfit(np.arange(len(vals)), vals, 1), np.arange(len(vals)))
             fig.add_trace(go.Scatter(x=idx, y=trend, name="Trend", line=dict(dash="dash")),1,1)
             fig.add_trace(go.Scatter(x=lb.index, y=lb, name="Lower BB", line=dict(dash="dash")),1,1)
             fig.add_trace(go.Scatter(x=ub.index, y=ub, name="Upper BB", line=dict(dash="dash")),1,1)
 
-            fig.add_trace(go.Scatter(x=atr.index, y=atr, name="ATR(14)"),row=2,col=1)
-            fig.update_layout(height=700,
-                              title_text=f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            # ATR subplot
+            fig.add_trace(go.Scatter(x=atr.index, y=atr, name="ATR(14)"), row=2, col=1)
+
+            fig.update_layout(
+                height=700,
+                title_text=f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}"
+            )
             st.plotly_chart(fig, use_container_width=True)
 
         # Hourly interactive
-        if chart in ("Hourly","Both"):
+        if chart in ("Hourly", "Both"):
             hc = dfi['Close'].ffill()[-576:]
             ema20 = hc.ewm(span=20).mean()
             atr5 = compute_atr(dfi)[-576:]
 
-            fig2 = make_subplots(rows=2, cols=1, shared_xaxes=True,
-                                 row_heights=[0.7,0.3], vertical_spacing=0.05)
+            fig2 = make_subplots(
+                rows=2, cols=1, shared_xaxes=True,
+                row_heights=[0.7, 0.3], vertical_spacing=0.05
+            )
             fig2.add_trace(go.Scatter(x=hc.index, y=hc, name="Price"),1,1)
             fig2.add_trace(go.Scatter(x=ema20.index, y=ema20, name="20 EMA", line=dict(dash="dash")),1,1)
             fig2.add_trace(go.Scatter(x=atr5.index, y=atr5, name="ATR(14)"),2,1)
-            fig2.update_layout(height=600,
-                               title_text=f"{sel} Last 48 Hours  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            fig2.update_layout(
+                height=600,
+                title_text=f"{sel} Last 48 Hours  ↑{p_up:.1%}  ↓{p_dn:.1%}"
+            )
             st.plotly_chart(fig2, use_container_width=True)
 
         # Forecast table
-        st.write(pd.DataFrame({"Forecast": vals, "Lower": ci.iloc[:,0], "Upper": ci.iloc[:,1]}, index=idx))
+        st.write(pd.DataFrame({
+            "Forecast": vals,
+            "Lower": ci.iloc[:,0],
+            "Upper": ci.iloc[:,1]
+        }, index=idx))
 
-# --- Tab2: Enhanced Forecast ---
+# --- Tab 2: Enhanced Forecast ---
 with tab2:
     st.header("Enhanced Forecast")
     if not st.session_state.run_all:
@@ -185,24 +219,24 @@ with tab2:
         ma30 = price.rolling(30).mean()
         lb, mb, ub = compute_bb(price)
         atr = compute_atr(dfh)
-        # RSI
         d = price.diff()
-        rsi = 100 - 100/(1 + d.clip(lower=0).rolling(14).mean()/d.clip(upper=0).abs().rolling(14).mean())
-        # MACD
+        rsi = 100 - 100/(1 + d.clip(lower=0).rolling(14).mean() / d.clip(upper=0).abs().rolling(14).mean())
         macd_line = price.ewm(span=12).mean() - price.ewm(span=26).mean()
         signal_line = macd_line.ewm(span=9).mean()
         hist = macd_line - signal_line
 
         idx, vals, ci = st.session_state.fc_idx, st.session_state.fc_vals, st.session_state.fc_ci
         last = price.iloc[-1]
-        p_up = np.mean(vals>last)
-        p_dn = 1-p_up
+        p_up = np.mean(vals > last)
+        p_dn = 1 - p_up
 
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
 
         if view in ("Daily","Both"):
-            fig = make_subplots(rows=4, cols=1, shared_xaxes=True,
-                                row_heights=[0.4,0.2,0.2,0.2], vertical_spacing=0.03)
+            fig = make_subplots(
+                rows=4, cols=1, shared_xaxes=True,
+                row_heights=[0.4,0.2,0.2,0.2], vertical_spacing=0.03
+            )
             fig.add_trace(go.Scatter(x=price[-360:].index, y=price[-360:], name="Close"),1,1)
             fig.add_trace(go.Scatter(x=ema200[-360:].index, y=ema200[-360:], name="200 EMA", line=dict(dash="dash")),1,1)
             fig.add_trace(go.Scatter(x=ma30[-360:].index, y=ma30[-360:], name="30 MA", line=dict(dash="dash")),1,1)
@@ -215,21 +249,26 @@ with tab2:
             fig.add_trace(go.Scatter(x=signal_line[-360:].index, y=signal_line[-360:], name="Signal"),3,1)
             fig.add_trace(go.Bar(x=hist[-360:].index, y=hist[-360:], name="Histogram"),4,1)
 
-            fig.update_layout(height=900, title_text=f"{st.session_state.ticker} Enhanced Forecast")
+            fig.update_layout(
+                height=900,
+                title_text=f"{st.session_state.ticker} Enhanced Forecast"
+            )
             st.plotly_chart(fig, use_container_width=True)
 
         if view in ("Intraday","Both"):
             dfi = st.session_state.intraday
             hc = dfi['Close'].ffill()
             ema20_i = hc.ewm(span=20).mean()
-            d = hc.diff()
-            rsi_i = 100 - 100/(1 + d.clip(lower=0).rolling(14).mean()/d.clip(upper=0).abs().rolling(14).mean())
+            d_i = hc.diff()
+            rsi_i = 100 - 100/(1 + d_i.clip(lower=0).rolling(14).mean() / d_i.clip(upper=0).abs().rolling(14).mean())
             macd_i = hc.ewm(span=12).mean() - hc.ewm(span=26).mean()
             sig_i = macd_i.ewm(span=9).mean()
             hist_i = macd_i - sig_i
 
-            fig2 = make_subplots(rows=4, cols=1, shared_xaxes=True,
-                                 row_heights=[0.4,0.2,0.2,0.2], vertical_spacing=0.03)
+            fig2 = make_subplots(
+                rows=4, cols=1, shared_xaxes=True,
+                row_heights=[0.4,0.2,0.2,0.2], vertical_spacing=0.03
+            )
             fig2.add_trace(go.Scatter(x=hc.index, y=hc, name="Price"),1,1)
             fig2.add_trace(go.Scatter(x=ema20_i.index, y=ema20_i, name="20 EMA", line=dict(dash="dash")),1,1)
 
@@ -238,10 +277,13 @@ with tab2:
             fig2.add_trace(go.Scatter(x=sig_i.index, y=sig_i, name="Signal"),3,1)
             fig2.add_trace(go.Bar(x=hist_i.index, y=hist_i, name="Histogram"),4,1)
 
-            fig2.update_layout(height=900, title_text=f"{st.session_state.ticker} Intraday Enhanced")
+            fig2.update_layout(
+                height=900,
+                title_text=f"{st.session_state.ticker} Intraday Enhanced"
+            )
             st.plotly_chart(fig2, use_container_width=True)
 
-# --- Tab3: Bull vs Bear ---
+# --- Tab 3: Bull vs Bear ---
 with tab3:
     st.header("Bull vs Bear Summary")
     if not st.session_state.run_all:
@@ -253,13 +295,13 @@ with tab3:
         bull = int(df3['Bull'].sum())
         bear = int((~df3['Bull']).sum())
         total = bull + bear
-        c1,c2,c3,c4 = st.columns(4)
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("Total Days", total)
         c2.metric("Bull Days", bull, f"{bull/total*100:.1f}%")
         c3.metric("Bear Days", bear, f"{bear/total*100:.1f}%")
         c4.metric("Lookback", bb_period)
 
-# --- Tab4: Metrics ---
+# --- Tab 4: Metrics ---
 with tab4:
     st.header("Detailed Metrics")
     if not st.session_state.run_all:
@@ -268,28 +310,39 @@ with tab4:
         df_hist = fetch_hist(st.session_state.ticker)
         last = df_hist['Close'].iloc[-1]
         idx, vals, ci = compute_sarimax(df_hist['Close'])
-        p_up = np.mean(vals>last)
-        p_dn = 1-p_up
+        p_up = np.mean(vals > last)
+        p_dn = 1 - p_up
 
         st.subheader(f"Last 3 Months  ↑{p_up:.1%}  ↓{p_dn:.1%}")
         cutoff = df_hist.index.max() - pd.Timedelta(days=90)
-        df3m = df_hist['Close'][df_hist.index>=cutoff]
+        df3m = df_hist['Close'][df_hist.index >= cutoff]
         ma30_3m = df3m.rolling(30).mean()
         res3m = df3m.rolling(30).max()
         sup3m = df3m.rolling(30).min()
-        trend3m = np.polyval(np.polyfit(np.arange(len(df3m)), df3m,1), np.arange(len(df3m)))
+        trend3m = np.polyval(np.polyfit(np.arange(len(df3m)), df3m, 1), np.arange(len(df3m)))
 
-        fig = make_subplots(rows=2,cols=1,shared_xaxes=True,row_heights=[0.7,0.3],vertical_spacing=0.05)
-        fig.add_trace(go.Scatter(x=df3m.index,y=df3m,name="Close"),1,1)
-        fig.add_trace(go.Scatter(x=df3m.index,y=ma30_3m,name="30 MA"),1,1)
-        fig.add_trace(go.Scatter(x=df3m.index,y=res3m,name="Resistance",line=dict(dash="dot")),1,1)
-        fig.add_trace(go.Scatter(x=df3m.index,y=sup3m,name="Support",line=dict(dash="dot")),1,1)
-        fig.add_trace(go.Scatter(x=df3m.index,y=trend3m,name="Trend",line=dict(dash="dash")),1,1)
+        fig = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                            row_heights=[0.7,0.3], vertical_spacing=0.05)
+        fig.add_trace(go.Scatter(x=df3m.index, y=df3m, name="Close"),1,1)
+        fig.add_trace(go.Scatter(x=ma30_3m.index, y=ma30_3m, name="30 MA"),1,1)
+        fig.add_trace(go.Scatter(x=res3m.index, y=res3m, name="Resistance", line=dict(dash="dot")),1,1)
+        fig.add_trace(go.Scatter(x=sup3m.index, y=sup3m, name="Support", line=dict(dash="dot")),1,1)
+        fig.add_trace(go.Scatter(x=df3m.index, y=trend3m, name="Trend", line=dict(dash="dash")),1,1)
+        fig.update_layout(height=600, title_text="Last 3 Months")
+        st.plotly_chart(fig, use_container_width=True)
 
-        # Distribution plot
+        st.markdown("---")
         df0 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
         df0['PctChange'] = df0['Close'].pct_change()
         df0['Bull'] = df0['PctChange'] > 0
-        dist = pd.DataFrame({"Type":["Bull","Bear"],"Days":[int(df0['Bull'].sum()),int((~df0['Bull']).sum())]}).set_index("Type")
-        st.plotly_chart(fig, use_container_width=True)
-        st.bar_chart(dist)
+        df0['MA30'] = df0['Close'].rolling(30).mean()
+
+        st.subheader("Daily % Change")
+        st.line_chart(df0['PctChange'], use_container_width=True)
+
+        st.subheader("Bull/Bear Distribution")
+        dist = pd.DataFrame({
+            "Type": ["Bull", "Bear"],
+            "Days": [int(df0['Bull'].sum()), int((~df0['Bull']).sum())]
+        }).set_index("Type")
+        st.bar_chart(dist, use_container_width=True)
