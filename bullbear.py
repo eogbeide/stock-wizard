@@ -206,4 +206,4 @@ with tab2:
     if not st.session_state.run_all:
         st.info("Run Tab 1 first.")
     else:
-        dfh = st.session_state df_hist
+        dfh = st.session_state.df_hist
