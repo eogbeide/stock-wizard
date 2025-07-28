@@ -169,4 +169,41 @@ with tab1:
             trend = np.polyval(np.polyfit(np.arange(len(vals)), vals.to_numpy(), 1), np.arange(len(vals)))
             fig.add_trace(go.Scatter(x=idx, y=trend, name="Trend", line=dict(dash="dash")),1,1)
             fig.add_trace(go.Scatter(x=lb.index, y=lb, name="Lower BB", line=dict(dash="dash")),1,1)
-            fig.add_trace(go.Scatter(x=ub.index, y=ub, name="Upper BB", line=dict(dash="dash")),
+            fig.add_trace(go.Scatter(x=ub.index, y=ub, name="Upper BB", line=dict(dash="dash")),1,1)
+
+            fig.add_trace(go.Scatter(x=atr.index, y=atr, name="ATR(14)"), row=2, col=1)
+
+            fig.update_layout(
+                height=700,
+                title_text=f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}"
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+        # Hourly interactive
+        if chart in ("Hourly", "Both"):
+            hc = dfi['Close'].ffill()[-576:]
+            ema20 = hc.ewm(span=20).mean()
+            atr5 = compute_atr(dfi)[-576:]
+
+            fig2 = make_subplots(
+                rows=2, cols=1, shared_xaxes=True,
+                row_heights=[0.7, 0.3], vertical_spacing=0.05
+            )
+            fig2.add_trace(go.Scatter(x=hc.index, y=hc, name="Price"),1,1)
+            fig2.add_trace(go.Scatter(x=ema20.index, y=ema20, name="20 EMA", line=dict(dash="dash")),1,1)
+            fig2.add_trace(go.Scatter(x=atr5.index, y=atr5, name="ATR(14)"),2,1)
+            fig2.update_layout(
+                height=600,
+                title_text=f"{sel} Last 48 Hours  ↑{p_up:.1%}  ↓{p_dn:.1%}"
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+
+        st.write(pd.DataFrame({"Forecast": vals, "Lower": ci.iloc[:,0], "Upper": ci.iloc[:,1]}, index=idx))
+
+# --- Tab 2: Enhanced Forecast ---
+with tab2:
+    st.header("Enhanced Forecast")
+    if not st.session_state.run_all:
+        st.info("Run Tab 1 first.")
+    else:
+        dfh = st.session_state df_hist
