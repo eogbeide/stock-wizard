@@ -76,7 +76,7 @@ def fetch_hist(ticker: str) -> pd.Series:
 
 @st.cache_data(ttl=900)
 def fetch_intraday(ticker: str) -> pd.DataFrame:
-    # now fetch 2 days of 5‑minute bars for a 48h window
+    # fetch 2 days of 5‑minute bars for later 48h slicing
     df = yf.download(ticker, period="2d", interval="5m")
     try:
         df = df.tz_localize('UTC')
@@ -134,9 +134,8 @@ with tab1:
     auto_run = st.session_state.run_all and (sel != st.session_state.ticker)
 
     if st.button("Run Forecast") or auto_run:
-        df_hist   = fetch_hist(sel)
+        df_hist, intraday = fetch_hist(sel), fetch_intraday(sel)
         idx, vals, ci = compute_sarimax_forecast(df_hist)
-        intraday  = fetch_intraday(sel)
         st.session_state.update({
             "df_hist": df_hist,
             "fc_idx": idx,
@@ -149,61 +148,70 @@ with tab1:
         })
 
     if st.session_state.run_all and st.session_state.ticker == sel:
-        df     = st.session_state.df_hist
+        df_hist = st.session_state.df_hist
+        intraday = st.session_state.intraday
         idx, vals, ci = (
             st.session_state.fc_idx,
             st.session_state.fc_vals,
             st.session_state.fc_ci
         )
-        last_price = float(df.iloc[-1])
+        last_price = float(df_hist.iloc[-1])
         p_up = np.mean(vals.to_numpy() > last_price)
         p_dn = 1 - p_up
 
-        # -- Daily: last 48h intraday instead of daily series
+        # --- Daily chart: historical daily (unchanged) ---
         if chart in ("Daily","Both"):
-            hist = st.session_state.intraday["Close"].ffill()
-            last48 = hist[-576:]  # 5‑min bars × 576 = 48h
-            # simple 20‑period EMA on intraday
-            ema20 = hist.ewm(span=20, adjust=False).mean()[-576:]
+            ema200 = df_hist.ewm(span=200).mean()
+            ma30   = df_hist.rolling(30).mean()
+            lb, mb, ub = compute_bb(df_hist)
+            res = df_hist.rolling(30, min_periods=1).max()
+            sup = df_hist.rolling(30, min_periods=1).min()
 
-            fig, ax = plt.subplots(figsize=(14,5))
-            ax.set_title(f"{sel} Last 48 Hours (5 min)  ↑{p_up:.1%}  ↓{p_dn:.1%}")
-            ax.plot(last48.index, last48, label="Price")
-            ax.plot(ema20.index, ema20, "--", label="20‑bar EMA")
-            # trend line
-            x = np.arange(len(last48))
-            slope, intercept = np.polyfit(x, last48.values, 1)
-            ax.plot(last48.index, slope*x + intercept, "--", label="Trend")
-            ax.set_xlabel("Time (PST)")
+            fig, ax = plt.subplots(figsize=(14,6))
+            ax.set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax.plot(df_hist[-360:], label="History")
+            ax.plot(ema200[-360:], "--", label="200 EMA")
+            ax.plot(ma30[-360:], "--", label="30 MA")
+            ax.plot(res[-360:], ":", label="Resistance")
+            ax.plot(sup[-360:], ":", label="Support")
+            ax.plot(idx, vals, label="Forecast")
+            ax.plot(idx, np.polyfit(np.arange(len(vals)), vals.to_numpy(), 1)[0]*np.arange(len(vals)) + np.polyfit(np.arange(len(vals)), vals.to_numpy(), 1)[1], "--", label="Forecast Trend")
+            ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
+            ax.plot(lb[-360:], "--", label="Lower BB")
+            ax.plot(ub[-360:], "--", label="Upper BB")
+            ax.set_xlabel("Date (PST)")
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # -- Hourly (intraday) remains unchanged
+        # --- Hourly chart: last 48 hours of 5‑min bars ---
         if chart in ("Hourly","Both"):
-            hc = st.session_state.intraday["Close"].ffill()
-            he = hc.ewm(span=20).mean()
-            xh = np.arange(len(hc))
-            slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
+            hc = intraday["Close"].ffill()
+            last48 = hc[-576:]  # 576 five‑minute bars = 48h
+            he = last48.ewm(span=20).mean()
+            xh = np.arange(len(last48))
+            slope_h, intercept_h = np.polyfit(xh, last48.values, 1)
             trend_h = slope_h * xh + intercept_h
-            res_h = hc.rolling(60, min_periods=1).max()
-            sup_h = hc.rolling(60, min_periods=1).min()
+            res_h = last48.rolling(60, min_periods=1).max()
+            sup_h = last48.rolling(60, min_periods=1).min()
 
             fig2, ax2 = plt.subplots(figsize=(14,4))
-            ax2.set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}")
-            ax2.plot(hc.index, hc, label="Intraday")
-            ax2.plot(hc.index, he, "--", label="20 EMA")
-            ax2.plot(hc.index, res_h, ":", label="Resistance")
-            ax2.plot(hc.index, sup_h, ":", label="Support")
-            ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
+            ax2.set_title(f"{sel} Last 48 Hours  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax2.plot(last48.index, last48, label="Price")
+            ax2.plot(last48.index, he, "--", label="20 EMA")
+            ax2.plot(last48.index, res_h, ":", label="Resistance")
+            ax2.plot(last48.index, sup_h, ":", label="Support")
+            ax2.plot(last48.index, trend_h, "--", label="Trend", linewidth=2)
             ax2.set_xlabel("Time (PST)")
             ax2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig2)
 
-        # -- Forecast table
+        # --- Forecast table ---
         st.write(pd.DataFrame({
-            "Forecast": st.session_state.fc_vals,
-            "Lower":    st.session_state.fc_ci.iloc[:,0],
-            "Upper":    st.session_state.fc_ci.iloc[:,1]
-        }, index=st.session_state.fc_idx))
+            "Forecast": vals,
+            "Lower":    ci.iloc[:,0],
+            "Upper":    ci.iloc[:,1]
+        }, index=idx))
 
-# (Tabs 2–4 stay unchanged)
+# --- Tab 2: Enhanced Forecast (unchanged) ---
+# --- Tab 3: Bull vs Bear (unchanged) ---
+# --- Tab 4: Metrics (unchanged) ---
