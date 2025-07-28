@@ -185,24 +185,24 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # --- Hourly chart: last 48 hours of 5‑min bars ---
+        # --- Hourly chart: last 24 hours of 5‑min bars ---
         if chart in ("Hourly","Both"):
             hc = intraday["Close"].ffill()
-            last48 = hc[-576:]  # 576 five‑minute bars = 48h
-            he = last48.ewm(span=20).mean()
-            xh = np.arange(len(last48))
-            slope_h, intercept_h = np.polyfit(xh, last48.values, 1)
+            last24 = hc[-576:]  # 576 five‑minute bars = 24h
+            he = last24.ewm(span=20).mean()
+            xh = np.arange(len(last24))
+            slope_h, intercept_h = np.polyfit(xh, last24.values, 1)
             trend_h = slope_h * xh + intercept_h
-            res_h = last48.rolling(60, min_periods=1).max()
-            sup_h = last48.rolling(60, min_periods=1).min()
+            res_h = last24.rolling(60, min_periods=1).max()
+            sup_h = last24.rolling(60, min_periods=1).min()
 
             fig2, ax2 = plt.subplots(figsize=(14,4))
-            ax2.set_title(f"{sel} Last 48 Hours  ↑{p_up:.1%}  ↓{p_dn:.1%}")
-            ax2.plot(last48.index, last48, label="Price")
-            ax2.plot(last48.index, he, "--", label="20 EMA")
-            ax2.plot(last48.index, res_h, ":", label="Resistance")
-            ax2.plot(last48.index, sup_h, ":", label="Support")
-            ax2.plot(last48.index, trend_h, "--", label="Trend", linewidth=2)
+            ax2.set_title(f"{sel} Last 24 Hours  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax2.plot(last24.index, last24, label="Price")
+            ax2.plot(last24.index, he, "--", label="20 EMA")
+            ax2.plot(last24.index, res_h, ":", label="Resistance")
+            ax2.plot(last24.index, sup_h, ":", label="Support")
+            ax2.plot(last24.index, trend_h, "--", label="Trend", linewidth=2)
             ax2.set_xlabel("Time (PST)")
             ax2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig2)
