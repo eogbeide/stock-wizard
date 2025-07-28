@@ -13,17 +13,26 @@ st.set_page_config(
     page_title="📊 Dashboard & Forecasts",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded"   # ensure sidebar is expanded by default
 )
 
 st.markdown("""
 <style>
   /* hide Streamlit menu, header, footer */
   #MainMenu, header, footer {visibility: hidden;}
-  /* on small screens, keep sidebar visible */
+
+  /* on small screens, override Streamlit's default so sidebar stays visible */
   @media (max-width: 600px) {
-    .css-18e3th9 {transform: none !important; visibility: visible !important; width: 100% !important; position: relative !important; margin-bottom: 1rem;}
-    .css-1v3fvcr {margin-left: 0 !important;}
+    .css-18e3th9 {  /* sidebar container */
+      transform: none !important;
+      visibility: visible !important;
+      width: 100% !important;
+      position: relative !important;
+      margin-bottom: 1rem;
+    }
+    .css-1v3fvcr {  /* main content area */
+      margin-left: 0 !important;
+    }
   }
 </style>
 """, unsafe_allow_html=True)
@@ -68,19 +77,18 @@ else:
 # --- Caching helpers (refresh every 15 minutes) ---
 @st.cache_data(ttl=900)
 def fetch_hist(ticker: str) -> pd.Series:
-    raw = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))
-    s = raw['Close']
-    # For forex, yfinance already returns only trading days; skip filling
-    if not ticker.endswith('=X'):
-        s = s.asfreq('D').fillna(method='ffill')
+    s = (
+        yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
+        .asfreq("D").fillna(method="ffill")
+    )
     return s.tz_localize(PACIFIC)
 
 @st.cache_data(ttl=900)
 def fetch_intraday(ticker: str) -> pd.DataFrame:
-    df = yf.download(ticker, period="2d", interval="5m")
+    df = yf.download(ticker, period="1d", interval="5m")
     try:
         df = df.tz_localize('UTC')
-    except:
+    except TypeError:
         pass
     return df.tz_convert(PACIFIC)
 
@@ -134,50 +142,52 @@ with tab1:
     auto_run = st.session_state.run_all and (sel != st.session_state.ticker)
 
     if st.button("Run Forecast") or auto_run:
-        df_hist   = fetch_hist(sel)
-        intraday  = fetch_intraday(sel)
+        df_hist = fetch_hist(sel)
         idx, vals, ci = compute_sarimax_forecast(df_hist)
+        intraday = fetch_intraday(sel)
         st.session_state.update({
             "df_hist": df_hist,
-            "intraday": intraday,
             "fc_idx": idx,
             "fc_vals": vals,
             "fc_ci": ci,
+            "intraday": intraday,
             "ticker": sel,
             "chart": chart,
             "run_all": True
         })
 
     if st.session_state.run_all and st.session_state.ticker == sel:
-        df_hist  = st.session_state.df_hist
-        intraday = st.session_state.intraday
+        df = st.session_state.df_hist
         idx, vals, ci = (
             st.session_state.fc_idx,
             st.session_state.fc_vals,
             st.session_state.fc_ci
         )
-        last_price = float(df_hist.iloc[-1])
+
+        last_price = float(df.iloc[-1])
         p_up = np.mean(vals.to_numpy() > last_price)
         p_dn = 1 - p_up
 
-        # --- Daily chart: historical daily (stocks include weekends, forex only actual days) ---
+        x_fc = np.arange(len(vals))
+        slope_fc, intercept_fc = np.polyfit(x_fc, vals.to_numpy(), 1)
+        trend_fc = slope_fc * x_fc + intercept_fc
+
         if chart in ("Daily","Both"):
-            ema200 = df_hist.ewm(span=200).mean()
-            ma30   = df_hist.rolling(30).mean()
-            lb, mb, ub = compute_bb(df_hist)
-            res = df_hist.rolling(30, min_periods=1).max()
-            sup = df_hist.rolling(30, min_periods=1).min()
+            ema200 = df.ewm(span=200).mean()
+            ma30   = df.rolling(30).mean()
+            lb, mb, ub = compute_bb(df)
+            res = df.rolling(30, min_periods=1).max()
+            sup = df.rolling(30, min_periods=1).min()
 
             fig, ax = plt.subplots(figsize=(14,6))
             ax.set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
-            ax.plot(df_hist[-360:], label="History")
+            ax.plot(df[-360:], label="History")
             ax.plot(ema200[-360:], "--", label="200 EMA")
             ax.plot(ma30[-360:], "--", label="30 MA")
-            ax.plot(res[-360:], ":", label="Resistance")
-            ax.plot(sup[-360:], ":", label="Support")
+            ax.plot(res[-360:], ":", label="30 Resistance")
+            ax.plot(sup[-360:], ":", label="30 Support")
             ax.plot(idx, vals, label="Forecast")
-            trend = np.polyfit(np.arange(len(vals)), vals.to_numpy(), 1)
-            ax.plot(idx, trend[0]*np.arange(len(vals)) + trend[1], "--", label="Trend")
+            ax.plot(idx, trend_fc, "--", label="Forecast Trend", linewidth=2)
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
             ax.plot(lb[-360:], "--", label="Lower BB")
             ax.plot(ub[-360:], "--", label="Upper BB")
@@ -185,40 +195,37 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # --- Hourly chart: last 24 hours of 5‑min bars ---
         if chart in ("Hourly","Both"):
-            hc = intraday["Close"].ffill()
-            last24 = hc[-576:]  # 576 five‑minute bars = 24h
-            he = last24.ewm(span=20).mean()
-            xh = np.arange(len(last24))
-            slope_h, intercept_h = np.polyfit(xh, last24.values, 1)
+            hc = st.session_state.intraday["Close"].ffill()
+            he = hc.ewm(span=20).mean()
+            xh = np.arange(len(hc))
+            slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
             trend_h = slope_h * xh + intercept_h
-            res_h = last24.rolling(60, min_periods=1).max()
-            sup_h = last24.rolling(60, min_periods=1).min()
+            res_h = hc.rolling(60, min_periods=1).max()
+            sup_h = hc.rolling(60, min_periods=1).min()
 
             fig2, ax2 = plt.subplots(figsize=(14,4))
-            ax2.set_title(f"{sel} Last 24 Hours  ↑{p_up:.1%}  ↓{p_dn:.1%}")
-            ax2.plot(last24.index, last24, label="Price")
-            ax2.plot(last24.index, he, "--", label="20 EMA")
-            ax2.plot(last24.index, res_h, ":", label="Resistance")
-            ax2.plot(last24.index, sup_h, ":", label="Support")
-            ax2.plot(last24.index, trend_h, "--", label="Trend", linewidth=2)
+            ax2.set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax2.plot(hc.index, hc, label="Intraday")
+            ax2.plot(hc.index, he, "--", label="20 EMA")
+            ax2.plot(hc.index, res_h, ":", label="Resistance")
+            ax2.plot(hc.index, sup_h, ":", label="Support")
+            ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
             ax2.set_xlabel("Time (PST)")
             ax2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig2)
 
-        # --- Forecast table ---
         st.write(pd.DataFrame({
-            "Forecast": vals,
-            "Lower":    ci.iloc[:,0],
-            "Upper":    ci.iloc[:,1]
-        }, index=idx))
+            "Forecast": st.session_state.fc_vals,
+            "Lower":    st.session_state.fc_ci.iloc[:,0],
+            "Upper":    st.session_state.fc_ci.iloc[:,1]
+        }, index=st.session_state.fc_idx))
 
 # --- Tab 2: Enhanced Forecast ---
 with tab2:
     st.header("Enhanced Forecast")
     if not st.session_state.run_all:
-        st.info("Run Tab 1 first.")
+        st.info("Run Tab 1 first.")
     else:
         df     = st.session_state.df_hist
         ema200 = df.ewm(span=200).mean()
@@ -239,7 +246,7 @@ with tab2:
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
         if view in ("Daily","Both"):
             fig, ax = plt.subplots(figsize=(14,6))
-            ax.set_title(f"{st.session_state.ticker} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax.set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
             ax.plot(df[-360:], label="History")
             ax.plot(ema200[-360:], "--", label="200 EMA")
             ax.plot(ma30[-360:], "--", label="30 MA")
@@ -274,7 +281,7 @@ with tab2:
             sup_i = ic.rolling(60, min_periods=1).min()
 
             fig3, ax3 = plt.subplots(figsize=(14,4))
-            ax3.set_title(f"{st.session_state.ticker} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax3.set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}")
             ax3.plot(ic.index, ic, label="Intraday")
             ax3.plot(ic.index, ie, "--", label="20 EMA")
             ax3.plot(ic.index, res_i, ":", label="Resistance")
@@ -302,7 +309,7 @@ with tab2:
 with tab3:
     st.header("Bull vs Bear Summary")
     if not st.session_state.run_all:
-        st.info("Run Tab 1 first.")
+        st.info("Run Tab 1 first.")
     else:
         df3 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
         df3['PctChange'] = df3['Close'].pct_change()
@@ -320,7 +327,7 @@ with tab3:
 with tab4:
     st.header("Detailed Metrics")
     if not st.session_state.run_all:
-        st.info("Run Tab 1 first.")
+        st.info("Run Tab 1 first.")
     else:
         df_hist = fetch_hist(st.session_state.ticker)
         last_price = float(df_hist.iloc[-1])
