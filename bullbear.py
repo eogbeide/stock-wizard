@@ -68,19 +68,19 @@ else:
 # --- Caching helpers (refresh every 15 minutes) ---
 @st.cache_data(ttl=900)
 def fetch_hist(ticker: str) -> pd.Series:
-    s = (
-        yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
-        .asfreq("D").fillna(method="ffill")
-    )
+    raw = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))
+    s = raw['Close']
+    # For forex, yfinance already returns only trading days; skip filling
+    if not ticker.endswith('=X'):
+        s = s.asfreq('D').fillna(method='ffill')
     return s.tz_localize(PACIFIC)
 
 @st.cache_data(ttl=900)
 def fetch_intraday(ticker: str) -> pd.DataFrame:
-    # fetch 2 days of 5‑minute bars for later 48h slicing
     df = yf.download(ticker, period="2d", interval="5m")
     try:
         df = df.tz_localize('UTC')
-    except TypeError:
+    except:
         pass
     return df.tz_convert(PACIFIC)
 
@@ -134,8 +134,8 @@ with tab1:
     auto_run = st.session_state.run_all and (sel != st.session_state.ticker)
 
     if st.button("Run Forecast") or auto_run:
-        df_hist = fetch_hist(sel)
-        intraday = fetch_intraday(sel)
+        df_hist   = fetch_hist(sel)
+        intraday  = fetch_intraday(sel)
         idx, vals, ci = compute_sarimax_forecast(df_hist)
         st.session_state.update({
             "df_hist": df_hist,
@@ -149,7 +149,7 @@ with tab1:
         })
 
     if st.session_state.run_all and st.session_state.ticker == sel:
-        df_hist = st.session_state.df_hist
+        df_hist  = st.session_state.df_hist
         intraday = st.session_state.intraday
         idx, vals, ci = (
             st.session_state.fc_idx,
@@ -160,7 +160,7 @@ with tab1:
         p_up = np.mean(vals.to_numpy() > last_price)
         p_dn = 1 - p_up
 
-        # --- Daily chart: historical daily ---
+        # --- Daily chart: historical daily (stocks include weekends, forex only actual days) ---
         if chart in ("Daily","Both"):
             ema200 = df_hist.ewm(span=200).mean()
             ma30   = df_hist.rolling(30).mean()
