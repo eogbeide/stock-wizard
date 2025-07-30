@@ -13,7 +13,7 @@ st.set_page_config(
     page_title="📊 Dashboard & Forecasts",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded"   # ensure sidebar is expanded by default
+    initial_sidebar_state="expanded"
 )
 
 st.markdown("""
@@ -23,14 +23,14 @@ st.markdown("""
 
   /* on small screens, override Streamlit's default so sidebar stays visible */
   @media (max-width: 600px) {
-    .css-18e3th9 {  /* sidebar container */
+    .css-18e3th9 {  /* sidebar */
       transform: none !important;
       visibility: visible !important;
       width: 100% !important;
       position: relative !important;
       margin-bottom: 1rem;
     }
-    .css-1v3fvcr {  /* main content area */
+    .css-1v3fvcr {  /* main content */
       margin-left: 0 !important;
     }
   }
@@ -57,8 +57,8 @@ st.sidebar.markdown(f"**Last refresh:** {pst_dt.strftime('%Y-%m-%d %H:%M:%S')} P
 
 # --- Sidebar config ---
 st.sidebar.title("Configuration")
-mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"])
-bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2)
+mode      = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"])
+bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo","3mo","6mo","1y"], index=2)
 
 # Universe for selection
 if mode == "Stock":
@@ -74,13 +74,11 @@ else:
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X'
     ]
 
-# --- Caching helpers (refresh every 15 minutes) ---
+# --- Caching helpers ---
 @st.cache_data(ttl=900)
 def fetch_hist(ticker: str) -> pd.Series:
-    s = (
-        yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
-        .asfreq("D").fillna(method="ffill")
-    )
+    s = (yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
+         .asfreq("D").fillna(method="ffill"))
     return s.tz_localize(PACIFIC)
 
 @st.cache_data(ttl=900)
@@ -108,10 +106,10 @@ def compute_sarimax_forecast(series: pd.Series):
 
 # Indicator helpers
 def compute_rsi(data, window=14):
-    d = data.diff()
+    d    = data.diff()
     gain = d.where(d>0,0).rolling(window).mean()
     loss = -d.where(d<0,0).rolling(window).mean()
-    rs = gain / loss
+    rs   = gain / loss
     return 100 - (100 / (1 + rs))
 
 def compute_bb(data, window=20, num_sd=2):
@@ -119,17 +117,19 @@ def compute_bb(data, window=20, num_sd=2):
     s = data.rolling(window).std()
     return m - num_sd*s, m, m + num_sd*s
 
+def compute_momentum(data, window=10):
+    return data - data.shift(window)
+
 # Session state init
 if 'run_all' not in st.session_state:
-    st.session_state.run_all = False
-    st.session_state.ticker = None
+    st.session_state.update({
+        'run_all': False,
+        'ticker': None
+    })
 
 # Tabs
 tab1, tab2, tab3, tab4 = st.tabs([
-    "Original Forecast",
-    "Enhanced Forecast",
-    "Bull vs Bear",
-    "Metrics"
+    "Original Forecast", "Enhanced Forecast", "Bull vs Bear", "Metrics"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -137,7 +137,7 @@ with tab1:
     st.header("Original Forecast")
     st.info("Pick a ticker; data will be cached for 15 minutes after first fetch.")
 
-    sel = st.selectbox("Ticker:", universe, key="orig_ticker")
+    sel   = st.selectbox("Ticker:", universe, key="orig_ticker")
     chart = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_chart")
     auto_run = st.session_state.run_all and (sel != st.session_state.ticker)
 
@@ -147,31 +147,21 @@ with tab1:
         intraday = fetch_intraday(sel)
         st.session_state.update({
             "df_hist": df_hist,
-            "fc_idx": idx,
-            "fc_vals": vals,
-            "fc_ci": ci,
-            "intraday": intraday,
-            "ticker": sel,
-            "chart": chart,
-            "run_all": True
+            "fc_idx": idx, "fc_vals": vals, "fc_ci": ci,
+            "intraday": intraday, "ticker": sel,
+            "chart": chart, "run_all": True
         })
 
     if st.session_state.run_all and st.session_state.ticker == sel:
-        df = st.session_state.df_hist
-        idx, vals, ci = (
-            st.session_state.fc_idx,
-            st.session_state.fc_vals,
-            st.session_state.fc_ci
-        )
-
+        df    = st.session_state.df_hist
+        idx, vals, ci = (st.session_state.fc_idx,
+                        st.session_state.fc_vals,
+                        st.session_state.fc_ci)
         last_price = float(df.iloc[-1])
         p_up = np.mean(vals.to_numpy() > last_price)
         p_dn = 1 - p_up
 
-        x_fc = np.arange(len(vals))
-        slope_fc, intercept_fc = np.polyfit(x_fc, vals.to_numpy(), 1)
-        trend_fc = slope_fc * x_fc + intercept_fc
-
+        # Daily
         if chart in ("Daily","Both"):
             ema200 = df.ewm(span=200).mean()
             ma30   = df.rolling(30).mean()
@@ -187,7 +177,8 @@ with tab1:
             ax.plot(res[-360:], ":", label="30 Resistance")
             ax.plot(sup[-360:], ":", label="30 Support")
             ax.plot(idx, vals, label="Forecast")
-            ax.plot(idx, trend_fc, "--", label="Forecast Trend", linewidth=2)
+            ax.plot(idx, np.poly1d(np.polyfit(range(len(vals)), vals, 1))(range(len(vals))),
+                    "--", label="Forecast Trend", linewidth=2)
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
             ax.plot(lb[-360:], "--", label="Lower BB")
             ax.plot(ub[-360:], "--", label="Upper BB")
@@ -195,12 +186,10 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
+        # Intraday
         if chart in ("Hourly","Both"):
             hc = st.session_state.intraday["Close"].ffill()
             he = hc.ewm(span=20).mean()
-            xh = np.arange(len(hc))
-            slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
-            trend_h = slope_h * xh + intercept_h
             res_h = hc.rolling(60, min_periods=1).max()
             sup_h = hc.rolling(60, min_periods=1).min()
 
@@ -210,11 +199,14 @@ with tab1:
             ax2.plot(hc.index, he, "--", label="20 EMA")
             ax2.plot(hc.index, res_h, ":", label="Resistance")
             ax2.plot(hc.index, sup_h, ":", label="Support")
-            ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
+            ax2.plot(hc.index,
+                     np.poly1d(np.polyfit(range(len(hc)), hc.values, 1))(range(len(hc))),
+                     "--", label="Trend", linewidth=2)
             ax2.set_xlabel("Time (PST)")
             ax2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig2)
 
+        # Forecast table
         st.write(pd.DataFrame({
             "Forecast": st.session_state.fc_vals,
             "Lower":    st.session_state.fc_ci.iloc[:,0],
@@ -227,78 +219,84 @@ with tab2:
     if not st.session_state.run_all:
         st.info("Run Tab 1 first.")
     else:
-        df     = st.session_state.df_hist
-        ema200 = df.ewm(span=200).mean()
-        ma30   = df.rolling(30).mean()
+        df      = st.session_state.df_hist
+        ema200  = df.ewm(span=200).mean()
+        ma30    = df.rolling(30).mean()
         lb, mb, ub = compute_bb(df)
-        rsi    = compute_rsi(df)
-        idx, vals, ci = (
-            st.session_state.fc_idx,
-            st.session_state.fc_vals,
-            st.session_state.fc_ci
-        )
+        rsi     = compute_rsi(df)
+        mom     = compute_momentum(df, window=10)
+        idx, vals, ci = (st.session_state.fc_idx,
+                         st.session_state.fc_vals,
+                         st.session_state.fc_ci)
         last_price = float(df.iloc[-1])
         p_up = np.mean(vals.to_numpy() > last_price)
         p_dn = 1 - p_up
-        res = df.rolling(30, min_periods=1).max()
-        sup = df.rolling(30, min_periods=1).min()
 
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
+
+        # Daily + Indicators
         if view in ("Daily","Both"):
             fig, ax = plt.subplots(figsize=(14,6))
-            ax.set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax.set_title(f"{st.session_state.ticker} Daily with Forecast")
             ax.plot(df[-360:], label="History")
             ax.plot(ema200[-360:], "--", label="200 EMA")
             ax.plot(ma30[-360:], "--", label="30 MA")
-            ax.plot(res[-360:], ":", label="Resistance")
-            ax.plot(sup[-360:], ":", label="Support")
             ax.plot(idx, vals, label="Forecast")
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
-            for lev in (0.236,0.382,0.5,0.618):
-                ax.hlines(
-                    df[-360:].max() - (df[-360:].max() - df[-360:].min())*lev,
-                    df.index[-360], df.index[-1],
-                    linestyles="dotted"
-                )
             ax.set_xlabel("Date (PST)")
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-            fig2, ax2 = plt.subplots(figsize=(14,3))
-            ax2.plot(rsi[-360:], label="RSI(14)")
-            ax2.axhline(70, linestyle="--"); ax2.axhline(30, linestyle="--")
-            ax2.set_xlabel("Date (PST)")
-            ax2.legend()
-            st.pyplot(fig2)
+            # RSI panel
+            fig_rsi, ax_rsi = plt.subplots(figsize=(14,3))
+            ax_rsi.plot(rsi[-360:], label="RSI(14)")
+            ax_rsi.axhline(70, linestyle="--")
+            ax_rsi.axhline(30, linestyle="--")
+            ax_rsi.set_xlabel("Date (PST)")
+            ax_rsi.legend()
+            st.pyplot(fig_rsi)
 
+            # Momentum panel
+            fig_mom, ax_mom = plt.subplots(figsize=(14,3))
+            ax_mom.plot(mom[-360:], label="Momentum(10)")
+            ax_mom.axhline(0, linestyle="--")
+            ax_mom.set_xlabel("Date (PST)")
+            ax_mom.legend()
+            st.pyplot(fig_mom)
+
+        # Intraday + Indicators
         if view in ("Intraday","Both"):
-            ic = st.session_state.intraday["Close"].ffill()
-            ie = ic.ewm(span=20).mean()
-            xi = np.arange(len(ic))
-            slope_i, intercept_i = np.polyfit(xi, ic.values, 1)
-            trend_i = slope_i * xi + intercept_i
-            res_i = ic.rolling(60, min_periods=1).max()
-            sup_i = ic.rolling(60, min_periods=1).min()
+            ic  = st.session_state.intraday["Close"].ffill()
+            ie  = ic.ewm(span=20).mean()
+            mom_i = compute_momentum(ic, window=10)
 
             fig3, ax3 = plt.subplots(figsize=(14,4))
-            ax3.set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax3.set_title(f"{st.session_state.ticker} Intraday")
             ax3.plot(ic.index, ic, label="Intraday")
             ax3.plot(ic.index, ie, "--", label="20 EMA")
-            ax3.plot(ic.index, res_i, ":", label="Resistance")
-            ax3.plot(ic.index, sup_i, ":", label="Support")
-            ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
             ax3.set_xlabel("Time (PST)")
             ax3.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig3)
 
-            fig4, ax4 = plt.subplots(figsize=(14,3))
+            # RSI panel
             ri = compute_rsi(ic)
+            fig4, ax4 = plt.subplots(figsize=(14,3))
             ax4.plot(ri, label="RSI(14)")
-            ax4.axhline(70, linestyle="--"); ax4.axhline(30, linestyle="--")
+            ax4.axhline(70, linestyle="--")
+            ax4.axhline(30, linestyle="--")
             ax4.set_xlabel("Time (PST)")
             ax4.legend()
             st.pyplot(fig4)
 
+            # Momentum panel
+            fig5, ax5 = plt.subplots(figsize=(14,3))
+            ax5.plot(mom_i, label="Momentum(10)")
+            ax5.axhline(0, linestyle="--")
+            ax5.set_xlabel("Time (PST)")
+            ax5.legend()
+            st.pyplot(fig5)
+
+        # Forecast table
         st.write(pd.DataFrame({
             "Forecast": vals,
             "Lower":    ci.iloc[:,0],
@@ -313,7 +311,7 @@ with tab3:
     else:
         df3 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
         df3['PctChange'] = df3['Close'].pct_change()
-        df3['Bull'] = df3['PctChange'] > 0
+        df3['Bull']      = df3['PctChange'] > 0
         bull = int(df3['Bull'].sum())
         bear = int((~df3['Bull']).sum())
         total = bull + bear
@@ -339,11 +337,10 @@ with tab4:
         cutoff = df_hist.index.max() - pd.Timedelta(days=90)
         df3m = df_hist[df_hist.index >= cutoff]
         ma30_3m = df3m.rolling(30, min_periods=1).mean()
-        res3m = df3m.rolling(30, min_periods=1).max()
-        sup3m = df3m.rolling(30, min_periods=1).min()
-        x3m = np.arange(len(df3m))
-        slope3m, intercept3m = np.polyfit(x3m, df3m.values, 1)
-        trend3m = slope3m * x3m + intercept3m
+        res3m   = df3m.rolling(30, min_periods=1).max()
+        sup3m   = df3m.rolling(30, min_periods=1).min()
+        x3m     = np.arange(len(df3m))
+        trend3m = np.poly1d(np.polyfit(x3m, df3m.values, 1))(x3m)
 
         fig, ax = plt.subplots(figsize=(14,5))
         ax.plot(df3m.index, df3m, label="Close")
@@ -358,15 +355,14 @@ with tab4:
         st.markdown("---")
         df0 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
         df0['PctChange'] = df0['Close'].pct_change()
-        df0['Bull'] = df0['PctChange'] > 0
-        df0['MA30'] = df0['Close'].rolling(30, min_periods=1).mean()
+        df0['Bull']      = df0['PctChange'] > 0
+        df0['MA30']      = df0['Close'].rolling(30, min_periods=1).mean()
 
         st.subheader("Close + 30‑day MA + Trend")
-        x0 = np.arange(len(df0))
-        slope0, intercept0 = np.polyfit(x0, df0['Close'], 1)
-        trend0 = slope0 * x0 + intercept0
-        res0 = df0.rolling(30, min_periods=1).max()
-        sup0 = df0.rolling(30, min_periods=1).min()
+        x0     = np.arange(len(df0))
+        trend0 = np.poly1d(np.polyfit(x0, df0['Close'], 1))(x0)
+        res0   = df0['Close'].rolling(30, min_periods=1).max()
+        sup0   = df0['Close'].rolling(30, min_periods=1).min()
 
         fig0, ax0 = plt.subplots(figsize=(14,5))
         ax0.plot(df0.index, df0['Close'], label="Close")
@@ -384,7 +380,7 @@ with tab4:
 
         st.subheader("Bull/Bear Distribution")
         dist = pd.DataFrame({
-            "Type": ["Bull", "Bear"],
+            "Type": ["Bull","Bear"],
             "Days": [int(df0['Bull'].sum()), int((~df0['Bull']).sum())]
         }).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
