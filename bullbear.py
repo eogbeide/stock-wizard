@@ -20,19 +20,16 @@ st.markdown("""
 <style>
   /* hide Streamlit menu, header, footer */
   #MainMenu, header, footer {visibility: hidden;}
-
-  /* on small screens, override Streamlit's default so sidebar stays visible */
+  /* on small screens, keep sidebar visible */
   @media (max-width: 600px) {
-    .css-18e3th9 {  /* sidebar */
+    .css-18e3th9 {
       transform: none !important;
       visibility: visible !important;
       width: 100% !important;
       position: relative !important;
       margin-bottom: 1rem;
     }
-    .css-1v3fvcr {  /* main content */
-      margin-left: 0 !important;
-    }
+    .css-1v3fvcr { margin-left: 0 !important; }
   }
 </style>
 """, unsafe_allow_html=True)
@@ -53,14 +50,14 @@ def auto_refresh():
 
 auto_refresh()
 pst_dt = datetime.fromtimestamp(st.session_state.last_refresh, tz=PACIFIC)
-st.sidebar.markdown(f"**Last refresh:** {pst_dt.strftime('%Y-%m-%d %H:%M:%S')} PST")
+st.sidebar.markdown(f"**Last refresh:** {pst_dt:%Y-%m-%d %H:%M:%S} PST")
 
 # --- Sidebar config ---
 st.sidebar.title("Configuration")
 mode      = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"])
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo","3mo","6mo","1y"], index=2)
 
-# Universe for selection
+# Universe selection
 if mode == "Stock":
     universe = sorted([
         'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
@@ -106,10 +103,10 @@ def compute_sarimax_forecast(series: pd.Series):
 
 # Indicator helpers
 def compute_rsi(data, window=14):
-    d    = data.diff()
-    gain = d.where(d>0,0).rolling(window).mean()
-    loss = -d.where(d<0,0).rolling(window).mean()
-    rs   = gain / loss
+    delta = data.diff()
+    gain  = delta.where(delta > 0, 0).rolling(window).mean()
+    loss  = -delta.where(delta < 0, 0).rolling(window).mean()
+    rs    = gain / loss
     return 100 - (100 / (1 + rs))
 
 def compute_bb(data, window=20, num_sd=2):
@@ -122,10 +119,7 @@ def compute_momentum(data, window=10):
 
 # Session state init
 if 'run_all' not in st.session_state:
-    st.session_state.update({
-        'run_all': False,
-        'ticker': None
-    })
+    st.session_state.update({'run_all': False, 'ticker': None})
 
 # Tabs
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -161,13 +155,17 @@ with tab1:
         p_up = np.mean(vals.to_numpy() > last_price)
         p_dn = 1 - p_up
 
-        # Daily
+        # Daily chart
         if chart in ("Daily","Both"):
-            ema200 = df.ewm(span=200).mean()
-            ma30   = df.rolling(30).mean()
-            lb, mb, ub = compute_bb(df)
-            res = df.rolling(30, min_periods=1).max()
-            sup = df.rolling(30, min_periods=1).min()
+            ema200      = df.ewm(span=200).mean()
+            ma30        = df.rolling(30).mean()
+            lb, mb, ub  = compute_bb(df)
+            res         = df.rolling(30, min_periods=1).max()
+            sup         = df.rolling(30, min_periods=1).min()
+
+            x_fc        = np.arange(len(vals))
+            slope_fc, intercept_fc = np.polyfit(x_fc, vals.to_numpy(), 1)
+            trend_fc    = slope_fc * x_fc + intercept_fc
 
             fig, ax = plt.subplots(figsize=(14,6))
             ax.set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
@@ -177,8 +175,7 @@ with tab1:
             ax.plot(res[-360:], ":", label="30 Resistance")
             ax.plot(sup[-360:], ":", label="30 Support")
             ax.plot(idx, vals, label="Forecast")
-            ax.plot(idx, np.poly1d(np.polyfit(range(len(vals)), vals, 1))(range(len(vals))),
-                    "--", label="Forecast Trend", linewidth=2)
+            ax.plot(idx, trend_fc, "--", label="Forecast Trend", linewidth=2)
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
             ax.plot(lb[-360:], "--", label="Lower BB")
             ax.plot(ub[-360:], "--", label="Upper BB")
@@ -186,12 +183,16 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # Intraday
+        # Intraday chart
         if chart in ("Hourly","Both"):
-            hc = st.session_state.intraday["Close"].ffill()
-            he = hc.ewm(span=20).mean()
-            res_h = hc.rolling(60, min_periods=1).max()
-            sup_h = hc.rolling(60, min_periods=1).min()
+            hc      = st.session_state.intraday["Close"].ffill()
+            he      = hc.ewm(span=20).mean()
+            res_h   = hc.rolling(60, min_periods=1).max()
+            sup_h   = hc.rolling(60, min_periods=1).min()
+
+            xh      = np.arange(len(hc))
+            slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
+            trend_h = slope_h * xh + intercept_h
 
             fig2, ax2 = plt.subplots(figsize=(14,4))
             ax2.set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}")
@@ -199,9 +200,7 @@ with tab1:
             ax2.plot(hc.index, he, "--", label="20 EMA")
             ax2.plot(hc.index, res_h, ":", label="Resistance")
             ax2.plot(hc.index, sup_h, ":", label="Support")
-            ax2.plot(hc.index,
-                     np.poly1d(np.polyfit(range(len(hc)), hc.values, 1))(range(len(hc))),
-                     "--", label="Trend", linewidth=2)
+            ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
             ax2.set_xlabel("Time (PST)")
             ax2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig2)
@@ -236,18 +235,23 @@ with tab2:
 
         # Daily + Indicators
         if view in ("Daily","Both"):
+            x_fc        = np.arange(len(vals))
+            slope_fc, intercept_fc = np.polyfit(x_fc, vals.to_numpy(), 1)
+            trend_fc    = slope_fc * x_fc + intercept_fc
+
             fig, ax = plt.subplots(figsize=(14,6))
             ax.set_title(f"{st.session_state.ticker} Daily with Forecast")
             ax.plot(df[-360:], label="History")
             ax.plot(ema200[-360:], "--", label="200 EMA")
             ax.plot(ma30[-360:], "--", label="30 MA")
             ax.plot(idx, vals, label="Forecast")
+            ax.plot(idx, trend_fc, "--", label="Forecast Trend", linewidth=2)
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
             ax.set_xlabel("Date (PST)")
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-            # RSI panel
+            # RSI
             fig_rsi, ax_rsi = plt.subplots(figsize=(14,3))
             ax_rsi.plot(rsi[-360:], label="RSI(14)")
             ax_rsi.axhline(70, linestyle="--")
@@ -256,7 +260,7 @@ with tab2:
             ax_rsi.legend()
             st.pyplot(fig_rsi)
 
-            # Momentum panel
+            # Momentum
             fig_mom, ax_mom = plt.subplots(figsize=(14,3))
             ax_mom.plot(mom[-360:], label="Momentum(10)")
             ax_mom.axhline(0, linestyle="--")
@@ -266,9 +270,9 @@ with tab2:
 
         # Intraday + Indicators
         if view in ("Intraday","Both"):
-            ic  = st.session_state.intraday["Close"].ffill()
-            ie  = ic.ewm(span=20).mean()
-            mom_i = compute_momentum(ic, window=10)
+            ic      = st.session_state.intraday["Close"].ffill()
+            ie      = ic.ewm(span=20).mean()
+            mom_i   = compute_momentum(ic, window=10)
 
             fig3, ax3 = plt.subplots(figsize=(14,4))
             ax3.set_title(f"{st.session_state.ticker} Intraday")
@@ -278,7 +282,7 @@ with tab2:
             ax3.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig3)
 
-            # RSI panel
+            # RSI
             ri = compute_rsi(ic)
             fig4, ax4 = plt.subplots(figsize=(14,3))
             ax4.plot(ri, label="RSI(14)")
@@ -288,7 +292,7 @@ with tab2:
             ax4.legend()
             st.pyplot(fig4)
 
-            # Momentum panel
+            # Momentum
             fig5, ax5 = plt.subplots(figsize=(14,3))
             ax5.plot(mom_i, label="Momentum(10)")
             ax5.axhline(0, linestyle="--")
@@ -296,7 +300,6 @@ with tab2:
             ax5.legend()
             st.pyplot(fig5)
 
-        # Forecast table
         st.write(pd.DataFrame({
             "Forecast": vals,
             "Lower":    ci.iloc[:,0],
