@@ -70,8 +70,10 @@ def fetch_hist(ticker: str) -> pd.Series:
 @st.cache_data(ttl=900)
 def fetch_intraday(ticker: str) -> pd.DataFrame:
     df = yf.download(ticker, period="1d", interval="5m")
-    try: df = df.tz_localize('UTC')
-    except: pass
+    try:
+        df = df.tz_localize('UTC')
+    except TypeError:
+        pass
     return df.tz_convert(PACIFIC)
 
 @st.cache_data(ttl=900)
@@ -79,8 +81,10 @@ def compute_sarimax_forecast(series: pd.Series):
     try:
         model = SARIMAX(series, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
     except np.linalg.LinAlgError:
-        model = SARIMAX(series, order=(1,1,1), seasonal_order=(1,1,1,12),
-                        enforce_stationarity=False, enforce_invertibility=False).fit(disp=False)
+        model = SARIMAX(
+            series, order=(1,1,1), seasonal_order=(1,1,1,12),
+            enforce_stationarity=False, enforce_invertibility=False
+        ).fit(disp=False)
     fc  = model.get_forecast(steps=30)
     idx = pd.date_range(series.index[-1] + timedelta(1), periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
@@ -115,7 +119,7 @@ with tab1:
 
     sel      = st.selectbox("Ticker:", universe, key="orig_ticker")
     chart    = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_chart")
-    auto_run = st.session_state.run_all and sel != st.session_state.ticker
+    auto_run = st.session_state.run_all and (sel != st.session_state.ticker)
 
     if st.button("Run Forecast") or auto_run:
         df_hist = fetch_hist(sel)
@@ -145,11 +149,13 @@ with tab1:
 
         # Daily chart
         if chart in ("Daily","Both"):
-            df360 = df[-360:]
-            ema200, ma30 = df360.ewm(span=200).mean(), df360.rolling(30).mean()
-            lb, mb, ub   = compute_bb(df360)
-            res, sup     = df360.rolling(30, min_periods=1).max(), df360.rolling(30, min_periods=1).min()
-            trend_fc     = np.poly1d(np.polyfit(np.arange(len(vals)), vals, 1))(np.arange(len(vals)))
+            df360       = df[-360:]
+            ema200      = df360.ewm(span=200).mean()
+            ma30        = df360.rolling(30).mean()
+            lb, mb, ub  = compute_bb(df360)
+            res         = df360.rolling(30, min_periods=1).max()
+            sup         = df360.rolling(30, min_periods=1).min()
+            trend_fc    = np.poly1d(np.polyfit(np.arange(len(vals)), vals, 1))(np.arange(len(vals)))
 
             fig, ax = plt.subplots(figsize=(14,6))
             ax.set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
@@ -208,12 +214,13 @@ with tab2:
     if not st.session_state.run_all:
         st.info("Run Tab 1 first.")
     else:
-        df360 = st.session_state.df_hist[-360:]
-        ema200, ma30 = df360.ewm(span=200).mean(), df360.rolling(30).mean()
-        lb, mb, ub   = compute_bb(df360)
-        rsi          = compute_rsi(df360)
-        mom          = (df360 - df360.shift(10))
-        idx, vals, ci= (
+        df360    = st.session_state.df_hist[-360:]
+        ema200   = df360.ewm(span=200).mean()
+        ma30     = df360.rolling(30).mean()
+        lb, mb, ub = compute_bb(df360)
+        rsi      = compute_rsi(df360)
+        mom      = df360 - df360.shift(10)
+        idx, vals, ci = (
             st.session_state.fc_idx,
             st.session_state.fc_vals,
             st.session_state.fc_ci
@@ -250,9 +257,9 @@ with tab2:
             st.pyplot(fig_m)
 
         if view in ("Intraday","Both"):
-            ic     = st.session_state.intraday['Close'].ffill()[-360:]
-            ie     = ic.ewm(span=20).mean()
-            trend_i= np.poly1d(np.polyfit(np.arange(len(ic)), ic.values, 1))(np.arange(len(ic)))
+            ic      = st.session_state.intraday['Close'].ffill()[-360:]
+            ie      = ic.ewm(span=20).mean()
+            trend_i = np.poly1d(np.polyfit(np.arange(len(ic)), ic.values, 1))(np.arange(len(ic)))
             fig3, ax3 = plt.subplots(figsize=(14,4))
             ax3.set_title(f"{st.session_state.ticker} Intraday")
             ax3.plot(ic.index, ic, label="Intraday")
@@ -305,10 +312,10 @@ with tab4:
         st.subheader(f"Last 3 Months  ↑{p_up:.1%}  ↓{p_dn:.1%}")
         cutoff = df_hist.index.max() - pd.Timedelta(days=90)
         df3m   = df_hist[df_hist.index >= cutoff]
-        ma30m  = df3m.rolling(30,min_periods=1).mean()
-        res3m  = df3m.rolling(30,min_periods=1).max()
-        sup3m  = df3m.rolling(30,min_periods=1).min()
-        trend3 = np.poly1d(np.polyfit(np.arange(len(df3m)), df3m.values,1))(np.arange(len(df3m)))
+        ma30m  = df3m.rolling(30, min_periods=1).mean()
+        res3m  = df3m.rolling(30, min_periods=1).max()
+        sup3m  = df3m.rolling(30, min_periods=1).min()
+        trend3 = np.poly1d(np.polyfit(np.arange(len(df3m)), df3m.values, 1))(np.arange(len(df3m)))
 
         fig, ax = plt.subplots(figsize=(14,5))
         ax.plot(df3m.index, df3m, label="Close")
@@ -320,11 +327,11 @@ with tab4:
 
         st.markdown("---")
         df0 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
-        df0['PctChange']=df0['Close'].pct_change()
-        df0['Bull']     = df0['PctChange']>0
-        df0['MA30']     = df0['Close'].rolling(30,min_periods=1).mean()
-        trend0         = np.poly1d(np.polyfit(np.arange(len(df0)), df0['Close'],1))(np.arange(len(df0)))
-        res0, sup0     = df0['Close'].rolling(30,min_periods=1).max(), df0['Close'].rolling(30,min_periods=1).min()
+        df0['PctChange'] = df0['Close'].pct_change()
+        df0['Bull']      = df0['PctChange'] > 0
+        df0['MA30']      = df0['Close'].rolling(30, min_periods=1).mean()
+        trend0          = np.poly1d(np.polyfit(np.arange(len(df0)), df0['Close'],1))(np.arange(len(df0)))
+        res0, sup0      = df0['Close'].rolling(30, min_periods=1).max(), df0['Close'].rolling(30, min_periods=1).min()
 
         fig0, ax0 = plt.subplots(figsize=(14,5))
         ax0.plot(df0.index, df0['Close'], label="Close")
@@ -338,9 +345,9 @@ with tab4:
         st.subheader("Daily % Change")
         st.line_chart(df0['PctChange'], use_container_width=True)
 
-        st.subheader("Bull/Bear Distribution
+        st.subheader("Bull/Bear Distribution")
         dist = pd.DataFrame({
-            "Type": ["Bull","Bear"],
+            "Type": ["Bull", "Bear"],
             "Days": [int(df0['Bull'].sum()), int((~df0['Bull']).sum())]
         }).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
