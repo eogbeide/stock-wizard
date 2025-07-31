@@ -41,10 +41,10 @@ st.markdown("""
 def safe_trend(x: np.ndarray, y: np.ndarray):
     try:
         coeff = np.polyfit(x, y, 1)
-        return coeff[0]*x + coeff[1]
+        return coeff[0]*x + coeff[1], coeff
     except (np.linalg.LinAlgError, ValueError):
         m = np.nanmean(y)
-        return np.full_like(x, m, dtype=float)
+        return np.full_like(x, m, dtype=float), (0.0, m)
 
 # --- Auto-refresh logic ---
 REFRESH_INTERVAL = 120  # seconds
@@ -183,12 +183,18 @@ with tab1:
             he = hc.ewm(span=20).mean()
             xh = np.arange(len(hc))
             yh = hc.values.flatten()
-            trend_h = safe_trend(xh, yh)
+            trend_h, coeff_h = safe_trend(xh, yh)
             res_h = hc.rolling(60, min_periods=1).max()
             sup_h = hc.rolling(60, min_periods=1).min()
+            # slope over range as percentage
+            if len(hc) > 1 and hc.iloc[0] != 0:
+                total_change = coeff_h[0] * (len(hc)-1)
+                slope_pct = (total_change / hc.iloc[0]) * 100
+            else:
+                slope_pct = 0.0
 
             fig2, ax2 = plt.subplots(figsize=(14,4))
-            ax2.set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax2.set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}  Slope: {slope_pct:.2f}%")
             ax2.plot(hc.index, hc, label="Intraday")
             ax2.plot(hc.index, he, "--", label="20 EMA")
             ax2.plot(hc.index, res_h, ":", label="Resistance")
@@ -207,7 +213,7 @@ with tab1:
             sup = df.rolling(30, min_periods=1).min()
             x_fc = np.arange(len(vals))
             y_fc = vals.to_numpy().flatten()
-            trend_fc = safe_trend(x_fc, y_fc)
+            trend_fc, coeff_fc = safe_trend(x_fc, y_fc)
 
             fig, ax = plt.subplots(figsize=(14,6))
             ax.set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
@@ -250,8 +256,6 @@ with tab2:
         last_price = float(df.iloc[-1])
         p_up = np.mean(vals.to_numpy() > last_price)
         p_dn = 1 - p_up
-        res = df.rolling(30, min_periods=1).max()
-        sup = df.rolling(30, min_periods=1).min()
 
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
         # Hourly first if selected
@@ -260,12 +264,17 @@ with tab2:
             ie = ic.ewm(span=20).mean()
             xi = np.arange(len(ic))
             yi = ic.values.flatten()
-            trend_i = safe_trend(xi, yi)
+            trend_i, coeff_i = safe_trend(xi, yi)
             res_i = ic.rolling(60, min_periods=1).max()
             sup_i = ic.rolling(60, min_periods=1).min()
+            if len(ic) > 1 and ic.iloc[0] != 0:
+                total_change_i = coeff_i[0] * (len(ic)-1)
+                slope_pct_i = (total_change_i / ic.iloc[0]) * 100
+            else:
+                slope_pct_i = 0.0
 
             fig3, ax3 = plt.subplots(figsize=(14,4))
-            ax3.set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax3.set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}  Slope: {slope_pct_i:.2f}%")
             ax3.plot(ic.index, ic, label="Intraday")
             ax3.plot(ic.index, ie, "--", label="20 EMA")
             ax3.plot(ic.index, res_i, ":", label="Resistance")
