@@ -158,8 +158,8 @@ with tab1:
         up_p = np.mean(vals > last)
         dn_p = 1 - up_p
 
-        # Daily
-        if view in ("Daily","Both"):
+        # Always render daily first if applicable:
+        if view in ("Daily", "Both"):
             recent = df[-360:]
             ema200 = recent.ewm(span=200).mean()
             ma30   = recent.rolling(30).mean()
@@ -187,8 +187,8 @@ with tab1:
             ax.legend(framealpha=0.5, loc="lower left")
             st.pyplot(fig)
 
-        # Hourly with 24/48 dropdown
-        if view in ("Hourly","Both"):
+        # Then intraday
+        if view in ("Hourly", "Both"):
             span = st.selectbox("Intraday Range:", ["Last 24 Hours","Last 48 Hours"], key="hourly_range")
             hrs  = 24 if span=="Last 24 Hours" else 48
 
@@ -249,11 +249,11 @@ with tab2:
 
             fig, ax = plt.subplots(figsize=(14,6))
             ax.set_title(f"{st.session_state.ticker} Daily + Forecast")
-            ax.plot(df360, label="History")
-            ax.plot(ema200, "--", label="200 EMA")
-            ax.plot(ma30,   "--", label="30 MA")
-            ax.plot(idx,    vals, label="Forecast")
-            ax.plot(idx,    trend, "--", label="Trend", linewidth=2)
+            ax.plot(df360,      label="History")
+            ax.plot(ema200,     "--", label="200 EMA")
+            ax.plot(ma30,       "--", label="30 MA")
+            ax.plot(idx, vals,  label="Forecast")
+            ax.plot(idx, trend, "--", label="Trend", linewidth=2)
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
             ax.set_xlabel("Date (PST)")
             ax.legend(framealpha=0.5, loc="lower left")
