@@ -158,7 +158,34 @@ with tab1:
         up_p = np.mean(vals > last)
         dn_p = 1 - up_p
 
-        # Always render daily first if applicable:
+        # Hourly first if selected
+        if view in ("Hourly", "Both"):
+            span = st.selectbox("Intraday Range:", ["Last 24 Hours","Last 48 Hours"], key="hourly_range")
+            hrs  = 24 if span=="Last 24 Hours" else 48
+
+            hc = fetch_intraday(sel).ffill()
+            cutoff = hc.index.max() - pd.Timedelta(hours=hrs)
+            hc = hc[hc.index >= cutoff]
+            he = hc.ewm(span=20).mean()
+            res_h = hc.rolling(60, min_periods=1).max()
+            sup_h = hc.rolling(60, min_periods=1).min()
+
+            xh = np.arange(len(hc))
+            yh = hc.values.flatten()
+            trend_h = safe_trend(xh, yh)
+
+            fig2, ax2 = plt.subplots(figsize=(14,4))
+            ax2.set_title(f"{sel} Intraday ({span})   ↑{up_p:.1%}  ↓{dn_p:.1%}")
+            ax2.plot(hc.index, hc,       label="Intraday")
+            ax2.plot(hc.index, he,       "--", label="20 EMA")
+            ax2.plot(hc.index, res_h,    ":",  label="Resistance")
+            ax2.plot(hc.index, sup_h,    ":",  label="Support")
+            ax2.plot(hc.index, trend_h,  "--", label="Trend", linewidth=2)
+            ax2.set_xlabel("Time (PST)")
+            ax2.legend(framealpha=0.5, loc="lower left")
+            st.pyplot(fig2)
+
+        # Then daily
         if view in ("Daily", "Both"):
             recent = df[-360:]
             ema200 = recent.ewm(span=200).mean()
@@ -186,33 +213,6 @@ with tab1:
             ax.set_xlabel("Date (PST)")
             ax.legend(framealpha=0.5, loc="lower left")
             st.pyplot(fig)
-
-        # Then intraday
-        if view in ("Hourly", "Both"):
-            span = st.selectbox("Intraday Range:", ["Last 24 Hours","Last 48 Hours"], key="hourly_range")
-            hrs  = 24 if span=="Last 24 Hours" else 48
-
-            hc = fetch_intraday(sel).ffill()
-            cutoff = hc.index.max() - pd.Timedelta(hours=hrs)
-            hc = hc[hc.index >= cutoff]
-            he = hc.ewm(span=20).mean()
-            res_h = hc.rolling(60, min_periods=1).max()
-            sup_h = hc.rolling(60, min_periods=1).min()
-
-            xh = np.arange(len(hc))
-            yh = hc.values.flatten()
-            trend_h = safe_trend(xh, yh)
-
-            fig2, ax2 = plt.subplots(figsize=(14,4))
-            ax2.set_title(f"{sel} Intraday ({span})   ↑{up_p:.1%}  ↓{dn_p:.1%}")
-            ax2.plot(hc.index, hc,       label="Intraday")
-            ax2.plot(hc.index, he,       "--", label="20 EMA")
-            ax2.plot(hc.index, res_h,    ":",  label="Resistance")
-            ax2.plot(hc.index, sup_h,    ":",  label="Support")
-            ax2.plot(hc.index, trend_h,  "--", label="Trend", linewidth=2)
-            ax2.set_xlabel("Time (PST)")
-            ax2.legend(framealpha=0.5, loc="lower left")
-            st.pyplot(fig2)
 
         # Forecast table
         st.write(pd.DataFrame({
@@ -242,6 +242,30 @@ with tab2:
         up_p, dn_p = np.mean(vals>last), 1-np.mean(vals>last)
 
         view2 = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
+
+        # Hourly first if chosen
+        if view2 in ("Intraday","Both"):
+            ic = fetch_intraday(st.session_state.ticker).ffill()[-360:]
+            ie = ic.ewm(span=20).mean()
+            xi = np.arange(len(ic))
+            yi = ic.values.flatten()
+            trend_i = safe_trend(xi, yi)
+
+            fig3, ax3 = plt.subplots(figsize=(14,4))
+            ax3.set_title(f"{st.session_state.ticker} Intraday")
+            ax3.plot(ic.index, ic,       label="Intraday")
+            ax3.plot(ic.index, ie,       "--", label="20 EMA")
+            ax3.plot(ic.index, trend_i,  "--", label="Trend", linewidth=2)
+            ax3.set_xlabel("Time (PST)"); ax3.legend(framealpha=0.5, loc="lower left")
+            st.pyplot(fig3)
+
+            ri = compute_rsi(ic)
+            fig4, ax4 = plt.subplots(figsize=(14,3))
+            ax4.plot(ri, label="RSI(14)")
+            ax4.axhline(70, linestyle="--"); ax4.axhline(30, linestyle="--")
+            ax4.set_xlabel("Time (PST)"); ax4.legend()
+            st.pyplot(fig4)
+
         if view2 in ("Daily","Both"):
             x = np.arange(len(vals))
             y = vals.to_numpy().flatten()
@@ -270,28 +294,6 @@ with tab2:
             ax_m.axhline(0, linestyle="--")
             ax_m.set_xlabel("Date (PST)"); ax_m.legend()
             st.pyplot(fig_m)
-
-        if view2 in ("Intraday","Both"):
-            ic = fetch_intraday(st.session_state.ticker).ffill()[-360:]
-            ie = ic.ewm(span=20).mean()
-            xi = np.arange(len(ic))
-            yi = ic.values.flatten()
-            trend_i = safe_trend(xi, yi)
-
-            fig3, ax3 = plt.subplots(figsize=(14,4))
-            ax3.set_title(f"{st.session_state.ticker} Intraday")
-            ax3.plot(ic.index, ic,       label="Intraday")
-            ax3.plot(ic.index, ie,       "--", label="20 EMA")
-            ax3.plot(ic.index, trend_i,  "--", label="Trend", linewidth=2)
-            ax3.set_xlabel("Time (PST)"); ax3.legend(framealpha=0.5, loc="lower left")
-            st.pyplot(fig3)
-
-            ri = compute_rsi(ic)
-            fig4, ax4 = plt.subplots(figsize=(14,3))
-            ax4.plot(ri, label="RSI(14)")
-            ax4.axhline(70, linestyle="--"); ax4.axhline(30, linestyle="--")
-            ax4.set_xlabel("Time (PST)"); ax4.legend()
-            st.pyplot(fig4)
 
         st.write(pd.DataFrame({
             "Forecast": vals,
