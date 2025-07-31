@@ -13,26 +13,15 @@ st.set_page_config(
     page_title="📊 Dashboard & Forecasts",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded"   # ensure sidebar is expanded by default
+    initial_sidebar_state="expanded"
 )
 
 st.markdown("""
 <style>
-  /* hide Streamlit menu, header, footer */
   #MainMenu, header, footer {visibility: hidden;}
-
-  /* on small screens, override Streamlit's default so sidebar stays visible */
   @media (max-width: 600px) {
-    .css-18e3th9 {  /* sidebar container */
-      transform: none !important;
-      visibility: visible !important;
-      width: 100% !important;
-      position: relative !important;
-      margin-bottom: 1rem;
-    }
-    .css-1v3fvcr {  /* main content area */
-      margin-left: 0 !important;
-    }
+    .css-18e3th9 {transform:none!important;visibility:visible!important;width:100%!important;position:relative!important;margin-bottom:1rem;}
+    .css-1v3fvcr {margin-left:0!important;}
   }
 </style>
 """, unsafe_allow_html=True)
@@ -41,17 +30,17 @@ st.markdown("""
 def safe_trend(x: np.ndarray, y: np.ndarray):
     try:
         coeff = np.polyfit(x, y, 1)
-        return coeff[0]*x + coeff[1], coeff
+        return coeff[0]*x + coeff[1], coeff  # slope, intercept tuple returned as coeff
     except (np.linalg.LinAlgError, ValueError):
         m = np.nanmean(y)
         return np.full_like(x, m, dtype=float), (0.0, m)
 
 # --- Auto-refresh logic ---
-REFRESH_INTERVAL = 120  # seconds
+REFRESH_INTERVAL = 120
 PACIFIC = pytz.timezone("US/Pacific")
 
 def auto_refresh():
-    if 'last_refresh' not in st.session_state:
+    if "last_refresh" not in st.session_state:
         st.session_state.last_refresh = time.time()
     elif time.time() - st.session_state.last_refresh > REFRESH_INTERVAL:
         st.session_state.last_refresh = time.time()
@@ -64,12 +53,11 @@ auto_refresh()
 pst_dt = datetime.fromtimestamp(st.session_state.last_refresh, tz=PACIFIC)
 st.sidebar.markdown(f"**Last refresh:** {pst_dt.strftime('%Y-%m-%d %H:%M:%S')} PST")
 
-# --- Sidebar config ---
+# --- Sidebar ---
 st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"])
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2)
 
-# Universe for selection
 if mode == "Stock":
     universe = sorted([
         'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
@@ -83,21 +71,18 @@ else:
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X'
     ]
 
-# --- Caching helpers (refresh every 15 minutes) ---
+# --- Cached fetchers ---
 @st.cache_data(ttl=900)
 def fetch_hist(ticker: str) -> pd.Series:
-    s = (
-        yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
-        .asfreq("D").fillna(method="ffill")
-    )
-    return s.tz_localize(PACIFIC)
+    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
+    return df.asfreq("D").fillna(method="ffill").tz_localize(PACIFIC)
 
 @st.cache_data(ttl=900)
 def fetch_intraday(ticker: str) -> pd.DataFrame:
     df = yf.download(ticker, period="1d", interval="5m")
     try:
-        df = df.tz_localize('UTC')
-    except TypeError:
+        df = df.tz_localize("UTC")
+    except Exception:
         pass
     return df.tz_convert(PACIFIC)
 
@@ -111,15 +96,14 @@ def compute_sarimax_forecast(series: pd.Series):
             enforce_stationarity=False, enforce_invertibility=False
         ).fit(disp=False)
     fc = model.get_forecast(steps=30)
-    idx = pd.date_range(series.index[-1] + timedelta(1),
-                        periods=30, freq="D", tz=PACIFIC)
+    idx = pd.date_range(series.index[-1] + timedelta(1), periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
 
-# Indicator helpers
+# --- Indicators ---
 def compute_rsi(data, window=14):
     d = data.diff()
-    gain = d.where(d>0,0).rolling(window).mean()
-    loss = -d.where(d<0,0).rolling(window).mean()
+    gain = d.where(d > 0, 0).rolling(window).mean()
+    loss = -d.where(d < 0, 0).rolling(window).mean()
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
@@ -128,26 +112,23 @@ def compute_bb(data, window=20, num_sd=2):
     s = data.rolling(window).std()
     return m - num_sd*s, m, m + num_sd*s
 
-# Session state init
-if 'run_all' not in st.session_state:
+# --- Session init ---
+if "run_all" not in st.session_state:
     st.session_state.run_all = False
     st.session_state.ticker = None
 
-# Tabs
+# --- Tabs ---
 tab1, tab2, tab3, tab4 = st.tabs([
-    "Original Forecast",
-    "Enhanced Forecast",
-    "Bull vs Bear",
-    "Metrics"
+    "Original Forecast", "Enhanced Forecast", "Bull vs Bear", "Metrics"
 ])
 
-# --- Tab 1: Original Forecast ---
+# --- Tab 1 ---
 with tab1:
     st.header("Original Forecast")
     st.info("Pick a ticker; data will be cached for 15 minutes after first fetch.")
 
     sel = st.selectbox("Ticker:", universe, key="orig_ticker")
-    chart = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_chart")
+    chart = st.radio("Chart View:", ["Daily", "Hourly", "Both"], key="orig_chart")
     auto_run = st.session_state.run_all and (sel != st.session_state.ticker)
 
     if st.button("Run Forecast") or auto_run or (not st.session_state.run_all):
@@ -172,26 +153,25 @@ with tab1:
             st.session_state.fc_vals,
             st.session_state.fc_ci
         )
-
         last_price = float(df.iloc[-1])
         p_up = np.mean(vals.to_numpy() > last_price)
         p_dn = 1 - p_up
 
-        # Hourly first when applicable
-        if chart in ("Hourly","Both"):
-            hc = st.session_state.intraday["Close"].ffill()
+        # Hourly first
+        if chart in ("Hourly", "Both"):
+            hc = st.session_state.intraday.get("Close", st.session_state.intraday).ffill()
             he = hc.ewm(span=20).mean()
             xh = np.arange(len(hc))
             yh = hc.values.flatten()
             trend_h, coeff_h = safe_trend(xh, yh)
             res_h = hc.rolling(60, min_periods=1).max()
             sup_h = hc.rolling(60, min_periods=1).min()
-            # slope over range as percentage
-            if len(hc) > 1 and hc.iloc[0] != 0:
-                total_change = coeff_h[0] * (len(hc)-1)
-                slope_pct = (total_change / hc.iloc[0]) * 100
-            else:
-                slope_pct = 0.0
+            slope_pct = 0.0
+            if len(hc) > 1:
+                base = hc.iloc[0]
+                if np.isscalar(base) and base != 0:
+                    total_change = coeff_h[0] * (len(hc) - 1)
+                    slope_pct = (total_change / base) * 100
 
             fig2, ax2 = plt.subplots(figsize=(14,4))
             ax2.set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}  Slope: {slope_pct:.2f}%")
@@ -205,15 +185,15 @@ with tab1:
             st.pyplot(fig2)
 
         # Then daily
-        if chart in ("Daily","Both"):
+        if chart in ("Daily", "Both"):
             ema200 = df.ewm(span=200).mean()
-            ma30   = df.rolling(30).mean()
+            ma30 = df.rolling(30).mean()
             lb, mb, ub = compute_bb(df)
             res = df.rolling(30, min_periods=1).max()
             sup = df.rolling(30, min_periods=1).min()
             x_fc = np.arange(len(vals))
             y_fc = vals.to_numpy().flatten()
-            trend_fc, coeff_fc = safe_trend(x_fc, y_fc)
+            trend_fc, _ = safe_trend(x_fc, y_fc)
 
             fig, ax = plt.subplots(figsize=(14,6))
             ax.set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
@@ -233,8 +213,8 @@ with tab1:
 
         st.write(pd.DataFrame({
             "Forecast": st.session_state.fc_vals,
-            "Lower":    st.session_state.fc_ci.iloc[:,0],
-            "Upper":    st.session_state.fc_ci.iloc[:,1]
+            "Lower": st.session_state.fc_ci.iloc[:,0],
+            "Upper": st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
 
 # --- Tab 2: Enhanced Forecast ---
@@ -243,11 +223,11 @@ with tab2:
     if not st.session_state.run_all:
         st.info("Run Tab 1 first.")
     else:
-        df     = st.session_state.df_hist
+        df = st.session_state.df_hist
         ema200 = df.ewm(span=200).mean()
-        ma30   = df.rolling(30).mean()
+        ma30 = df.rolling(30).mean()
         lb, mb, ub = compute_bb(df)
-        rsi    = compute_rsi(df)
+        rsi = compute_rsi(df)
         idx, vals, ci = (
             st.session_state.fc_idx,
             st.session_state.fc_vals,
@@ -257,24 +237,24 @@ with tab2:
         p_up = np.mean(vals.to_numpy() > last_price)
         p_dn = 1 - p_up
 
-        view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
-        # Hourly first if selected
-        if view in ("Intraday","Both"):
-            ic = st.session_state.intraday["Close"].ffill()
+        view = st.radio("View:", ["Daily", "Intraday", "Both"], key="enh_view")
+        if view in ("Intraday", "Both"):
+            ic = st.session_state.intraday.get("Close", st.session_state.intraday).ffill()
             ie = ic.ewm(span=20).mean()
             xi = np.arange(len(ic))
             yi = ic.values.flatten()
             trend_i, coeff_i = safe_trend(xi, yi)
             res_i = ic.rolling(60, min_periods=1).max()
             sup_i = ic.rolling(60, min_periods=1).min()
-            if len(ic) > 1 and ic.iloc[0] != 0:
-                total_change_i = coeff_i[0] * (len(ic)-1)
-                slope_pct_i = (total_change_i / ic.iloc[0]) * 100
-            else:
-                slope_pct_i = 0.0
+            slope_pct_i = 0.0
+            if len(ic) > 1:
+                base_i = ic.iloc[0]
+                if np.isscalar(base_i) and base_i != 0:
+                    total_change_i = coeff_i[0] * (len(ic) - 1)
+                    slope_pct_i = (total_change_i / base_i) * 100
 
             fig3, ax3 = plt.subplots(figsize=(14,4))
-            ax3.set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}  Slope: {slope_pct_i:.2f}%")
+            ax3.set_title(f"{st.session_state.ticker} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}  Slope: {slope_pct_i:.2f}%")
             ax3.plot(ic.index, ic, label="Intraday")
             ax3.plot(ic.index, ie, "--", label="20 EMA")
             ax3.plot(ic.index, res_i, ":", label="Resistance")
@@ -292,19 +272,20 @@ with tab2:
             ax4.legend()
             st.pyplot(fig4)
 
-        if view in ("Daily","Both"):
+        if view in ("Daily", "Both"):
             fig, ax = plt.subplots(figsize=(14,6))
-            ax.set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax.set_title(f"{st.session_state.ticker} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
             ax.plot(df[-360:], label="History")
             ax.plot(ema200[-360:], "--", label="200 EMA")
             ax.plot(ma30[-360:], "--", label="30 MA")
-            ax.plot(res[-360:], ":", label="Resistance")
-            ax.plot(sup[-360:], ":", label="Support")
+            ax.plot(lb[-360:], "--", label="Lower BB")
+            ax.plot(mb[-360:], "--", label="Mid BB")
+            ax.plot(ub[-360:], "--", label="Upper BB")
             ax.plot(idx, vals, label="Forecast")
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
-            for lev in (0.236,0.382,0.5,0.618):
+            for lev in (0.236, 0.382, 0.5, 0.618):
                 ax.hlines(
-                    df[-360:].max() - (df[-360:].max() - df[-360:].min())*lev,
+                    df[-360:].max() - (df[-360:].max() - df[-360:].min()) * lev,
                     df.index[-360], df.index[-1],
                     linestyles="dotted"
                 )
@@ -314,8 +295,8 @@ with tab2:
 
         st.write(pd.DataFrame({
             "Forecast": vals,
-            "Lower":    ci.iloc[:,0],
-            "Upper":    ci.iloc[:,1]
+            "Lower": ci.iloc[:,0],
+            "Upper": ci.iloc[:,1]
         }, index=idx))
 
 # --- Tab 3: Bull vs Bear ---
@@ -355,8 +336,7 @@ with tab4:
         res3m = df3m.rolling(30, min_periods=1).max()
         sup3m = df3m.rolling(30, min_periods=1).min()
         x3m = np.arange(len(df3m))
-        slope3m, intercept3m = np.polyfit(x3m, df3m.values, 1)
-        trend3m = slope3m * x3m + intercept3m
+        trend3m, _ = safe_trend(x3m, df3m.values.flatten())
 
         fig, ax = plt.subplots(figsize=(14,5))
         ax.plot(df3m.index, df3m, label="Close")
@@ -376,10 +356,9 @@ with tab4:
 
         st.subheader("Close + 30-day MA + Trend")
         x0 = np.arange(len(df0))
-        slope0, intercept0 = np.polyfit(x0, df0['Close'], 1)
-        trend0 = slope0 * x0 + intercept0
-        res0 = df0.rolling(30, min_periods=1).max()
-        sup0 = df0.rolling(30, min_periods=1).min()
+        trend0, _ = safe_trend(x0, df0['Close'].values.flatten())
+        res0 = df0['Close'].rolling(30, min_periods=1).max()
+        sup0 = df0['Close'].rolling(30, min_periods=1).min()
 
         fig0, ax0 = plt.subplots(figsize=(14,5))
         ax0.plot(df0.index, df0['Close'], label="Close")
