@@ -189,6 +189,9 @@ with tab1:
             except Exception:
                 slope_pct = 0.0
 
+            # ensure histogram is numeric
+            hist_vals_h = pd.to_numeric(hist_h, errors="coerce").fillna(0).to_numpy()
+
             fig2, axes2 = plt.subplots(2, 1, figsize=(14,7), sharex=True)
             axes2[0].set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}  Slope: {slope_pct:.2f}%")
             axes2[0].plot(hc.index, hc, label="Intraday")
@@ -199,9 +202,9 @@ with tab1:
             axes2[0].set_ylabel("Price")
             axes2[0].legend(loc="lower left", framealpha=0.5)
 
-            axes2[1].plot(hc.index, macd_line_h, label="MACD Line")
-            axes2[1].plot(hc.index, signal_h, "--", label="Signal Line")
-            axes2[1].bar(hc.index, hist_h, label="Histogram", alpha=0.5)
+            axes2[1].plot(hc.index, macd_line_h.to_numpy(), label="MACD Line")
+            axes2[1].plot(hc.index, signal_h.to_numpy(), "--", label="Signal Line")
+            axes2[1].bar(hc.index, hist_vals_h, label="Histogram", alpha=0.5)
             axes2[1].axhline(0, color="black", linewidth=0.5)
             axes2[1].set_ylabel("MACD")
             axes2[1].legend(loc="lower left", framealpha=0.5)
@@ -220,6 +223,9 @@ with tab1:
             trend_fc, _ = safe_trend(x_fc, vals.to_numpy().flatten())
             macd_line, signal_line, hist = compute_macd(df)
 
+            # clean histogram
+            hist_vals = pd.to_numeric(hist, errors="coerce").fillna(0).to_numpy()
+
             fig, axes = plt.subplots(2, 1, figsize=(14,8), sharex=False)
             axes[0].set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
             axes[0].plot(df[-360:], label="History")
@@ -235,9 +241,9 @@ with tab1:
             axes[0].set_xlabel("Date (PST)")
             axes[0].legend(loc="lower left", framealpha=0.5)
 
-            axes[1].plot(df.index, macd_line, label="MACD Line")
-            axes[1].plot(df.index, signal_line, "--", label="Signal Line")
-            axes[1].bar(df.index, hist, label="Histogram", alpha=0.5)
+            axes[1].plot(df.index, macd_line.to_numpy(), label="MACD Line")
+            axes[1].plot(df.index, signal_line.to_numpy(), "--", label="Signal Line")
+            axes[1].bar(df.index, hist_vals, label="Histogram", alpha=0.5)
             axes[1].axhline(0, color="black", linewidth=0.5)
             axes[1].set_ylabel("MACD")
             axes[1].legend(loc="lower left", framealpha=0.5)
@@ -292,6 +298,8 @@ with tab2:
             except Exception:
                 slope_pct_i = 0.0
 
+            hist_vals_i = pd.to_numeric(hist_i, errors="coerce").fillna(0).to_numpy()
+
             fig3, ax3 = plt.subplots(2, 1, figsize=(14,7), sharex=True)
             ax3[0].set_title(f"{st.session_state.ticker} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}  Slope: {slope_pct_i:.2f}%")
             ax3[0].plot(ic.index, ic, label="Intraday")
@@ -302,9 +310,9 @@ with tab2:
             ax3[0].set_ylabel("Price")
             ax3[0].legend(loc="lower left", framealpha=0.5)
 
-            ax3[1].plot(ic.index, macd_line_i, label="MACD Line")
-            ax3[1].plot(ic.index, signal_i, "--", label="Signal Line")
-            ax3[1].bar(ic.index, hist_i, label="Histogram", alpha=0.5)
+            ax3[1].plot(ic.index, macd_line_i.to_numpy(), label="MACD Line")
+            ax3[1].plot(ic.index, signal_i.to_numpy(), "--", label="Signal Line")
+            ax3[1].bar(ic.index, hist_vals_i, label="Histogram", alpha=0.5)
             ax3[1].axhline(0, color="black", linewidth=0.5)
             ax3[1].set_ylabel("MACD")
             ax3[1].legend(loc="lower left", framealpha=0.5)
@@ -341,7 +349,6 @@ with tab2:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # Forecast table
         st.write(pd.DataFrame({
             "Forecast": vals,
             "Lower": ci.iloc[:,0],
