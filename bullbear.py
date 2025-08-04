@@ -83,8 +83,8 @@ def fetch_hist(ticker: str) -> pd.Series:
     return s.tz_localize(PACIFIC)
 
 @st.cache_data(ttl=900)
-def fetch_intraday(ticker: str) -> pd.DataFrame:
-    df = yf.download(ticker, period="1d", interval="5m")
+def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
+    df = yf.download(ticker, period=period, interval="5m")
     try:
         df = df.tz_localize("UTC")
     except Exception:
@@ -142,12 +142,14 @@ with tab1:
 
     sel = st.selectbox("Ticker:", universe, key="orig_ticker")
     chart = st.radio("Chart View:", ["Daily", "Hourly", "Both"], key="orig_chart")
+    hour_range = st.selectbox("Hourly lookback:", ["24h", "48h"], key="hour_range")
     auto_run = st.session_state.run_all and (sel != st.session_state.ticker)
 
     if st.button("Run Forecast") or auto_run or (not st.session_state.run_all):
         df_hist = fetch_hist(sel)
+        intraday_period = "2d" if hour_range == "48h" else "1d"
+        intraday = fetch_intraday(sel, period=intraday_period)
         idx, vals, ci = compute_sarimax_forecast(df_hist)
-        intraday = fetch_intraday(sel)
         st.session_state.update({
             "df_hist": df_hist,
             "fc_idx": idx,
@@ -156,6 +158,7 @@ with tab1:
             "intraday": intraday,
             "ticker": sel,
             "chart": chart,
+            "hour_range": hour_range,
             "run_all": True
         })
 
@@ -175,7 +178,8 @@ with tab1:
 
         # --- Intraday ---
         if chart in ("Hourly", "Both"):
-            hc = st.session_state.intraday.get("Close", st.session_state.intraday).ffill()
+            intraday = st.session_state.intraday
+            hc = intraday.get("Close", intraday).ffill()
             he = hc.ewm(span=20).mean()
             xh = np.arange(len(hc))
             trend_h, coeff_h = safe_trend(xh, hc.values.flatten())
@@ -193,7 +197,7 @@ with tab1:
             trend_label_hourly = f"{slope_pct:.2f}%"
 
             fig2, ax2 = plt.subplots(figsize=(14,4))
-            ax2.set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}  Predicted Trend: {trend_label_hourly}")
+            ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{p_up:.1%}  ↓{p_dn:.1%}  Predicted Trend: {trend_label_hourly}")
             ax2.plot(hc.index, hc, label="Intraday")
             ax2.plot(hc.index, he, "--", label="20 EMA")
             ax2.plot(hc.index, res_h, ":", label="Resistance")
@@ -214,7 +218,6 @@ with tab1:
             trend_fc, _ = safe_trend(x_fc, vals.to_numpy().flatten())
             macd_line, signal_line, hist = compute_macd(df)
 
-            # safe histogram
             if isinstance(hist, (pd.Series, np.ndarray, list)):
                 hist_series = pd.Series(hist)
                 hist_vals = pd.to_numeric(hist_series, errors="coerce").fillna(0).to_numpy()
