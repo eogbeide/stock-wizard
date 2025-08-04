@@ -18,7 +18,7 @@ st.set_page_config(
 st.markdown("""
 <style>
   #MainMenu, header, footer {visibility: hidden;}
-  /* mobile sidebar hack */
+  /* mobile sidebar override */
   @media (max-width: 600px) {
     .css-18e3th9 {transform:none!important;visibility:visible!important;width:100%!important;position:relative!important;margin-bottom:1rem;}
     .css-1v3fvcr {margin-left:0!important;}
@@ -73,7 +73,7 @@ else:
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X'
     ]
 
-# --- Caching helpers (15 min) ---
+# --- Caching helpers (refresh every 15 minutes) ---
 @st.cache_data(ttl=900)
 def fetch_hist(ticker: str) -> pd.Series:
     s = (
@@ -138,7 +138,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # --- Tab 1: Original Forecast ---
 with tab1:
     st.header("Original Forecast")
-    st.info("Pick a ticker; data is cached for 15 minutes after fetch.")
+    st.info("Pick a ticker; data will be cached for 15 minutes after fetch.")
 
     sel = st.selectbox("Ticker:", universe, key="orig_ticker")
     chart = st.radio("Chart View:", ["Daily", "Hourly", "Both"], key="orig_chart")
@@ -189,8 +189,12 @@ with tab1:
             except Exception:
                 slope_pct = 0.0
 
-            # ensure histogram is numeric
-            hist_vals_h = pd.to_numeric(hist_h, errors="coerce").fillna(0).to_numpy()
+            # safe histogram
+            if isinstance(hist_h, (pd.Series, np.ndarray, list)):
+                hist_series_h = pd.Series(hist_h)
+                hist_vals_h = pd.to_numeric(hist_series_h, errors="coerce").fillna(0).to_numpy()
+            else:
+                hist_vals_h = np.zeros(len(hc))
 
             fig2, axes2 = plt.subplots(2, 1, figsize=(14,7), sharex=True)
             axes2[0].set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}  Slope: {slope_pct:.2f}%")
@@ -223,8 +227,11 @@ with tab1:
             trend_fc, _ = safe_trend(x_fc, vals.to_numpy().flatten())
             macd_line, signal_line, hist = compute_macd(df)
 
-            # clean histogram
-            hist_vals = pd.to_numeric(hist, errors="coerce").fillna(0).to_numpy()
+            if isinstance(hist, (pd.Series, np.ndarray, list)):
+                hist_series = pd.Series(hist)
+                hist_vals = pd.to_numeric(hist_series, errors="coerce").fillna(0).to_numpy()
+            else:
+                hist_vals = np.zeros(len(df))
 
             fig, axes = plt.subplots(2, 1, figsize=(14,8), sharex=False)
             axes[0].set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
@@ -298,7 +305,11 @@ with tab2:
             except Exception:
                 slope_pct_i = 0.0
 
-            hist_vals_i = pd.to_numeric(hist_i, errors="coerce").fillna(0).to_numpy()
+            if isinstance(hist_i, (pd.Series, np.ndarray, list)):
+                hist_series_i = pd.Series(hist_i)
+                hist_vals_i = pd.to_numeric(hist_series_i, errors="coerce").fillna(0).to_numpy()
+            else:
+                hist_vals_i = np.zeros(len(ic))
 
             fig3, ax3 = plt.subplots(2, 1, figsize=(14,7), sharex=True)
             ax3[0].set_title(f"{st.session_state.ticker} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}  Slope: {slope_pct_i:.2f}%")
