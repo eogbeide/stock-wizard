@@ -138,7 +138,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # --- Tab 1: Original Forecast ---
 with tab1:
     st.header("Original Forecast")
-    st.info("Pick a ticker; data will be cached for 15 minutes after first fetch.")
+    st.info("Pick a ticker; data is cached for 15 minutes after fetch.")
 
     sel = st.selectbox("Ticker:", universe, key="orig_ticker")
     chart = st.radio("Chart View:", ["Daily", "Hourly", "Both"], key="orig_chart")
@@ -170,7 +170,7 @@ with tab1:
         p_up = np.mean(vals.to_numpy() > last_price)
         p_dn = 1 - p_up
 
-        # --- Intraday first ---
+        # --- Intraday ---
         if chart in ("Hourly", "Both"):
             hc = st.session_state.intraday.get("Close", st.session_state.intraday).ffill()
             he = hc.ewm(span=20).mean()
@@ -181,30 +181,32 @@ with tab1:
             macd_line_h, signal_h, hist_h = compute_macd(hc)
 
             slope_pct = 0.0
-            if len(hc) > 1:
-                base = hc.iloc[0]
+            try:
+                base = float(hc.iloc[0])
                 if base != 0:
                     total_change = coeff_h[0] * (len(hc) - 1)
                     slope_pct = (total_change / base) * 100
+            except Exception:
+                slope_pct = 0.0
 
-            fig2, ax2 = plt.subplots(2, 1, figsize=(14,7), sharex=True)
-            ax2[0].set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}  Slope: {slope_pct:.2f}%")
-            ax2[0].plot(hc.index, hc, label="Intraday")
-            ax2[0].plot(hc.index, he, "--", label="20 EMA")
-            ax2[0].plot(hc.index, res_h, ":", label="Resistance")
-            ax2[0].plot(hc.index, sup_h, ":", label="Support")
-            ax2[0].plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
-            ax2[0].set_ylabel("Price")
-            ax2[0].legend(loc="lower left", framealpha=0.5)
+            fig2, axes2 = plt.subplots(2, 1, figsize=(14,7), sharex=True)
+            axes2[0].set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}  Slope: {slope_pct:.2f}%")
+            axes2[0].plot(hc.index, hc, label="Intraday")
+            axes2[0].plot(hc.index, he, "--", label="20 EMA")
+            axes2[0].plot(hc.index, res_h, ":", label="Resistance")
+            axes2[0].plot(hc.index, sup_h, ":", label="Support")
+            axes2[0].plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
+            axes2[0].set_ylabel("Price")
+            axes2[0].legend(loc="lower left", framealpha=0.5)
 
-            # MACD subplot
-            ax2[1].plot(hc.index, macd_line_h, label="MACD Line")
-            ax2[1].plot(hc.index, signal_h, "--", label="Signal Line")
-            ax2[1].bar(hc.index, hist_h, label="Histogram", alpha=0.5)
-            ax2[1].axhline(0, color="black", linewidth=0.5)
-            ax2[1].set_ylabel("MACD")
-            ax2[1].legend(loc="lower left", framealpha=0.5)
-            ax2[1].set_xlabel("Time (PST)")
+            axes2[1].plot(hc.index, macd_line_h, label="MACD Line")
+            axes2[1].plot(hc.index, signal_h, "--", label="Signal Line")
+            axes2[1].bar(hc.index, hist_h, label="Histogram", alpha=0.5)
+            axes2[1].axhline(0, color="black", linewidth=0.5)
+            axes2[1].set_ylabel("MACD")
+            axes2[1].legend(loc="lower left", framealpha=0.5)
+            axes2[1].set_xlabel("Time (PST)")
+
             st.pyplot(fig2)
 
         # --- Daily ---
@@ -218,33 +220,32 @@ with tab1:
             trend_fc, _ = safe_trend(x_fc, vals.to_numpy().flatten())
             macd_line, signal_line, hist = compute_macd(df)
 
-            fig, ax = plt.subplots(2,1, figsize=(14,8), sharex=False)
-            ax[0].set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
-            ax[0].plot(df[-360:], label="History")
-            ax[0].plot(ema200[-360:], "--", label="200 EMA")
-            ax[0].plot(ma30[-360:], "--", label="30 MA")
-            ax[0].plot(res[-360:], ":", label="30 Resistance")
-            ax[0].plot(sup[-360:], ":", label="30 Support")
-            ax[0].plot(idx, vals, label="Forecast")
-            ax[0].plot(idx, trend_fc, "--", label="Forecast Trend", linewidth=2)
-            ax[0].fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
-            ax[0].plot(lb[-360:], "--", label="Lower BB")
-            ax[0].plot(ub[-360:], "--", label="Upper BB")
-            ax[0].set_xlabel("Date (PST)")
-            ax[0].legend(loc="lower left", framealpha=0.5)
+            fig, axes = plt.subplots(2, 1, figsize=(14,8), sharex=False)
+            axes[0].set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            axes[0].plot(df[-360:], label="History")
+            axes[0].plot(ema200[-360:], "--", label="200 EMA")
+            axes[0].plot(ma30[-360:], "--", label="30 MA")
+            axes[0].plot(res[-360:], ":", label="30 Resistance")
+            axes[0].plot(sup[-360:], ":", label="30 Support")
+            axes[0].plot(idx, vals, label="Forecast")
+            axes[0].plot(idx, trend_fc, "--", label="Forecast Trend", linewidth=2)
+            axes[0].fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
+            axes[0].plot(lb[-360:], "--", label="Lower BB")
+            axes[0].plot(ub[-360:], "--", label="Upper BB")
+            axes[0].set_xlabel("Date (PST)")
+            axes[0].legend(loc="lower left", framealpha=0.5)
 
-            # MACD
-            ax[1].plot(df.index, macd_line, label="MACD Line")
-            ax[1].plot(df.index, signal_line, "--", label="Signal Line")
-            ax[1].bar(df.index, hist, label="Histogram", alpha=0.5)
-            ax[1].axhline(0, color="black", linewidth=0.5)
-            ax[1].set_ylabel("MACD")
-            ax[1].legend(loc="lower left", framealpha=0.5)
-            ax[1].set_xlabel("Date (PST)")
+            axes[1].plot(df.index, macd_line, label="MACD Line")
+            axes[1].plot(df.index, signal_line, "--", label="Signal Line")
+            axes[1].bar(df.index, hist, label="Histogram", alpha=0.5)
+            axes[1].axhline(0, color="black", linewidth=0.5)
+            axes[1].set_ylabel("MACD")
+            axes[1].legend(loc="lower left", framealpha=0.5)
+            axes[1].set_xlabel("Date (PST)")
 
             st.pyplot(fig)
 
-        # Forecast table
+        # Forecast summary table
         st.write(pd.DataFrame({
             "Forecast": st.session_state.fc_vals,
             "Lower": st.session_state.fc_ci.iloc[:,0],
@@ -272,6 +273,7 @@ with tab2:
         p_dn = 1 - p_up
 
         view = st.radio("View:", ["Daily", "Intraday", "Both"], key="enh_view")
+
         if view in ("Intraday", "Both"):
             ic = st.session_state.intraday.get("Close", st.session_state.intraday).ffill()
             ie = ic.ewm(span=20).mean()
@@ -280,14 +282,17 @@ with tab2:
             res_i = ic.rolling(60, min_periods=1).max()
             sup_i = ic.rolling(60, min_periods=1).min()
             macd_line_i, signal_i, hist_i = compute_macd(ic)
+
             slope_pct_i = 0.0
-            if len(ic) > 1:
-                base_i = ic.iloc[0]
+            try:
+                base_i = float(ic.iloc[0])
                 if base_i != 0:
                     total_change_i = coeff_i[0] * (len(ic) - 1)
                     slope_pct_i = (total_change_i / base_i) * 100
+            except Exception:
+                slope_pct_i = 0.0
 
-            fig3, ax3 = plt.subplots(2,1, figsize=(14,7), sharex=True)
+            fig3, ax3 = plt.subplots(2, 1, figsize=(14,7), sharex=True)
             ax3[0].set_title(f"{st.session_state.ticker} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}  Slope: {slope_pct_i:.2f}%")
             ax3[0].plot(ic.index, ic, label="Intraday")
             ax3[0].plot(ic.index, ie, "--", label="20 EMA")
@@ -304,6 +309,7 @@ with tab2:
             ax3[1].set_ylabel("MACD")
             ax3[1].legend(loc="lower left", framealpha=0.5)
             ax3[1].set_xlabel("Time (PST)")
+
             st.pyplot(fig3)
 
             fig4, ax4 = plt.subplots(figsize=(14,3))
