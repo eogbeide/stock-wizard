@@ -126,10 +126,9 @@ def compute_macd(series: pd.Series, fast=12, slow=26, signal=9):
     return macd_line, signal_line, histogram
 
 # --- Session state init ---
-if "run_all" not in st.session_state:
-    st.session_state.run_all = False
-    st.session_state.ticker = None
-    st.session_state.hour_range = "24h"
+st.session_state.setdefault("run_all", False)
+st.session_state.setdefault("ticker", None)
+st.session_state.setdefault("hour_range", "24h")
 
 # --- Tabs ---
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -143,7 +142,7 @@ with tab1:
 
     sel = st.selectbox("Ticker:", universe, key="orig_ticker")
     chart = st.radio("Chart View:", ["Daily", "Hourly", "Both"], key="orig_chart")
-    hour_range = st.selectbox("Hourly lookback:", ["24h", "48h"], key="hour_range")
+    hour_range = st.selectbox("Hourly lookback:", ["24h", "48h"], key="hour_range_select")
     auto_run = st.session_state.run_all and (sel != st.session_state.ticker)
 
     if st.button("Run Forecast") or auto_run or (not st.session_state.run_all):
@@ -151,7 +150,7 @@ with tab1:
         intraday_period = "2d" if hour_range == "48h" else "1d"
         intraday = fetch_intraday(sel, period=intraday_period)
         idx, vals, ci = compute_sarimax_forecast(df_hist)
-        # assign individually to avoid SessionState update conflict
+        # assign individually to avoid update conflicts
         st.session_state.df_hist = df_hist
         st.session_state.fc_idx = idx
         st.session_state.fc_vals = vals
@@ -159,7 +158,9 @@ with tab1:
         st.session_state.intraday = intraday
         st.session_state.ticker = sel
         st.session_state.chart = chart
-        st.session_state.hour_range = hour_range
+        # only update if changed
+        if st.session_state.get("hour_range") != hour_range:
+            st.session_state.hour_range = hour_range
         st.session_state.run_all = True
 
     if st.session_state.run_all and st.session_state.ticker == sel:
@@ -169,6 +170,7 @@ with tab1:
             st.session_state.fc_vals,
             st.session_state.fc_ci
         )
+
         last_price = float(df.iloc[-1])
         p_up = np.mean(vals.to_numpy() > last_price)
         p_dn = 1 - p_up
