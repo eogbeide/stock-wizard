@@ -129,6 +129,7 @@ def compute_macd(series: pd.Series, fast=12, slow=26, signal=9):
 if "run_all" not in st.session_state:
     st.session_state.run_all = False
     st.session_state.ticker = None
+    st.session_state.hour_range = "24h"
 
 # --- Tabs ---
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -150,17 +151,16 @@ with tab1:
         intraday_period = "2d" if hour_range == "48h" else "1d"
         intraday = fetch_intraday(sel, period=intraday_period)
         idx, vals, ci = compute_sarimax_forecast(df_hist)
-        st.session_state.update({
-            "df_hist": df_hist,
-            "fc_idx": idx,
-            "fc_vals": vals,
-            "fc_ci": ci,
-            "intraday": intraday,
-            "ticker": sel,
-            "chart": chart,
-            "hour_range": hour_range,
-            "run_all": True
-        })
+        # assign individually to avoid SessionState update conflict
+        st.session_state.df_hist = df_hist
+        st.session_state.fc_idx = idx
+        st.session_state.fc_vals = vals
+        st.session_state.fc_ci = ci
+        st.session_state.intraday = intraday
+        st.session_state.ticker = sel
+        st.session_state.chart = chart
+        st.session_state.hour_range = hour_range
+        st.session_state.run_all = True
 
     if st.session_state.run_all and st.session_state.ticker == sel:
         df = st.session_state.df_hist
