@@ -169,10 +169,9 @@ with tab1:
         last_price = float(df.iloc[-1])
         p_up = np.mean(vals.to_numpy() > last_price)
         p_dn = 1 - p_up
-        # predicted trend percentage: average forecast vs last
         expected_mean = float(vals.mean())
         pred_trend_pct = ((expected_mean - last_price) / last_price) * 100 if last_price != 0 else 0.0
-        trend_label = f"+{pred_trend_pct:.2f}%" if pred_trend_pct >= 0 else f"{pred_trend_pct:.2f}%"
+        trend_label_daily = f"+{pred_trend_pct:.2f}%" if pred_trend_pct >= 0 else f"{pred_trend_pct:.2f}%"
 
         # --- Intraday ---
         if chart in ("Hourly", "Both"):
@@ -191,9 +190,10 @@ with tab1:
                     slope_pct = (total_change / base) * 100
             except Exception:
                 slope_pct = 0.0
+            trend_label_hourly = f"{slope_pct:.2f}%"
 
             fig2, ax2 = plt.subplots(figsize=(14,4))
-            ax2.set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}  Slope: {slope_pct:.2f}%")
+            ax2.set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}  Predicted Trend: {trend_label_hourly}")
             ax2.plot(hc.index, hc, label="Intraday")
             ax2.plot(hc.index, he, "--", label="20 EMA")
             ax2.plot(hc.index, res_h, ":", label="Resistance")
@@ -222,7 +222,7 @@ with tab1:
                 hist_vals = np.zeros(len(df))
 
             fig, axes = plt.subplots(2, 1, figsize=(14,8), sharex=False)
-            axes[0].set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}  Predicted Trend: {trend_label}")
+            axes[0].set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}  Predicted Trend: {trend_label_daily}")
             axes[0].plot(df[-360:], label="History")
             axes[0].plot(ema200[-360:], "--", label="200 EMA")
             axes[0].plot(ma30[-360:], "--", label="30 MA")
@@ -296,7 +296,7 @@ with tab2:
                 slope_pct_i = 0.0
 
             fig3, ax3 = plt.subplots(figsize=(14,4))
-            ax3.set_title(f"{st.session_state.ticker} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}  Slope: {slope_pct_i:.2f}%")
+            ax3.set_title(f"{st.session_state.ticker} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}  Predicted Trend: {slope_pct_i:.2f}%")
             ax3.plot(ic.index, ic, label="Intraday")
             ax3.plot(ic.index, ie, "--", label="20 EMA")
             ax3.plot(ic.index, res_i, ":", label="Resistance")
