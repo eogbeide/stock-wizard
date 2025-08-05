@@ -19,7 +19,9 @@ st.markdown("""
 <style>
   #MainMenu, header, footer {visibility: hidden;}
   @media (max-width: 600px) {
-    .css-18e3th9 {transform:none!important;visibility:visible!important;width:100%!important;position:relative!important;margin-bottom:1rem;}
+    .css-18e3th9 {transform:none!important;visibility:visible!important;
+                  width:100%!important;position:relative!important;
+                  margin-bottom:1rem;}
     .css-1v3fvcr {margin-left:0!important;}
   }
 </style>
@@ -29,8 +31,7 @@ st.markdown("""
 def safe_trend(x: np.ndarray, y: np.ndarray):
     try:
         coeff = np.polyfit(x, y, 1)
-        trend = coeff[0] * x + coeff[1]
-        return trend, coeff
+        return coeff[0] * x + coeff[1], coeff
     except:
         m = np.nanmean(y)
         return np.full_like(x, m, dtype=float), (0.0, m)
@@ -38,7 +39,6 @@ def safe_trend(x: np.ndarray, y: np.ndarray):
 # --- Auto-refresh logic ---
 REFRESH_INTERVAL = 120
 PACIFIC = pytz.timezone("US/Pacific")
-
 def auto_refresh():
     if "last_refresh" not in st.session_state:
         st.session_state.last_refresh = time.time()
@@ -46,7 +46,6 @@ def auto_refresh():
         st.session_state.last_refresh = time.time()
         try: st.experimental_rerun()
         except: pass
-
 auto_refresh()
 pst_dt = datetime.fromtimestamp(st.session_state.last_refresh, tz=PACIFIC)
 st.sidebar.markdown(f"**Last refresh:** {pst_dt.strftime('%Y-%m-%d %H:%M:%S')} PST")
@@ -55,7 +54,6 @@ st.sidebar.markdown(f"**Last refresh:** {pst_dt.strftime('%Y-%m-%d %H:%M:%S')} P
 st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"])
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo","3mo","6mo","1y"], index=2)
-
 if mode == "Stock":
     universe = sorted(['AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
                        'META','SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO',
@@ -72,7 +70,7 @@ def fetch_hist(ticker: str) -> pd.Series:
     return s.asfreq("D").fillna(method="ffill").tz_localize(PACIFIC)
 
 @st.cache_data(ttl=900)
-def fetch_intraday(ticker: str, period: str="1d") -> pd.DataFrame:
+def fetch_intraday(ticker: str, period="1d"):
     df = yf.download(ticker, period=period, interval="5m")
     try: df = df.tz_localize("UTC")
     except: pass
@@ -100,15 +98,15 @@ def compute_rsi(data, window=14):
 def compute_bb(data, window=20, num_sd=2):
     m = data.rolling(window).mean()
     s = data.rolling(window).std()
-    return m - num_sd*s, m, m + num_sd*s
+    return m-num_sd*s, m, m+num_sd*s
 
-def compute_macd(series: pd.Series, fast=12, slow=26, signal=9):
-    fast_ema = series.ewm(span=fast, adjust=False).mean()
-    slow_ema = series.ewm(span=slow, adjust=False).mean()
-    macd_line = fast_ema - slow_ema
-    sig_line = macd_line.ewm(span=signal, adjust=False).mean()
-    hist = macd_line - sig_line
-    return macd_line, sig_line, hist
+def compute_macd(series, fast=12, slow=26, signal=9):
+    ef = series.ewm(span=fast, adjust=False).mean()
+    es = series.ewm(span=slow, adjust=False).mean()
+    macd = ef - es
+    sig  = macd.ewm(span=signal, adjust=False).mean()
+    hist = macd - sig
+    return macd, sig, hist
 
 # --- Session defaults ---
 st.session_state.setdefault("run_all", False)
@@ -123,114 +121,115 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # --- Tab 1: Original Forecast ---
 with tab1:
     st.header("Original Forecast")
-    st.info("Pick a ticker; data caches for 15 minutes.")
+    st.info("Pick a ticker; data caches for 15 min.")
 
-    sel = st.selectbox("Ticker:", universe, key="orig_ticker")
-    chart = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_chart")
+    sel        = st.selectbox("Ticker:", universe, key="orig_ticker")
+    chart      = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_chart")
     hour_range = st.selectbox("Hourly lookback:", ["24h","48h","72h","96h","120h"], key="hour_range_select")
-    auto_run = st.session_state.run_all and (sel != st.session_state.ticker)
+    auto_run   = st.session_state.run_all and sel!=st.session_state.ticker
 
-    if st.button("Run Forecast") or auto_run or (not st.session_state.run_all):
+    if st.button("Run Forecast") or auto_run or not st.session_state.run_all:
         df_hist = fetch_hist(sel)
-        days = {"24h":"1d","48h":"2d","72h":"3d","96h":"4d","120h":"5d"}[hour_range]
-        intraday = fetch_intraday(sel, period=days)
+        days    = {"24h":"1d","48h":"2d","72h":"3d","96h":"4d","120h":"5d"}[hour_range]
+        intr    = fetch_intraday(sel, period=days)
         idx, vals, ci = compute_sarimax_forecast(df_hist)
 
-        # store in session
         st.session_state.update({
-            "df_hist": df_hist,
-            "intraday": intraday,
-            "fc_idx": idx,
-            "fc_vals": vals,
-            "fc_ci": ci,
-            "ticker": sel,
-            "chart": chart,
+            "df_hist":    df_hist,
+            "intraday":   intr,
+            "fc_idx":     idx,
+            "fc_vals":    vals,
+            "fc_ci":      ci,
+            "ticker":     sel,
+            "chart":      chart,
             "hour_range": hour_range,
-            "run_all": True
+            "run_all":    True
         })
 
-    if st.session_state.run_all and st.session_state.ticker == sel:
-        df = st.session_state.df_hist
+    if st.session_state.run_all and st.session_state.ticker==sel:
+        df   = st.session_state.df_hist
         intr = st.session_state.intraday
         idx, vals, ci = st.session_state.fc_idx, st.session_state.fc_vals, st.session_state.fc_ci
 
-        last = float(df.iloc[-1])
-        p_up = np.mean(vals.to_numpy()>last)
-        p_dn = 1-p_up
-        mean_fc = float(vals.mean())
-        pct_trend = ((mean_fc-last)/last*100) if last else 0.0
-        trend_lbl = f"+{pct_trend:.2f}%" if pct_trend>=0 else f"{pct_trend:.2f}%"
+        last     = float(df.iloc[-1])
+        p_up     = np.mean(vals>last)
+        p_dn     = 1-p_up
+        mean_fc  = float(vals.mean())
+        pct_trnd = ((mean_fc-last)/last*100) if last else 0.0
+        tlb      = f"+{pct_trnd:.2f}%" if pct_trnd>=0 else f"{pct_trnd:.2f}%"
 
-        # --- Intraday chart with Price Action overlay ---
+        # — Intraday with Price Action & Std Dev —
         if chart in ("Hourly","Both"):
             hc = intr["Close"].ffill()
             he = hc.ewm(span=20).mean()
+            lo = intr["Low"].ffill().values
+            hi = intr["High"].ffill().values
             xh = np.arange(len(hc))
-            trend_h, coeff_h = safe_trend(xh, hc.values.flatten())
-            # price action band
-            lo = intr["Low"].ffill()
-            hi = intr["High"].ffill()
-            # rolling stats
+
+            trend_h, c_h = safe_trend(xh, hc.values)
+            base = hc.iloc[0] or 1
+            slope_pct = c_h[0]*(len(hc)-1)/base*100
+
+            # rolling variance/stddev
             window = int(st.session_state.hour_range[:-1]) * 12
-            var_h = hc.rolling(window, min_periods=1).var()
-            std_h = hc.rolling(window, min_periods=1).std()
-            # slope pct
-            slope_pct = 0.0
-            try:
-                b0 = float(hc.iloc[0])
-                slope_pct = coeff_h[0]*(len(hc)-1)/b0*100 if b0 else 0.0
-            except:
-                pass
+            var_h = hc.rolling(window, min_periods=1).var().values
+            std_h = hc.rolling(window, min_periods=1).std().values
 
             fig2, ax2 = plt.subplots(figsize=(14,4))
             ax2.set_title(
                 f"{sel} Intraday ({st.session_state.hour_range})  ↑{p_up:.1%}  ↓{p_dn:.1%}  Trend: {slope_pct:.2f}%"
             )
-            # price action fill
-            ax2.fill_between(lo.index, lo, hi, color="silver", alpha=0.3, label="Price Action")
-            ax2.plot(hc.index, hc, label="Close")
-            ax2.plot(hc.index, he, "--", label="20 EMA")
-            ax2.plot(trend_h + pd.to_datetime(hc.index[0]), trend_h, "--", label="Trend")  # align trend
-            ax2.plot(var_h.index, var_h, "-.", label="Variance")
-            ax2.plot(std_h.index, std_h, ":", label="Std Dev")
+            ax2.fill_between(xh, lo, hi, color="silver", alpha=0.3, label="Price Action")
+            ax2.plot(xh, hc.values, label="Close")
+            ax2.plot(xh, he.values, "--", label="20 EMA")
+            ax2.plot(xh, trend_h, "--", label="Trend")
+            ax2.plot(xh, var_h, "-.", label="Variance")
+            ax2.plot(xh, std_h, ":", label="Std Dev")
+
+            # tidy x-axis
+            ticks = xh[::12]
+            labels = hc.index.strftime("%m-%d %H:%M")[::12]
+            ax2.set_xticks(ticks)
+            ax2.set_xticklabels(labels, rotation=45, ha="right")
+
             ax2.set_xlabel("Time (PST)")
             ax2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig2)
 
-        # --- Daily + MACD ---
+        # — Daily + MACD —
         if chart in ("Daily","Both"):
             ema200 = df.ewm(span=200).mean()
             ma30   = df.rolling(30).mean()
             lb, mb, ub = compute_bb(df)
-            res = df.rolling(30,min_periods=1).max()
-            sup = df.rolling(30,min_periods=1).min()
-            xfc = np.arange(len(vals))
-            trend_fc, _ = safe_trend(xfc, vals.to_numpy().flatten())
+            res     = df.rolling(30,min_periods=1).max()
+            sup     = df.rolling(30,min_periods=1).min()
+            xfc     = np.arange(len(vals))
+            tr_fc,_ = safe_trend(xfc, vals.values)
             macd_l, sig_l, hist = compute_macd(df)
-            hist_arr = pd.Series(hist).fillna(0).to_numpy()
+            h_arr   = pd.Series(hist).fillna(0).values
 
             fig, (ax0, ax1) = plt.subplots(2,1,figsize=(14,8))
-            ax0.set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}  Trend: {trend_lbl}")
-            ax0.plot(df[-360:], label="History")
-            ax0.plot(ema200[-360:], "--", label="200 EMA")
-            ax0.plot(ma30[-360:], "--", label="30 MA")
-            ax0.plot(res[-360:], ":", label="Resist")
-            ax0.plot(sup[-360:], ":", label="Support")
-            ax0.plot(idx, vals, label="Forecast")
-            ax0.plot(idx, trend_fc, "--", label="Forecast Trend")
+            ax0.set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}  Trend: {tlb}")
+            ax0.plot(df[-360:],               label="History")
+            ax0.plot(ema200[-360:], "--",     label="200 EMA")
+            ax0.plot(ma30[-360:], "--",       label="30 MA")
+            ax0.plot(res[-360:],  ":",        label="30 Resist")
+            ax0.plot(sup[-360:],  ":",        label="30 Support")
+            ax0.plot(idx,           vals,     label="Forecast")
+            ax0.plot(idx,           tr_fc,    "--", label="Fc Trend")
             ax0.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
             ax0.plot(lb[-360:], "--", label="Lower BB")
             ax0.plot(ub[-360:], "--", label="Upper BB")
             ax0.set_xlabel("Date (PST)")
             ax0.legend(loc="lower left", framealpha=0.5)
 
-            ax1.plot(df.index, macd_l, label="MACD")
-            ax1.plot(df.index, sig_l, "--", label="Signal")
-            ax1.bar(df.index, hist_arr, alpha=0.5, label="Hist")
+            ax1.plot(df.index, macd_l,       label="MACD Line")
+            ax1.plot(df.index, sig_l,  "--",  label="Signal Line")
+            ax1.bar(df.index, h_arr, alpha=0.5, label="Histogram")
             ax1.axhline(0, color="black", linewidth=0.5)
             ax1.set_ylabel("MACD")
-            ax1.legend(loc="lower left", framealpha=0.5)
             ax1.set_xlabel("Date (PST)")
+            ax1.legend(loc="lower left", framealpha=0.5)
 
             st.pyplot(fig)
 
@@ -241,5 +240,4 @@ with tab1:
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
 
-# --- Tab 2: Enhanced Forecast ---
-# Tab 3 & Tab 4 unchanged...
+# --- Tab 2, 3, 4 remain the same as before ---
