@@ -25,7 +25,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- Utility ---
+# --- Utility function ---
 def safe_trend(x: np.ndarray, y: np.ndarray):
     try:
         coeff = np.polyfit(x, y, 1)
@@ -169,7 +169,7 @@ with tab1:
         trend_pct   = ((float(vals.mean()) - last_price) / last_price)*100 if last_price else 0.0
         trend_lbl   = f"{trend_pct:+.2f}%"
 
-        # --- Intraday ---
+        # --- Intraday Chart ---
         if chart in ("Hourly","Both"):
             hc  = dfint["Close"].ffill()
             sma = hc.rolling(12).mean()
@@ -183,14 +183,14 @@ with tab1:
                 f"↑{p_up:.1%}  ↓{p_dn:.1%}  Trend: {trend_lbl}"
             )
             ax2.plot(hc.index, hc, label="Close")
-            ax2.plot(hc.index, sma, "--", label="12-point SMA")
-            ax2.plot(hc.index, ema, "--", label="20-point EMA")
+            ax2.plot(hc.index, sma, "--", label="12-pt SMA")
+            ax2.plot(hc.index, ema, "--", label="20-pt EMA")
             ax2.plot(hc.index, tr_h, "--", label="Trend")
             ax2.set_xlabel("Time (PST)")
             ax2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig2)
 
-        # --- Daily + MACD ---
+        # --- Daily + MACD Chart ---
         if chart in ("Daily","Both"):
             ema200      = df.ewm(span=200).mean()
             ma30        = df.rolling(30).mean()
@@ -233,9 +233,45 @@ with tab1:
 
             st.pyplot(fig)
 
-        # --- Forecast summary ---
+        # --- Forecast summary table ---
         st.write(pd.DataFrame({
             "Forecast": st.session_state.fc_vals,
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
+
+# --- Tab 2: Enhanced Forecast (as before) ---
+with tab2:
+    st.header("Enhanced Forecast")
+    if not st.session_state.run_all:
+        st.info("Run the original forecast first.")
+    else:
+        # ... your enhanced forecasts here ...
+        pass
+
+# --- Tab 3: Bull vs Bear ---
+with tab3:
+    st.header("Bull vs Bear Summary")
+    if not st.session_state.run_all:
+        st.info("Run the original forecast first.")
+    else:
+        df3 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
+        df3['PctChange'] = df3['Close'].pct_change()
+        df3['Bull'] = df3['PctChange'] > 0
+        bull = int(df3['Bull'].sum())
+        bear = int((~df3['Bull']).sum())
+        total = bull + bear
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total Days", total)
+        c2.metric("Bull Days", bull, f"{bull/total:.1f}%")
+        c3.metric("Bear Days", bear, f"{bear/total:.1f}%")
+        c4.metric("Lookback", bb_period)
+
+# --- Tab 4: Detailed Metrics ---
+with tab4:
+    st.header("Detailed Metrics")
+    if not st.session_state.run_all:
+        st.info("Run the original forecast first.")
+    else:
+        # ... your detailed metrics here ...
+        pass
