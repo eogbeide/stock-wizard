@@ -1,4 +1,4 @@
-import streamlit as stdfsss
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -171,7 +171,7 @@ with tab1:
 
         # --- Intraday ---
         if chart in ("Hourly","Both"):
-            hc = dfint["Close"].ffill()
+            hc  = dfint["Close"].ffill()
             sma = hc.rolling(12).mean()
             ema = hc.ewm(span=20).mean()
             xh, yh = np.arange(len(hc)), hc.values
@@ -183,8 +183,8 @@ with tab1:
                 f"↑{p_up:.1%}  ↓{p_dn:.1%}  Trend: {trend_lbl}"
             )
             ax2.plot(hc.index, hc, label="Close")
-            ax2.plot(hc.index, sma, "--", label="12-pt SMA")
-            ax2.plot(hc.index, ema, "--", label="20-pt EMA")
+            ax2.plot(hc.index, sma, "--", label="12-point SMA")
+            ax2.plot(hc.index, ema, "--", label="20-point EMA")
             ax2.plot(hc.index, tr_h, "--", label="Trend")
             ax2.set_xlabel("Time (PST)")
             ax2.legend(loc="lower left", framealpha=0.5)
@@ -201,9 +201,7 @@ with tab1:
             tr_fc, _    = safe_trend(xfc, vals.to_numpy().flatten())
             macd_l, sig_l, hist = compute_macd(df)
             hist_arr = (
-                pd.Series(hist)
-                  .fillna(0)
-                  .to_numpy()
+                pd.Series(hist).fillna(0).to_numpy()
                 if isinstance(hist, (pd.Series, np.ndarray, list))
                 else np.zeros(len(df))
             )
@@ -212,22 +210,22 @@ with tab1:
             ax0.set_title(
                 f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}  Trend: {trend_lbl}"
             )
-            ax0.plot(df[-360:],              label="History")
-            ax0.plot(ema200[-360:], "--",    label="200 EMA")
-            ax0.plot(ma30[-360:],   "--",    label="30 MA")
-            ax0.plot(res[-360:],    ":",     label="30 Resistance")
-            ax0.plot(sup[-360:],    ":",     label="30 Support")
-            ax0.plot(idx,            vals,   label="Forecast")
-            ax0.plot(idx,            tr_fc,  "--", label="Forecast Trend")
+            ax0.plot(df[-360:],           label="History")
+            ax0.plot(ema200[-360:], "--", label="200 EMA")
+            ax0.plot(ma30[-360:],   "--", label="30 MA")
+            ax0.plot(res[-360:],    ":",  label="Resistance")
+            ax0.plot(sup[-360:],    ":",  label="Support")
+            ax0.plot(idx,           vals, label="Forecast")
+            ax0.plot(idx,           tr_fc, "--", label="Forecast Trend")
             ax0.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
-            ax0.plot(lb[-360:],       "--", label="Lower BB")
-            ax0.plot(ub[-360:],       "--", label="Upper BB")
+            ax0.plot(lb[-360:], "--", label="Lower BB")
+            ax0.plot(ub[-360:], "--", label="Upper BB")
             ax0.set_xlabel("Date (PST)")
             ax0.legend(loc="lower left", framealpha=0.5)
 
-            ax1.plot(df.index,        macd_l,    label="MACD Line")
-            ax1.plot(df.index,        sig_l,     "--", label="Signal Line")
-            ax1.bar(df.index,         hist_arr,  label="Histogram", alpha=0.5)
+            ax1.plot(df.index,    macd_l,    label="MACD Line")
+            ax1.plot(df.index,    sig_l,     "--", label="Signal Line")
+            ax1.bar(df.index,     hist_arr,  label="Histogram", alpha=0.5)
             ax1.axhline(0, color="black", linewidth=0.5)
             ax1.set_ylabel("MACD")
             ax1.legend(loc="lower left", framealpha=0.5)
