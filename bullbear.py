@@ -112,16 +112,15 @@ with tab1:
         df_hist = fetch_hist(selected)
         idx, vals, ci = compute_sarimax_forecast(df_hist)
         intraday = fetch_intraday(selected)
-
         st.session_state.update({
-            "df_hist":    df_hist,
-            "fc_idx":     idx,
-            "fc_vals":    vals,
-            "fc_ci":      ci,
-            "intraday":   intraday,
-            "ticker":     selected,
-            "chart":      chart,
-            "run_all":    True
+            "df_hist":  df_hist,
+            "fc_idx":   idx,
+            "fc_vals":  vals,
+            "fc_ci":    ci,
+            "intraday": intraday,
+            "ticker":   selected,
+            "chart":    chart,
+            "run_all":  True
         })
 
     if st.session_state.run_all and st.session_state.ticker == selected:
@@ -161,11 +160,14 @@ with tab1:
             ).dropna()
 
             # detect sign changes
-            sign_change = rolling_slope.apply(np.sign).diff().fillna(0) != 0
-            inv_times  = rolling_slope.index[sign_change.values]   # <-- use .values here
+            rolling_sign = rolling_slope.apply(np.sign)
+            sign_change  = rolling_sign.diff().fillna(0) != 0
+
+            # get inversion timestamps
+            inv_times  = sign_change[sign_change].index
             inv_values = hc.loc[inv_times]
 
-            # long‐run trend & 20‐EMA
+            # long-run trend & 20-EMA
             xh = np.arange(len(hc))
             slope, inter = np.polyfit(xh, hc.values, 1)
             trend = slope * xh + inter
@@ -182,14 +184,14 @@ with tab1:
             ax2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig2)
 
-        # Forecast table
+        # Forecast summary
         st.write(pd.DataFrame({
             "Forecast": st.session_state.fc_vals,
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
 
-# --- Tab 2: Enhanced Forecast ---
+# --- Tab 2: Enhanced Forecast (unchanged) ---
 with tab2:
     st.header("Enhanced Forecast")
     if not st.session_state.run_all:
@@ -197,12 +199,9 @@ with tab2:
     else:
         df   = st.session_state.df_hist
         rsi  = compute_rsi(df)
-        lb, mb, ub = compute_bollinger_bands(df)
-        idx, vals, ci = (
-            st.session_state.fc_idx,
-            st.session_state.fc_vals,
-            st.session_state.fc_ci
-        )
+        idx, vals, ci = (st.session_state.fc_idx,
+                         st.session_state.fc_vals,
+                         st.session_state.fc_ci)
 
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
         if view in ("Daily","Both"):
@@ -215,8 +214,7 @@ with tab2:
             for lev in (0.236,0.382,0.5,0.618):
                 ax.hlines(
                     df[-360:].max() - (df[-360:].max()-df[-360:].min())*lev,
-                    df.index[-360], df.index[-1],
-                    linestyles="dotted"
+                    df.index[-360], df.index[-1], linestyles="dotted"
                 )
             ax.set_xlabel("Date (PST)")
             ax.legend()
@@ -231,13 +229,14 @@ with tab2:
 
         if view in ("Intraday","Both"):
             hc = st.session_state.intraday["Close"].ffill()
-
             rolling_slope = hc.rolling(12).apply(
                 lambda x: np.polyfit(np.arange(len(x)), x, 1)[0],
                 raw=True
             ).dropna()
-            sign_change = rolling_slope.apply(np.sign).diff().fillna(0) != 0
-            inv_times  = rolling_slope.index[sign_change.values]
+            rolling_sign = rolling_slope.apply(np.sign)
+            sign_change  = rolling_sign.diff().fillna(0) != 0
+
+            inv_times  = sign_change[sign_change].index
             inv_values = hc.loc[inv_times]
 
             xh = np.arange(len(hc))
@@ -256,10 +255,11 @@ with tab2:
             ax3.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig3)
 
+        # summary table
         st.write(pd.DataFrame({
-            "Forecast": vals,
-            "Lower":    ci.iloc[:,0],
-            "Upper":    ci.iloc[:,1]
+            "Forecast": st.session_state.fc_vals,
+            "Lower":    st.session_state.fc_ci.iloc[:,0],
+            "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=idx))
 
-# --- Tab 3 & Tab 4 remain as before ---
+# --- Tabs 3 & 4 unchanged ----------------------------------------------
