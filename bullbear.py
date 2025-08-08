@@ -72,7 +72,7 @@ def fetch_intraday(ticker: str) -> pd.DataFrame:
 def compute_sarimax_forecast(series: pd.Series):
     try:
         model = SARIMAX(series, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
-    except np.linalg.LinAlgLinAlgError:
+    except np.linalg.LinAlgError:
         model = SARIMAX(
             series,
             order=(1,1,1),
@@ -81,7 +81,6 @@ def compute_sarimax_forecast(series: pd.Series):
             enforce_invertibility=False
         ).fit(disp=False)
     except Exception:
-        # last-resort fallback
         model = SARIMAX(series, order=(1,1,0)).fit(disp=False)
     fc = model.get_forecast(steps=30)
     idx = pd.date_range(series.index[-1] + timedelta(1), periods=30, freq="D", tz=PACIFIC)
@@ -143,25 +142,7 @@ with tab1:
             st.session_state.fc_ci
         )
 
-        # --- Daily Plot ---
-        if chart in ("Daily","Both"):
-            ema200 = df.ewm(span=200).mean()
-            ma30   = df.rolling(30).mean()
-            lb, mb, ub = compute_bollinger_bands(df)
-
-            fig, ax = plt.subplots(figsize=(14,6))
-            ax.plot(df[-360:], label="History")
-            ax.plot(ema200[-360:], "--", label="200 EMA")
-            ax.plot(ma30[-360:], "--", label="30 MA")
-            ax.plot(idx, vals, label="Forecast")
-            ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
-            ax.plot(lb[-360:], "--", label="Lower BB")
-            ax.plot(ub[-360:], "--", label="Upper BB")
-            ax.set_xlabel("Date (PST)")
-            ax.legend(loc="lower left", framealpha=0.5)
-            st.pyplot(fig)
-
-        # --- Hourly Plot: inversions + mid-trend line + crossing markers ---
+        # --- Hourly FIRST: inversions + mid-trend line + crossing markers ---
         if chart in ("Hourly","Both"):
             hc = st.session_state.intraday["Close"].ffill()
             if len(hc) >= 6:
@@ -172,7 +153,6 @@ with tab1:
 
                 # Mid-trend line (horizontal at median of trend values)
                 mid_val  = float(np.median(trend))
-                mid_line = np.full_like(trend, mid_val, dtype=float)
 
                 # Where the trend line crosses the mid-trend line
                 diff_sign = np.sign(trend - mid_val)
@@ -192,24 +172,19 @@ with tab1:
                 inv_times  = sign_change[sign_change].index
                 inv_values = hc.reindex(inv_times)
 
-                # EMA for context
                 ema20 = hc.ewm(span=20).mean()
 
-                # Plot
                 fig2, ax2 = plt.subplots(figsize=(14,4))
                 ax2.plot(hc.index, hc, label="Intraday")
                 ax2.plot(hc.index, trend, "--", label="Trend")
                 ax2.plot(hc.index, ema20, "--", label="20 EMA")
-                # Mid-trend horizontal line
                 ax2.hlines(mid_val, xmin=hc.index[0], xmax=hc.index[-1],
                            linestyles="dashdot", label="Mid-Trend Line")
-                # Crossing markers
                 if len(cross_idx):
                     ax2.scatter(cross_times, cross_prices, marker="x", s=70,
                                 label="Trend ↔ Mid-line Cross")
                     for ct in cross_times:
                         ax2.axvline(ct, linestyle=":", alpha=0.35)
-                # Inversion markers (rolling slope flips)
                 if len(inv_times):
                     ax2.scatter(inv_times, inv_values, color="red", s=50, zorder=3,
                                 label="Inversion (slope flip)")
@@ -219,6 +194,24 @@ with tab1:
                 st.pyplot(fig2)
             else:
                 st.info("Not enough intraday points yet to compute trend / mid-line.")
+
+        # --- Daily AFTER hourly ---
+        if chart in ("Daily","Both"):
+            ema200 = df.ewm(span=200).mean()
+            ma30   = df.rolling(30).mean()
+            lb, mb, ub = compute_bollinger_bands(df)
+
+            fig, ax = plt.subplots(figsize=(14,6))
+            ax.plot(df[-360:], label="History")
+            ax.plot(ema200[-360:], "--", label="200 EMA")
+            ax.plot(ma30[-360:], "--", label="30 MA")
+            ax.plot(idx, vals, label="Forecast")
+            ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
+            ax.plot(lb[-360:], "--", label="Lower BB")
+            ax.plot(ub[-360:], "--", label="Upper BB")
+            ax.set_xlabel("Date (PST)")
+            ax.legend(loc="lower left", framealpha=0.5)
+            st.pyplot(fig)
 
         # --- Forecast Table ---
         st.write(pd.DataFrame({
@@ -242,6 +235,29 @@ with tab2:
         )
 
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
+
+        # Render intraday FIRST when Both is selected
+        if view in ("Intraday","Both"):
+            hc = st.session_state.intraday["Close"].ffill()
+            if len(hc) >= 6:
+                xh = np.arange(len(hc))
+                slope, intercept = np.polyfit(xh, hc.values, 1)
+                trend   = slope * xh + intercept
+                ema20   = hc.ewm(span=20).mean()
+                mid_val = float(np.median(trend))
+
+                fig3, ax3 = plt.subplots(figsize=(14,4))
+                ax3.plot(hc.index, hc, label="Intraday")
+                ax3.plot(hc.index, trend, "--", label="Trend")
+                ax3.plot(hc.index, ema20, "--", label="20 EMA")
+                ax3.hlines(mid_val, xmin=hc.index[0], xmax=hc.index[-1],
+                           linestyles="dashdot", label="Mid-Trend Line")
+                ax3.set_xlabel("Time (PST)")
+                ax3.legend(loc="lower left", framealpha=0.5)
+                st.pyplot(fig3)
+            else:
+                st.info("Not enough intraday points yet to compute trend / mid-line.")
+
         if view in ("Daily","Both"):
             fig, ax = plt.subplots(figsize=(14,6))
             ax.plot(df[-360:], label="History")
@@ -265,27 +281,6 @@ with tab2:
             ax2.set_xlabel("Date (PST)")
             ax2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig2)
-
-        if view in ("Intraday","Both"):
-            hc = st.session_state.intraday["Close"].ffill()
-            if len(hc) >= 6:
-                xh = np.arange(len(hc))
-                slope, intercept = np.polyfit(xh, hc.values, 1)
-                trend   = slope * xh + intercept
-                ema20   = hc.ewm(span=20).mean()
-                mid_val = float(np.median(trend))
-
-                fig3, ax3 = plt.subplots(figsize=(14,4))
-                ax3.plot(hc.index, hc, label="Intraday")
-                ax3.plot(hc.index, trend, "--", label="Trend")
-                ax3.plot(hc.index, ema20, "--", label="20 EMA")
-                ax3.hlines(mid_val, xmin=hc.index[0], xmax=hc.index[-1],
-                           linestyles="dashdot", label="Mid-Trend Line")
-                ax3.set_xlabel("Time (PST)")
-                ax3.legend(loc="lower left", framealpha=0.5)
-                st.pyplot(fig3)
-            else:
-                st.info("Not enough intraday points yet to compute trend / mid-line.")
 
         st.write(pd.DataFrame({
             "Forecast": vals,
