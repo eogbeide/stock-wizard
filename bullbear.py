@@ -16,7 +16,7 @@ st.set_page_config(
 )
 st.markdown("<style>#MainMenu, footer, header {visibility: hidden;}</style>", unsafe_allow_html=True)
 
-# --- Auto‐refresh logic ---
+# --- Auto-refresh logic ---
 REFRESH_INTERVAL = 120  # seconds
 PACIFIC = pytz.timezone("US/Pacific")
 
@@ -72,7 +72,7 @@ def fetch_intraday(ticker: str) -> pd.DataFrame:
 def compute_sarimax_forecast(series: pd.Series):
     try:
         model = SARIMAX(series, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
-    except np.linalg.LinAlgError:
+    except np.linalg.LinAlgLinAlgError:
         model = SARIMAX(
             series,
             order=(1,1,1),
@@ -80,9 +80,11 @@ def compute_sarimax_forecast(series: pd.Series):
             enforce_stationarity=False,
             enforce_invertibility=False
         ).fit(disp=False)
+    except Exception:
+        # last-resort fallback
+        model = SARIMAX(series, order=(1,1,0)).fit(disp=False)
     fc = model.get_forecast(steps=30)
-    idx = pd.date_range(series.index[-1] + timedelta(1),
-                        periods=30, freq="D", tz=PACIFIC)
+    idx = pd.date_range(series.index[-1] + timedelta(1), periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
 
 def compute_rsi(data, window=14):
@@ -159,36 +161,64 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # --- Hourly Plot with Trend Inversion Marker ---
+        # --- Hourly Plot: inversions + mid-trend line + crossing markers ---
         if chart in ("Hourly","Both"):
             hc = st.session_state.intraday["Close"].ffill()
+            if len(hc) >= 6:
+                # Linear trend (regression)
+                xh = np.arange(len(hc))
+                slope, intercept = np.polyfit(xh, hc.values, 1)
+                trend = slope * xh + intercept
 
-            # rolling‐window slope
-            rolling_slope = hc.rolling(12).apply(
-                lambda x: np.polyfit(np.arange(len(x)), x, 1)[0],
-                raw=True
-            ).dropna()
-            rolling_sign = np.sign(rolling_slope)
-            sign_change  = rolling_sign.diff().fillna(0) != 0
+                # Mid-trend line (horizontal at median of trend values)
+                mid_val  = float(np.median(trend))
+                mid_line = np.full_like(trend, mid_val, dtype=float)
 
-            inv_times  = sign_change[sign_change].index
-            inv_values = hc.loc[inv_times]
+                # Where the trend line crosses the mid-trend line
+                diff_sign = np.sign(trend - mid_val)
+                cross_idx = np.where(np.diff(diff_sign) != 0)[0] + 1
+                cross_times  = hc.index[cross_idx] if len(cross_idx) else []
+                cross_prices = hc.iloc[cross_idx] if len(cross_idx) else pd.Series([], dtype=float)
 
-            xh = np.arange(len(hc))
-            slope, intercept = np.polyfit(xh, hc.values, 1)
-            trend = slope * xh + intercept
-            ema20 = hc.ewm(span=20).mean()
+                # Trend inversion (rolling slope sign changes)
+                rolling_slope = hc.rolling(12).apply(
+                    lambda x: np.polyfit(np.arange(len(x)), x, 1)[0],
+                    raw=True
+                ).dropna()
+                rolling_sign = np.sign(rolling_slope)
+                sign_change  = (rolling_sign.diff().fillna(0) != 0)
+                if not sign_change.empty:
+                    sign_change.iloc[0] = False
+                inv_times  = sign_change[sign_change].index
+                inv_values = hc.reindex(inv_times)
 
-            fig2, ax2 = plt.subplots(figsize=(14,4))
-            ax2.plot(hc.index, hc, label="Intraday")
-            ax2.plot(hc.index, trend, "--", label="Trend")
-            ax2.plot(hc.index, ema20, "--", label="20 EMA")
-            ax2.scatter(inv_times, inv_values,
-                        color="red", marker="o", s=50,
-                        label="Trend Inversion")
-            ax2.set_xlabel("Time (PST)")
-            ax2.legend(loc="lower left", framealpha=0.5)
-            st.pyplot(fig2)
+                # EMA for context
+                ema20 = hc.ewm(span=20).mean()
+
+                # Plot
+                fig2, ax2 = plt.subplots(figsize=(14,4))
+                ax2.plot(hc.index, hc, label="Intraday")
+                ax2.plot(hc.index, trend, "--", label="Trend")
+                ax2.plot(hc.index, ema20, "--", label="20 EMA")
+                # Mid-trend horizontal line
+                ax2.hlines(mid_val, xmin=hc.index[0], xmax=hc.index[-1],
+                           linestyles="dashdot", label="Mid-Trend Line")
+                # Crossing markers
+                if len(cross_idx):
+                    ax2.scatter(cross_times, cross_prices, marker="x", s=70,
+                                label="Trend ↔ Mid-line Cross")
+                    for ct in cross_times:
+                        ax2.axvline(ct, linestyle=":", alpha=0.35)
+                # Inversion markers (rolling slope flips)
+                if len(inv_times):
+                    ax2.scatter(inv_times, inv_values, color="red", s=50, zorder=3,
+                                label="Inversion (slope flip)")
+
+                ax2.set_xlabel("Time (PST)")
+                ax2.legend(loc="lower left", framealpha=0.5)
+                st.pyplot(fig2)
+            else:
+                st.info("Not enough intraday points yet to compute trend / mid-line.")
 
         # --- Forecast Table ---
         st.write(pd.DataFrame({
@@ -238,18 +268,24 @@ with tab2:
 
         if view in ("Intraday","Both"):
             hc = st.session_state.intraday["Close"].ffill()
-            xh = np.arange(len(hc))
-            slope, intercept = np.polyfit(xh, hc.values, 1)
-            trend = slope * xh + intercept
-            ema20 = hc.ewm(span=20).mean()
+            if len(hc) >= 6:
+                xh = np.arange(len(hc))
+                slope, intercept = np.polyfit(xh, hc.values, 1)
+                trend   = slope * xh + intercept
+                ema20   = hc.ewm(span=20).mean()
+                mid_val = float(np.median(trend))
 
-            fig3, ax3 = plt.subplots(figsize=(14,4))
-            ax3.plot(hc.index, hc, label="Intraday")
-            ax3.plot(hc.index, trend, "--", label="Trend")
-            ax3.plot(hc.index, ema20, "--", label="20 EMA")
-            ax3.set_xlabel("Time (PST)")
-            ax3.legend(loc="lower left", framealpha=0.5)
-            st.pyplot(fig3)
+                fig3, ax3 = plt.subplots(figsize=(14,4))
+                ax3.plot(hc.index, hc, label="Intraday")
+                ax3.plot(hc.index, trend, "--", label="Trend")
+                ax3.plot(hc.index, ema20, "--", label="20 EMA")
+                ax3.hlines(mid_val, xmin=hc.index[0], xmax=hc.index[-1],
+                           linestyles="dashdot", label="Mid-Trend Line")
+                ax3.set_xlabel("Time (PST)")
+                ax3.legend(loc="lower left", framealpha=0.5)
+                st.pyplot(fig3)
+            else:
+                st.info("Not enough intraday points yet to compute trend / mid-line.")
 
         st.write(pd.DataFrame({
             "Forecast": vals,
@@ -306,7 +342,8 @@ with tab4:
         df0['MA30']      = df0['Close'].rolling(30, min_periods=1).mean()
 
         st.subheader("Close + 30-day MA + Trend")
-        x0, slope0, intercept0 = np.arange(len(df0)), *np.polyfit(np.arange(len(df0)), df0['Close'], 1)
+        x0 = np.arange(len(df0))
+        slope0, intercept0 = np.polyfit(x0, df0['Close'], 1)
         trend0 = slope0 * x0 + intercept0
 
         fig0, ax0 = plt.subplots(figsize=(14,5))
