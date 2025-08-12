@@ -11,7 +11,7 @@ from urllib.parse import urlsplit, urlunsplit, quote
 # --------------------------------------------------------
 st.set_page_config(page_title="Psych 180 MCQs", page_icon="🧠", layout="centered")
 
-DOC_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Psych 180 Pages.doc"
+DOC_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Psych 180 Pages.docx"
 
 # Simple mobile-friendly tweaks
 st.markdown("""
