@@ -2,8 +2,6 @@ import streamlit as st
 import requests
 import io
 import re
-import random
-import zlib
 from urllib.parse import urlsplit, urlunsplit, quote
 from docx import Document  # pip install python-docx
 
@@ -12,8 +10,8 @@ from docx import Document  # pip install python-docx
 # =========================
 st.set_page_config(page_title="Psych 180 MCQs", page_icon="🧠", layout="centered")
 
-# Your DOCX URL (spaces auto-encoded by encode_url):
-DOC_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Psych 180 Pages.docx"
+# Default DOCX URL (auto-encodes spaces)
+DEFAULT_DOC_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Psych 180 Pages.docx"
 
 # Mobile-friendly sizing
 st.markdown("""
@@ -31,61 +29,81 @@ def encode_url(url: str) -> str:
     return urlunsplit((parts.scheme, parts.netloc, quote(parts.path), parts.query, parts.fragment))
 
 def _norm(s: str) -> str:
-    return re.sub(r'\s+', ' ', str(s).strip())
+    return re.sub(r'\s+', ' ', str(s or "").strip())
 
 def is_question_start(line: str) -> bool:
-    # e.g., "1. ...", "1) ...", "Q1 ...", "Question 1 ..."
+    # "1. ...", "1) ...", "Q1 ...", "Question 1 ..."
     return bool(re.match(r'^\s*(?:Q(?:uestion)?\s*)?\d+\s*[\.\)]\s*\S', line, flags=re.I))
 
-def parse_option(line: str):
+def strip_qnum(line: str) -> str:
+    return re.sub(r'^\s*(?:Q(?:uestion)?\s*)?\d+\s*[\.\)]\s*', '', line, flags=re.I)
+
+def parse_multiple_options_inline(line: str):
     """
-    Return (letter, text) if line looks like an option, else None.
-    Accepts formats: "A) text", "A. text", "(A) text", "A - text", "A: text"
+    Parse a single line that may contain multiple options like:
+    "A. text B) text C: text D - text"
+    Returns list of tuples: [(letter, text), ...]
+    """
+    results = []
+    # find occurrences of an option marker (A-E + punctuation)
+    pat = re.compile(r'\(?([A-Ea-e])\)?\s*[\.\):\-]\s*')
+    matches = list(pat.finditer(line))
+    if not matches:
+        return results
+    for i, m in enumerate(matches):
+        letter = m.group(1).upper()
+        start = m.end()
+        end = matches[i+1].start() if i+1 < len(matches) else len(line)
+        text = _norm(line[start:end])
+        if text:
+            results.append((letter, text))
+    return results
+
+def parse_option_line(line: str):
+    """
+    Parse a line that's just one option, e.g.:
+    "A) text" / "A. text" / "(A) text" / "A - text" / "A: text"
     """
     m = re.match(r'^\s*\(?([A-Ea-e])\)?\s*[\.\):\-]\s*(\S.*)$', line)
     if m:
-        return m.group(1).upper(), _norm(m.group(2))
-    return None
+        return [(m.group(1).upper(), _norm(m.group(2)))]
+    return []
 
-def parse_answer_line(line: str):
-    """Return answer value (letter or text) if line starts with Answer/Correct/Key."""
-    m = re.match(r'^\s*(?:Answer|Ans|Key|Correct)\s*[:\-]\s*(\S.*)$', line, flags=re.I)
-    if m:
-        return _norm(m.group(1))
-    return None
-
-def parse_expl_start(line: str):
-    """Return initial explanation text if line starts with Explanation/Rationale/Why/Exp."""
-    m = re.match(r'^\s*(?:Explanation|Rationale|Why|Exp)\s*[:\-]\s*(.*)$', line, flags=re.I)
-    if m:
-        return _norm(m.group(1))
-    return None
-
-def figure_out_correct_idx(correct_val, options):
-    """Map 'A'..'E' or exact text to an index within options."""
+def figure_out_correct_idx(correct_val, letters, texts):
+    """
+    Map 'B' or exact option text to an index within current letters/texts.
+    letters: ['A','B','C','D',...]
+    texts:   ['opt text', ...]   (same length/order)
+    """
     if correct_val is None:
         return 0
     cv = _norm(correct_val)
-    letter_map = {"A":0,"B":1,"C":2,"D":3,"E":4}
-    if cv.upper() in letter_map and letter_map[cv.upper()] < len(options):
-        return letter_map[cv.upper()]
-    # exact match
-    for i, opt in enumerate(options):
-        if _norm(opt).lower() == cv.lower():
+    # Letter key?
+    if re.fullmatch(r'[A-Ea-e]', cv):
+        letter = cv.upper()
+        if letter in letters:
+            return letters.index(letter)
+    # Exact text match?
+    for i, t in enumerate(texts):
+        if _norm(t).lower() == cv.lower():
             return i
-    # contains match
-    for i, opt in enumerate(options):
-        if cv.lower() in _norm(opt).lower():
+    # Contains match
+    for i, t in enumerate(texts):
+        if cv.lower() in _norm(t).lower():
             return i
     return 0
 
-def stable_shuffle(n: int, seed_key: str):
-    """Stable permutation for each question (so options don't jump around)."""
-    seed = zlib.adler32(seed_key.encode("utf-8")) & 0xffffffff
-    rng = random.Random(seed)
-    order = list(range(n))
-    rng.shuffle(order)
-    return order
+def assign_missing_letters(options):
+    """Fill in missing letters in sequence A, B, C, ... keeping given letters if present."""
+    out_letters, out_texts = [], []
+    next_code = ord('A')
+    for letter, text in options:
+        if letter is None or not re.fullmatch(r'[A-E]', letter):
+            letter = chr(next_code)
+        out_letters.append(letter)
+        out_texts.append(text)
+        next_code = ord('A') + len(out_letters)
+    return out_letters, out_texts
 
 # =========================
 # Load & Parse DOCX
@@ -96,14 +114,14 @@ def load_questions(doc_url: str):
     resp.raise_for_status()
     doc = Document(io.BytesIO(resp.content))
 
-    # Flatten text lines (paragraphs first)
+    # Collect text lines from paragraphs first
     lines = []
     for p in doc.paragraphs:
         t = _norm(p.text)
         if t or (lines and lines[-1] != ""):
             lines.append(t if t else "")
 
-    # If nothing usable found, also scan tables
+    # If nothing, also check tables
     if not any(lines):
         for tbl in doc.tables:
             for row in tbl.rows:
@@ -116,81 +134,92 @@ def load_questions(doc_url: str):
     # Parse state
     questions = []
     q_text_parts = []
-    options = []
+    opts_accum = []           # list of (letter or None, text)
     correct_val = None
     explanation_parts = []
     collecting_expl = False
 
     def flush_current():
-        if q_text_parts and options:
-            q_text = _norm(" ".join(q_text_parts))
-            correct_idx = figure_out_correct_idx(correct_val, options)
+        if q_text_parts and opts_accum:
+            letters, texts = assign_missing_letters(opts_accum)
+            correct_idx = figure_out_correct_idx(correct_val, letters, texts)
             questions.append({
-                "question": q_text,
-                "options": options[:],
-                "correct_idx": max(0, min(correct_idx, len(options)-1)),
+                "question": _norm(" ".join(q_text_parts)),
+                "letters": letters,
+                "options": texts,
+                "correct_idx": max(0, min(correct_idx, len(texts)-1)),
                 "explanation": _norm(" ".join(explanation_parts)) if explanation_parts else ""
             })
 
     for raw in lines:
         line = raw.strip()
 
-        # Explanation collection mode
+        # If we're collecting explanation and a new question starts, flush & start over
         if collecting_expl:
             if is_question_start(line):
                 flush_current()
-                q_text_parts = [re.sub(r'^\s*(?:Q(?:uestion)?\s*)?\d+\s*[\.\)]\s*', '', line, flags=re.I)]
-                options, correct_val, explanation_parts = [], None, []
+                q_text_parts = [strip_qnum(line)]
+                opts_accum, correct_val, explanation_parts = [], None, []
                 collecting_expl = False
             else:
-                explanation_parts.append(line)
+                if line != "":
+                    explanation_parts.append(line)
             continue
 
-        # New question?
+        # New question start?
         if is_question_start(line):
-            if q_text_parts or options:
+            if q_text_parts or opts_accum:
                 flush_current()
-                q_text_parts, options, correct_val, explanation_parts = [], [], None, []
-            q_text_parts = [re.sub(r'^\s*(?:Q(?:uestion)?\s*)?\d+\s*[\.\)]\s*', '', line, flags=re.I)]
+                q_text_parts, opts_accum, correct_val, explanation_parts = [], [], None, []
+            q_text_parts = [strip_qnum(line)]
             continue
 
-        # Option line?
-        opt = parse_option(line)
-        if opt:
-            _, text = opt
-            options.append(text)
+        # Options inline on a single line?
+        inline_opts = parse_multiple_options_inline(line)
+        if inline_opts:
+            opts_accum.extend(inline_opts)
             continue
 
-        # Answer line?
-        ans = parse_answer_line(line)
-        if ans is not None:
-            correct_val = ans
+        # Single option on this line?
+        one_opt = parse_option_line(line)
+        if one_opt:
+            opts_accum.extend(one_opt)
             continue
 
-        # Explanation start?
-        expl0 = parse_expl_start(line)
-        if expl0 is not None:
+        # Answer line
+        m_ans = re.match(r'^\s*(?:Answer|Ans|Key|Correct)\s*[:\-]\s*(\S.*)$', line, flags=re.I)
+        if m_ans:
+            correct_val = _norm(m_ans.group(1))
+            continue
+
+        # Explanation start
+        m_exp = re.match(r'^\s*(?:Explanation|Rationale|Why|Exp)\s*[:\-]\s*(.*)$', line, flags=re.I)
+        if m_exp:
             collecting_expl = True
-            explanation_parts = [expl0] if expl0 else []
+            first = _norm(m_exp.group(1))
+            explanation_parts = [first] if first else []
             continue
 
-        # Empty line — soft separator
+        # Empty line → soft separator
         if line == "":
             continue
 
-        # Otherwise: continuation of stem or wrapped option
-        if options:
-            options[-1] = _norm(options[-1] + " " + line)
+        # Otherwise it's probably stem continuation or wrapped option continuation
+        if opts_accum:
+            # append to last option's text
+            last_letter, last_text = opts_accum[-1]
+            opts_accum[-1] = (last_letter, _norm(last_text + " " + line))
         else:
             q_text_parts.append(line)
 
-    # Flush last one
+    # flush last
     flush_current()
 
     if not questions:
         raise ValueError(
-            "No usable questions were parsed. Ensure numbered questions (e.g., '1.'), "
-            "options like 'A) ...', an 'Answer:' line, and optional 'Explanation:'."
+            "No usable questions parsed. Ensure numbered questions (e.g., '1.'), "
+            "options like 'A) ...' OR inline 'A. ... B. ...', an 'Answer:' line, "
+            "and optional 'Explanation:'."
         )
 
     return questions
@@ -200,7 +229,7 @@ def load_questions(doc_url: str):
 # =========================
 st.title("🧠 Psych 180 MCQs (from .docx)")
 
-doc_url = st.text_input("DOCX URL", DOC_URL)
+doc_url = st.text_input("DOCX URL", DEFAULT_DOC_URL)
 if not doc_url:
     st.stop()
 
@@ -213,66 +242,54 @@ except Exception as e:
 # Session state
 if "q_idx" not in st.session_state:
     st.session_state.q_idx = 0
-if "shuffle_map" not in st.session_state:
-    st.session_state.shuffle_map = {}
 if "selection" not in st.session_state:
-    # stores the selected VALUE per question:
-    #   -1 for "no selection yet", or 0..n-1 for chosen option index (in shuffled space)
+    # For each question, store selected index (0..n-1) or -1 for none
     st.session_state.selection = {}
 
 total = len(qs)
 st.caption(f"Loaded {total} question(s) from Psych 180 Pages")
 
 # Navigation
-cols = st.columns([1,2,1])
-with cols[0]:
+c1, c2, c3 = st.columns([1,2,1])
+with c1:
     st.button("◀ Back", disabled=(st.session_state.q_idx == 0),
               on_click=lambda: st.session_state.update(q_idx=max(0, st.session_state.q_idx - 1)))
-with cols[2]:
+with c3:
     st.button("Next ▶", disabled=(st.session_state.q_idx >= total - 1),
               on_click=lambda: st.session_state.update(q_idx=min(total - 1, st.session_state.q_idx + 1)))
 
 idx = st.session_state.q_idx
 q = qs[idx]
 
-# Stable shuffle of options per question
-if idx not in st.session_state.shuffle_map:
-    st.session_state.shuffle_map[idx] = stable_shuffle(len(q["options"]), seed_key=q["question"])
-order = st.session_state.shuffle_map[idx]
-shuffled_opts = [q["options"][i] for i in order]
-correct_shuffled_idx = order.index(q["correct_idx"])
-
 st.subheader(f"Q{idx+1}. {q['question']}")
 
-# ----- RADIO WIDGET (fixed) -----
-# Use a sentinel option at POSITION 0, but store/compare using its VALUE (-1).
-SENTINEL_VALUE = -1
-options_for_radio = [SENTINEL_VALUE] + list(range(len(shuffled_opts)))
+# Build radio choices with letter prefixes (A., B., C., D.)
+labels = [f"{q['letters'][i]}. {q['options'][i]}" for i in range(len(q['options']))]
 
-def format_opt(val: int) -> str:
-    return "— Select an answer —" if val == SENTINEL_VALUE else shuffled_opts[val]
+# Sentinel handling so we don't error before the user picks
+SENTINEL = -1
+saved_value = st.session_state.selection.get(idx, SENTINEL)
 
-# Determine the RADIO INDEX (position) from the previously saved VALUE
-prev_value = st.session_state.selection.get(idx, SENTINEL_VALUE)
-try:
-    default_radio_index = options_for_radio.index(prev_value)
-except ValueError:
-    default_radio_index = 0  # fallback safely inside [0, len(options)-1]
+# Compute default index (0..n) for radio widget: if none selected, default to 0 but show a placeholder
+radio_options = list(range(len(labels)))  # values: 0..n-1
+default_index = saved_value if saved_value in radio_options else 0
 
-selected_value = st.radio(
+# A top placeholder label so users must actively choose? (Optional)
+# If you prefer a visible placeholder, use a selectbox instead.
+selected_idx = st.radio(
     "Choose one:",
-    options=options_for_radio,           # values: [-1, 0, 1, 2, ...]
-    format_func=format_opt,
-    index=default_radio_index,           # <-- POSITION within options list (0..n-1)
+    options=radio_options,
+    format_func=lambda i: labels[i],
+    index=default_index,
     key=f"radio_{idx}"
 )
 
-# Persist the VALUE (-1 or 0..n-1) for this question
-st.session_state.selection[idx] = selected_value
+# Persist selection
+st.session_state.selection[idx] = selected_idx
 
-# Feedback (only once user has actually selected an option)
-if selected_value != SENTINEL_VALUE:
-    if selected_value == correct_shuffled_idx:
+# Feedback
+if selected_idx != SENTINEL:
+    if selected_idx == q["correct_idx"]:
         st.success("✅ Correct!")
         if q.get("explanation"):
             st.info(q["explanation"])
