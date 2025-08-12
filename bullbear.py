@@ -84,8 +84,9 @@ def fetch_hist(ticker: str) -> pd.Series:
     return s.tz_localize(PACIFIC)
 
 @st.cache_data(ttl=900)
-def fetch_intraday(ticker: str) -> pd.DataFrame:
-    df = yf.download(ticker, period="1d", interval="5m")
+def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
+    # period options here: "1d" (~24h), "2d" (~48h), "4d" (~96h) with 5m interval
+    df = yf.download(ticker, period=period, interval="5m")
     try:
         df = df.tz_localize('UTC')
     except TypeError:
@@ -123,6 +124,7 @@ def compute_bb(data, window=20, num_sd=2):
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
     st.session_state.ticker = None
+    st.session_state.hour_range = "24h"
 
 # Tabs
 tab1, tab2, tab3, tab4 = st.tabs([
@@ -135,16 +137,31 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # --- Tab 1: Original Forecast ---
 with tab1:
     st.header("Original Forecast")
-    st.info("Pick a ticker; data will be cached for 15 minutes after first fetch.")
+    st.info("Pick a ticker; data will be cached for 15 minutes after first fetch.")
 
     sel = st.selectbox("Ticker:", universe, key="orig_ticker")
     chart = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_chart")
-    auto_run = st.session_state.run_all and (sel != st.session_state.ticker)
+
+    # NEW: Hourly lookback selector
+    hour_range = st.selectbox(
+        "Hourly lookback:",
+        ["24h", "48h", "96h"],
+        index=["24h","48h","96h"].index(st.session_state.get("hour_range","24h")),
+        key="hour_range_select"
+    )
+    period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
+
+    auto_run = (
+        st.session_state.run_all and (
+            sel != st.session_state.ticker or
+            hour_range != st.session_state.get("hour_range")
+        )
+    )
 
     if st.button("Run Forecast") or auto_run:
         df_hist = fetch_hist(sel)
         idx, vals, ci = compute_sarimax_forecast(df_hist)
-        intraday = fetch_intraday(sel)
+        intraday = fetch_intraday(sel, period=period_map[hour_range])
         st.session_state.update({
             "df_hist": df_hist,
             "fc_idx": idx,
@@ -153,6 +170,7 @@ with tab1:
             "intraday": intraday,
             "ticker": sel,
             "chart": chart,
+            "hour_range": hour_range,
             "run_all": True
         })
 
@@ -205,7 +223,7 @@ with tab1:
             sup_h = hc.rolling(60, min_periods=1).min()
 
             fig2, ax2 = plt.subplots(figsize=(14,4))
-            ax2.set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{p_up:.1%}  ↓{p_dn:.1%}")
             ax2.plot(hc.index, hc, label="Intraday")
             ax2.plot(hc.index, he, "--", label="20 EMA")
             ax2.plot(hc.index, res_h, ":", label="Resistance")
@@ -243,10 +261,14 @@ with tab2:
         res = df.rolling(30, min_periods=1).max()
         sup = df.rolling(30, min_periods=1).min()
 
+        # Show the chosen lookback in this tab too (read-only)
+        st.caption(f"Intraday lookback: **{st.session_state.get('hour_range','24h')}** "
+                   "(change in 'Original Forecast' tab and rerun)")
+
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
         if view in ("Daily","Both"):
             fig, ax = plt.subplots(figsize=(14,6))
-            ax.set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax.set_title(f"{st.session_state.ticker} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
             ax.plot(df[-360:], label="History")
             ax.plot(ema200[-360:], "--", label="200 EMA")
             ax.plot(ma30[-360:], "--", label="30 MA")
@@ -281,7 +303,7 @@ with tab2:
             sup_i = ic.rolling(60, min_periods=1).min()
 
             fig3, ax3 = plt.subplots(figsize=(14,4))
-            ax3.set_title(f"{sel} Intraday  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{p_up:.1%}  ↓{p_dn:.1%}")
             ax3.plot(ic.index, ic, label="Intraday")
             ax3.plot(ic.index, ie, "--", label="20 EMA")
             ax3.plot(ic.index, res_i, ":", label="Resistance")
@@ -361,7 +383,7 @@ with tab4:
         df0['Bull'] = df0['PctChange'] > 0
         df0['MA30'] = df0['Close'].rolling(30, min_periods=1).mean()
 
-        st.subheader("Close + 30‑day MA + Trend")
+        st.subheader("Close + 30-day MA + Trend")
         x0 = np.arange(len(df0))
         slope0, intercept0 = np.polyfit(x0, df0['Close'], 1)
         trend0 = slope0 * x0 + intercept0
