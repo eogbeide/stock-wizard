@@ -10,7 +10,6 @@ from docx import Document  # pip install python-docx
 # =========================
 st.set_page_config(page_title="Psych 180 MCQs", page_icon="🧠", layout="centered")
 
-# Default DOCX URL (spaces auto-encoded)
 DEFAULT_DOC_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Psych 180 Pages.docx"
 
 # Mobile-friendly tweaks
@@ -38,47 +37,65 @@ def is_question_start(line: str) -> bool:
 def strip_qnum(line: str) -> str:
     return re.sub(r'^\s*(?:Q(?:uestion)?\s*)?\d+\s*[\.\)]\s*', '', line, flags=re.I)
 
-def parse_multiple_options_inline(line: str):
+def classify_meta(text: str):
     """
-    Parse a line like: "A. text B) text C: text D - text"
-    Returns list of tuples: [(letter, text), ...]
-    Also captures any leading segment *before* the first marker as option A.
+    Detect 'Answer:', 'Explanation:'/'Why:'/'Exp:', 'Rationale:' or 'Eliminate ...'
+    Return ('answer', value) | ('explanation', txt) | ('rationale', txt) | None
     """
-    results = []
-    pat = re.compile(r'\(?([A-Ea-e])\)?\s*[\.\):\-]\s*')
+    t = _norm(text)
+    m = re.match(r'^(?:Answer|Ans|Key|Correct)\s*[:\-]\s*(\S.*)$', t, flags=re.I)
+    if m:
+        return ('answer', _norm(m.group(1)))
+    m = re.match(r'^(?:Explanation|Why|Exp)\s*[:\-]\s*(.*)$', t, flags=re.I)
+    if m:
+        return ('explanation', _norm(m.group(1)))
+    m = re.match(r'^(?:Rationale)\s*[:\-]\s*(.*)$', t, flags=re.I)
+    if m:
+        return ('rationale', _norm(m.group(1)))
+    # Many docs write rationale without the word "Rationale", e.g., "Eliminate A and D because ..."
+    if re.match(r'^(Eliminate|Because)\b', t, flags=re.I):
+        return ('rationale', t)
+    return None
+
+def parse_inline_options(line: str):
+    """
+    Parse a line that may contain inline options:
+      "Question: ... A. text B) text C: text D - text F. Answer: C Explanation: ..."
+
+    Returns: (leading_text, parts)
+      - leading_text: text before first option marker (belongs to the question stem)
+      - parts: list of tuples [('A', '...'), ('B','...'), ...]  (letters kept if present)
+              meta segments like 'Answer:' / 'Explanation:' / 'Rationale:' are returned as
+              [('META', 'answer: C')] etc. We'll classify later.
+    """
+    parts = []
+    pat = re.compile(r'\(?([A-Fa-f])\)?\s*[\.\):\-]\s*')
     matches = list(pat.finditer(line))
     if not matches:
-        return results
+        return (_norm(line), [])  # no options here
 
-    # Leading text before first marker -> treat as first option if present
-    if matches[0].start() > 0:
-        lead = _norm(line[:matches[0].start()])
-        if lead:
-            results.append((None, lead))  # letter assigned later (likely "A")
+    # Leading stem before first marker
+    lead = _norm(line[:matches[0].start()])
 
-    # Subsequent marked options
+    # Segments from each marker to the next
     for i, m in enumerate(matches):
         letter = m.group(1).upper()
         start = m.end()
         end = matches[i+1].start() if i+1 < len(matches) else len(line)
-        text = _norm(line[start:end])
-        if text:
-            results.append((letter, text))
-    return results
+        seg = _norm(line[start:end])
+        if seg:
+            parts.append((letter, seg))
+    return (lead, parts)
 
-def parse_option_line(line: str):
-    """Parse a single option line: 'A) text' / 'A. text' / '(A) text' / 'A - text' / 'A: text'."""
-    m = re.match(r'^\s*\(?([A-Ea-e])\)?\s*[\.\):\-]\s*(\S.*)$', line)
+def parse_single_option(line: str):
+    """Parse a single option line like 'A) text' or '(B) text'."""
+    m = re.match(r'^\s*\(?([A-Fa-f])\)?\s*[\.\):\-]\s*(\S.*)$', line)
     if m:
-        return [(m.group(1).upper(), _norm(m.group(2)))]
-    return []
+        return (m.group(1).upper(), _norm(m.group(2)))
+    return None
 
 def figure_out_correct_idx(correct_val, letters, texts):
-    """
-    Map 'B' or exact option text to an index within current letters/texts.
-    letters: ['A','B','C','D',...]
-    texts:   ['opt text', ...]
-    """
+    """Map 'B' or exact/contains text to an index among texts."""
     if correct_val is None:
         return 0
     cv = _norm(correct_val)
@@ -101,16 +118,22 @@ def figure_out_correct_idx(correct_val, letters, texts):
 
     return 0
 
-def assign_missing_letters(options):
-    """Fill in missing letters sequentially A, B, C, ... keeping given letters if present."""
+def finalize_letters_texts(collected):
+    """
+    Keep ONLY the first four real options in A–D order.
+    'collected' is list like [('A','...'), ('B','...'), ...].
+    Drop anything with letters beyond 'D'.
+    If letters missing, fill sequentially A..D.
+    """
+    real = [(L, T) for (L, T) in collected if L in ('A','B','C','D')]
+    # If some A-D are missing but we have unlabeled options (None), fill them in order.
     out_letters, out_texts = [], []
     next_code = ord('A')
-    for letter, text in options:
-        if letter is None or not re.fullmatch(r'[A-E]', letter):
-            letter = chr(next_code)
-        out_letters.append(letter)
-        out_texts.append(text)
-        next_code = ord('A') + len(out_letters)
+    for L, T in real[:4]:
+        # enforce A..D order by their natural letter order
+        out_letters.append(L)
+        out_texts.append(T)
+    # If fewer than 4 found, stop with what we have
     return out_letters, out_texts
 
 # =========================
@@ -122,14 +145,12 @@ def load_questions(doc_url: str):
     resp.raise_for_status()
     doc = Document(io.BytesIO(resp.content))
 
-    # Gather lines from paragraphs
+    # Gather lines from paragraphs (fallback to tables if needed)
     lines = []
     for p in doc.paragraphs:
         t = _norm(p.text)
         if t or (lines and lines[-1] != ""):
             lines.append(t if t else "")
-
-    # If nothing, also scan tables
     if not any(lines):
         for tbl in doc.tables:
             for row in tbl.rows:
@@ -139,22 +160,26 @@ def load_questions(doc_url: str):
                         if t or (lines and lines[-1] != ""):
                             lines.append(t if t else "")
 
-    # Parse state
     questions = []
     q_text_parts = []
-    opts_accum = []            # list[(letter or None, text)]
+    option_pairs = []  # [('A','text'), ('B','text'), ...]
     correct_val = None
     explanation_parts = []
     rationale_parts = []
     collecting_expl = False
     collecting_rat = False
 
-    def flush_current():
-        if q_text_parts and opts_accum:
-            letters, texts = assign_missing_letters(opts_accum)
+    def flush():
+        if q_text_parts and option_pairs:
+            letters, texts = finalize_letters_texts(option_pairs)
+            if not letters or not texts:
+                return
+            q_text = _norm(" ".join(q_text_parts))
+            # common doc style: "Question: ..." — strip that tag from stem
+            q_text = re.sub(r'^\s*(?:Question)\s*[:\-]\s*', '', q_text, flags=re.I)
             correct_idx = figure_out_correct_idx(correct_val, letters, texts)
             questions.append({
-                "question": _norm(" ".join(q_text_parts)),
+                "question": q_text,
                 "letters": letters,
                 "options": texts,
                 "correct_idx": max(0, min(correct_idx, len(texts)-1)),
@@ -165,107 +190,126 @@ def load_questions(doc_url: str):
     for raw in lines:
         line = raw.strip()
 
-        # Collecting Explanation
+        # Explanation and Rationale collection blocks
         if collecting_expl:
-            # Switch to next question?
             if is_question_start(line):
-                flush_current()
-                q_text_parts = [strip_qnum(line)]
-                opts_accum, correct_val = [], None
-                explanation_parts, rationale_parts = [], []
+                flush()
+                q_text_parts, option_pairs = [strip_qnum(line)], []
+                correct_val, explanation_parts, rationale_parts = None, [], []
                 collecting_expl = collecting_rat = False
                 continue
-            # Switch to Rationale?
-            m_rat0 = re.match(r'^\s*(?:Rationale)\s*[:\-]\s*(.*)$', line, flags=re.I)
-            if m_rat0:
+            # Switch to rationale midstream?
+            meta = classify_meta(line)
+            if meta and meta[0] == 'rationale':
                 collecting_expl = False
                 collecting_rat = True
-                first = _norm(m_rat0.group(1))
-                rationale_parts = [first] if first else []
+                if meta[1]:
+                    rationale_parts.append(meta[1])
                 continue
-            # Continue explanation
-            if line != "":
+            if line:
                 explanation_parts.append(line)
             continue
 
-        # Collecting Rationale
         if collecting_rat:
             if is_question_start(line):
-                flush_current()
-                q_text_parts = [strip_qnum(line)]
-                opts_accum, correct_val = [], None
-                explanation_parts, rationale_parts = [], []
+                flush()
+                q_text_parts, option_pairs = [strip_qnum(line)], []
+                correct_val, explanation_parts, rationale_parts = None, [], []
                 collecting_expl = collecting_rat = False
                 continue
-            if line != "":
+            if line:
                 rationale_parts.append(line)
             continue
 
         # Start of a new question?
         if is_question_start(line):
-            if q_text_parts or opts_accum:
-                flush_current()
-                q_text_parts, opts_accum = [], []
-                correct_val = None
-                explanation_parts, rationale_parts = [], []
+            if q_text_parts or option_pairs:
+                flush()
+                q_text_parts, option_pairs = [], []
+                correct_val, explanation_parts, rationale_parts = None, [], []
             q_text_parts = [strip_qnum(line)]
             continue
 
-        # Options inline on a single line?
-        inline_opts = parse_multiple_options_inline(line)
-        if inline_opts:
-            opts_accum.extend(inline_opts)
+        # Inline options?
+        lead, parts = parse_inline_options(line)
+        if parts:
+            if lead:
+                q_text_parts.append(lead)
+            for L, seg in parts:
+                # If the "option" is actually meta (Answer/Explanation/Rationale), capture it
+                meta = classify_meta(seg)
+                if meta:
+                    kind, val = meta
+                    if kind == 'answer':
+                        correct_val = val
+                    elif kind == 'explanation':
+                        collecting_expl = True
+                        if val:
+                            explanation_parts.append(val)
+                    elif kind == 'rationale':
+                        collecting_rat = True
+                        if val:
+                            rationale_parts.append(val)
+                    continue
+                # Keep only A-D as options
+                if L in ('A','B','C','D'):
+                    option_pairs.append((L, seg))
             continue
 
-        # Single option line?
-        one_opt = parse_option_line(line)
-        if one_opt:
-            opts_accum.extend(one_opt)
+        # Single option per line?
+        opt = parse_single_option(line)
+        if opt:
+            L, seg = opt
+            meta = classify_meta(seg)
+            if meta:
+                kind, val = meta
+                if kind == 'answer':
+                    correct_val = val
+                elif kind == 'explanation':
+                    collecting_expl = True
+                    if val:
+                        explanation_parts.append(val)
+                elif kind == 'rationale':
+                    collecting_rat = True
+                    if val:
+                        rationale_parts.append(val)
+            else:
+                if L in ('A','B','C','D'):
+                    option_pairs.append((L, seg))
             continue
 
-        # Answer line
-        m_ans = re.match(r'^\s*(?:Answer|Ans|Key|Correct)\s*[:\-]\s*(\S.*)$', line, flags=re.I)
-        if m_ans:
-            correct_val = _norm(m_ans.group(1))
-            continue
-
-        # Explanation start
-        m_exp = re.match(r'^\s*(?:Explanation|Why|Exp)\s*[:\-]\s*(.*)$', line, flags=re.I)
-        if m_exp:
-            collecting_expl = True
-            first = _norm(m_exp.group(1))
-            explanation_parts = [first] if first else []
-            continue
-
-        # Rationale start
-        m_rat = re.match(r'^\s*(?:Rationale)\s*[:\-]\s*(.*)$', line, flags=re.I)
-        if m_rat:
-            collecting_rat = True
-            first = _norm(m_rat.group(1))
-            rationale_parts = [first] if first else []
+        # Explicit Answer / Explanation / Rationale lines (no A/B/C prefix)
+        meta = classify_meta(line)
+        if meta:
+            kind, val = meta
+            if kind == 'answer':
+                correct_val = val
+            elif kind == 'explanation':
+                collecting_expl = True
+                if val:
+                    explanation_parts.append(val)
+            elif kind == 'rationale':
+                collecting_rat = True
+                if val:
+                    rationale_parts.append(val)
             continue
 
         # Empty line → soft separator
         if line == "":
             continue
 
-        # Otherwise: continuation of stem or wrapped option continuation
-        if opts_accum:
-            last_letter, last_text = opts_accum[-1]
-            opts_accum[-1] = (last_letter, _norm(last_text + " " + line))
-        else:
-            q_text_parts.append(line)
+        # Otherwise, more stem text OR option continuation (we only continue stem here to avoid mis-capturing)
+        q_text_parts.append(line)
 
     # Flush last block
-    flush_current()
+    flush()
 
     if not questions:
         raise ValueError(
-            "No usable questions parsed. Ensure numbered questions (e.g., '1.'), "
-            "options like 'A) ...' OR inline 'A. ... B. ...', an 'Answer:' line, "
-            "and optional 'Explanation:' and 'Rationale:' lines."
+            "No usable questions parsed. Use numbered questions (e.g., '1.'), "
+            "A–D options (inline or one per line), and an 'Answer:' line. "
+            "Optional 'Explanation:' and 'Rationale:' supported."
         )
-
     return questions
 
 # =========================
@@ -286,14 +330,11 @@ except Exception as e:
 if "q_idx" not in st.session_state:
     st.session_state.q_idx = 0
 if "selection" not in st.session_state:
-    # per-question selected VALUE: -1 for none, else 0..n-1
-    st.session_state.selection = {}
+    st.session_state.selection = {}       # per-question selected VALUE: -1 or 0..3
 if "submitted" not in st.session_state:
-    # per-question submission boolean
-    st.session_state.submitted = {}
+    st.session_state.submitted = {}       # per-question submitted flag
 if "checked_value" not in st.session_state:
-    # per-question last submitted VALUE (for stable feedback)
-    st.session_state.checked_value = {}
+    st.session_state.checked_value = {}   # per-question last submitted VALUE
 
 total = len(qs)
 st.caption(f"Loaded {total} question(s) from Psych 180 Pages")
@@ -310,45 +351,44 @@ with c3:
 idx = st.session_state.q_idx
 q = qs[idx]
 
+# Question text (separate from options)
 st.subheader(f"Q{idx+1}. {q['question']}")
 
-# Build radio with A/B/C/D labels
+# Build radio list with exactly A–D that were parsed
 labels = [f"{q['letters'][i]}. {q['options'][i]}" for i in range(len(q['options']))]
 
-# Radio with a placeholder sentinel so the user must choose
+# Radio with sentinel until user chooses
 SENTINEL = -1
-options_values = [SENTINEL] + list(range(len(labels)))  # values: -1, 0..n-1
-
-prev_value = st.session_state.selection.get(idx, SENTINEL)
+values = [SENTINEL] + list(range(len(labels)))  # [-1, 0, 1, 2, 3]
+prev = st.session_state.selection.get(idx, SENTINEL)
 try:
-    default_radio_index = options_values.index(prev_value)
+    default_index = values.index(prev)
 except ValueError:
-    default_radio_index = 0
+    default_index = 0
 
 selected_value = st.radio(
     "Choose one:",
-    options=options_values,
+    options=values,
     format_func=lambda v: "— Select an answer —" if v == SENTINEL else labels[v],
-    index=default_radio_index,
+    index=default_index,
     key=f"radio_{idx}"
 )
 
 # Persist current choice
 st.session_state.selection[idx] = selected_value
 
-# If selection changed after submitting, require resubmission
+# If user changes selection after submit, require re-submit
 if st.session_state.submitted.get(idx, False):
-    last_checked = st.session_state.checked_value.get(idx, SENTINEL)
-    if last_checked != selected_value:
+    if st.session_state.checked_value.get(idx, SENTINEL) != selected_value:
         st.session_state.submitted[idx] = False
         st.info("Selection changed — click Submit to check.")
 
-# Submit button
+# Submit
 if st.button("Submit", key=f"submit_{idx}"):
     st.session_state.submitted[idx] = True
     st.session_state.checked_value[idx] = st.session_state.selection.get(idx, SENTINEL)
 
-# Show result ONLY after submission
+# Result after submission
 if st.session_state.submitted.get(idx, False):
     checked = st.session_state.checked_value.get(idx, SENTINEL)
     if checked == SENTINEL:
