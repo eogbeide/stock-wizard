@@ -12,7 +12,7 @@ from docx import Document  # pip install python-docx
 # =========================
 st.set_page_config(page_title="Psych 180 MCQs", page_icon="🧠", layout="centered")
 
-# Replace with your real DOCX raw URL (spaces auto-encoded):
+# Your DOCX URL (spaces auto-encoded by encode_url):
 DOC_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Psych 180 Pages.docx"
 
 # Mobile-friendly sizing
@@ -30,7 +30,7 @@ def encode_url(url: str) -> str:
     parts = urlsplit(url)
     return urlunsplit((parts.scheme, parts.netloc, quote(parts.path), parts.query, parts.fragment))
 
-def _norm(s):
+def _norm(s: str) -> str:
     return re.sub(r'\s+', ' ', str(s).strip())
 
 def is_question_start(line: str) -> bool:
@@ -138,9 +138,7 @@ def load_questions(doc_url: str):
         # Explanation collection mode
         if collecting_expl:
             if is_question_start(line):
-                # next question begins
                 flush_current()
-                # start new question
                 q_text_parts = [re.sub(r'^\s*(?:Q(?:uestion)?\s*)?\d+\s*[\.\)]\s*', '', line, flags=re.I)]
                 options, correct_val, explanation_parts = [], None, []
                 collecting_expl = False
@@ -153,15 +151,13 @@ def load_questions(doc_url: str):
             if q_text_parts or options:
                 flush_current()
                 q_text_parts, options, correct_val, explanation_parts = [], [], None, []
-            # strip the numbering (e.g., "1. ", "Q1) ")
             q_text_parts = [re.sub(r'^\s*(?:Q(?:uestion)?\s*)?\d+\s*[\.\)]\s*', '', line, flags=re.I)]
             continue
 
         # Option line?
         opt = parse_option(line)
         if opt:
-            letter, text = opt
-            # If options already collected and we see another letter that jumps (OK), just append.
+            _, text = opt
             options.append(text)
             continue
 
@@ -178,16 +174,12 @@ def load_questions(doc_url: str):
             explanation_parts = [expl0] if expl0 else []
             continue
 
-        # Empty line — treat as soft separator
+        # Empty line — soft separator
         if line == "":
-            # If we have question + options but no explanation, keep going;
-            # some docs separate blocks with blank lines.
-            # Also allow multi-line stems/options before/after empties.
             continue
 
-        # Otherwise: it's either part of the stem or a wrapped option; decide:
+        # Otherwise: continuation of stem or wrapped option
         if options:
-            # Likely continuation of the previous option (wrapped line)
             options[-1] = _norm(options[-1] + " " + line)
         else:
             q_text_parts.append(line)
@@ -196,7 +188,10 @@ def load_questions(doc_url: str):
     flush_current()
 
     if not questions:
-        raise ValueError("No usable questions were parsed. Make sure your DOCX uses numbered questions and options like 'A) ...', and includes an 'Answer:' line (plus optional 'Explanation:').")
+        raise ValueError(
+            "No usable questions were parsed. Ensure numbered questions (e.g., '1.'), "
+            "options like 'A) ...', an 'Answer:' line, and optional 'Explanation:'."
+        )
 
     return questions
 
@@ -221,11 +216,14 @@ if "q_idx" not in st.session_state:
 if "shuffle_map" not in st.session_state:
     st.session_state.shuffle_map = {}
 if "selection" not in st.session_state:
-    st.session_state.selection = {}  # q_idx -> selected shuffled index (or -1)
+    # stores the selected VALUE per question:
+    #   -1 for "no selection yet", or 0..n-1 for chosen option index (in shuffled space)
+    st.session_state.selection = {}
 
 total = len(qs)
 st.caption(f"Loaded {total} question(s) from Psych 180 Pages")
 
+# Navigation
 cols = st.columns([1,2,1])
 with cols[0]:
     st.button("◀ Back", disabled=(st.session_state.q_idx == 0),
@@ -246,27 +244,35 @@ correct_shuffled_idx = order.index(q["correct_idx"])
 
 st.subheader(f"Q{idx+1}. {q['question']}")
 
-# Add a "select prompt" sentinel so we don't show error before the user chooses
-sentinel = -1
-options_for_radio = [sentinel] + list(range(len(shuffled_opts)))
+# ----- RADIO WIDGET (fixed) -----
+# Use a sentinel option at POSITION 0, but store/compare using its VALUE (-1).
+SENTINEL_VALUE = -1
+options_for_radio = [SENTINEL_VALUE] + list(range(len(shuffled_opts)))
 
-def format_opt(i):
-    return "— Select an answer —" if i == sentinel else shuffled_opts[i]
+def format_opt(val: int) -> str:
+    return "— Select an answer —" if val == SENTINEL_VALUE else shuffled_opts[val]
 
-selected = st.radio(
+# Determine the RADIO INDEX (position) from the previously saved VALUE
+prev_value = st.session_state.selection.get(idx, SENTINEL_VALUE)
+try:
+    default_radio_index = options_for_radio.index(prev_value)
+except ValueError:
+    default_radio_index = 0  # fallback safely inside [0, len(options)-1]
+
+selected_value = st.radio(
     "Choose one:",
-    options=options_for_radio,
+    options=options_for_radio,           # values: [-1, 0, 1, 2, ...]
     format_func=format_opt,
-    index=st.session_state.selection.get(idx, sentinel),
+    index=default_radio_index,           # <-- POSITION within options list (0..n-1)
     key=f"radio_{idx}"
 )
 
-# Persist selection
-st.session_state.selection[idx] = selected
+# Persist the VALUE (-1 or 0..n-1) for this question
+st.session_state.selection[idx] = selected_value
 
-# Feedback (only once user has selected something)
-if selected != sentinel:
-    if selected == correct_shuffled_idx:
+# Feedback (only once user has actually selected an option)
+if selected_value != SENTINEL_VALUE:
+    if selected_value == correct_shuffled_idx:
         st.success("✅ Correct!")
         if q.get("explanation"):
             st.info(q["explanation"])
