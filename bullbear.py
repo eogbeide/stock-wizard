@@ -31,13 +31,28 @@ def auto_refresh():
             pass
 
 auto_refresh()
+
+# Sidebar timing info
+elapsed = time.time() - st.session_state.last_refresh
+next_in = max(0, REFRESH_INTERVAL - int(elapsed))
 pst_dt = datetime.fromtimestamp(st.session_state.last_refresh, tz=PACIFIC)
 st.sidebar.markdown(f"**Last refresh:** {pst_dt.strftime('%Y-%m-%d %H:%M:%S')} PST")
+st.sidebar.caption(f"Next auto-refresh in: {next_in}s")
 
 # --- Sidebar config ---
 st.sidebar.title("Configuration")
 mode      = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"])
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2)
+
+# Status placeholder (sidebar)
+status_box = st.sidebar.empty()
+def set_status(running: bool, msg: str = ""):
+    if running:
+        status_box.info(f"🟡 Running… {msg}")
+    else:
+        status_box.success("🟢 Idle")
+
+set_status(False)
 
 # Universe for selection
 if mode == "Stock":
@@ -120,11 +135,27 @@ with tab1:
     chart    = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_chart")
 
     auto_run = st.session_state.run_all and (selected != st.session_state.ticker)
-    if st.button("Run Forecast", key="run") or auto_run:
-        df_hist = fetch_hist(selected)
-        idx, vals, ci = compute_sarimax_forecast(df_hist)
-        intraday = fetch_intraday(selected)
 
+    run_clicked = st.button("Run Forecast", key="run")
+
+    if run_clicked or auto_run:
+        t0 = time.perf_counter()
+        prog = st.sidebar.progress(0, text="Starting…")
+        set_status(True, "initializing")
+        with st.spinner("⏳ Fetching data & running forecast…"):
+            # Step 1: daily history
+            prog.progress(10, text="Fetching daily history…")
+            df_hist = fetch_hist(selected)
+
+            # Step 2: model
+            prog.progress(55, text="Computing SARIMAX forecast…")
+            idx, vals, ci = compute_sarimax_forecast(df_hist)
+
+            # Step 3: intraday
+            prog.progress(85, text="Fetching intraday (5m)…")
+            intraday = fetch_intraday(selected)
+
+        # Save results
         st.session_state.df_hist  = df_hist
         st.session_state.fc_idx   = idx
         st.session_state.fc_vals  = vals
@@ -133,6 +164,14 @@ with tab1:
         st.session_state.ticker   = selected
         st.session_state.chart    = chart
         st.session_state.run_all  = True
+        st.session_state.last_refresh = time.time()
+
+        runtime = time.perf_counter() - t0
+        prog.progress(100, text=f"Done in {runtime:.2f}s")
+        time.sleep(0.15)
+        prog.empty()
+        set_status(False)
+        st.toast(f"✅ Run finished in {runtime:.2f}s", icon="✅")
 
     if st.session_state.run_all and st.session_state.ticker == selected:
         df, idx, vals, ci = (
@@ -185,177 +224,3 @@ with tab1:
                                 label="Trend ↔ Mid-line Cross")
                     for ct in cross_times:
                         ax2.axvline(ct, linestyle=":", alpha=0.35)
-                if len(inv_times):
-                    ax2.scatter(inv_times, inv_values, color="red", s=50, zorder=3,
-                                label="Inversion (slope flip)")
-
-                ax2.set_xlabel("Time (PST)")
-                ax2.legend(loc="lower left", framealpha=0.5)
-                st.pyplot(fig2)
-            else:
-                st.info("Not enough intraday points yet to compute trend / mid-line.")
-
-        # --- Daily AFTER hourly ---
-        if chart in ("Daily","Both"):
-            ema200 = df.ewm(span=200).mean()
-            ma30   = df.rolling(30).mean()
-            lb, mb, ub = compute_bollinger_bands(df)
-
-            fig, ax = plt.subplots(figsize=(14,6))
-            ax.plot(df[-360:], label="History")
-            ax.plot(ema200[-360:], "--", label="200 EMA")
-            ax.plot(ma30[-360:], "--", label="30 MA")
-            ax.plot(idx, vals, label="Forecast")
-            ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
-            ax.plot(lb[-360:], "--", label="Lower BB")
-            ax.plot(ub[-360:], "--", label="Upper BB")
-            ax.set_xlabel("Date (PST)")
-            ax.legend(loc="lower left", framealpha=0.5)
-            st.pyplot(fig)
-
-        # --- Forecast Table ---
-        st.write(pd.DataFrame({
-            "Forecast": vals,
-            "Lower":    ci.iloc[:,0],
-            "Upper":    ci.iloc[:,1]
-        }, index=idx))
-
-# --- Tab 2: Enhanced Forecast ---
-with tab2:
-    st.header("Enhanced Forecast")
-    if not st.session_state.run_all:
-        st.info("Run Tab 1 first.")
-    else:
-        df   = st.session_state.df_hist
-        rsi  = compute_rsi(df)
-        idx, vals, ci = (
-            st.session_state.fc_idx,
-            st.session_state.fc_vals,
-            st.session_state.fc_ci
-        )
-
-        view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
-
-        # Render intraday FIRST when Both is selected
-        if view in ("Intraday","Both"):
-            hc = st.session_state.intraday["Close"].ffill()
-            if len(hc) >= 6:
-                xh = np.arange(len(hc))
-                slope, intercept = np.polyfit(xh, hc.values, 1)
-                trend   = slope * xh + intercept
-                ema20   = hc.ewm(span=20).mean()
-                mid_val = float(np.median(trend))
-
-                fig3, ax3 = plt.subplots(figsize=(14,4))
-                ax3.plot(hc.index, hc, label="Intraday")
-                ax3.plot(hc.index, trend, "--", label="Trend")
-                ax3.plot(hc.index, ema20, "--", label="20 EMA")
-                ax3.hlines(mid_val, xmin=hc.index[0], xmax=hc.index[-1],
-                           linestyles="dashdot", label="Mid-Trend Line")
-                ax3.set_xlabel("Time (PST)")
-                ax3.legend(loc="lower left", framealpha=0.5)
-                st.pyplot(fig3)
-            else:
-                st.info("Not enough intraday points yet to compute trend / mid-line.")
-
-        if view in ("Daily","Both"):
-            fig, ax = plt.subplots(figsize=(14,6))
-            ax.plot(df[-360:], label="History")
-            ax.plot(df.ewm(span=200).mean()[-360:], "--", label="200 EMA")
-            ax.plot(df.rolling(30).mean()[-360:], "--", label="30 MA")
-            ax.plot(idx, vals, label="Forecast")
-            ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
-            for lev in (0.236,0.382,0.5,0.618):
-                ax.hlines(
-                    df[-360:].max() - (df[-360:].max()-df[-360:].min())*lev,
-                    df.index[-360], df.index[-1],
-                    linestyles="dotted"
-                )
-            ax.set_xlabel("Date (PST)")
-            ax.legend(loc="lower left", framealpha=0.5)
-            st.pyplot(fig)
-
-            fig2, ax2 = plt.subplots(figsize=(14,3))
-            ax2.plot(rsi[-360:], label="RSI(14)")
-            ax2.axhline(70, linestyle="--"); ax2.axhline(30, linestyle="--")
-            ax2.set_xlabel("Date (PST)")
-            ax2.legend(loc="lower left", framealpha=0.5)
-            st.pyplot(fig2)
-
-        st.write(pd.DataFrame({
-            "Forecast": vals,
-            "Lower":    ci.iloc[:,0],
-            "Upper":    ci.iloc[:,1]
-        }, index=idx))
-
-# --- Tab 3: Bull vs Bear ---
-with tab3:
-    st.header("Bull vs Bear Summary")
-    if not st.session_state.run_all:
-        st.info("Run Tab 1 first.")
-    else:
-        ticker = st.session_state.ticker
-        df3 = yf.download(ticker, period=bb_period)[['Close']].dropna()
-        df3['PctChange'] = df3['Close'].pct_change()
-        df3['Bull']      = df3['PctChange'] > 0
-        bull, bear      = int(df3['Bull'].sum()), int((~df3['Bull']).sum())
-        total           = bull + bear
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Days", total)
-        c2.metric("Bull Days", bull, f"{bull/total*100:.1f}%")
-        c3.metric("Bear Days", bear, f"{bear/total*100:.1f}%")
-        c4.metric("Lookback", bb_period)
-
-# --- Tab 4: Metrics ---
-with tab4:
-    st.header("Detailed Metrics")
-    if not st.session_state.run_all:
-        st.info("Run Tab 1 first.")
-    else:
-        df_hist = fetch_hist(st.session_state.ticker)
-
-        st.subheader("Last 3 Months: Close + 30-day MA + Trend")
-        cutoff = df_hist.index.max() - pd.Timedelta(days=90)
-        df3m   = df_hist[df_hist.index >= cutoff]
-        ma30_3m = df3m.rolling(30, min_periods=1).mean()
-        x       = np.arange(len(df3m))
-        slope, intercept = np.polyfit(x, df3m.values, 1)
-        trend3m = slope * x + intercept
-
-        fig, ax = plt.subplots(figsize=(14,5))
-        ax.plot(df3m.index, df3m, label="Close")
-        ax.plot(df3m.index, ma30_3m, label="30-day MA")
-        ax.plot(df3m.index, trend3m, "--", label="Trend")
-        ax.set_xlabel("Date (PST)")
-        ax.legend(loc="lower left", framealpha=0.5)
-        st.pyplot(fig)
-
-        st.markdown("---")
-        df0 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
-        df0['PctChange'] = df0['Close'].pct_change()
-        df0['Bull']      = df0['PctChange'] > 0
-        df0['MA30']      = df0['Close'].rolling(30, min_periods=1).mean()
-
-        st.subheader("Close + 30-day MA + Trend")
-        x0 = np.arange(len(df0))
-        slope0, intercept0 = np.polyfit(x0, df0['Close'], 1)
-        trend0 = slope0 * x0 + intercept0
-
-        fig0, ax0 = plt.subplots(figsize=(14,5))
-        ax0.plot(df0.index, df0['Close'], label="Close")
-        ax0.plot(df0.index, df0['MA30'], label="30-day MA")
-        ax0.plot(df0.index, trend0, "--", label="Trend")
-        ax0.set_xlabel("Date (PST)")
-        ax0.legend(loc="lower left", framealpha=0.5)
-        st.pyplot(fig0)
-
-        st.markdown("---")
-        st.subheader("Daily % Change")
-        st.line_chart(df0['PctChange'], use_container_width=True)
-
-        st.subheader("Bull/Bear Distribution")
-        dist = pd.DataFrame({
-            "Type": ["Bull", "Bear"],
-            "Days": [int(df0['Bull'].sum()), int((~df0['Bull']).sum())]
-        }).set_index("Type")
-        st.bar_chart(dist, use_container_width=True)
