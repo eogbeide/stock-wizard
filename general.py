@@ -1,6 +1,5 @@
-# lab.py — Read ALL pages & passages (no exclusions) + Auto TTS + Auto-Advance
+# lab.py — All pages/passages + Auto-play + Auto-advance (pause supported)
 import re
-import time
 import base64
 from io import BytesIO
 
@@ -18,9 +17,9 @@ except Exception:
     DOCX_OK = False
 
 # ---------- App config ----------
-st.set_page_config(page_title="📖 Lab Reader (All Pages → Auto TTS)", page_icon="🎧", layout="wide")
+st.set_page_config(page_title="📖 Lab Reader (Auto TTS → Auto Next)", page_icon="🎧", layout="wide")
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/General.docx"
-DEFAULT_PAGE_CHARS = 1600  # used only if no explicit page breaks exist
+DEFAULT_PAGE_CHARS = 1600  # fallback when no explicit page breaks exist
 
 # ---------- Helpers ----------
 @st.cache_data(show_spinner=False)
@@ -107,46 +106,60 @@ def tts_mp3(text: str) -> BytesIO:
     combined.seek(0)
     return combined
 
-def play_audio(audio_bytes: BytesIO, autoplay: bool = False):
-    """Embed an <audio> tag with optional autoplay."""
+def audio_player_with_autonext(audio_bytes: BytesIO, autoplay: bool, next_idx: int | None):
+    """
+    Renders an <audio> element that (optionally) auto-plays.
+    If autoplay is True and next_idx is not None, when playback ends it navigates
+    to the same app URL with ?p=<next_idx>, which advances the page.
+    """
     audio_bytes.seek(0)
     b64 = base64.b64encode(audio_bytes.read()).decode("ascii")
-    auto = "autoplay" if autoplay else ""
+    auto_attr = "autoplay" if autoplay else ""
+    # Small delay before jumping helps on some browsers after 'ended'
+    js = f"""
+      <script>
+        (function() {{
+          const AUTO = {str(autoplay).lower()};
+          const NEXT = {('' if next_idx is None else int(next_idx))};
+          const audio = document.getElementById('tts-audio');
+          if (!audio) return;
+          if (AUTO) {{
+            audio.addEventListener('ended', function() {{
+              {"const u=new URL(window.location); u.searchParams.set('p', NEXT); setTimeout(()=>{ window.location.href = u.toString(); }, 400);" if next_idx is not None else ""}
+            }});
+          }}
+        }})();
+      </script>
+    """
     html(
         f"""
-        <audio controls {auto} style="width:100%;">
-            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
-            Your browser does not support the audio element.
+        <audio id="tts-audio" controls {auto_attr} style="width:100%;">
+          <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+          Your browser does not support the audio element.
         </audio>
+        {js}
         """,
-        height=80,
+        height=90,
     )
 
-def estimate_seconds(text: str, wpm: int) -> int:
-    words = len(re.findall(r"[A-Za-z0-9']+", text))
-    secs = int(max(2, round((words / max(80, wpm)) * 60)))
-    return secs
-
-# ---------- UI: controls ----------
-st.title("📖 Lab Reader (All Content) → Auto Text-to-Speech")
-st.caption("Reads everything, auto-advances page by page. Use Pause/Resume to control playback.")
+# ---------- UI & controls ----------
+st.title("📖 Lab Reader — Auto-play each page, auto-advance unless paused")
+st.caption("Hit **Start** once (browser gesture), then it will read and jump to the next page automatically.")
 
 with st.sidebar:
     url = st.text_input("GitHub RAW .docx URL", value=DEFAULT_URL)
     target_chars = st.slider("Target characters per page (fallback when no page breaks)", 800, 3200, DEFAULT_PAGE_CHARS, 100)
-    wpm = st.slider("Reading speed (WPM)", 120, 260, 170, 5)
-    gap = st.slider("Gap between pages (seconds)", 0, 10, 1, 1)
     loop_end = st.toggle("Loop to first page at the end", value=False)
 
     # Playback controls
     if "auto" not in st.session_state:
         st.session_state.auto = False
 
-    cols = st.columns(2)
-    with cols[0]:
+    c1, c2 = st.columns(2)
+    with c1:
         if st.button("▶️ Start / Resume"):
             st.session_state.auto = True
-    with cols[1]:
+    with c2:
         if st.button("⏸️ Pause"):
             st.session_state.auto = False
 
@@ -157,6 +170,16 @@ if "pages" not in st.session_state:
     st.session_state.pages = []
 if "page_idx" not in st.session_state:
     st.session_state.page_idx = 0
+
+# Sync page index from URL query (?p=)
+try:
+    q = st.experimental_get_query_params()
+    if "p" in q:
+        p = int(q["p"][0])
+        if 0 <= p:
+            st.session_state.page_idx = p
+except Exception:
+    pass  # ignore malformed values
 
 # ---------- Load & paginate ----------
 if url != st.session_state.loaded_url:
@@ -179,6 +202,9 @@ if not st.session_state.pages:
     st.warning("No content found.")
     st.stop()
 
+# Clamp index in range
+st.session_state.page_idx = max(0, min(st.session_state.page_idx, len(st.session_state.pages) - 1))
+
 # ---------- Navigation (manual) ----------
 left, mid, right = st.columns([1, 3, 1])
 with left:
@@ -193,36 +219,24 @@ with right:
     if st.button("Next ➡️", use_container_width=True, disabled=st.session_state.page_idx >= len(st.session_state.pages) - 1):
         st.session_state.page_idx = min(len(st.session_state.pages) - 1, st.session_state.page_idx + 1)
 
+# Keep URL query param in sync with current page
+st.experimental_set_query_params(p=st.session_state.page_idx)
+
 # ---------- Current page ----------
 page_text = st.session_state.pages[st.session_state.page_idx]
 st.text_area("Page Content (Full, unfiltered)", page_text, height=520)
 
-# ---------- Auto TTS + Auto-advance ----------
-# Generate audio and play (autoplay if auto mode is ON).
+# ---------- Auto TTS + Auto-advance tied to audio 'ended' ----------
+# Decide what the *next* page index should be (or None if we should stop at the end).
+last_idx = len(st.session_state.pages) - 1
+if st.session_state.page_idx < last_idx:
+    next_idx = st.session_state.page_idx + 1
+else:
+    next_idx = 0 if loop_end else None
+
+# Generate & play audio (autoplay when auto==True). On 'ended', JS hops to ?p=next_idx.
 audio_bytes = tts_mp3(page_text)
-play_audio(audio_bytes, autoplay=st.session_state.auto)
-
-# Estimate duration & schedule auto-advance using st_autorefresh:
-from streamlit.runtime.scriptrunner import add_script_run_ctx  # available at runtime
-from streamlit import runtime
-
-# Streamlit's built-in autorefresh:
-count = 0
-if st.session_state.auto:
-    est_secs = estimate_seconds(page_text, wpm) + gap
-    count = st.autorefresh(interval=int(est_secs * 1000), limit=1, key=f"auto-{st.session_state.page_idx}")
-
-# When refresh fires once (count==1), advance the page and rerun.
-if st.session_state.auto and count == 1:
-    last_idx = len(st.session_state.pages) - 1
-    if st.session_state.page_idx < last_idx:
-        st.session_state.page_idx += 1
-    else:
-        if loop_end:
-            st.session_state.page_idx = 0
-        else:
-            st.session_state.auto = False  # stop at the end if not looping
-    st.experimental_rerun()
+audio_player_with_autonext(audio_bytes, autoplay=st.session_state.auto, next_idx=next_idx)
 
 # ---------- Download ----------
 st.download_button(
@@ -244,4 +258,5 @@ with st.expander("Jump to page"):
     )
     if st.button("Go"):
         st.session_state.page_idx = int(idx) - 1
+        st.experimental_set_query_params(p=st.session_state.page_idx)
         st.experimental_rerun()
