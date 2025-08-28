@@ -16,7 +16,7 @@ except Exception:
 
 # ---------- App config ----------
 st.set_page_config(page_title="📖 Lab Reader (All Pages + Passages → TTS)", page_icon="🎧", layout="wide")
-DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/CARS.docx"
+DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/aamccars.docx"
 DEFAULT_PAGE_CHARS = 1600  # used only if no explicit page breaks are present
 
 # ---------- Helpers ----------
