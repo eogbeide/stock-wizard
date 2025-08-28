@@ -1,5 +1,5 @@
 # lab.py — Passages + MCQs + Options + Answers/Explanations (GitHub → TTS)
-import re
+import red
 from io import BytesIO
 
 import requests
