@@ -16,7 +16,7 @@ except Exception:
 
 # ---------- App config ----------
 st.set_page_config(page_title="📖 GitHub Doc → Pages + TTS", page_icon="🎧", layout="wide")
-DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/psychbooks.doc"
+DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/psychbooks.docx"
 DEFAULT_PAGE_SIZE = 1400  # characters per page
 
 # ---------- Helpers ----------
