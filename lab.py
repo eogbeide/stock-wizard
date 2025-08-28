@@ -1,4 +1,4 @@
-# psychology.py — MCQs + Options + Answers/Explanations only (Passages removed)
+# psychology.py — Lab book: Passages + MCQs + Options + Answers/Explanations (GitHub → TTS)
 import re
 from io import BytesIO
 
@@ -15,7 +15,7 @@ except Exception:
     DOCX_OK = False
 
 # ---------- App config ----------
-st.set_page_config(page_title="📖 MCQs + Answers Reader (GitHub → TTS)", page_icon="🎧", layout="wide")
+st.set_page_config(page_title="📖 Lab MCQs + Passages Reader (GitHub → TTS)", page_icon="🎧", layout="wide")
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/labbook.docx"
 
 # ---------- Helpers ----------
@@ -65,7 +65,7 @@ ANSWER_PAT = re.compile(r"""^\s*(?:answer|answers?|ans|correct\s*answer|key|solu
 EXPL_PAT   = re.compile(r"""^\s*(?:explanation|rationale|why|reason(?:ing)?)\s*[:\-]?\s*(.*)""", re.IGNORECASE)
 
 # Passage headers like: "Passage", "PASSAGE I", "Passage 2", "Passage A", etc.
-PASSAGE_HEADER_PAT = re.compile(r"^\s*passage(\s*[ivx]+|\s*\d+|\s*[a-z])?\b", re.IGNORECASE)
+PASSAGE_HEADER_PAT   = re.compile(r"^\s*passage(\s*[ivx]+|\s*\d+|\s*[a-z])?\b", re.IGNORECASE)
 QUESTIONS_HEADER_PAT = re.compile(r"^\s*questions?\b", re.IGNORECASE)
 
 def looks_like_question(line: str) -> bool:
@@ -83,59 +83,59 @@ def parse_expl(line: str):
 def clean_line(line: str) -> str:
     return re.sub(r"\s+", " ", line).strip()
 
-def remove_passages(full_text: str) -> list[str]:
+# ---- NEW: include passages and attach to MCQs ----
+def extract_passages_and_mcqs(full_text: str, repeat_passage_each_mcq: bool = False):
     """
-    Remove passage blocks. If a line starts with 'Passage...' we skip lines
-    until we hit a question line or a 'Questions' header.
+    Returns a list of formatted blocks:
+      Passage: ...
+      Q... (stem)
+      A) ...
+      ...
+      Answer: ...
+      Explanation: ...
+    Passages are attached to the FIRST MCQ after they appear (or to every MCQ if repeat_passage_each_mcq=True),
+    until a new Passage header is encountered.
     """
     lines = [l.rstrip() for l in full_text.split("\n")]
-    filtered = []
-    in_passage = False
-    for raw in lines:
-        line = raw.strip()
 
-        # Start/stop passage blocks
-        if PASSAGE_HEADER_PAT.match(line):
-            in_passage = True
-            continue
-        if in_passage:
-            if not line:
-                # keep skipping inside passage until a question or 'Questions' header; blank does nothing
-                continue
-            if QUESTIONS_HEADER_PAT.match(line) or looks_like_question(line):
-                in_passage = False
-            else:
-                # still inside passage → skip
-                continue
-
-        # If we reach here, not inside a passage block
-        filtered.append(raw)
-    return filtered
-
-def extract_mcqs_with_answers(full_text: str):
-    """
-    Return only MCQs (stem + options) and Answer/Explanation lines. Passages removed.
-    """
-    lines = remove_passages(full_text)
     mcqs = []
+
+    # Passage tracking
+    collecting_passage = False
+    current_passage_lines = []
+    current_passage_text = None
+    passage_needs_inclusion = False  # include with the next MCQ only (unless repeat flag)
+
+    # MCQ tracking
     cur_stem, cur_opts = [], []
     cur_answer, cur_expl = None, None
     in_mcq = False
     options_started = False
 
-    def flush():
-        nonlocal cur_stem, cur_opts, cur_answer, cur_expl, in_mcq, options_started
+    def passage_text_block():
+        if not current_passage_text:
+            return None
+        return "Passage:\n" + current_passage_text
+
+    def flush_mcq():
+        nonlocal cur_stem, cur_opts, cur_answer, cur_expl, in_mcq, options_started, passage_needs_inclusion
         stem_text = " ".join([clean_line(s) for s in cur_stem if s is not None]).strip()
         if stem_text and len(cur_opts) >= 2:
-            block = []
-            block.append(stem_text)
-            block.extend(cur_opts)
+            block_lines = []
+            # attach passage when required
+            if current_passage_text and (repeat_passage_each_mcq or passage_needs_inclusion):
+                block_lines.append(passage_text_block())
+                passage_needs_inclusion = False  # consumed for "first question" case
+
+            block_lines.append(stem_text)
+            block_lines.extend(cur_opts)
             if cur_answer:
-                block.append(f"Answer: {cur_answer}")
+                block_lines.append(f"Answer: {cur_answer}")
             if cur_expl:
-                block.append(f"Explanation: {cur_expl}")
-            mcqs.append("\n".join(block).strip())
-        # reset
+                block_lines.append(f"Explanation: {cur_expl}")
+            mcqs.append("\n".join([b for b in block_lines if b]).strip())
+
+        # reset MCQ fields
         cur_stem, cur_opts = [], []
         cur_answer, cur_expl = None, None
         in_mcq = False
@@ -143,14 +143,35 @@ def extract_mcqs_with_answers(full_text: str):
 
     for raw in lines:
         line = raw.strip()
-        if not line:
-            if in_mcq and cur_stem and not options_started:
-                cur_stem.append("")  # paragraph spacing within stem
+
+        # ----- Passage handling -----
+        if PASSAGE_HEADER_PAT.match(line):
+            # finishing any in-flight MCQ before new passage header? keep it clean
+            if in_mcq:
+                flush_mcq()
+            collecting_passage = True
+            current_passage_lines = [clean_line(line)]
             continue
 
+        if collecting_passage:
+            # stop collecting when we hit Questions header OR a new question
+            if not line:
+                current_passage_lines.append("")  # preserve minimal spacing
+                continue
+            if QUESTIONS_HEADER_PAT.match(line) or looks_like_question(line):
+                collecting_passage = False
+                # finalize current passage text
+                current_passage_text = "\n".join([l for l in current_passage_lines]).strip()
+                passage_needs_inclusion = True  # include with next MCQ (first one after passage)
+                # if this line is a question, fall through to MCQ logic (do not 'continue')
+            else:
+                current_passage_lines.append(clean_line(line))
+                continue
+
+        # ----- MCQ parsing -----
         if looks_like_question(line):
             if in_mcq:
-                flush()
+                flush_mcq()
             in_mcq = True
             options_started = False
             cur_stem = [clean_line(line)]
@@ -159,6 +180,7 @@ def extract_mcqs_with_answers(full_text: str):
             continue
 
         if not in_mcq:
+            # Non-passage, non-question text outside an MCQ is ignored
             continue
 
         if looks_like_option(line):
@@ -176,15 +198,16 @@ def extract_mcqs_with_answers(full_text: str):
             cur_expl = (cur_expl + " " + expl).strip() if cur_expl else expl
             continue
 
-        # Extra prose: join to stem before options; after options, treat as continuation of explanation if one exists
+        # Extra prose: before options => part of stem; after options => continuation of explanation if present
         if not options_started:
             cur_stem.append(clean_line(line))
         else:
             if cur_answer is not None or cur_expl is not None:
                 cur_expl = (cur_expl + " " + clean_line(line)).strip() if cur_expl else clean_line(line)
 
+    # tail flush
     if in_mcq:
-        flush()
+        flush_mcq()
 
     return mcqs
 
@@ -207,11 +230,12 @@ def tts_mp3(text: str) -> BytesIO:
     return combined
 
 # ---------- Sidebar ----------
-st.title("📖 MCQs + Answers Reader (Passages removed)")
-st.caption("Reads only Multiple-Choice Questions, Options, Answers, and Explanations — no passages.")
+st.title("📖 Lab MCQs + Passages Reader (GitHub → TTS)")
+st.caption("Includes Passages + MCQs (Options, Answers, Explanations).")
 with st.sidebar:
     url = st.text_input("GitHub RAW file URL", value=DEFAULT_URL)
     mcqs_per_page = st.slider("MCQs per page", 1, 10, 3, 1)
+    repeat_passage = st.toggle("Repeat passage before every MCQ in a set", value=False)
     st.markdown("- Use a **raw** URL (`https://raw.githubusercontent.com/...`). Best with **.docx** or **.txt**.")
 
 # ---------- Session state ----------
@@ -242,7 +266,7 @@ if url != st.session_state.loaded_url:
         else:
             full_text = normalize_text(best_effort_bytes_to_text(data))
 
-        mcqs = extract_mcqs_with_answers(full_text)
+        mcqs = extract_passages_and_mcqs(full_text, repeat_passage_each_mcq=repeat_passage)
         pages = mcqs_to_pages(mcqs, mcqs_per_page)
 
         st.session_state.pages = pages
@@ -261,14 +285,21 @@ with left:
     if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
         st.session_state.page_idx = max(0, st.session_state.page_idx - 1)
 with mid:
-    st.markdown(f"<div style='text-align:center;font-weight:600;'>Page {st.session_state.page_idx + 1} / {len(st.session_state.pages)}</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='text-align:center;font-weight:600;'>Page {st.session_state.page_idx + 1} / {len(st.session_state.pages)}</div>",
+        unsafe_allow_html=True,
+    )
 with right:
-    if st.button("Next ➡️", use_container_width=True, disabled=st.session_state.page_idx >= len(st.session_state.pages) - 1):
+    if st.button(
+        "Next ➡️",
+        use_container_width=True,
+        disabled=st.session_state.page_idx >= len(st.session_state.pages) - 1,
+    ):
         st.session_state.page_idx = min(len(st.session_state.pages) - 1, st.session_state.page_idx + 1)
 
 # ---------- Current page ----------
 page_text = st.session_state.pages[st.session_state.page_idx]
-st.text_area("MCQs + Answers (no passage)", page_text, height=480)
+st.text_area("Passage(s) + MCQs (with answers/explanations)", page_text, height=520)
 
 col_play, col_dl = st.columns([2, 1])
 with col_play:
@@ -283,7 +314,7 @@ with col_dl:
     st.download_button(
         "⬇️ Download this page (txt)",
         data=page_text.encode("utf-8"),
-        file_name=f"mcqs_page_{st.session_state.page_idx+1}.txt",
+        file_name=f"lab_mcqs_page_{st.session_state.page_idx+1}.txt",
         mime="text/plain",
     )
 
@@ -291,5 +322,4 @@ with col_dl:
 with st.expander("Jump to page"):
     idx = st.number_input("Go to page #", min_value=1, max_value=len(st.session_state.pages), value=st.session_state.page_idx + 1, step=1)
     if st.button("Go"):
-        st.session_state.page_idx = int(idx) - 1
-        st.experimental_rerun()
+        st.session_state.page_idx =
