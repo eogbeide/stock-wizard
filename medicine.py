@@ -53,19 +53,19 @@ st.write(f"Last updated: {today}")
 
 # Create buttons to navigate to the external apps
 if st.button("Go to MCAT Prep Psych Book"):
-    st.markdown("[Open MCAT Content Reviews](https://psychbook.streamlit.app/)", unsafe_allow_html=True)
+    st.markdown("[Open MCAT Prep Psych Book](https://psychbook.streamlit.app/)", unsafe_allow_html=True)
 
 if st.button("Go to MCAT Bio Book"):
-    st.markdown("[Open MCAT Quiz Prep](https://biobook.streamlit.app/)", unsafe_allow_html=True)
+    st.markdown("[Open MCAT Bio Book](https://biobook.streamlit.app/)", unsafe_allow_html=True)
 
 if st.button("Go to MCAT BCH"):
-    st.markdown("[Open MCAT Topics](https://bchbook.streamlit.app/)", unsafe_allow_html=True)
+    st.markdown("[Open MCAT BCH](https://bchbook.streamlit.app/)", unsafe_allow_html=True)
 
 if st.button("Go to MCAT Chem, Physics and Organo"):
-    st.markdown("[Open MCAT Lab Review](https://chmbook.streamlit.app/)", unsafe_allow_html=True)
+    st.markdown("[Open MCAT Chem, Physics and Organo](https://chmbook.streamlit.app/)", unsafe_allow_html=True)
 
 if st.button("Go to MCAT BCH Lab"):
-    st.markdown("[Open MCAT Flash Cards](https://labbook.streamlit.app/)", unsafe_allow_html=True)
+    st.markdown("[Open MCAT BCH Lab](https://labbook.streamlit.app/)", unsafe_allow_html=True)
 
 # Instructions for refreshing all links daily
 st.write("""
