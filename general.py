@@ -1,10 +1,13 @@
-# lab.py — Read ALL pages & passages (no exclusions) + TTS
+# lab.py — Read ALL pages & passages (no exclusions) + Auto TTS + Auto-Advance
 import re
+import time
+import base64
 from io import BytesIO
 
 import requests
 import streamlit as st
 from gtts import gTTS
+from streamlit.components.v1 import html
 
 # .docx extraction
 try:
@@ -15,9 +18,9 @@ except Exception:
     DOCX_OK = False
 
 # ---------- App config ----------
-st.set_page_config(page_title="📖 Lab Reader (All Pages + Passages → TTS)", page_icon="🎧", layout="wide")
+st.set_page_config(page_title="📖 Lab Reader (All Pages → Auto TTS)", page_icon="🎧", layout="wide")
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/General.docx"
-DEFAULT_PAGE_CHARS = 1600  # used only if no explicit page breaks are present
+DEFAULT_PAGE_CHARS = 1600  # used only if no explicit page breaks exist
 
 # ---------- Helpers ----------
 @st.cache_data(show_spinner=False)
@@ -27,9 +30,8 @@ def fetch_bytes(url: str) -> bytes:
     return r.content
 
 def normalize_text(text: str) -> str:
-    # keep ALL content; just standardize newlines and compress super-long blank gaps a bit
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = re.sub(r"\n{4,}", "\n\n\n", text)  # cap at max 3 consecutive blanks
+    text = re.sub(r"\n{4,}", "\n\n\n", text)  # cap huge blank gaps
     return text.strip()
 
 def best_effort_bytes_to_text(data: bytes) -> str:
@@ -38,55 +40,39 @@ def best_effort_bytes_to_text(data: bytes) -> str:
             return data.decode(enc)
         except UnicodeDecodeError:
             pass
-    # last resort: retain visible bytes
     return "".join(chr(b) if 32 <= b <= 126 or b in (9, 10, 13) else " " for b in data)
 
 def extract_docx_text_with_breaks(data: bytes) -> str:
-    """
-    Extract ALL text from .docx, inserting \f for explicit page breaks.
-    Nothing is filtered out.
-    """
+    """Extract ALL text from .docx, inserting \f on explicit page breaks."""
     if not DOCX_OK:
         raise RuntimeError("python-docx not available. Add 'python-docx' to requirements.txt.")
     doc = Document(BytesIO(data))
     out = []
     for para in doc.paragraphs:
         out.append(para.text)
-        # insert form-feed when Word page break is present
         for run in para.runs:
             if getattr(run, "break_type", None) == WD_BREAK.PAGE:
                 out.append("\f")
-    text = "\n".join(out)
-    # clean duplicated newline around form feeds
-    text = text.replace("\f\n", "\f").replace("\n\f", "\f")
+    text = "\n".join(out).replace("\f\n", "\f").replace("\n\f", "\f")
     return normalize_text(text)
 
 def split_by_formfeed(text: str):
-    # Prefer explicit page breaks if present
-    parts = [p for p in text.split("\f")]
-    # Keep empty pages if any (rare), then trim edges lightly
-    parts = [p.strip("\n") for p in parts]
+    parts = [p.strip("\n") for p in text.split("\f")]
     return parts if len(parts) > 1 else None
 
 def smart_paginate(text: str, max_chars: int):
-    """
-    If the doc has no explicit page breaks, paginate by sentences/paragraphs
-    without dropping anything.
-    """
     paragraphs = [p for p in re.split(r"\n\s*\n", text)]
-    # sentence boundaries (naive but safe)
     sent_pat = re.compile(r'(?<=\S[.?!])\s+(?=[A-Z0-9"“(])')
 
     sentences = []
     for p in paragraphs:
         if not p.strip():
-            sentences.append("")  # preserve paragraph break
+            sentences.append("")  # paragraph break
             continue
         sentences.extend(sent_pat.split(p))
 
     pages, buf = [], ""
     for s in sentences:
-        # keep paragraph breaks (blank lines) as newlines
         s_clean = s if s == "" else s.strip()
         candidate = (buf + ("\n\n" if s_clean == "" else (" " if buf and s_clean else "")) + s_clean).rstrip()
         if len(candidate) <= max_chars:
@@ -96,23 +82,20 @@ def smart_paginate(text: str, max_chars: int):
                 pages.append(buf.strip())
                 buf = s_clean
             else:
-                # extremely long single chunk: hard wrap to ensure nothing is lost
                 for i in range(0, len(s_clean), max_chars):
-                    pages.append(s_clean[i : i + max_chars].strip())
+                    pages.append(s_clean[i:i+max_chars].strip())
                 buf = ""
     if buf:
         pages.append(buf.strip())
-
     return pages if pages else [text]
 
 @st.cache_data(show_spinner=False)
 def paginate_full_text(text: str, max_chars: int):
-    # First try real page breaks; otherwise paginate smartly
     ff = split_by_formfeed(text)
     return ff if ff else smart_paginate(text, max_chars)
 
 def tts_mp3(text: str) -> BytesIO:
-    # gTTS works best in <~4500 char chunks
+    """Generate MP3 (gTTS) for the text. Chunk to keep requests small."""
     step = 4500
     combined = BytesIO()
     for i in range(0, len(text), step):
@@ -124,17 +107,48 @@ def tts_mp3(text: str) -> BytesIO:
     combined.seek(0)
     return combined
 
-# ---------- UI ----------
-st.title("📖 Lab Reader (All Content) → Text-to-Speech")
-st.caption("Reads **everything** from the document, including all pages and passages. Nothing is excluded.")
+def play_audio(audio_bytes: BytesIO, autoplay: bool = False):
+    """Embed an <audio> tag with optional autoplay."""
+    audio_bytes.seek(0)
+    b64 = base64.b64encode(audio_bytes.read()).decode("ascii")
+    auto = "autoplay" if autoplay else ""
+    html(
+        f"""
+        <audio controls {auto} style="width:100%;">
+            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+            Your browser does not support the audio element.
+        </audio>
+        """,
+        height=80,
+    )
+
+def estimate_seconds(text: str, wpm: int) -> int:
+    words = len(re.findall(r"[A-Za-z0-9']+", text))
+    secs = int(max(2, round((words / max(80, wpm)) * 60)))
+    return secs
+
+# ---------- UI: controls ----------
+st.title("📖 Lab Reader (All Content) → Auto Text-to-Speech")
+st.caption("Reads everything, auto-advances page by page. Use Pause/Resume to control playback.")
 
 with st.sidebar:
     url = st.text_input("GitHub RAW .docx URL", value=DEFAULT_URL)
     target_chars = st.slider("Target characters per page (fallback when no page breaks)", 800, 3200, DEFAULT_PAGE_CHARS, 100)
-    st.markdown(
-        "- Use a **raw** URL (`https://raw.githubusercontent.com/...`).\n"
-        "- If your file isn’t `.docx`, convert it to `.docx` for best results."
-    )
+    wpm = st.slider("Reading speed (WPM)", 120, 260, 170, 5)
+    gap = st.slider("Gap between pages (seconds)", 0, 10, 1, 1)
+    loop_end = st.toggle("Loop to first page at the end", value=False)
+
+    # Playback controls
+    if "auto" not in st.session_state:
+        st.session_state.auto = False
+
+    cols = st.columns(2)
+    with cols[0]:
+        if st.button("▶️ Start / Resume"):
+            st.session_state.auto = True
+    with cols[1]:
+        if st.button("⏸️ Pause"):
+            st.session_state.auto = False
 
 # ---------- Session state ----------
 if "loaded_url" not in st.session_state:
@@ -152,9 +166,7 @@ if url != st.session_state.loaded_url:
             if url.lower().endswith(".docx"):
                 full_text = extract_docx_text_with_breaks(data)
             else:
-                # best-effort for .txt/.md
                 full_text = normalize_text(best_effort_bytes_to_text(data))
-
             pages = paginate_full_text(full_text, target_chars)
             st.session_state.pages = pages
             st.session_state.page_idx = 0
@@ -167,7 +179,7 @@ if not st.session_state.pages:
     st.warning("No content found.")
     st.stop()
 
-# ---------- Navigation ----------
+# ---------- Navigation (manual) ----------
 left, mid, right = st.columns([1, 3, 1])
 with left:
     if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
@@ -185,27 +197,51 @@ with right:
 page_text = st.session_state.pages[st.session_state.page_idx]
 st.text_area("Page Content (Full, unfiltered)", page_text, height=520)
 
-col_play, col_dl = st.columns([2, 1])
-with col_play:
-    if st.button("🔊 Read this page aloud"):
-        try:
-            with st.spinner("Generating audio..."):
-                st.audio(tts_mp3(page_text), format="audio/mp3")
-        except Exception as e:
-            st.error(f"TTS failed: {e}")
+# ---------- Auto TTS + Auto-advance ----------
+# Generate audio and play (autoplay if auto mode is ON).
+audio_bytes = tts_mp3(page_text)
+play_audio(audio_bytes, autoplay=st.session_state.auto)
 
-with col_dl:
-    st.download_button(
-        "⬇️ Download this page (txt)",
-        data=page_text.encode("utf-8"),
-        file_name=f"page_{st.session_state.page_idx+1}.txt",
-        mime="text/plain",
-    )
+# Estimate duration & schedule auto-advance using st_autorefresh:
+from streamlit.runtime.scriptrunner import add_script_run_ctx  # available at runtime
+from streamlit import runtime
+
+# Streamlit's built-in autorefresh:
+count = 0
+if st.session_state.auto:
+    est_secs = estimate_seconds(page_text, wpm) + gap
+    count = st.autorefresh(interval=int(est_secs * 1000), limit=1, key=f"auto-{st.session_state.page_idx}")
+
+# When refresh fires once (count==1), advance the page and rerun.
+if st.session_state.auto and count == 1:
+    last_idx = len(st.session_state.pages) - 1
+    if st.session_state.page_idx < last_idx:
+        st.session_state.page_idx += 1
+    else:
+        if loop_end:
+            st.session_state.page_idx = 0
+        else:
+            st.session_state.auto = False  # stop at the end if not looping
+    st.experimental_rerun()
+
+# ---------- Download ----------
+st.download_button(
+    "⬇️ Download this page (txt)",
+    data=page_text.encode("utf-8"),
+    file_name=f"page_{st.session_state.page_idx+1}.txt",
+    mime="text/plain",
+)
 
 # ---------- Jump ----------
 with st.expander("Jump to page"):
     total = max(1, len(st.session_state.pages))
-    idx = st.number_input("Go to page #", min_value=1, max_value=total, value=min(st.session_state.page_idx + 1, total), step=1)
+    idx = st.number_input(
+        "Go to page #",
+        min_value=1,
+        max_value=total,
+        value=min(st.session_state.page_idx + 1, total),
+        step=1,
+    )
     if st.button("Go"):
         st.session_state.page_idx = int(idx) - 1
         st.experimental_rerun()
