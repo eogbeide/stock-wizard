@@ -1,5 +1,5 @@
 # lab.py — Read ALL pages & passages (no exclusions) + TTS
-import re
+import reb
 from io import BytesIO
 
 import requests
