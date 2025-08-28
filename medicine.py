@@ -76,6 +76,10 @@ if st.button("Go to MCAT CARS"):
 if st.button("Go to MCAT JW"):
     st.markdown("[Open MCAT JW](https://jwmcat.streamlit.app/)", unsafe_allow_html=True)
 
+if st.button("Go to MCAT BIOLOGY"):
+    st.markdown("[Open MCAT BIOLOGY](https://biomcat.streamlit.app/)", unsafe_allow_html=True)
+
+
 # Instructions for refreshing all links daily
 st.write("""
 To refresh all links daily, ensure to run this app once a day to get the latest updates.
