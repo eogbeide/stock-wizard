@@ -64,8 +64,8 @@ if st.button("Go to MCAT BCH"):
 if st.button("Go to MCAT Chem, Physics and Organo"):
     st.markdown("[Open MCAT Lab Review](https://chmbook.streamlit.app/)", unsafe_allow_html=True)
 
-if st.button("Go to MCAT BCh Lab"):
-    st.markdown("[Open MCAT Flash Cards](https://mcatflashcards.streamlit.app/)", unsafe_allow_html=True)
+if st.button("Go to MCAT BCH Lab"):
+    st.markdown("[Open MCAT Flash Cards](https://labbook.streamlit.app/)", unsafe_allow_html=True)
 
 # Instructions for refreshing all links daily
 st.write("""
