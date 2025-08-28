@@ -70,6 +70,9 @@ if st.button("Go to MCAT BCH Lab"):
 if st.button("Go to MCAT Sciences"):
     st.markdown("[Open MCAT Sciences](https://mcatscience.streamlit.app/)", unsafe_allow_html=True)
 
+if st.button("Go to MCAT CARS"):
+    st.markdown("[Open MCAT CARS](https://mcatcars.streamlit.app/)", unsafe_allow_html=True)
+
 # Instructions for refreshing all links daily
 st.write("""
 To refresh all links daily, ensure to run this app once a day to get the latest updates.
