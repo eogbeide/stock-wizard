@@ -16,7 +16,7 @@ except Exception:
 
 # ---------- App config ----------
 st.set_page_config(page_title="📖 MCQs + Answers Reader (GitHub → TTS)", page_icon="🎧", layout="wide")
-DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/biohbooks.docx"
+DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/biobooks.docx"
 
 # ---------- Helpers ----------
 @st.cache_data(show_spinner=False)
