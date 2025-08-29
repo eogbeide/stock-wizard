@@ -1,25 +1,12 @@
 # psychology.py — MCQs + Options + Answers/Explanations only (Passages removed)
 import re
-import time
-import random
 from io import BytesIO
 
 import requests
 import streamlit as st
 from gtts import gTTS
 
-# ---------------- App config ----------------
-st.set_page_config(page_title="📖 MCQs + Answers Reader (GitHub → TTS)", page_icon="🎧", layout="wide")
-DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/psychbooks.docx"
-
-def safe_rerun():
-    """Use st.rerun() on modern Streamlit; fall back to experimental on older versions."""
-    if hasattr(st, "rerun"):
-        st.rerun()
-    elif hasattr(st, "experimental_rerun"):
-        st.experimental_rerun()
-
-# ---------------- .docx extraction ----------------
+# .docx extraction
 try:
     from docx import Document
     from docx.enum.text import WD_BREAK
@@ -27,7 +14,11 @@ try:
 except Exception:
     DOCX_OK = False
 
-# ---------------- Helpers ----------------
+# ---------- App config ----------
+st.set_page_config(page_title="📖 MCQs + Answers Reader (GitHub → TTS)", page_icon="🎧", layout="wide")
+DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/psychbooks.docx"
+
+# ---------- Helpers ----------
 @st.cache_data(show_spinner=False)
 def fetch_bytes(url: str) -> bytes:
     r = requests.get(url, timeout=30)
@@ -60,7 +51,7 @@ def extract_docx_text(data: bytes) -> str:
     text = "\n".join(parts).replace("\f\n", "\f")
     return normalize_text(text)
 
-# ---------------- Patterns ----------------
+# -------- Patterns --------
 MCQ_START_PAT = re.compile(
     r"""^\s*(?:
             (?:Q(?:uestion)?\s*\d*)[.)\s:-]* |
@@ -68,10 +59,12 @@ MCQ_START_PAT = re.compile(
         )""",
     re.IGNORECASE | re.VERBOSE,
 )
+
 OPTION_PAT = re.compile(r"""^\s*([A-Ha-h])\s*[\).:,-]\s+""", re.VERBOSE)
 ANSWER_PAT = re.compile(r"""^\s*(?:answer|answers?|ans|correct\s*answer|key|solution)\s*[:\-]?\s*(.*)""", re.IGNORECASE)
 EXPL_PAT   = re.compile(r"""^\s*(?:explanation|rationale|why|reason(?:ing)?)\s*[:\-]?\s*(.*)""", re.IGNORECASE)
 
+# Passage headers like: "Passage", "PASSAGE I", "Passage 2", "Passage A", etc.
 PASSAGE_HEADER_PAT = re.compile(r"^\s*passage(\s*[ivx]+|\s*\d+|\s*[a-z])?\b", re.IGNORECASE)
 QUESTIONS_HEADER_PAT = re.compile(r"^\s*questions?\b", re.IGNORECASE)
 
@@ -82,12 +75,10 @@ def looks_like_option(line: str) -> bool:
     return bool(OPTION_PAT.match(line))
 
 def parse_answer(line: str):
-    m = ANSWER_PAT.match(line)
-    return m.group(1).strip() if m else None
+    m = ANSWER_PAT.match(line);  return m.group(1).strip() if m else None
 
 def parse_expl(line: str):
-    m = EXPL_PAT.match(line)
-    return m.group(1).strip() if m else None
+    m = EXPL_PAT.match(line);    return m.group(1).strip() if m else None
 
 def clean_line(line: str) -> str:
     return re.sub(r"\s+", " ", line).strip()
@@ -103,16 +94,21 @@ def remove_passages(full_text: str) -> list[str]:
     for raw in lines:
         line = raw.strip()
 
+        # Start/stop passage blocks
         if PASSAGE_HEADER_PAT.match(line):
             in_passage = True
             continue
-
         if in_passage:
+            if not line:
+                # keep skipping inside passage until a question or 'Questions' header; blank does nothing
+                continue
             if QUESTIONS_HEADER_PAT.match(line) or looks_like_question(line):
                 in_passage = False
             else:
-                continue  # still inside a passage → skip
+                # still inside passage → skip
+                continue
 
+        # If we reach here, not inside a passage block
         filtered.append(raw)
     return filtered
 
@@ -198,51 +194,27 @@ def mcqs_to_pages(mcqs, per_page: int):
         pages.append("\n\n".join(mcqs[i:i+per_page]))
     return pages or ["No MCQs (with options) found."]
 
-# --------- Robust, cached TTS to avoid 429s ---------
-@st.cache_data(show_spinner=False)
-def tts_mp3_cached(text: str) -> bytes:
-    """
-    Generate MP3 for text with retries + exponential backoff and return raw bytes.
-    Cached by Streamlit based on `text` so reruns don't hit the TTS service again.
-    """
-    if not text.strip():
-        return b""
-
-    step = 4500  # gTTS is reliable below ~5000 chars
-    out = BytesIO()
-
+def tts_mp3(text: str) -> BytesIO:
+    step = 4500
+    combined = BytesIO()
     for i in range(0, len(text), step):
-        chunk = text[i:i + step]
-        delay = 1.0
-        for attempt in range(5):  # up to 5 tries for each chunk
-            try:
-                buf = BytesIO()
-                gTTS(chunk, lang="en").write_to_fp(buf)
-                buf.seek(0)
-                out.write(buf.read())
-                break  # success
-            except Exception as e:
-                msg = str(e).lower()
-                rate_limited = any(k in msg for k in ("429", "too many", "rate", "quota"))
-                if rate_limited and attempt < 4:
-                    time.sleep(delay + random.uniform(0, 0.5))  # jitter
-                    delay *= 1.8
-                    continue
-                raise RuntimeError(f"TTS failed: {e}") from e
+        chunk = text[i:i+step]
+        buf = BytesIO()
+        gTTS(chunk, lang="en").write_to_fp(buf)
+        buf.seek(0)
+        combined.write(buf.read())
+    combined.seek(0)
+    return combined
 
-    out.seek(0)
-    return out.read()
-
-# ---------------- UI ----------------
+# ---------- Sidebar ----------
 st.title("📖 MCQs + Answers Reader (Passages removed)")
 st.caption("Reads only Multiple-Choice Questions, Options, Answers, and Explanations — no passages.")
-
 with st.sidebar:
     url = st.text_input("GitHub RAW file URL", value=DEFAULT_URL)
     mcqs_per_page = st.slider("MCQs per page", 1, 10, 3, 1)
     st.markdown("- Use a **raw** URL (`https://raw.githubusercontent.com/...`). Best with **.docx** or **.txt**.")
 
-# ---------------- Session state ----------------
+# ---------- Session state ----------
 if "loaded_url" not in st.session_state:
     st.session_state.loaded_url = ""
 if "pages" not in st.session_state:
@@ -250,7 +222,7 @@ if "pages" not in st.session_state:
 if "page_idx" not in st.session_state:
     st.session_state.page_idx = 0
 
-# ---------------- Load → decode → extract ----------------
+# ---------- Load → decode → extract ----------
 if url != st.session_state.loaded_url:
     try:
         with st.spinner("Fetching file..."):
@@ -283,34 +255,29 @@ if url != st.session_state.loaded_url:
         st.error(f"Could not load/parse: {e}")
         st.stop()
 
-# ---------------- Navigation ----------------
+# ---------- Navigation ----------
 left, mid, right = st.columns([1, 3, 1])
 with left:
     if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
         st.session_state.page_idx = max(0, st.session_state.page_idx - 1)
 with mid:
-    st.markdown(
-        f"<div style='text-align:center;font-weight:600;'>Page {st.session_state.page_idx + 1} / {len(st.session_state.pages)}</div>",
-        unsafe_allow_html=True,
-    )
+    st.markdown(f"<div style='text-align:center;font-weight:600;'>Page {st.session_state.page_idx + 1} / {len(st.session_state.pages)}</div>", unsafe_allow_html=True)
 with right:
     if st.button("Next ➡️", use_container_width=True, disabled=st.session_state.page_idx >= len(st.session_state.pages) - 1):
         st.session_state.page_idx = min(len(st.session_state.pages) - 1, st.session_state.page_idx + 1)
 
-# ---------------- Current page ----------------
+# ---------- Current page ----------
 page_text = st.session_state.pages[st.session_state.page_idx]
 st.text_area("MCQs + Answers (no passage)", page_text, height=480)
 
-# ---------------- TTS (cached + backoff) ----------------
 col_play, col_dl = st.columns([2, 1])
 with col_play:
     if st.button("🔊 Read this page aloud"):
         try:
-            with st.spinner("Preparing audio (cached to avoid rate limits)..."):
-                audio_bytes = tts_mp3_cached(page_text)  # <- cached, retries built-in
-            st.audio(audio_bytes, format="audio/mp3")
+            with st.spinner("Generating audio..."):
+                st.audio(tts_mp3(page_text), format="audio/mp3")
         except Exception as e:
-            st.error(str(e))
+            st.error(f"TTS failed: {e}")
 
 with col_dl:
     st.download_button(
@@ -320,15 +287,9 @@ with col_dl:
         mime="text/plain",
     )
 
-# ---------------- Jump ----------------
+# ---------- Jump ----------
 with st.expander("Jump to page"):
-    idx = st.number_input(
-        "Go to page #",
-        min_value=1,
-        max_value=len(st.session_state.pages),
-        value=st.session_state.page_idx + 1,
-        step=1,
-    )
+    idx = st.number_input("Go to page #", min_value=1, max_value=len(st.session_state.pages), value=st.session_state.page_idx + 1, step=1)
     if st.button("Go"):
         st.session_state.page_idx = int(idx) - 1
-        safe_rerun()
+        st.experimental_rerun()
