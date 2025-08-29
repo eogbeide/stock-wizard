@@ -1,5 +1,5 @@
 # psychology.py — MCQs + Options + Answers/Explanations only (Passages removed)
-import ref
+import re
 from io import BytesIO
 
 import requests
