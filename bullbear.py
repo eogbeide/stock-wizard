@@ -13,7 +13,7 @@ st.set_page_config(
     page_title="📊 Dashboard & Forecasts",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded"   # ensure sidebar is expanded by default
+    initial_sidebar_state="expanded"
 )
 
 st.markdown("""
@@ -21,7 +21,7 @@ st.markdown("""
   /* hide Streamlit menu, header, footer */
   #MainMenu, header, footer {visibility: hidden;}
 
-  /* on small screens, override Streamlit's default so sidebar stays visible */
+  /* on small screens, keep sidebar visible */
   @media (max-width: 600px) {
     .css-18e3th9 {  /* sidebar container */
       transform: none !important;
@@ -48,7 +48,7 @@ def auto_refresh():
         st.session_state.last_refresh = time.time()
         try:
             st.experimental_rerun()
-        except:
+        except Exception:
             pass
 
 auto_refresh()
@@ -59,6 +59,9 @@ st.sidebar.markdown(f"**Last refresh:** {pst_dt.strftime('%Y-%m-%d %H:%M:%S')} P
 st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"])
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2)
+
+# NEW: show Fibonacci on hourly
+show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly)", value=True)
 
 # Universe for selection
 if mode == "Stock":
@@ -85,7 +88,7 @@ def fetch_hist(ticker: str) -> pd.Series:
 
 @st.cache_data(ttl=900)
 def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
-    # period options here: "1d" (~24h), "2d" (~48h), "4d" (~96h) with 5m interval
+    # period options: "1d" (~24h), "2d" (~48h), "4d" (~96h) with 5m interval
     df = yf.download(ticker, period=period, interval="5m")
     try:
         df = df.tz_localize('UTC')
@@ -120,6 +123,26 @@ def compute_bb(data, window=20, num_sd=2):
     s = data.rolling(window).std()
     return m - num_sd*s, m, m + num_sd*s
 
+def fibonacci_levels(series: pd.Series):
+    """Return dict of fib retracement price levels for a series (using full visible range)."""
+    if series.empty:
+        return {}
+    hi = float(series.max())
+    lo = float(series.min())
+    diff = hi - lo
+    if diff == 0:
+        # flat series; still draw a single line
+        return {"100%": lo}
+    return {
+        "0%": hi,
+        "23.6%": hi - 0.236 * diff,
+        "38.2%": hi - 0.382 * diff,
+        "50%": hi - 0.5   * diff,
+        "61.8%": hi - 0.618 * diff,
+        "78.6%": hi - 0.786 * diff,
+        "100%": lo,
+    }
+
 # Session state init
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -142,7 +165,7 @@ with tab1:
     sel = st.selectbox("Ticker:", universe, key="orig_ticker")
     chart = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_chart")
 
-    # NEW: Hourly lookback selector
+    # Hourly lookback selector
     hour_range = st.selectbox(
         "Hourly lookback:",
         ["24h", "48h", "96h"],
@@ -229,6 +252,17 @@ with tab1:
             ax2.plot(hc.index, res_h, ":", label="Resistance")
             ax2.plot(hc.index, sup_h, ":", label="Support")
             ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
+
+            # ---- Fibonacci on hourly ----
+            if show_fibs:
+                fibs = fibonacci_levels(hc)
+                for lbl, y in fibs.items():
+                    ax2.hlines(y, xmin=hc.index[0], xmax=hc.index[-1],
+                               linestyles="dotted", linewidth=1)
+                # optional annotate on the right edge
+                for lbl, y in fibs.items():
+                    ax2.text(hc.index[-1], y, f" {lbl}", va="center")
+
             ax2.set_xlabel("Time (PST)")
             ax2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig2)
@@ -261,7 +295,6 @@ with tab2:
         res = df.rolling(30, min_periods=1).max()
         sup = df.rolling(30, min_periods=1).min()
 
-        # Show the chosen lookback in this tab too (read-only)
         st.caption(f"Intraday lookback: **{st.session_state.get('hour_range','24h')}** "
                    "(change in 'Original Forecast' tab and rerun)")
 
@@ -272,8 +305,8 @@ with tab2:
             ax.plot(df[-360:], label="History")
             ax.plot(ema200[-360:], "--", label="200 EMA")
             ax.plot(ma30[-360:], "--", label="30 MA")
-            ax.plot(res[-360:], ":", label="Resistance")
-            ax.plot(sup[-360:], ":", label="Support")
+            ax.plot(res[-360:], ":", label="30 Resistance")
+            ax.plot(sup[-360:], ":", label="30 Support")
             ax.plot(idx, vals, label="Forecast")
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
             for lev in (0.236,0.382,0.5,0.618):
@@ -309,6 +342,16 @@ with tab2:
             ax3.plot(ic.index, res_i, ":", label="Resistance")
             ax3.plot(ic.index, sup_i, ":", label="Support")
             ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
+
+            # ---- Fibonacci on hourly ----
+            if show_fibs:
+                fibs = fibonacci_levels(ic)
+                for lbl, y in fibs.items():
+                    ax3.hlines(y, xmin=ic.index[0], xmax=ic.index[-1],
+                               linestyles="dotted", linewidth=1)
+                for lbl, y in fibs.items():
+                    ax3.text(ic.index[-1], y, f" {lbl}", va="center")
+
             ax3.set_xlabel("Time (PST)")
             ax3.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig3)
