@@ -23,16 +23,14 @@ st.markdown("""
 
   /* on small screens, keep sidebar visible */
   @media (max-width: 600px) {
-    .css-18e3th9 {  /* sidebar container */
+    .css-18e3th9 {
       transform: none !important;
       visibility: visible !important;
       width: 100% !important;
       position: relative !important;
       margin-bottom: 1rem;
     }
-    .css-1v3fvcr {  /* main content area */
-      margin-left: 0 !important;
-    }
+    .css-1v3fvcr { margin-left: 0 !important; }
   }
 </style>
 """, unsafe_allow_html=True)
@@ -60,8 +58,8 @@ st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"])
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2)
 
-# NEW: show Fibonacci on hourly
-show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly)", value=True)
+# Toggle for Fibonacci lines (applies to both hourly & daily charts)
+show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly & daily)", value=True)
 
 # Universe for selection
 if mode == "Stock":
@@ -110,7 +108,7 @@ def compute_sarimax_forecast(series: pd.Series):
                         periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
 
-# Indicator helpers
+# ---- Indicators ----
 def compute_rsi(data, window=14):
     d = data.diff()
     gain = d.where(d>0,0).rolling(window).mean()
@@ -124,14 +122,13 @@ def compute_bb(data, window=20, num_sd=2):
     return m - num_sd*s, m, m + num_sd*s
 
 def fibonacci_levels(series: pd.Series):
-    """Return dict of fib retracement price levels for a series (using full visible range)."""
-    if series.empty:
+    """Return dict of fib retracement price levels using the series' high/low."""
+    if series is None or series.empty:
         return {}
     hi = float(series.max())
     lo = float(series.min())
     diff = hi - lo
     if diff == 0:
-        # flat series; still draw a single line
         return {"100%": lo}
     return {
         "0%": hi,
@@ -214,6 +211,8 @@ with tab1:
         trend_fc = slope_fc * x_fc + intercept_fc
 
         if chart in ("Daily","Both"):
+            # Use the visible slice for fibs (last 360 daily points)
+            df_show = df[-360:]
             ema200 = df.ewm(span=200).mean()
             ma30   = df.rolling(30).mean()
             lb, mb, ub = compute_bb(df)
@@ -222,7 +221,7 @@ with tab1:
 
             fig, ax = plt.subplots(figsize=(14,6))
             ax.set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
-            ax.plot(df[-360:], label="History")
+            ax.plot(df_show, label="History")
             ax.plot(ema200[-360:], "--", label="200 EMA")
             ax.plot(ma30[-360:], "--", label="30 MA")
             ax.plot(res[-360:], ":", label="30 Resistance")
@@ -232,6 +231,16 @@ with tab1:
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
             ax.plot(lb[-360:], "--", label="Lower BB")
             ax.plot(ub[-360:], "--", label="Upper BB")
+
+            # ---- Fibonacci on daily ----
+            if show_fibs:
+                fibs_d = fibonacci_levels(df_show)
+                for lbl, y in fibs_d.items():
+                    ax.hlines(y, xmin=df_show.index[0], xmax=df_show.index[-1],
+                              linestyles="dotted", linewidth=1)
+                for lbl, y in fibs_d.items():
+                    ax.text(df_show.index[-1], y, f" {lbl}", va="center")
+
             ax.set_xlabel("Date (PST)")
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
@@ -254,13 +263,12 @@ with tab1:
             ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
 
             # ---- Fibonacci on hourly ----
-            if show_fibs:
-                fibs = fibonacci_levels(hc)
-                for lbl, y in fibs.items():
+            if show_fibs and not hc.empty:
+                fibs_h = fibonacci_levels(hc)
+                for lbl, y in fibs_h.items():
                     ax2.hlines(y, xmin=hc.index[0], xmax=hc.index[-1],
                                linestyles="dotted", linewidth=1)
-                # optional annotate on the right edge
-                for lbl, y in fibs.items():
+                for lbl, y in fibs_h.items():
                     ax2.text(hc.index[-1], y, f" {lbl}", va="center")
 
             ax2.set_xlabel("Time (PST)")
@@ -300,21 +308,26 @@ with tab2:
 
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
         if view in ("Daily","Both"):
+            df_show = df[-360:]
             fig, ax = plt.subplots(figsize=(14,6))
             ax.set_title(f"{st.session_state.ticker} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
-            ax.plot(df[-360:], label="History")
+            ax.plot(df_show, label="History")
             ax.plot(ema200[-360:], "--", label="200 EMA")
             ax.plot(ma30[-360:], "--", label="30 MA")
-            ax.plot(res[-360:], ":", label="30 Resistance")
-            ax.plot(sup[-360:], ":", label="30 Support")
+            ax.plot(res[-360:], ":", label="Resistance")
+            ax.plot(sup[-360:], ":", label="Support")
             ax.plot(idx, vals, label="Forecast")
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
-            for lev in (0.236,0.382,0.5,0.618):
-                ax.hlines(
-                    df[-360:].max() - (df[-360:].max() - df[-360:].min())*lev,
-                    df.index[-360], df.index[-1],
-                    linestyles="dotted"
-                )
+
+            # ---- Fibonacci on daily ----
+            if show_fibs:
+                fibs_d = fibonacci_levels(df_show)
+                for lbl, y in fibs_d.items():
+                    ax.hlines(y, xmin=df_show.index[0], xmax=df_show.index[-1],
+                              linestyles="dotted", linewidth=1)
+                for lbl, y in fibs_d.items():
+                    ax.text(df_show.index[-1], y, f" {lbl}", va="center")
+
             ax.set_xlabel("Date (PST)")
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
@@ -344,12 +357,12 @@ with tab2:
             ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
 
             # ---- Fibonacci on hourly ----
-            if show_fibs:
-                fibs = fibonacci_levels(ic)
-                for lbl, y in fibs.items():
+            if show_fibs and not ic.empty:
+                fibs_h = fibonacci_levels(ic)
+                for lbl, y in fibs_h.items():
                     ax3.hlines(y, xmin=ic.index[0], xmax=ic.index[-1],
                                linestyles="dotted", linewidth=1)
-                for lbl, y in fibs.items():
+                for lbl, y in fibs_h.items():
                     ax3.text(ic.index[-1], y, f" {lbl}", va="center")
 
             ax3.set_xlabel("Time (PST)")
