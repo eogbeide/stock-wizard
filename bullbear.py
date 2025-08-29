@@ -144,21 +144,25 @@ def fibonacci_levels(series: pd.Series):
         "100%": lo,
     }
 
-# NEW: slope line helper (least-squares over last N points)
+# --- Robust slope helpers ---
 def slope_line(series: pd.Series, lookback: int):
     """
     Fit y = m*x + b over the last `lookback` non-null points of `series`.
     Returns (yhat: pd.Series aligned to last N index, slope m as float).
     """
-    if series is None or series.dropna().shape[0] < 2:
-        return pd.Series(dtype=float), np.nan
-    s = series.dropna().iloc[-lookback:]
+    if series is None:
+        return pd.Series(dtype=float), float("nan")
+    s = pd.to_numeric(series, errors="coerce").dropna().iloc[-lookback:]
     if s.shape[0] < 2:
-        return pd.Series(dtype=float), np.nan
-    x = np.arange(len(s))
+        return pd.Series(dtype=float), float("nan")
+    x = np.arange(len(s), dtype=float)
     m, b = np.polyfit(x, s.values.astype(float), 1)
+    m = float(m)  # ensure plain float
     yhat = pd.Series(m * x + b, index=s.index)
     return yhat, m
+
+def fmt_slope(m: float) -> str:
+    return f"{m:.4f}" if np.isfinite(m) else "n/a"
 
 # Session state init
 if 'run_all' not in st.session_state:
@@ -239,7 +243,7 @@ with tab1:
             res = df.rolling(30, min_periods=1).max()
             sup = df.rolling(30, min_periods=1).min()
 
-            # NEW: daily slope line (over last N daily bars)
+            # Daily slope line
             yhat_d, m_d = slope_line(df, slope_lb_daily)
 
             fig, ax = plt.subplots(figsize=(14,6))
@@ -255,10 +259,9 @@ with tab1:
             ax.plot(lb[-360:], "--", label="Lower BB")
             ax.plot(ub[-360:], "--", label="Upper BB")
 
-            # Plot daily slope
             if not yhat_d.empty:
                 ax.plot(yhat_d.index, yhat_d.values, "-", linewidth=2,
-                        label=f"Slope {slope_lb_daily} bars ({m_d:.4f}/bar)")
+                        label=f"Slope {slope_lb_daily} bars ({fmt_slope(m_d)}/bar)")
 
             # Fibonacci on daily
             if show_fibs:
@@ -282,7 +285,7 @@ with tab1:
             res_h = hc.rolling(60, min_periods=1).max()
             sup_h = hc.rolling(60, min_periods=1).min()
 
-            # NEW: hourly slope line (over last N 5-minute bars)
+            # Hourly slope line (over last N intraday bars)
             yhat_h, m_h = slope_line(hc, slope_lb_hourly)
 
             fig2, ax2 = plt.subplots(figsize=(14,4))
@@ -293,10 +296,9 @@ with tab1:
             ax2.plot(hc.index, sup_h, ":", label="Support")
             ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
 
-            # Plot hourly slope
             if not yhat_h.empty:
                 ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
-                         label=f"Slope {slope_lb_hourly} bars ({m_h:.4f}/bar)")
+                         label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
             # Fibonacci on hourly
             if show_fibs and not hc.empty:
@@ -345,8 +347,6 @@ with tab2:
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
         if view in ("Daily","Both"):
             df_show = df[-360:]
-
-            # NEW: daily slope (enhanced tab too)
             yhat_d, m_d = slope_line(df, slope_lb_daily)
 
             fig, ax = plt.subplots(figsize=(14,6))
@@ -361,7 +361,7 @@ with tab2:
 
             if not yhat_d.empty:
                 ax.plot(yhat_d.index, yhat_d.values, "-", linewidth=2,
-                        label=f"Slope {slope_lb_daily} bars ({m_d:.4f}/bar)")
+                        label=f"Slope {slope_lb_daily} bars ({fmt_slope(m_d)}/bar)")
 
             if show_fibs:
                 fibs_d = fibonacci_levels(df_show)
@@ -391,7 +391,6 @@ with tab2:
             res_i = ic.rolling(60, min_periods=1).max()
             sup_i = ic.rolling(60, min_periods=1).min()
 
-            # NEW: hourly slope (enhanced tab too)
             yhat_h, m_h = slope_line(ic, slope_lb_hourly)
 
             fig3, ax3 = plt.subplots(figsize=(14,4))
@@ -404,7 +403,7 @@ with tab2:
 
             if not yhat_h.empty:
                 ax3.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
-                         label=f"Slope {slope_lb_hourly} bars ({m_h:.4f}/bar)")
+                         label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
             if show_fibs and not ic.empty:
                 fibs_h = fibonacci_levels(ic)
