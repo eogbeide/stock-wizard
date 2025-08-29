@@ -1,5 +1,5 @@
 # psychology.py — MCQs + Options + Answers/Explanations only (Passages removed)
-import ren
+import re
 import time
 import random
 from io import BytesIO
