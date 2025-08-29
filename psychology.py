@@ -1,5 +1,7 @@
 # psychology.py — MCQs + Options + Answers/Explanations only (Passages removed)
 import re
+import time
+import random
 from io import BytesIO
 
 import requests
@@ -59,12 +61,10 @@ MCQ_START_PAT = re.compile(
         )""",
     re.IGNORECASE | re.VERBOSE,
 )
-
 OPTION_PAT = re.compile(r"""^\s*([A-Ha-h])\s*[\).:,-]\s+""", re.VERBOSE)
 ANSWER_PAT = re.compile(r"""^\s*(?:answer|answers?|ans|correct\s*answer|key|solution)\s*[:\-]?\s*(.*)""", re.IGNORECASE)
 EXPL_PAT   = re.compile(r"""^\s*(?:explanation|rationale|why|reason(?:ing)?)\s*[:\-]?\s*(.*)""", re.IGNORECASE)
 
-# Passage headers like: "Passage", "PASSAGE I", "Passage 2", "Passage A", etc.
 PASSAGE_HEADER_PAT = re.compile(r"^\s*passage(\s*[ivx]+|\s*\d+|\s*[a-z])?\b", re.IGNORECASE)
 QUESTIONS_HEADER_PAT = re.compile(r"^\s*questions?\b", re.IGNORECASE)
 
@@ -100,15 +100,12 @@ def remove_passages(full_text: str) -> list[str]:
             continue
         if in_passage:
             if not line:
-                # keep skipping inside passage until a question or 'Questions' header; blank does nothing
                 continue
             if QUESTIONS_HEADER_PAT.match(line) or looks_like_question(line):
                 in_passage = False
             else:
-                # still inside passage → skip
                 continue
 
-        # If we reach here, not inside a passage block
         filtered.append(raw)
     return filtered
 
@@ -194,17 +191,39 @@ def mcqs_to_pages(mcqs, per_page: int):
         pages.append("\n\n".join(mcqs[i:i+per_page]))
     return pages or ["No MCQs (with options) found."]
 
-def tts_mp3(text: str) -> BytesIO:
-    step = 4500
-    combined = BytesIO()
+# --------- NEW: Robust, cached TTS to avoid 429s ----------
+@st.cache_data(show_spinner=False)
+def tts_mp3_cached(text: str) -> bytes:
+    """
+    Generate MP3 for text with retries + exponential backoff and return raw bytes.
+    Cached by Streamlit based on `text` so reruns don't hit the TTS service again.
+    """
+    step = 4500  # gTTS is reliable below ~5000 chars
+    out = BytesIO()
+
     for i in range(0, len(text), step):
-        chunk = text[i:i+step]
-        buf = BytesIO()
-        gTTS(chunk, lang="en").write_to_fp(buf)
-        buf.seek(0)
-        combined.write(buf.read())
-    combined.seek(0)
-    return combined
+        chunk = text[i:i + step]
+        delay = 1.0
+        for attempt in range(5):  # up to 5 tries for each chunk
+            try:
+                buf = BytesIO()
+                gTTS(chunk, lang="en").write_to_fp(buf)
+                buf.seek(0)
+                out.write(buf.read())
+                break  # success, go to next chunk
+            except Exception as e:
+                # Detect rate-limit-ish errors and back off, otherwise raise
+                msg = str(e).lower()
+                rate_limited = any(k in msg for k in ("429", "too many", "rate", "quota"))
+                if rate_limited and attempt < 4:
+                    time.sleep(delay + random.uniform(0, 0.5))  # jitter
+                    delay *= 1.8
+                    continue
+                # not a rate limit or retries exhausted
+                raise RuntimeError(f"TTS failed: {e}") from e
+
+    out.seek(0)
+    return out.read()
 
 # ---------- Sidebar ----------
 st.title("📖 MCQs + Answers Reader (Passages removed)")
@@ -261,7 +280,10 @@ with left:
     if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
         st.session_state.page_idx = max(0, st.session_state.page_idx - 1)
 with mid:
-    st.markdown(f"<div style='text-align:center;font-weight:600;'>Page {st.session_state.page_idx + 1} / {len(st.session_state.pages)}</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='text-align:center;font-weight:600;'>Page {st.session_state.page_idx + 1} / {len(st.session_state.pages)}</div>",
+        unsafe_allow_html=True,
+    )
 with right:
     if st.button("Next ➡️", use_container_width=True, disabled=st.session_state.page_idx >= len(st.session_state.pages) - 1):
         st.session_state.page_idx = min(len(st.session_state.pages) - 1, st.session_state.page_idx + 1)
@@ -270,14 +292,16 @@ with right:
 page_text = st.session_state.pages[st.session_state.page_idx]
 st.text_area("MCQs + Answers (no passage)", page_text, height=480)
 
+# ---------- TTS (cached + backoff) ----------
 col_play, col_dl = st.columns([2, 1])
 with col_play:
     if st.button("🔊 Read this page aloud"):
         try:
-            with st.spinner("Generating audio..."):
-                st.audio(tts_mp3(page_text), format="audio/mp3")
+            with st.spinner("Preparing audio (cached to avoid rate limits)..."):
+                audio_bytes = tts_mp3_cached(page_text)  # <- cached, retries built-in
+            st.audio(audio_bytes, format="audio/mp3")
         except Exception as e:
-            st.error(f"TTS failed: {e}")
+            st.error(str(e))
 
 with col_dl:
     st.download_button(
