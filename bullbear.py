@@ -58,8 +58,12 @@ st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"])
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2)
 
-# Toggle for Fibonacci lines (applies to both hourly & daily charts)
+# Toggles
 show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly & daily)", value=True)
+
+# NEW: slope line lookbacks
+slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10)
+slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120, 6)
 
 # Universe for selection
 if mode == "Stock":
@@ -140,6 +144,22 @@ def fibonacci_levels(series: pd.Series):
         "100%": lo,
     }
 
+# NEW: slope line helper (least-squares over last N points)
+def slope_line(series: pd.Series, lookback: int):
+    """
+    Fit y = m*x + b over the last `lookback` non-null points of `series`.
+    Returns (yhat: pd.Series aligned to last N index, slope m as float).
+    """
+    if series is None or series.dropna().shape[0] < 2:
+        return pd.Series(dtype=float), np.nan
+    s = series.dropna().iloc[-lookback:]
+    if s.shape[0] < 2:
+        return pd.Series(dtype=float), np.nan
+    x = np.arange(len(s))
+    m, b = np.polyfit(x, s.values.astype(float), 1)
+    yhat = pd.Series(m * x + b, index=s.index)
+    return yhat, m
+
 # Session state init
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -211,13 +231,16 @@ with tab1:
         trend_fc = slope_fc * x_fc + intercept_fc
 
         if chart in ("Daily","Both"):
-            # Use the visible slice for fibs (last 360 daily points)
+            # Slice for display and overlays
             df_show = df[-360:]
             ema200 = df.ewm(span=200).mean()
             ma30   = df.rolling(30).mean()
             lb, mb, ub = compute_bb(df)
             res = df.rolling(30, min_periods=1).max()
             sup = df.rolling(30, min_periods=1).min()
+
+            # NEW: daily slope line (over last N daily bars)
+            yhat_d, m_d = slope_line(df, slope_lb_daily)
 
             fig, ax = plt.subplots(figsize=(14,6))
             ax.set_title(f"{sel} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
@@ -232,7 +255,12 @@ with tab1:
             ax.plot(lb[-360:], "--", label="Lower BB")
             ax.plot(ub[-360:], "--", label="Upper BB")
 
-            # ---- Fibonacci on daily ----
+            # Plot daily slope
+            if not yhat_d.empty:
+                ax.plot(yhat_d.index, yhat_d.values, "-", linewidth=2,
+                        label=f"Slope {slope_lb_daily} bars ({m_d:.4f}/bar)")
+
+            # Fibonacci on daily
             if show_fibs:
                 fibs_d = fibonacci_levels(df_show)
                 for lbl, y in fibs_d.items():
@@ -254,6 +282,9 @@ with tab1:
             res_h = hc.rolling(60, min_periods=1).max()
             sup_h = hc.rolling(60, min_periods=1).min()
 
+            # NEW: hourly slope line (over last N 5-minute bars)
+            yhat_h, m_h = slope_line(hc, slope_lb_hourly)
+
             fig2, ax2 = plt.subplots(figsize=(14,4))
             ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{p_up:.1%}  ↓{p_dn:.1%}")
             ax2.plot(hc.index, hc, label="Intraday")
@@ -262,7 +293,12 @@ with tab1:
             ax2.plot(hc.index, sup_h, ":", label="Support")
             ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
 
-            # ---- Fibonacci on hourly ----
+            # Plot hourly slope
+            if not yhat_h.empty:
+                ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
+                         label=f"Slope {slope_lb_hourly} bars ({m_h:.4f}/bar)")
+
+            # Fibonacci on hourly
             if show_fibs and not hc.empty:
                 fibs_h = fibonacci_levels(hc)
                 for lbl, y in fibs_h.items():
@@ -309,6 +345,10 @@ with tab2:
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
         if view in ("Daily","Both"):
             df_show = df[-360:]
+
+            # NEW: daily slope (enhanced tab too)
+            yhat_d, m_d = slope_line(df, slope_lb_daily)
+
             fig, ax = plt.subplots(figsize=(14,6))
             ax.set_title(f"{st.session_state.ticker} Daily  ↑{p_up:.1%}  ↓{p_dn:.1%}")
             ax.plot(df_show, label="History")
@@ -319,7 +359,10 @@ with tab2:
             ax.plot(idx, vals, label="Forecast")
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
 
-            # ---- Fibonacci on daily ----
+            if not yhat_d.empty:
+                ax.plot(yhat_d.index, yhat_d.values, "-", linewidth=2,
+                        label=f"Slope {slope_lb_daily} bars ({m_d:.4f}/bar)")
+
             if show_fibs:
                 fibs_d = fibonacci_levels(df_show)
                 for lbl, y in fibs_d.items():
@@ -348,6 +391,9 @@ with tab2:
             res_i = ic.rolling(60, min_periods=1).max()
             sup_i = ic.rolling(60, min_periods=1).min()
 
+            # NEW: hourly slope (enhanced tab too)
+            yhat_h, m_h = slope_line(ic, slope_lb_hourly)
+
             fig3, ax3 = plt.subplots(figsize=(14,4))
             ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{p_up:.1%}  ↓{p_dn:.1%}")
             ax3.plot(ic.index, ic, label="Intraday")
@@ -356,7 +402,10 @@ with tab2:
             ax3.plot(ic.index, sup_i, ":", label="Support")
             ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
 
-            # ---- Fibonacci on hourly ----
+            if not yhat_h.empty:
+                ax3.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
+                         label=f"Slope {slope_lb_hourly} bars ({m_h:.4f}/bar)")
+
             if show_fibs and not ic.empty:
                 fibs_h = fibonacci_levels(ic)
                 for lbl, y in fibs_h.items():
