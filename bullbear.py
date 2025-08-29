@@ -18,10 +18,7 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-  /* hide Streamlit menu, header, footer */
   #MainMenu, header, footer {visibility: hidden;}
-
-  /* on small screens, keep sidebar visible */
   @media (max-width: 600px) {
     .css-18e3th9 {
       transform: none !important;
@@ -58,14 +55,11 @@ st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"])
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2)
 
-# Toggles
 show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly & daily)", value=True)
-
-# NEW: slope line lookbacks
 slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10)
 slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120, 6)
 
-# Universe for selection
+# Universe
 if mode == "Stock":
     universe = sorted([
         'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
@@ -79,7 +73,7 @@ else:
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X'
     ]
 
-# --- Caching helpers (refresh every 15 minutes) ---
+# --- Cache helpers ---
 @st.cache_data(ttl=900)
 def fetch_hist(ticker: str) -> pd.Series:
     s = (
@@ -90,7 +84,6 @@ def fetch_hist(ticker: str) -> pd.Series:
 
 @st.cache_data(ttl=900)
 def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
-    # period options: "1d" (~24h), "2d" (~48h), "4d" (~96h) with 5m interval
     df = yf.download(ticker, period=period, interval="5m")
     try:
         df = df.tz_localize('UTC')
@@ -126,11 +119,21 @@ def compute_bb(data, window=20, num_sd=2):
     return m - num_sd*s, m, m + num_sd*s
 
 def fibonacci_levels(series: pd.Series):
-    """Return dict of fib retracement price levels using the series' high/low."""
-    if series is None or series.empty:
+    if series is None or len(series) == 0:
         return {}
-    hi = float(series.max())
-    lo = float(series.min())
+    # Ensure 1D numeric series
+    if isinstance(series, pd.DataFrame):
+        num_cols = [c for c in series.columns if pd.api.types.is_numeric_dtype(series[c])]
+        if not num_cols:
+            return {}
+        s = series[num_cols[0]].dropna()
+    elif isinstance(series, pd.Series):
+        s = pd.to_numeric(series, errors="coerce").dropna()
+    else:
+        s = pd.Series(series).dropna()
+    if s.empty:
+        return {}
+    hi = float(s.max()); lo = float(s.min())
     diff = hi - lo
     if diff == 0:
         return {"100%": lo}
@@ -144,27 +147,45 @@ def fibonacci_levels(series: pd.Series):
         "100%": lo,
     }
 
-# --- Robust slope helpers ---
-def slope_line(series: pd.Series, lookback: int):
+# ---- Robust slope helpers ----
+def _coerce_1d_series(obj) -> pd.Series:
+    """Return a numeric Series from Series/DataFrame/array-like; empty Series if impossible."""
+    if obj is None:
+        return pd.Series(dtype=float)
+    if isinstance(obj, pd.Series):
+        s = obj
+    elif isinstance(obj, pd.DataFrame):
+        num_cols = [c for c in obj.columns if pd.api.types.is_numeric_dtype(obj[c])]
+        if not num_cols:
+            return pd.Series(dtype=float)
+        s = obj[num_cols[0]]
+    else:
+        try:
+            s = pd.Series(obj)
+        except Exception:
+            return pd.Series(dtype=float)
+    return pd.to_numeric(s, errors="coerce")
+
+def slope_line(series_like, lookback: int):
     """
-    Fit y = m*x + b over the last `lookback` non-null points of `series`.
-    Returns (yhat: pd.Series aligned to last N index, slope m as float).
+    Fit y = m*x + b over the last `lookback` points of a 1D numeric series.
+    Accepts Series, DataFrame, list, ndarray. Returns (yhat Series, slope float).
     """
-    if series is None:
+    s = _coerce_1d_series(series_like).dropna()
+    if s.shape[0] < 2:
         return pd.Series(dtype=float), float("nan")
-    s = pd.to_numeric(series, errors="coerce").dropna().iloc[-lookback:]
+    s = s.iloc[-lookback:] if lookback > 0 else s
     if s.shape[0] < 2:
         return pd.Series(dtype=float), float("nan")
     x = np.arange(len(s), dtype=float)
-    m, b = np.polyfit(x, s.values.astype(float), 1)
-    m = float(m)  # ensure plain float
+    m, b = np.polyfit(x, s.to_numpy(dtype=float), 1)
     yhat = pd.Series(m * x + b, index=s.index)
-    return yhat, m
+    return yhat, float(m)
 
 def fmt_slope(m: float) -> str:
     return f"{m:.4f}" if np.isfinite(m) else "n/a"
 
-# Session state init
+# --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
     st.session_state.ticker = None
@@ -186,7 +207,6 @@ with tab1:
     sel = st.selectbox("Ticker:", universe, key="orig_ticker")
     chart = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_chart")
 
-    # Hourly lookback selector
     hour_range = st.selectbox(
         "Hourly lookback:",
         ["24h", "48h", "96h"],
@@ -203,14 +223,14 @@ with tab1:
     )
 
     if st.button("Run Forecast") or auto_run:
-        df_hist = fetch_hist(sel)
-        idx, vals, ci = compute_sarimax_forecast(df_hist)
-        intraday = fetch_intraday(sel, period=period_map[hour_range])
+        df_hist = fetch_hist(sel)                       # Series
+        fc_idx, fc_vals, fc_ci = compute_sarimax_forecast(df_hist)
+        intraday = fetch_intraday(sel, period=period_map[hour_range])  # DataFrame
         st.session_state.update({
             "df_hist": df_hist,
-            "fc_idx": idx,
-            "fc_vals": vals,
-            "fc_ci": ci,
+            "fc_idx": fc_idx,
+            "fc_vals": fc_vals,
+            "fc_ci": fc_ci,
             "intraday": intraday,
             "ticker": sel,
             "chart": chart,
@@ -219,7 +239,7 @@ with tab1:
         })
 
     if st.session_state.run_all and st.session_state.ticker == sel:
-        df = st.session_state.df_hist
+        df = st.session_state.df_hist                  # Series
         idx, vals, ci = (
             st.session_state.fc_idx,
             st.session_state.fc_vals,
@@ -235,7 +255,6 @@ with tab1:
         trend_fc = slope_fc * x_fc + intercept_fc
 
         if chart in ("Daily","Both"):
-            # Slice for display and overlays
             df_show = df[-360:]
             ema200 = df.ewm(span=200).mean()
             ma30   = df.rolling(30).mean()
@@ -243,7 +262,7 @@ with tab1:
             res = df.rolling(30, min_periods=1).max()
             sup = df.rolling(30, min_periods=1).min()
 
-            # Daily slope line
+            # Robust daily slope
             yhat_d, m_d = slope_line(df, slope_lb_daily)
 
             fig, ax = plt.subplots(figsize=(14,6))
@@ -263,7 +282,6 @@ with tab1:
                 ax.plot(yhat_d.index, yhat_d.values, "-", linewidth=2,
                         label=f"Slope {slope_lb_daily} bars ({fmt_slope(m_d)}/bar)")
 
-            # Fibonacci on daily
             if show_fibs:
                 fibs_d = fibonacci_levels(df_show)
                 for lbl, y in fibs_d.items():
@@ -277,7 +295,8 @@ with tab1:
             st.pyplot(fig)
 
         if chart in ("Hourly","Both"):
-            hc = st.session_state.intraday["Close"].ffill()
+            intr = st.session_state.intraday              # DataFrame
+            hc = intr["Close"].ffill()
             he = hc.ewm(span=20).mean()
             xh = np.arange(len(hc))
             slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
@@ -285,7 +304,7 @@ with tab1:
             res_h = hc.rolling(60, min_periods=1).max()
             sup_h = hc.rolling(60, min_periods=1).min()
 
-            # Hourly slope line (over last N intraday bars)
+            # Robust hourly slope
             yhat_h, m_h = slope_line(hc, slope_lb_hourly)
 
             fig2, ax2 = plt.subplots(figsize=(14,4))
@@ -300,7 +319,6 @@ with tab1:
                 ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
                          label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
-            # Fibonacci on hourly
             if show_fibs and not hc.empty:
                 fibs_h = fibonacci_levels(hc)
                 for lbl, y in fibs_h.items():
