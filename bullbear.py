@@ -18,10 +18,7 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-  /* hide Streamlit menu, header, footer */
   #MainMenu, header, footer {visibility: hidden;}
-
-  /* on small screens, keep sidebar visible */
   @media (max-width: 600px) {
     .css-18e3th9 {
       transform: none !important;
@@ -58,10 +55,12 @@ st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"])
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2)
 
-# Toggle for Fibonacci lines (applies to both hourly & daily charts)
+# Toggles
 show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly & daily)", value=True)
+show_hhll = st.sidebar.checkbox("Show HH/HL/LH/LL structure", value=True)
+pivot_left = st.sidebar.slider("Swing lookback (bars)", 2, 10, 3)
 
-# Universe for selection
+# Universe
 if mode == "Stock":
     universe = sorted([
         'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
@@ -86,7 +85,6 @@ def fetch_hist(ticker: str) -> pd.Series:
 
 @st.cache_data(ttl=900)
 def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
-    # period options: "1d" (~24h), "2d" (~48h), "4d" (~96h) with 5m interval
     df = yf.download(ticker, period=period, interval="5m")
     try:
         df = df.tz_localize('UTC')
@@ -122,7 +120,6 @@ def compute_bb(data, window=20, num_sd=2):
     return m - num_sd*s, m, m + num_sd*s
 
 def fibonacci_levels(series: pd.Series):
-    """Return dict of fib retracement price levels using the series' high/low."""
     if series is None or series.empty:
         return {}
     hi = float(series.max())
@@ -139,6 +136,59 @@ def fibonacci_levels(series: pd.Series):
         "78.6%": hi - 0.786 * diff,
         "100%": lo,
     }
+
+# ---- HH/HL/LH/LL market structure (pivot) helper ----
+def swings_hhll(series: pd.Series, left: int = 3, right: int | None = None) -> pd.DataFrame:
+    """
+    Detect swing highs/lows and classify as HH/HL/LH/LL.
+    left/right = bars on each side for a confirmed pivot.
+    Returns DataFrame with columns: ['price','kind','label'] indexed by pivot timestamps.
+    """
+    if series is None or series.empty:
+        return pd.DataFrame(columns=["price","kind","label"])
+    s = series.dropna()
+    if s.size < (2*left + 3):
+        return pd.DataFrame(columns=["price","kind","label"])
+
+    if right is None:
+        right = left
+
+    vals = s.values
+    idxs = s.index.to_list()
+
+    pivots = []  # (i, price, kind)
+    for i in range(left, len(vals) - right):
+        window = vals[i-left:i+right+1]
+        center = vals[i]
+        if np.argmax(window) == left and np.sum(window == center) == 1:
+            pivots.append((i, center, 'H'))
+        elif np.argmin(window) == left and np.sum(window == center) == 1:
+            pivots.append((i, center, 'L'))
+
+    if not pivots:
+        return pd.DataFrame(columns=["price","kind","label"])
+
+    # Classify HH/HL/LH/LL relative to previous same-type pivot
+    last_high = None
+    last_low = None
+    rows = []
+    for i, price, kind in pivots:
+        if kind == 'H':
+            if last_high is None:
+                label = 'H'
+            else:
+                label = 'HH' if price > last_high else 'LH'
+            last_high = price
+        else:
+            if last_low is None:
+                label = 'L'
+            else:
+                label = 'HL' if price > last_low else 'LL'
+            last_low = price
+        rows.append((idxs[i], price, kind, label))
+
+    dfp = pd.DataFrame(rows, columns=["time","price","kind","label"]).set_index("time")
+    return dfp
 
 # Session state init
 if 'run_all' not in st.session_state:
@@ -162,7 +212,6 @@ with tab1:
     sel = st.selectbox("Ticker:", universe, key="orig_ticker")
     chart = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_chart")
 
-    # Hourly lookback selector
     hour_range = st.selectbox(
         "Hourly lookback:",
         ["24h", "48h", "96h"],
@@ -210,8 +259,8 @@ with tab1:
         slope_fc, intercept_fc = np.polyfit(x_fc, vals.to_numpy(), 1)
         trend_fc = slope_fc * x_fc + intercept_fc
 
+        # ----- Daily -----
         if chart in ("Daily","Both"):
-            # Use the visible slice for fibs (last 360 daily points)
             df_show = df[-360:]
             ema200 = df.ewm(span=200).mean()
             ma30   = df.rolling(30).mean()
@@ -232,7 +281,7 @@ with tab1:
             ax.plot(lb[-360:], "--", label="Lower BB")
             ax.plot(ub[-360:], "--", label="Upper BB")
 
-            # ---- Fibonacci on daily ----
+            # Fibonacci (daily)
             if show_fibs:
                 fibs_d = fibonacci_levels(df_show)
                 for lbl, y in fibs_d.items():
@@ -241,10 +290,21 @@ with tab1:
                 for lbl, y in fibs_d.items():
                     ax.text(df_show.index[-1], y, f" {lbl}", va="center")
 
+            # HH/HL/LH/LL structure (daily)
+            if show_hhll:
+                piv_d = swings_hhll(df_show, left=pivot_left)
+                if not piv_d.empty:
+                    ax.plot(piv_d.index, piv_d["price"], marker="o", linewidth=1, label="Structure")
+                    # annotate last ~20 pivots to reduce clutter
+                    tail = piv_d.tail(20)
+                    for t, r in tail.iterrows():
+                        ax.text(t, r["price"], f" {r['label']}", va="bottom")
+
             ax.set_xlabel("Date (PST)")
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
+        # ----- Hourly (5m intraday aggregated display) -----
         if chart in ("Hourly","Both"):
             hc = st.session_state.intraday["Close"].ffill()
             he = hc.ewm(span=20).mean()
@@ -262,7 +322,7 @@ with tab1:
             ax2.plot(hc.index, sup_h, ":", label="Support")
             ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
 
-            # ---- Fibonacci on hourly ----
+            # Fibonacci (hourly)
             if show_fibs and not hc.empty:
                 fibs_h = fibonacci_levels(hc)
                 for lbl, y in fibs_h.items():
@@ -270,6 +330,15 @@ with tab1:
                                linestyles="dotted", linewidth=1)
                 for lbl, y in fibs_h.items():
                     ax2.text(hc.index[-1], y, f" {lbl}", va="center")
+
+            # HH/HL/LH/LL structure (hourly)
+            if show_hhll and not hc.empty:
+                piv_h = swings_hhll(hc, left=pivot_left)
+                if not piv_h.empty:
+                    ax2.plot(piv_h.index, piv_h["price"], marker="o", linewidth=1, label="Structure")
+                    tail = piv_h.tail(20)
+                    for t, r in tail.iterrows():
+                        ax2.text(t, r["price"], f" {r['label']}", va="bottom")
 
             ax2.set_xlabel("Time (PST)")
             ax2.legend(loc="lower left", framealpha=0.5)
@@ -319,7 +388,7 @@ with tab2:
             ax.plot(idx, vals, label="Forecast")
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
 
-            # ---- Fibonacci on daily ----
+            # Fibonacci (daily)
             if show_fibs:
                 fibs_d = fibonacci_levels(df_show)
                 for lbl, y in fibs_d.items():
@@ -327,6 +396,15 @@ with tab2:
                               linestyles="dotted", linewidth=1)
                 for lbl, y in fibs_d.items():
                     ax.text(df_show.index[-1], y, f" {lbl}", va="center")
+
+            # HH/HL/LH/LL (daily)
+            if show_hhll:
+                piv_d = swings_hhll(df_show, left=pivot_left)
+                if not piv_d.empty:
+                    ax.plot(piv_d.index, piv_d["price"], marker="o", linewidth=1, label="Structure")
+                    tail = piv_d.tail(20)
+                    for t, r in tail.iterrows():
+                        ax.text(t, r["price"], f" {r['label']}", va="bottom")
 
             ax.set_xlabel("Date (PST)")
             ax.legend(loc="lower left", framealpha=0.5)
@@ -356,7 +434,7 @@ with tab2:
             ax3.plot(ic.index, sup_i, ":", label="Support")
             ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
 
-            # ---- Fibonacci on hourly ----
+            # Fibonacci (hourly)
             if show_fibs and not ic.empty:
                 fibs_h = fibonacci_levels(ic)
                 for lbl, y in fibs_h.items():
@@ -364,6 +442,15 @@ with tab2:
                                linestyles="dotted", linewidth=1)
                 for lbl, y in fibs_h.items():
                     ax3.text(ic.index[-1], y, f" {lbl}", va="center")
+
+            # HH/HL/LH/LL (hourly)
+            if show_hhll and not ic.empty:
+                piv_h = swings_hhll(ic, left=pivot_left)
+                if not piv_h.empty:
+                    ax3.plot(piv_h.index, piv_h["price"], marker="o", linewidth=1, label="Structure")
+                    tail = piv_h.tail(20)
+                    for t, r in tail.iterrows():
+                        ax3.text(t, r["price"], f" {r['label']}", va="bottom")
 
             ax3.set_xlabel("Time (PST)")
             ax3.legend(loc="lower left", framealpha=0.5)
