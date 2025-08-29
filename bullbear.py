@@ -1,4 +1,3 @@
-# bullbear.py
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -14,21 +13,26 @@ st.set_page_config(
     page_title="📊 Dashboard & Forecasts",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded"   # ensure sidebar is expanded by default
 )
 
 st.markdown("""
 <style>
+  /* hide Streamlit menu, header, footer */
   #MainMenu, header, footer {visibility: hidden;}
+
+  /* on small screens, override Streamlit's default so sidebar stays visible */
   @media (max-width: 600px) {
-    .css-18e3th9 {
+    .css-18e3th9 {  /* sidebar container */
       transform: none !important;
       visibility: visible !important;
       width: 100% !important;
       position: relative !important;
       margin-bottom: 1rem;
     }
-    .css-1v3fvcr { margin-left: 0 !important; }
+    .css-1v3fvcr {  /* main content area */
+      margin-left: 0 !important;
+    }
   }
 </style>
 """, unsafe_allow_html=True)
@@ -43,11 +47,8 @@ def auto_refresh():
     elif time.time() - st.session_state.last_refresh > REFRESH_INTERVAL:
         st.session_state.last_refresh = time.time()
         try:
-            if hasattr(st, "rerun"):
-                st.rerun()
-            else:
-                st.experimental_rerun()
-        except Exception:
+            st.experimental_rerun()
+        except:
             pass
 
 auto_refresh()
@@ -84,10 +85,8 @@ def fetch_hist(ticker: str) -> pd.Series:
 
 @st.cache_data(ttl=900)
 def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
-    # period options: "1d" (~24h), "2d" (~48h), "4d" (~96h) with 5m interval
+    # period options here: "1d" (~24h), "2d" (~48h), "4d" (~96h) with 5m interval
     df = yf.download(ticker, period=period, interval="5m")
-    if df.empty:
-        return df
     try:
         df = df.tz_localize('UTC')
     except TypeError:
@@ -108,7 +107,7 @@ def compute_sarimax_forecast(series: pd.Series):
                         periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
 
-# -------- Indicator helpers --------
+# Indicator helpers
 def compute_rsi(data, window=14):
     d = data.diff()
     gain = d.where(d>0,0).rolling(window).mean()
@@ -120,61 +119,6 @@ def compute_bb(data, window=20, num_sd=2):
     m = data.rolling(window).mean()
     s = data.rolling(window).std()
     return m - num_sd*s, m, m + num_sd*s
-
-def _coerce_volume_series(df: pd.DataFrame):
-    """Return numeric Series for 'Volume' or None if not usable."""
-    if "Volume" not in df.columns:
-        return None
-    vol = df["Volume"]
-    # If Volume accidentally comes as DataFrame (duplicate column names), squeeze:
-    if isinstance(vol, pd.DataFrame):
-        if vol.shape[1] == 1:
-            vol = vol.iloc[:, 0]
-        else:
-            # take the first numeric column
-            for col in vol.columns:
-                s = pd.to_numeric(vol[col], errors="coerce")
-                if s.notna().any():
-                    vol = s
-                    break
-    vol = pd.to_numeric(vol, errors="coerce")
-    vol = vol.dropna()
-    if vol.empty:
-        return None
-    return vol
-
-def normalized_volume_1h(df_5m: pd.DataFrame, window:int = 20, method:str = "zscore"):
-    """
-    From 5-minute data, build 1-hour volume and normalize.
-    Returns (vol_1h, norm) or (None, None) if volume isn't usable.
-    """
-    if df_5m is None or df_5m.empty:
-        return None, None
-
-    vol = _coerce_volume_series(df_5m)
-    if vol is None:
-        return None, None
-
-    # Hourly aggregation; keep NaN if none in the hour (min_count=1)
-    vol_h = vol.resample("1H").sum(min_count=1)
-
-    # If still all NaN or (almost) all zeros
-    if vol_h.dropna().empty:
-        return None, None
-    if np.nansum(vol_h.to_numpy()) == 0:
-        return None, None
-
-    # Rolling stats with sensible minimums to avoid all-NaN windows
-    minp = max(3, window // 2)
-    mean_h = vol_h.rolling(window, min_periods=minp).mean()
-    if method.lower() == "ratio":
-        norm = vol_h / mean_h
-    else:
-        std_h = vol_h.rolling(window, min_periods=minp).std(ddof=0)
-        norm = (vol_h - mean_h) / std_h
-    norm = norm.replace([np.inf, -np.inf], np.nan).fillna(0.0)
-
-    return vol_h, norm
 
 # Session state init
 if 'run_all' not in st.session_state:
@@ -198,7 +142,7 @@ with tab1:
     sel = st.selectbox("Ticker:", universe, key="orig_ticker")
     chart = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_chart")
 
-    # Hourly lookback selector
+    # NEW: Hourly lookback selector
     hour_range = st.selectbox(
         "Hourly lookback:",
         ["24h", "48h", "96h"],
@@ -206,7 +150,6 @@ with tab1:
         key="hour_range_select"
     )
     period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
-    vol_window = st.number_input("Normalized Volume lookback (hours)", 10, 60, 20, 1)
 
     auto_run = (
         st.session_state.run_all and (
@@ -271,45 +214,24 @@ with tab1:
             st.pyplot(fig)
 
         if chart in ("Hourly","Both"):
-            intr = st.session_state.intraday[['Open','High','Low','Close','Volume']].dropna(how="all")
-            if intr.empty:
-                st.warning("No intraday data available.")
-            else:
-                hc = intr["Close"].ffill()
-                he = hc.ewm(span=20).mean()
-                xh = np.arange(len(hc))
-                slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
-                trend_h = slope_h * xh + intercept_h
-                res_h = hc.rolling(60, min_periods=1).max()
-                sup_h = hc.rolling(60, min_periods=1).min()
+            hc = st.session_state.intraday["Close"].ffill()
+            he = hc.ewm(span=20).mean()
+            xh = np.arange(len(hc))
+            slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
+            trend_h = slope_h * xh + intercept_h
+            res_h = hc.rolling(60, min_periods=1).max()
+            sup_h = hc.rolling(60, min_periods=1).min()
 
-                # ---- Normalized Volume (1H) ----
-                vol_1h, vol_norm = normalized_volume_1h(intr, window=int(vol_window), method="zscore")
-
-                # Price + normalized volume stacked chart
-                fig2, (ax2, axv) = plt.subplots(
-                    2, 1, figsize=(14,6), sharex=True,
-                    gridspec_kw={'height_ratios':[3,1]}
-                )
-                ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{p_up:.1%}  ↓{p_dn:.1%}")
-                ax2.plot(hc.index, hc, label="5-min Close")
-                ax2.plot(hc.index, he, "--", label="20 EMA")
-                ax2.plot(hc.index, res_h, ":", label="Resistance")
-                ax2.plot(hc.index, sup_h, ":", label="Support")
-                ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
-                ax2.set_ylabel("Price")
-                ax2.legend(loc="lower left", framealpha=0.5)
-
-                if vol_1h is None:
-                    axv.text(0.5, 0.5, "No usable volume for this ticker (common for FX).",
-                             transform=axv.transAxes, ha="center", va="center")
-                else:
-                    axv.bar(vol_norm.index, vol_norm.values, width=0.03)
-                    axv.axhline(0, linestyle="--", linewidth=1)
-                    axv.axhline(2, linestyle="--", linewidth=1)  # 2σ spike guide
-                    axv.set_ylabel("Norm Vol (z)")
-                axv.set_xlabel("Time (PST)")
-                st.pyplot(fig2)
+            fig2, ax2 = plt.subplots(figsize=(14,4))
+            ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax2.plot(hc.index, hc, label="Intraday")
+            ax2.plot(hc.index, he, "--", label="20 EMA")
+            ax2.plot(hc.index, res_h, ":", label="Resistance")
+            ax2.plot(hc.index, sup_h, ":", label="Support")
+            ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
+            ax2.set_xlabel("Time (PST)")
+            ax2.legend(loc="lower left", framealpha=0.5)
+            st.pyplot(fig2)
 
         st.write(pd.DataFrame({
             "Forecast": st.session_state.fc_vals,
@@ -339,6 +261,7 @@ with tab2:
         res = df.rolling(30, min_periods=1).max()
         sup = df.rolling(30, min_periods=1).min()
 
+        # Show the chosen lookback in this tab too (read-only)
         st.caption(f"Intraday lookback: **{st.session_state.get('hour_range','24h')}** "
                    "(change in 'Original Forecast' tab and rerun)")
 
@@ -349,14 +272,15 @@ with tab2:
             ax.plot(df[-360:], label="History")
             ax.plot(ema200[-360:], "--", label="200 EMA")
             ax.plot(ma30[-360:], "--", label="30 MA")
-            ax.plot(res[-360:], ":", label="30 Resistance")
-            ax.plot(sup[-360:], ":", label="30 Support")
+            ax.plot(res[-360:], ":", label="Resistance")
+            ax.plot(sup[-360:], ":", label="Support")
             ax.plot(idx, vals, label="Forecast")
             ax.fill_between(idx, ci.iloc[:,0], ci.iloc[:,1], alpha=0.3)
             for lev in (0.236,0.382,0.5,0.618):
                 ax.hlines(
                     df[-360:].max() - (df[-360:].max() - df[-360:].min())*lev,
-                    df.index[-360], df.index[-1], linestyles="dotted"
+                    df.index[-360], df.index[-1],
+                    linestyles="dotted"
                 )
             ax.set_xlabel("Date (PST)")
             ax.legend(loc="lower left", framealpha=0.5)
@@ -370,40 +294,32 @@ with tab2:
             st.pyplot(fig2)
 
         if view in ("Intraday","Both"):
-            intr = st.session_state.intraday[['Open','High','Low','Close','Volume']].dropna(how="all")
-            if intr.empty:
-                st.warning("No intraday data available.")
-            else:
-                ic = intr['Close'].ffill()
-                ie = ic.ewm(span=20).mean()
-                xi = np.arange(len(ic))
-                slope_i, intercept_i = np.polyfit(xi, ic.values, 1)
-                trend_i = slope_i * xi + intercept_i
-                res_i = ic.rolling(60, min_periods=1).max()
-                sup_i = ic.rolling(60, min_periods=1).min()
+            ic = st.session_state.intraday["Close"].ffill()
+            ie = ic.ewm(span=20).mean()
+            xi = np.arange(len(ic))
+            slope_i, intercept_i = np.polyfit(xi, ic.values, 1)
+            trend_i = slope_i * xi + intercept_i
+            res_i = ic.rolling(60, min_periods=1).max()
+            sup_i = ic.rolling(60, min_periods=1).min()
 
-                vol_1h, vol_norm = normalized_volume_1h(intr, window=20, method="zscore")
+            fig3, ax3 = plt.subplots(figsize=(14,4))
+            ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax3.plot(ic.index, ic, label="Intraday")
+            ax3.plot(ic.index, ie, "--", label="20 EMA")
+            ax3.plot(ic.index, res_i, ":", label="Resistance")
+            ax3.plot(ic.index, sup_i, ":", label="Support")
+            ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
+            ax3.set_xlabel("Time (PST)")
+            ax3.legend(loc="lower left", framealpha=0.5)
+            st.pyplot(fig3)
 
-                fig3, (ax3, axv3) = plt.subplots(2, 1, figsize=(14,6), sharex=True,
-                                                 gridspec_kw={'height_ratios':[3,1]})
-                ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})")
-                ax3.plot(ic.index, ic, label="5-min Close")
-                ax3.plot(ic.index, ie, "--", label="20 EMA")
-                ax3.plot(ic.index, res_i, ":", label="Resistance")
-                ax3.plot(ic.index, sup_i, ":", label="Support")
-                ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
-                ax3.legend(loc="lower left", framealpha=0.5)
-
-                if vol_1h is None:
-                    axv3.text(0.5, 0.5, "No usable volume for this ticker (common for FX).",
-                              transform=axv3.transAxes, ha="center", va="center")
-                else:
-                    axv3.bar(vol_norm.index, vol_norm.values, width=0.03)
-                    axv3.axhline(0, linestyle="--", linewidth=1)
-                    axv3.axhline(2, linestyle="--", linewidth=1)
-                    axv3.set_ylabel("Norm Vol (z)")
-                axv3.set_xlabel("Time (PST)")
-                st.pyplot(fig3)
+            fig4, ax4 = plt.subplots(figsize=(14,3))
+            ri = compute_rsi(ic)
+            ax4.plot(ri, label="RSI(14)")
+            ax4.axhline(70, linestyle="--"); ax4.axhline(30, linestyle="--")
+            ax4.set_xlabel("Time (PST)")
+            ax4.legend()
+            st.pyplot(fig4)
 
         st.write(pd.DataFrame({
             "Forecast": vals,
