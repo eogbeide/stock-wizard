@@ -13,21 +13,26 @@ st.set_page_config(
     page_title="📊 Dashboard & Forecasts",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="expanded"   # ensure sidebar is expanded by default
 )
 
 st.markdown("""
 <style>
+  /* hide Streamlit menu, header, footer */
   #MainMenu, header, footer {visibility: hidden;}
+
+  /* on small screens, override Streamlit's default so sidebar stays visible */
   @media (max-width: 600px) {
-    .css-18e3th9 {
+    .css-18e3th9 {  /* sidebar container */
       transform: none !important;
       visibility: visible !important;
       width: 100% !important;
       position: relative !important;
       margin-bottom: 1rem;
     }
-    .css-1v3fvcr { margin-left: 0 !important; }
+    .css-1v3fvcr {  /* main content area */
+      margin-left: 0 !important;
+    }
   }
 </style>
 """, unsafe_allow_html=True)
@@ -42,10 +47,8 @@ def auto_refresh():
     elif time.time() - st.session_state.last_refresh > REFRESH_INTERVAL:
         st.session_state.last_refresh = time.time()
         try:
-            # newer streamlit
-            if hasattr(st, "rerun"): st.rerun()
-            else: st.experimental_rerun()
-        except Exception:
+            st.experimental_rerun()
+        except:
             pass
 
 auto_refresh()
@@ -82,6 +85,7 @@ def fetch_hist(ticker: str) -> pd.Series:
 
 @st.cache_data(ttl=900)
 def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
+    # period options here: "1d" (~24h), "2d" (~48h), "4d" (~96h) with 5m interval
     df = yf.download(ticker, period=period, interval="5m")
     try:
         df = df.tz_localize('UTC')
@@ -99,10 +103,11 @@ def compute_sarimax_forecast(series: pd.Series):
             enforce_stationarity=False, enforce_invertibility=False
         ).fit(disp=False)
     fc = model.get_forecast(steps=30)
-    idx = pd.date_range(series.index[-1] + timedelta(1), periods=30, freq="D", tz=PACIFIC)
+    idx = pd.date_range(series.index[-1] + timedelta(1),
+                        periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
 
-# ---------- Indicator helpers ----------
+# Indicator helpers
 def compute_rsi(data, window=14):
     d = data.diff()
     gain = d.where(d>0,0).rolling(window).mean()
@@ -114,66 +119,6 @@ def compute_bb(data, window=20, num_sd=2):
     m = data.rolling(window).mean()
     s = data.rolling(window).std()
     return m - num_sd*s, m, m + num_sd*s
-
-def compute_supertrend(ohlc: pd.DataFrame, period: int = 10, multiplier: float = 3.0) -> pd.DataFrame:
-    """
-    ATR-based Supertrend. Returns columns: 'supertrend', 'direction' (1 bull, -1 bear), 'signal'.
-    Signal is +1 on bullish flip, -1 on bearish flip, else 0.
-    """
-    df = ohlc[['High','Low','Close']].copy().dropna()
-    hl2 = (df['High'] + df['Low']) / 2.0
-
-    # True Range and ATR (EMA for smoother response)
-    tr = pd.concat([
-        df['High'] - df['Low'],
-        (df['High'] - df['Close'].shift()).abs(),
-        (df['Low']  - df['Close'].shift()).abs()
-    ], axis=1).max(axis=1)
-    atr = tr.ewm(alpha=1/period, adjust=False).mean()
-
-    upper = hl2 + multiplier * atr
-    lower = hl2 - multiplier * atr
-
-    st_line = pd.Series(index=df.index, dtype=float)
-    direction = pd.Series(index=df.index, dtype=int)
-
-    st_line.iloc[0] = upper.iloc[0]
-    direction.iloc[0] = -1  # start bearish by default
-
-    for i in range(1, len(df)):
-        prev_dir = direction.iloc[i-1]
-        prev_st  = st_line.iloc[i-1]
-
-        # band persistence
-        if upper.iloc[i] < prev_st and prev_dir == -1:
-            upper.iloc[i] = prev_st
-        if lower.iloc[i] > prev_st and prev_dir == 1:
-            lower.iloc[i] = prev_st
-
-        if prev_dir == -1:
-            if df['Close'].iloc[i] > upper.iloc[i]:
-                direction.iloc[i] = 1
-                st_line.iloc[i] = lower.iloc[i]
-            else:
-                direction.iloc[i] = -1
-                st_line.iloc[i] = upper.iloc[i]
-        else:
-            if df['Close'].iloc[i] < lower.iloc[i]:
-                direction.iloc[i] = -1
-                st_line.iloc[i] = upper.iloc[i]
-            else:
-                direction.iloc[i] = 1
-                st_line.iloc[i] = lower.iloc[i]
-
-    signal = direction.diff().fillna(0)
-    signal = signal.map({2:1, -2:-1}).fillna(0).astype(int)  # +1 buy, -1 sell, 0 none
-
-    out = pd.DataFrame({
-        'supertrend': st_line,
-        'direction': direction,
-        'signal': signal
-    }, index=df.index)
-    return out
 
 # Session state init
 if 'run_all' not in st.session_state:
@@ -197,7 +142,7 @@ with tab1:
     sel = st.selectbox("Ticker:", universe, key="orig_ticker")
     chart = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_chart")
 
-    # Hourly lookback selector
+    # NEW: Hourly lookback selector
     hour_range = st.selectbox(
         "Hourly lookback:",
         ["24h", "48h", "96h"],
@@ -269,25 +214,7 @@ with tab1:
             st.pyplot(fig)
 
         if chart in ("Hourly","Both"):
-            # 5m series for visual context
-            intr = st.session_state.intraday[['Open','High','Low','Close']].dropna()
-            hc = intr['Close'].ffill()
-
-            # ---- Supertrend on HOURLY candles ----
-            h1 = intr.resample('1H').agg({'Open':'first','High':'max','Low':'min','Close':'last'}).dropna()
-            st_df = compute_supertrend(h1, period=10, multiplier=3.0)
-
-            # BUY/SELL markers (based on hourly signal)
-            buys  = st_df[st_df['signal'] == 1].index
-            sells = st_df[st_df['signal'] == -1].index
-
-            # Latest signal
-            latest_dir = int(st_df['direction'].iloc[-1])
-            latest_sig = int(st_df['signal'].iloc[-1])
-            label = "BUY" if latest_dir == 1 else "SELL"
-            delta = "Triggered" if latest_sig != 0 else "—"
-            st.metric("Supertrend (1H)", label, delta=delta)
-
+            hc = st.session_state.intraday["Close"].ffill()
             he = hc.ewm(span=20).mean()
             xh = np.arange(len(hc))
             slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
@@ -295,24 +222,15 @@ with tab1:
             res_h = hc.rolling(60, min_periods=1).max()
             sup_h = hc.rolling(60, min_periods=1).min()
 
-            fig2, ax2 = plt.subplots(figsize=(14,5))
-            ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range}) — with Supertrend (1H)  ↑{p_up:.1%}  ↓{p_dn:.1%}")
-            ax2.plot(hc.index, hc, label="5-min Close", alpha=0.65)
-            ax2.plot(hc.index, he, "--", label="20 EMA", alpha=0.7)
-            ax2.plot(hc.index, res_h, ":", label="Resistance", alpha=0.5)
-            ax2.plot(hc.index, sup_h, ":", label="Support", alpha=0.5)
-
-            # Supertrend line & markers (on hourly timeline)
-            ax2.plot(st_df.index, st_df['supertrend'], linewidth=2, label="Supertrend (1H)")
-
-            # Marker y-values from matching close price near those timestamps
-            buy_y  = h1['Close'].reindex(buys)
-            sell_y = h1['Close'].reindex(sells)
-            ax2.scatter(buy_y.index,  buy_y.values,  marker="^", s=120, label="BUY",  zorder=5)
-            ax2.scatter(sell_y.index, sell_y.values, marker="v", s=120, label="SELL", zorder=5)
-
+            fig2, ax2 = plt.subplots(figsize=(14,4))
+            ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax2.plot(hc.index, hc, label="Intraday")
+            ax2.plot(hc.index, he, "--", label="20 EMA")
+            ax2.plot(hc.index, res_h, ":", label="Resistance")
+            ax2.plot(hc.index, sup_h, ":", label="Support")
+            ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
             ax2.set_xlabel("Time (PST)")
-            ax2.legend(loc="lower left", framealpha=0.5, ncol=3)
+            ax2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig2)
 
         st.write(pd.DataFrame({
@@ -343,7 +261,9 @@ with tab2:
         res = df.rolling(30, min_periods=1).max()
         sup = df.rolling(30, min_periods=1).min()
 
-        st.caption(f"Intraday lookback: **{st.session_state.get('hour_range','24h')}** (change in Tab 1)")
+        # Show the chosen lookback in this tab too (read-only)
+        st.caption(f"Intraday lookback: **{st.session_state.get('hour_range','24h')}** "
+                   "(change in 'Original Forecast' tab and rerun)")
 
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
         if view in ("Daily","Both"):
@@ -359,7 +279,8 @@ with tab2:
             for lev in (0.236,0.382,0.5,0.618):
                 ax.hlines(
                     df[-360:].max() - (df[-360:].max() - df[-360:].min())*lev,
-                    df.index[-360], df.index[-1], linestyles="dotted"
+                    df.index[-360], df.index[-1],
+                    linestyles="dotted"
                 )
             ax.set_xlabel("Date (PST)")
             ax.legend(loc="lower left", framealpha=0.5)
@@ -373,8 +294,7 @@ with tab2:
             st.pyplot(fig2)
 
         if view in ("Intraday","Both"):
-            intr = st.session_state.intraday[['Open','High','Low','Close']].dropna()
-            ic = intr['Close'].ffill()
+            ic = st.session_state.intraday["Close"].ffill()
             ie = ic.ewm(span=20).mean()
             xi = np.arange(len(ic))
             slope_i, intercept_i = np.polyfit(xi, ic.values, 1)
@@ -382,23 +302,15 @@ with tab2:
             res_i = ic.rolling(60, min_periods=1).max()
             sup_i = ic.rolling(60, min_periods=1).min()
 
-            # Supertrend (1H) again
-            h1 = intr.resample('1H').agg({'Open':'first','High':'max','Low':'min','Close':'last'}).dropna()
-            st_df = compute_supertrend(h1, period=10, multiplier=3.0)
-            buys  = st_df[st_df['signal'] == 1].index
-            sells = st_df[st_df['signal'] == -1].index
-
             fig3, ax3 = plt.subplots(figsize=(14,4))
-            ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range}) + Supertrend (1H)  ↑{p_up:.1%}  ↓{p_dn:.1%}")
-            ax3.plot(ic.index, ic, label="5-min Close", alpha=0.65)
-            ax3.plot(ic.index, ie, "--", label="20 EMA", alpha=0.7)
-            ax3.plot(ic.index, res_i, ":", label="Resistance", alpha=0.5)
-            ax3.plot(ic.index, sup_i, ":", label="Support", alpha=0.5)
-            ax3.plot(st_df.index, st_df['supertrend'], linewidth=2, label="Supertrend (1H)")
-            ax3.scatter(buys,  h1['Close'].reindex(buys),  marker="^", s=120, label="BUY",  zorder=5)
-            ax3.scatter(sells, h1['Close'].reindex(sells), marker="v", s=120, label="SELL", zorder=5)
+            ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+            ax3.plot(ic.index, ic, label="Intraday")
+            ax3.plot(ic.index, ie, "--", label="20 EMA")
+            ax3.plot(ic.index, res_i, ":", label="Resistance")
+            ax3.plot(ic.index, sup_i, ":", label="Support")
+            ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
             ax3.set_xlabel("Time (PST)")
-            ax3.legend(loc="lower left", framealpha=0.5, ncol=3)
+            ax3.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig3)
 
             fig4, ax4 = plt.subplots(figsize=(14,3))
