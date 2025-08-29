@@ -55,14 +55,11 @@ st.write(f"Last updated: {today}")
 if st.button("Go to MCAT Prep Psych Book"):
     st.markdown("[Open MCAT Prep Psych Book](https://psychbook.streamlit.app/)", unsafe_allow_html=True)
 
-if st.button("Go to MCAT Bio Book"):
-    st.markdown("[Open MCAT Bio Book](https://biobook.streamlit.app/)", unsafe_allow_html=True)
+if st.button("Go to MCAT BIOLOGY"):
+    st.markdown("[Open MCAT BIOLOGY](https://biomcat.streamlit.app/)", unsafe_allow_html=True)
 
 if st.button("Go to MCAT BCH"):
     st.markdown("[Open MCAT BCH](https://bchbook.streamlit.app/)", unsafe_allow_html=True)
-
-if st.button("Go to MCAT Chem, Physics and Organo"):
-    st.markdown("[Open MCAT Chem, Physics and Organo](https://chmbook.streamlit.app/)", unsafe_allow_html=True)
 
 if st.button("Go to MCAT BCH Lab"):
     st.markdown("[Open MCAT BCH Lab](https://labbook.streamlit.app/)", unsafe_allow_html=True)
@@ -70,14 +67,16 @@ if st.button("Go to MCAT BCH Lab"):
 if st.button("Go to MCAT Sciences"):
     st.markdown("[Open MCAT Sciences](https://mcatscience.streamlit.app/)", unsafe_allow_html=True)
 
+if st.button("Go to MCAT Chem, Physics and Organo"):
+    st.markdown("[Open MCAT Chem, Physics and Organo](https://chmbook.streamlit.app/)", unsafe_allow_html=True)
+
 if st.button("Go to MCAT CARS"):
     st.markdown("[Open MCAT CARS](https://mcatcars.streamlit.app/)", unsafe_allow_html=True)
 
 if st.button("Go to MCAT JW"):
     st.markdown("[Open MCAT JW](https://jwmcat.streamlit.app/)", unsafe_allow_html=True)
 
-if st.button("Go to MCAT BIOLOGY"):
-    st.markdown("[Open MCAT BIOLOGY](https://biomcat.streamlit.app/)", unsafe_allow_html=True)
+
 
 
 # Instructions for refreshing all links daily
