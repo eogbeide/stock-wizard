@@ -1,4 +1,4 @@
-# psychology.py — MCQs + Options + Answers/Explanations only (Passages removed)
+# psychology.py — MCQs + Answers/Explanations (Options removed, Passages removed)
 import re
 import base64
 from io import BytesIO
@@ -16,7 +16,7 @@ except Exception:
     DOCX_OK = False
 
 # ---------- App config ----------
-st.set_page_config(page_title="📖 MCQs + Answers Reader (GitHub → TTS)", page_icon="🎧", layout="wide")
+st.set_page_config(page_title="📖 MCQs + Answers Reader (Options removed)", page_icon="🎧", layout="wide")
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/psychbooks.docx"
 
 # ---------- Helpers ----------
@@ -107,30 +107,29 @@ def remove_passages(full_text: str) -> list[str]:
         filtered.append(raw)
     return filtered
 
-def extract_mcqs_with_answers(full_text: str):
+def extract_mcqs_qae_only(full_text: str):
     """
-    Return only MCQs (stem + options) and Answer/Explanation lines. Passages removed.
+    Return MCQs as: Question, Answer, Explanation (options are parsed to identify sections but NOT shown).
     """
     lines = remove_passages(full_text)
-    mcqs = []
-    cur_stem, cur_opts = [], []
+    items = []
+    cur_stem_parts = []
     cur_answer, cur_expl = None, None
     in_mcq = False
     options_started = False
 
     def flush():
-        nonlocal cur_stem, cur_opts, cur_answer, cur_expl, in_mcq, options_started
-        stem_text = " ".join([clean_line(s) for s in cur_stem if s is not None]).strip()
-        if stem_text and len(cur_opts) >= 2:
-            block = []
-            block.append(stem_text)
-            block.extend(cur_opts)
+        nonlocal cur_stem_parts, cur_answer, cur_expl, in_mcq, options_started
+        stem_text = " ".join([clean_line(s) for s in cur_stem_parts if s is not None]).strip()
+        if stem_text:
+            block = [f"Question: {stem_text}"]
             if cur_answer:
                 block.append(f"Answer: {cur_answer}")
             if cur_expl:
                 block.append(f"Explanation: {cur_expl}")
-            mcqs.append("\n".join(block).strip())
-        cur_stem, cur_opts = [], []
+            items.append("\n".join(block).strip())
+        # reset
+        cur_stem_parts = []
         cur_answer, cur_expl = None, None
         in_mcq = False
         options_started = False
@@ -138,8 +137,8 @@ def extract_mcqs_with_answers(full_text: str):
     for raw in lines:
         line = raw.strip()
         if not line:
-            if in_mcq and cur_stem and not options_started:
-                cur_stem.append("")
+            if in_mcq and cur_stem_parts and not options_started:
+                cur_stem_parts.append("")  # paragraph spacing in stem
             continue
 
         if looks_like_question(line):
@@ -147,8 +146,7 @@ def extract_mcqs_with_answers(full_text: str):
                 flush()
             in_mcq = True
             options_started = False
-            cur_stem = [clean_line(line)]
-            cur_opts = []
+            cur_stem_parts = [clean_line(line)]
             cur_answer, cur_expl = None, None
             continue
 
@@ -157,7 +155,7 @@ def extract_mcqs_with_answers(full_text: str):
 
         if looks_like_option(line):
             options_started = True
-            cur_opts.append(clean_line(line))
+            # We do NOT add options to output
             continue
 
         ans = parse_answer(line)
@@ -171,20 +169,21 @@ def extract_mcqs_with_answers(full_text: str):
             continue
 
         if not options_started:
-            cur_stem.append(clean_line(line))
+            cur_stem_parts.append(clean_line(line))
         else:
+            # Post-options prose often belongs to explanation
             if cur_answer is not None or cur_expl is not None:
                 cur_expl = (cur_expl + " " + clean_line(line)).strip() if cur_expl else clean_line(line)
 
     if in_mcq:
         flush()
-    return mcqs
+    return items
 
 def mcqs_to_pages(mcqs, per_page: int):
     pages = []
     for i in range(0, len(mcqs), per_page):
         pages.append("\n\n".join(mcqs[i:i+per_page]))
-    return pages or ["No MCQs (with options) found."]
+    return pages or ["No MCQs found."]
 
 def tts_mp3(text: str) -> BytesIO:
     step = 4500
@@ -221,9 +220,9 @@ def render_speedy_audio(audio_bytes: BytesIO, rate: float = 2.5, autoplay: bool 
         height=80,
     )
 
-# ---------- UI (Top Controls First) ----------
-st.title("📖 MCQs + Answers Reader (Passages removed)")
-st.caption("Reads only Multiple-Choice Questions, Options, Answers, and Explanations — no passages.")
+# ---------- UI ----------
+st.title("📖 MCQs + Answers/Explanations (Options removed)")
+st.caption("Passages and options are removed. Each item includes only the Question, Answer, and Explanation.")
 
 # ---------- Session state ----------
 if "loaded_url" not in st.session_state:
@@ -232,9 +231,8 @@ if "pages" not in st.session_state:
     st.session_state.pages = []
 if "page_idx" not in st.session_state:
     st.session_state.page_idx = 0
-# default playback speed = 2.5x
 if "playback_rate" not in st.session_state:
-    st.session_state.playback_rate = 2.5
+    st.session_state.playback_rate = 2.5  # default 2.5×
 
 # ---------- Sidebar ----------
 with st.sidebar:
@@ -261,7 +259,7 @@ if url != st.session_state.loaded_url:
         else:
             full_text = normalize_text(best_effort_bytes_to_text(data))
 
-        mcqs = extract_mcqs_with_answers(full_text)
+        mcqs = extract_mcqs_qae_only(full_text)
         pages = mcqs_to_pages(mcqs, mcqs_per_page)
 
         st.session_state.pages = pages
@@ -269,10 +267,24 @@ if url != st.session_state.loaded_url:
         st.session_state.loaded_url = url
 
         if pages and pages[0].startswith("No MCQs"):
-            st.warning("No MCQs with options detected. Ensure questions start with 'Q...' or '1.' and options like 'A) text'.")
+            st.warning("No MCQs detected. Ensure questions start with 'Q...' or '1.' and answers contain 'Answer:'.")
     except Exception as e:
         st.error(f"Could not load/parse: {e}")
         st.stop()
+
+# ---------- Sidebar dropdown page selector ----------
+with st.sidebar:
+    total_pages = len(st.session_state.pages)
+    if total_pages:
+        page_labels = [f"Page {i}" for i in range(1, total_pages + 1)]
+        selected_label = st.selectbox(
+            "Select page",
+            options=page_labels,
+            index=min(st.session_state.page_idx, total_pages - 1)
+        )
+        st.session_state.page_idx = page_labels.index(selected_label)
+    else:
+        st.selectbox("Select page", options=["(no pages yet)"], index=0, disabled=True)
 
 # ---------- TOP: Speed & Play Controls ----------
 st.subheader("Playback speed")
@@ -285,7 +297,6 @@ if c5.button("3.0×"): st.session_state.playback_rate = 3.0
 if c6.button("0.75×"): st.session_state.playback_rate = 0.75
 st.caption(f"Current speed: **{st.session_state.playback_rate}×**")
 
-# Generate & Play sits at the top now
 if st.button("🔊 Generate & Play at selected speed", use_container_width=True):
     try:
         page_text_top = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
@@ -306,37 +317,24 @@ with left:
     if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
         st.session_state.page_idx = max(0, st.session_state.page_idx - 1)
 with mid:
+    total = len(st.session_state.pages)
     st.markdown(
-        f"<div style='text-align:center;font-weight:600;'>Page {st.session_state.page_idx + 1} / {len(st.session_state.pages)}</div>",
+        f"<div style='text-align:center;font-weight:600;'>Page {st.session_state.page_idx + 1 if total else 0} / {total}</div>",
         unsafe_allow_html=True
     )
 with right:
-    if st.button("Next ➡️", use_container_width=True, disabled=st.session_state.page_idx >= len(st.session_state.pages) - 1):
-        st.session_state.page_idx = min(len(st.session_state.pages) - 1, st.session_state.page_idx + 1)
+    if st.button("Next ➡️", use_container_width=True, disabled=st.session_state.page_idx >= total - 1):
+        st.session_state.page_idx = min(total - 1, st.session_state.page_idx + 1)
 
 # ---------- Current page ----------
 page_text = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
-st.text_area("MCQs + Answers (no passage)", page_text, height=480)
+st.text_area("MCQs (Question + Answer + Explanation — options removed)", page_text, height=480)
 
 # ---------- Download ----------
 st.download_button(
     "⬇️ Download this page (txt)",
     data=(page_text or "").encode("utf-8"),
-    file_name=f"mcqs_page_{st.session_state.page_idx+1}.txt",
+    file_name=f"mcqs_page_{(st.session_state.page_idx + 1) if st.session_state.pages else 0}.txt",
     mime="text/plain",
     disabled=not page_text,
 )
-
-# ---------- Jump ----------
-with st.expander("Jump to page"):
-    total = max(1, len(st.session_state.pages))
-    idx = st.number_input(
-        "Go to page #",
-        min_value=1,
-        max_value=total,
-        value=min(st.session_state.page_idx + 1, total),
-        step=1
-    )
-    if st.button("Go"):
-        st.session_state.page_idx = int(idx) - 1
-        st.experimental_rerun()
