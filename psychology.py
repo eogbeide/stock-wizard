@@ -1,4 +1,4 @@
-# psychology.py — MCQs + Answers/Explanations (Options removed, Passages removed)
+# psychology.py — MCQs (Question + Explanation only; Options & Answers removed)
 import re
 import base64
 from io import BytesIO
@@ -16,7 +16,7 @@ except Exception:
     DOCX_OK = False
 
 # ---------- App config ----------
-st.set_page_config(page_title="📖 MCQs + Answers Reader (Options removed)", page_icon="🎧", layout="wide")
+st.set_page_config(page_title="📖 MCQs Reader — Question + Explanation", page_icon="🎧", layout="wide")
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/psychbooks.docx"
 
 # ---------- Helpers ----------
@@ -70,14 +70,13 @@ QUESTIONS_HEADER_PAT = re.compile(r"^\s*questions?\b", re.IGNORECASE)
 def looks_like_question(line: str) -> bool:
     return bool(MCQ_START_PAT.match(line))
 
-def looks_like_option(line: str) -> bool:
-    return bool(OPTION_PAT.match(line))
-
 def parse_answer(line: str):
-    m = ANSWER_PAT.match(line);  return m.group(1).strip() if m else None
+    m = ANSWER_PAT.match(line)
+    return m.group(1).strip() if m else None
 
 def parse_expl(line: str):
-    m = EXPL_PAT.match(line);    return m.group(1).strip() if m else None
+    m = EXPL_PAT.match(line)
+    return m.group(1).strip() if m else None
 
 def clean_line(line: str) -> str:
     return re.sub(r"\s+", " ", line).strip()
@@ -107,82 +106,104 @@ def remove_passages(full_text: str) -> list[str]:
         filtered.append(raw)
     return filtered
 
-def extract_mcqs_qae_only(full_text: str):
+# ---------- Core extraction: Question + Explanation ONLY ----------
+def extract_mcqs_qe_only(full_text: str):
     """
-    Return MCQs as: Question, Answer, Explanation (options are parsed to identify sections but NOT shown).
+    Build items with ONLY:
+      - Question: <stem>
+      - Explanation: <text> (when present)
+    Options and Answers are ignored/omitted entirely.
+    Explanation paragraphs may follow an 'Explanation:' line, or come after an 'Answer:' line.
     """
     lines = remove_passages(full_text)
+
     items = []
-    cur_stem_parts = []
-    cur_answer, cur_expl = None, None
+    cur_stem_parts: list[str] = []
+    cur_expl_parts: list[str] = []
+
     in_mcq = False
     options_started = False
+    capturing_expl = False  # turn on when we see Explanation: OR after Answer: line
 
     def flush():
-        nonlocal cur_stem_parts, cur_answer, cur_expl, in_mcq, options_started
+        nonlocal cur_stem_parts, cur_expl_parts, in_mcq, options_started, capturing_expl
         stem_text = " ".join([clean_line(s) for s in cur_stem_parts if s is not None]).strip()
+        expl_text = " ".join([clean_line(s) for s in cur_expl_parts if s is not None]).strip()
         if stem_text:
             block = [f"Question: {stem_text}"]
-            if cur_answer:
-                block.append(f"Answer: {cur_answer}")
-            if cur_expl:
-                block.append(f"Explanation: {cur_expl}")
+            if expl_text:
+                block.append(f"Explanation: {expl_text}")
             items.append("\n".join(block).strip())
         # reset
         cur_stem_parts = []
-        cur_answer, cur_expl = None, None
+        cur_expl_parts = []
         in_mcq = False
         options_started = False
+        capturing_expl = False
 
     for raw in lines:
         line = raw.strip()
         if not line:
-            if in_mcq and cur_stem_parts and not options_started:
-                cur_stem_parts.append("")  # paragraph spacing in stem
+            # keep blank lines inside stem (pre-options) and explanation (when capturing)
+            if in_mcq:
+                if not options_started and not capturing_expl and cur_stem_parts:
+                    cur_stem_parts.append("")
+                elif capturing_expl and cur_expl_parts:
+                    cur_expl_parts.append("")
             continue
 
+        # New question
         if looks_like_question(line):
             if in_mcq:
                 flush()
             in_mcq = True
             options_started = False
+            capturing_expl = False
             cur_stem_parts = [clean_line(line)]
-            cur_answer, cur_expl = None, None
+            cur_expl_parts = []
             continue
 
         if not in_mcq:
             continue
 
-        if looks_like_option(line):
+        # Option? (ignored but toggles options_started)
+        if OPTION_PAT.match(line):
             options_started = True
-            # We do NOT add options to output
             continue
 
-        ans = parse_answer(line)
-        if ans is not None:
-            cur_answer = ans or cur_answer or ""
+        # Answer? (ignored, but explanations often follow; start capturing expl after this)
+        if parse_answer(line) is not None:
+            capturing_expl = True
             continue
 
+        # Explanation line?
         expl = parse_expl(line)
         if expl is not None:
-            cur_expl = (cur_expl + " " + expl).strip() if cur_expl else expl
+            capturing_expl = True
+            if expl:
+                cur_expl_parts.append(expl)
             continue
 
-        if not options_started:
+        # Free text
+        if capturing_expl:
+            cur_expl_parts.append(clean_line(line))
+        elif not options_started:
             cur_stem_parts.append(clean_line(line))
         else:
-            # Post-options prose often belongs to explanation
-            if cur_answer is not None or cur_expl is not None:
-                cur_expl = (cur_expl + " " + clean_line(line)).strip() if cur_expl else clean_line(line)
+            # text after options but before explicit Explanation/Answer:
+            # treat as explanation if we've already started capturing
+            # (otherwise ignore to avoid mixing with option blocks)
+            pass
 
     if in_mcq:
         flush()
+
     return items
 
-def mcqs_to_pages(mcqs, per_page: int):
+def mcqs_to_pages(items, per_page: int):
     pages = []
-    for i in range(0, len(mcqs), per_page):
-        pages.append("\n\n".join(mcqs[i:i+per_page]))
+    for i in range(0, len(items), per_page):
+        pages.append("\n\n".join(items[i:i+per_page]))
     return pages or ["No MCQs found."]
 
 def tts_mp3(text: str) -> BytesIO:
@@ -221,8 +242,8 @@ def render_speedy_audio(audio_bytes: BytesIO, rate: float = 2.5, autoplay: bool 
     )
 
 # ---------- UI ----------
-st.title("📖 MCQs + Answers/Explanations (Options removed)")
-st.caption("Passages and options are removed. Each item includes only the Question, Answer, and Explanation.")
+st.title("📖 MCQs — Question + Explanation (Options/Answers removed)")
+st.caption("Shows only the question stem and any explanation text. Passages, options, and answer lines are omitted from display.")
 
 # ---------- Session state ----------
 if "loaded_url" not in st.session_state:
@@ -259,15 +280,15 @@ if url != st.session_state.loaded_url:
         else:
             full_text = normalize_text(best_effort_bytes_to_text(data))
 
-        mcqs = extract_mcqs_qae_only(full_text)
-        pages = mcqs_to_pages(mcqs, mcqs_per_page)
+        items = extract_mcqs_qe_only(full_text)
+        pages = mcqs_to_pages(items, mcqs_per_page)
 
         st.session_state.pages = pages
         st.session_state.page_idx = 0
         st.session_state.loaded_url = url
 
         if pages and pages[0].startswith("No MCQs"):
-            st.warning("No MCQs detected. Ensure questions start with 'Q...' or '1.' and answers contain 'Answer:'.")
+            st.warning("No MCQs detected. Make sure questions start with 'Q...' or '1.' and explanations contain 'Explanation:'.")
     except Exception as e:
         st.error(f"Could not load/parse: {e}")
         st.stop()
@@ -280,7 +301,7 @@ with st.sidebar:
         selected_label = st.selectbox(
             "Select page",
             options=page_labels,
-            index=min(st.session_state.page_idx, total_pages - 1)
+            index=min(st.session_state.page_idx, total_pages - 1),
         )
         st.session_state.page_idx = page_labels.index(selected_label)
     else:
@@ -320,7 +341,7 @@ with mid:
     total = len(st.session_state.pages)
     st.markdown(
         f"<div style='text-align:center;font-weight:600;'>Page {st.session_state.page_idx + 1 if total else 0} / {total}</div>",
-        unsafe_allow_html=True
+        unsafe_allow_html=True,
     )
 with right:
     if st.button("Next ➡️", use_container_width=True, disabled=st.session_state.page_idx >= total - 1):
@@ -328,7 +349,7 @@ with right:
 
 # ---------- Current page ----------
 page_text = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
-st.text_area("MCQs (Question + Answer + Explanation — options removed)", page_text, height=480)
+st.text_area("MCQs (Question + Explanation only)", page_text, height=480)
 
 # ---------- Download ----------
 st.download_button(
