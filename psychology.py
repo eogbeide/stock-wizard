@@ -1,4 +1,4 @@
-# psychology.py — MCQs + Options + Answers/Explanations only (Passages removed)
+# psychology.py — Questions + Answers + Explanations only (Passages & Options removed)
 import re
 import base64
 from io import BytesIO
@@ -16,7 +16,7 @@ except Exception:
     DOCX_OK = False
 
 # ---------- App config ----------
-st.set_page_config(page_title="📖 MCQs + Answers Reader (GitHub → TTS)", page_icon="🎧", layout="wide")
+st.set_page_config(page_title="📖 Q+A+Explanation Reader (GitHub → TTS)", page_icon="🎧", layout="wide")
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/psychbooks.docx"
 
 # ---------- Helpers ----------
@@ -60,24 +60,23 @@ MCQ_START_PAT = re.compile(
         )""",
     re.IGNORECASE | re.VERBOSE,
 )
-OPTION_PAT = re.compile(r"""^\s*([A-Ha-h])\s*[\).:,-]\s+""", re.VERBOSE)
+OPTION_PAT = re.compile(r"""^\s*([A-Ha-h])\s*[\).:,-]\s+""", re.VERBOSE)  # will be ignored
 ANSWER_PAT = re.compile(r"""^\s*(?:answer|answers?|ans|correct\s*answer|key|solution)\s*[:\-]?\s*(.*)""", re.IGNORECASE)
 EXPL_PAT   = re.compile(r"""^\s*(?:explanation|rationale|why|reason(?:ing)?)\s*[:\-]?\s*(.*)""", re.IGNORECASE)
 
-PASSAGE_HEADER_PAT = re.compile(r"^\s*passage(\s*[ivx]+|\s*\d+|\s*[a-z])?\b", re.IGNORECASE)
+PASSAGE_HEADER_PAT   = re.compile(r"^\s*passage(\s*[ivx]+|\s*\d+|\s*[a-z])?\b", re.IGNORECASE)
 QUESTIONS_HEADER_PAT = re.compile(r"^\s*questions?\b", re.IGNORECASE)
 
 def looks_like_question(line: str) -> bool:
     return bool(MCQ_START_PAT.match(line))
 
-def looks_like_option(line: str) -> bool:
-    return bool(OPTION_PAT.match(line))
-
 def parse_answer(line: str):
-    m = ANSWER_PAT.match(line);  return m.group(1).strip() if m else None
+    m = ANSWER_PAT.match(line)
+    return m.group(1).strip() if m else None
 
 def parse_expl(line: str):
-    m = EXPL_PAT.match(line);    return m.group(1).strip() if m else None
+    m = EXPL_PAT.match(line)
+    return m.group(1).strip() if m else None
 
 def clean_line(line: str) -> str:
     return re.sub(r"\s+", " ", line).strip()
@@ -107,30 +106,36 @@ def remove_passages(full_text: str) -> list[str]:
         filtered.append(raw)
     return filtered
 
-def extract_mcqs_with_answers(full_text: str):
+def extract_qae_only(full_text: str):
     """
-    Return only MCQs (stem + options) and Answer/Explanation lines. Passages removed.
+    Build items with ONLY:
+      - Question (stem text)
+      - Answer
+      - Explanation (optional)
+    Options are ignored/omitted entirely. Passages already removed.
     """
     lines = remove_passages(full_text)
-    mcqs = []
-    cur_stem, cur_opts = [], []
+
+    items = []
+    cur_stem_parts = []
     cur_answer, cur_expl = None, None
     in_mcq = False
     options_started = False
 
     def flush():
-        nonlocal cur_stem, cur_opts, cur_answer, cur_expl, in_mcq, options_started
-        stem_text = " ".join([clean_line(s) for s in cur_stem if s is not None]).strip()
-        if stem_text and len(cur_opts) >= 2:
-            block = []
-            block.append(stem_text)
-            block.extend(cur_opts)
+        nonlocal cur_stem_parts, cur_answer, cur_expl, in_mcq, options_started
+        stem_text = " ".join([clean_line(s) for s in cur_stem_parts if s is not None]).strip()
+        # Keep the item if we have a stem AND (answer or explanation)
+        if stem_text and (cur_answer or cur_expl):
+            block = [f"Question: {stem_text}"]
             if cur_answer:
                 block.append(f"Answer: {cur_answer}")
             if cur_expl:
                 block.append(f"Explanation: {cur_expl}")
-            mcqs.append("\n".join(block).strip())
-        cur_stem, cur_opts = [], []
+            items.append("\n".join(block).strip())
+
+        # reset
+        cur_stem_parts = []
         cur_answer, cur_expl = None, None
         in_mcq = False
         options_started = False
@@ -138,28 +143,30 @@ def extract_mcqs_with_answers(full_text: str):
     for raw in lines:
         line = raw.strip()
         if not line:
-            if in_mcq and cur_stem and not options_started:
-                cur_stem.append("")
+            # allow paragraph spacing within stem before options are seen
+            if in_mcq and cur_stem_parts and not options_started:
+                cur_stem_parts.append("")
             continue
 
+        # start of a new question
         if looks_like_question(line):
             if in_mcq:
                 flush()
             in_mcq = True
             options_started = False
-            cur_stem = [clean_line(line)]
-            cur_opts = []
+            cur_stem_parts = [clean_line(line)]
             cur_answer, cur_expl = None, None
             continue
 
         if not in_mcq:
             continue
 
-        if looks_like_option(line):
+        # Ignore/skip options entirely
+        if OPTION_PAT.match(line):
             options_started = True
-            cur_opts.append(clean_line(line))
             continue
 
+        # Capture Answer / Explanation lines (may be multiple)
         ans = parse_answer(line)
         if ans is not None:
             cur_answer = ans or cur_answer or ""
@@ -170,21 +177,24 @@ def extract_mcqs_with_answers(full_text: str):
             cur_expl = (cur_expl + " " + expl).strip() if cur_expl else expl
             continue
 
+        # Additional text: join to stem before options; after options, treat as extra explanation if we already have A/Expl
         if not options_started:
-            cur_stem.append(clean_line(line))
+            cur_stem_parts.append(clean_line(line))
         else:
             if cur_answer is not None or cur_expl is not None:
                 cur_expl = (cur_expl + " " + clean_line(line)).strip() if cur_expl else clean_line(line)
 
     if in_mcq:
         flush()
-    return mcqs
 
-def mcqs_to_pages(mcqs, per_page: int):
+    return items
+
+def pages_from_items(items, per_page: int):
     pages = []
-    for i in range(0, len(mcqs), per_page):
-        pages.append("\n\n".join(mcqs[i:i+per_page]))
-    return pages or ["No MCQs (with options) found."]
+    sep = "\n\n"  # space between items on a page
+    for i in range(0, len(items), per_page):
+        pages.append(sep.join(items[i:i+per_page]))
+    return pages or ["No Questions/Answers found."]
 
 def tts_mp3(text: str) -> BytesIO:
     step = 4500
@@ -222,8 +232,8 @@ def render_speedy_audio(audio_bytes: BytesIO, rate: float = 2.5, autoplay: bool 
     )
 
 # ---------- UI (Top Controls First) ----------
-st.title("📖 MCQs + Answers Reader (Passages removed)")
-st.caption("Reads only Multiple-Choice Questions, Options, Answers, and Explanations — no passages.")
+st.title("📖 Questions + Answers + Explanations (No Options)")
+st.caption("Passages and options are removed. Each item shows only the Question, Answer, and Explanation.")
 
 # ---------- Session state ----------
 if "loaded_url" not in st.session_state:
@@ -232,14 +242,13 @@ if "pages" not in st.session_state:
     st.session_state.pages = []
 if "page_idx" not in st.session_state:
     st.session_state.page_idx = 0
-# default playback speed = 2.5x
 if "playback_rate" not in st.session_state:
-    st.session_state.playback_rate = 2.5
+    st.session_state.playback_rate = 2.5  # default 2.5×
 
 # ---------- Sidebar ----------
 with st.sidebar:
     url = st.text_input("GitHub RAW file URL", value=DEFAULT_URL)
-    mcqs_per_page = st.slider("MCQs per page", 1, 10, 3, 1)
+    per_page = st.slider("Items per page", 1, 10, 3, 1)
     st.markdown("- Use a **raw** URL (`https://raw.githubusercontent.com/...`). Best with **.docx** or **.txt**.")
 
 # ---------- Load → decode → extract ----------
@@ -261,15 +270,15 @@ if url != st.session_state.loaded_url:
         else:
             full_text = normalize_text(best_effort_bytes_to_text(data))
 
-        mcqs = extract_mcqs_with_answers(full_text)
-        pages = mcqs_to_pages(mcqs, mcqs_per_page)
+        items = extract_qae_only(full_text)
+        pages = pages_from_items(items, per_page)
 
         st.session_state.pages = pages
         st.session_state.page_idx = 0
         st.session_state.loaded_url = url
 
-        if pages and pages[0].startswith("No MCQs"):
-            st.warning("No MCQs with options detected. Ensure questions start with 'Q...' or '1.' and options like 'A) text'.")
+        if pages and pages[0].startswith("No Questions/Answers"):
+            st.warning("No questions with answers detected. Make sure questions start with 'Q...' or '1.' and answer lines contain 'Answer:'.")
     except Exception as e:
         st.error(f"Could not load/parse: {e}")
         st.stop()
@@ -285,7 +294,6 @@ if c5.button("3.0×"): st.session_state.playback_rate = 3.0
 if c6.button("0.75×"): st.session_state.playback_rate = 0.75
 st.caption(f"Current speed: **{st.session_state.playback_rate}×**")
 
-# Generate & Play sits at the top now
 if st.button("🔊 Generate & Play at selected speed", use_container_width=True):
     try:
         page_text_top = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
@@ -316,13 +324,13 @@ with right:
 
 # ---------- Current page ----------
 page_text = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
-st.text_area("MCQs + Answers (no passage)", page_text, height=480)
+st.text_area("Questions + Answers + Explanations", page_text, height=520)
 
 # ---------- Download ----------
 st.download_button(
     "⬇️ Download this page (txt)",
     data=(page_text or "").encode("utf-8"),
-    file_name=f"mcqs_page_{st.session_state.page_idx+1}.txt",
+    file_name=f"qa_page_{st.session_state.page_idx+1}.txt",
     mime="text/plain",
     disabled=not page_text,
 )
