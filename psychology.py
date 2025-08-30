@@ -1,5 +1,5 @@
 # psychology.py — Questions + Answers + Explanations only (Passages & Options removed)
-import rewe
+import re
 import base64
 from io import BytesIO
 
