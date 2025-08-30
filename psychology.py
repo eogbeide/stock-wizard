@@ -1,5 +1,5 @@
 # psychology.py — Question + Correct Option + Explanation (Passages removed)
-import rex
+import re
 import base64
 from io import BytesIO
 
