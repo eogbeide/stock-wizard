@@ -83,16 +83,11 @@ def clean_line(line: str) -> str:
     return re.sub(r"\s+", " ", line).strip()
 
 def remove_passages(full_text: str) -> list[str]:
-    """
-    Remove passage blocks. If a line starts with 'Passage...' we skip lines
-    until we hit a question line or a 'Questions' header.
-    """
     lines = [l.rstrip() for l in full_text.split("\n")]
     filtered = []
     in_passage = False
     for raw in lines:
         line = raw.strip()
-
         if PASSAGE_HEADER_PAT.match(line):
             in_passage = True
             continue
@@ -103,14 +98,10 @@ def remove_passages(full_text: str) -> list[str]:
                 in_passage = False
             else:
                 continue
-
         filtered.append(raw)
     return filtered
 
 def extract_mcqs_with_answers(full_text: str):
-    """
-    Return only MCQs (stem + options) and Answer/Explanation lines. Passages removed.
-    """
     lines = remove_passages(full_text)
     mcqs = []
     cur_stem, cur_opts = [], []
@@ -199,7 +190,6 @@ def tts_mp3(text: str) -> BytesIO:
     return combined
 
 def render_speedy_audio(audio_bytes: BytesIO, rate: float = 2.5, autoplay: bool = False):
-    """Render a custom HTML5 audio player with adjustable playbackRate (default 2.5x)."""
     audio_bytes.seek(0)
     b64 = base64.b64encode(audio_bytes.read()).decode("ascii")
     auto = "autoplay" if autoplay else ""
@@ -232,7 +222,6 @@ if "pages" not in st.session_state:
     st.session_state.pages = []
 if "page_idx" not in st.session_state:
     st.session_state.page_idx = 0
-# default playback speed = 2.5x
 if "playback_rate" not in st.session_state:
     st.session_state.playback_rate = 2.5
 
@@ -274,6 +263,17 @@ if url != st.session_state.loaded_url:
         st.error(f"Could not load/parse: {e}")
         st.stop()
 
+# ---------- Sidebar dropdown page selector ----------
+with st.sidebar:
+    total_pages = len(st.session_state.pages)
+    if total_pages:
+        options = list(range(1, total_pages + 1))
+        current = st.session_state.page_idx + 1 if 1 <= st.session_state.page_idx + 1 <= total_pages else 1
+        selected = st.selectbox("Go to page", options=options, index=options.index(current))
+        st.session_state.page_idx = selected - 1
+    else:
+        st.selectbox("Go to page", options=["(no pages yet)"], index=0, disabled=True)
+
 # ---------- TOP: Speed & Play Controls ----------
 st.subheader("Playback speed")
 c1, c2, c3, c4, c5, c6 = st.columns(6)
@@ -285,7 +285,7 @@ if c5.button("3.0×"): st.session_state.playback_rate = 3.0
 if c6.button("0.75×"): st.session_state.playback_rate = 0.75
 st.caption(f"Current speed: **{st.session_state.playback_rate}×**")
 
-# Generate & Play sits at the top now
+# Generate & Play
 if st.button("🔊 Generate & Play at selected speed", use_container_width=True):
     try:
         page_text_top = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
@@ -300,19 +300,20 @@ if st.button("🔊 Generate & Play at selected speed", use_container_width=True)
 
 st.markdown("---")
 
-# ---------- Navigation ----------
+# ---------- Navigation (Prev/Next) ----------
 left, mid, right = st.columns([1, 3, 1])
 with left:
     if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
         st.session_state.page_idx = max(0, st.session_state.page_idx - 1)
 with mid:
+    total = len(st.session_state.pages)
     st.markdown(
-        f"<div style='text-align:center;font-weight:600;'>Page {st.session_state.page_idx + 1} / {len(st.session_state.pages)}</div>",
+        f"<div style='text-align:center;font-weight:600;'>Page {st.session_state.page_idx + 1 if total else 0} / {total}</div>",
         unsafe_allow_html=True
     )
 with right:
-    if st.button("Next ➡️", use_container_width=True, disabled=st.session_state.page_idx >= len(st.session_state.pages) - 1):
-        st.session_state.page_idx = min(len(st.session_state.pages) - 1, st.session_state.page_idx + 1)
+    if st.button("Next ➡️", use_container_width=True, disabled=st.session_state.page_idx >= total - 1):
+        st.session_state.page_idx = min(total - 1, st.session_state.page_idx + 1)
 
 # ---------- Current page ----------
 page_text = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
@@ -322,21 +323,7 @@ st.text_area("MCQs + Answers (no passage)", page_text, height=480)
 st.download_button(
     "⬇️ Download this page (txt)",
     data=(page_text or "").encode("utf-8"),
-    file_name=f"mcqs_page_{st.session_state.page_idx+1}.txt",
+    file_name=f"mcqs_page_{(st.session_state.page_idx + 1) if st.session_state.pages else 0}.txt",
     mime="text/plain",
     disabled=not page_text,
 )
-
-# ---------- Jump ----------
-with st.expander("Jump to page"):
-    total = max(1, len(st.session_state.pages))
-    idx = st.number_input(
-        "Go to page #",
-        min_value=1,
-        max_value=total,
-        value=min(st.session_state.page_idx + 1, total),
-        step=1
-    )
-    if st.button("Go"):
-        st.session_state.page_idx = int(idx) - 1
-        st.experimental_rerun()
