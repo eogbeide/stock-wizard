@@ -1,4 +1,4 @@
-# psychology.py — MCQs + Options + Explanations only (no "Correct/Answer" line)
+# psychology.py — MCQs + Options + Explanations only (Passages removed)
 import re
 import base64
 from io import BytesIO
@@ -7,13 +7,12 @@ import requests
 import streamlit as st
 from gtts import gTTS
 
-# --- Safe rerun helper (handles older/newer Streamlit) ---
+# --- Safe rerun helper (for older Streamlit) ---
 def _safe_rerun():
     if hasattr(st, "rerun"):
         st.rerun()
     else:
-        # for older Streamlit versions
-        st.experimental_rerun()  # noqa: F401
+        st.experimental_rerun()
 
 # .docx extraction
 try:
@@ -24,7 +23,7 @@ except Exception:
     DOCX_OK = False
 
 # ---------- App config ----------
-st.set_page_config(page_title="📖 MCQs + Explanations (GitHub → TTS)", page_icon="🎧", layout="wide")
+st.set_page_config(page_title="📖 MCQs + Answers Reader (GitHub → TTS)", page_icon="🎧", layout="wide")
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/psychbooks.docx"
 
 # ---------- Helpers ----------
@@ -179,15 +178,21 @@ def extract_mcqs_no_answer(full_text: str):
     return mcqs
 
 def mcqs_to_pages(mcqs, per_page: int):
+    """
+    Build pages and ensure each page STARTS with 'Multiple Choice Question'.
+    """
     try:
         per_page = int(per_page)
     except Exception:
         per_page = 3
     per_page = max(1, per_page)
+
     pages = []
+    header = "Multiple Choice Question"
     for i in range(0, len(mcqs), per_page):
-        pages.append("\n\n".join(mcqs[i:i+per_page]))
-    return pages or ["No MCQs (with options) found."]
+        body = "\n\n".join(mcqs[i:i+per_page])
+        pages.append(f"{header}\n\n{body}" if body else header)
+    return pages or [f"{header}\n\nNo MCQs (with options) found."]
 
 def tts_mp3(text: str) -> BytesIO:
     step = 4500
@@ -233,21 +238,12 @@ if "pages" not in st.session_state:      st.session_state.pages = []
 if "page_idx" not in st.session_state:   st.session_state.page_idx = 0
 if "playback_rate" not in st.session_state: st.session_state.playback_rate = 2.5
 
-# ---------- Sidebar (page selector lives here) ----------
+# ---------- Sidebar (URL + per-page) ----------
 with st.sidebar:
     url = st.text_input("GitHub RAW file URL", value=DEFAULT_URL)
     mcqs_per_page = st.slider("MCQs per page", 1, 10, 3, 1)
     st.markdown("- Use a **raw** URL (`https://raw.githubusercontent.com/...`). Best with **.docx** or **.txt**.")
     st.divider()
-    total_pages = max(1, len(st.session_state.pages))
-    sel_page = st.number_input(
-        "Go to page #",
-        min_value=1, max_value=total_pages,
-        value=min(st.session_state.page_idx + 1, total_pages), step=1
-    )
-    if st.button("📌 Show page"):
-        st.session_state.page_idx = int(sel_page) - 1
-        _safe_rerun()  # <- FIX: use safe rerun wrapper
 
 # ---------- Load → decode → extract ----------
 if url != st.session_state.loaded_url:
@@ -273,11 +269,31 @@ if url != st.session_state.loaded_url:
         st.session_state.page_idx = 0
         st.session_state.loaded_url = url
 
-        if st.session_state.pages and st.session_state.pages[0].startswith("No MCQs"):
+        if st.session_state.pages and "No MCQs" in st.session_state.pages[0]:
             st.warning("No MCQs with options detected. Ensure questions start with 'Q...' or '1.' and options like 'A) text'.")
     except Exception as e:
         st.error(f"Could not load/parse: {e}")
         st.stop()
+
+# ---------- Sidebar (Dropdown page selector) ----------
+with st.sidebar:
+    # Build nice labels from each page (skip the "Multiple Choice Question" header)
+    def _preview_label(txt: str) -> str:
+        lines = [l.strip() for l in txt.splitlines() if l.strip()]
+        if lines and lines[0].lower().startswith("multiple choice question"):
+            lines = lines[1:]
+        head = lines[0] if lines else "(empty)"
+        if len(head) > 80:
+            head = head[:80] + "…"
+        return head
+
+    if st.session_state.pages:
+        labels = [f"{i+1}. {_preview_label(p)}" for i, p in enumerate(st.session_state.pages)]
+        # keep current page_idx as default index
+        sel_label = st.selectbox("Jump to page", options=labels, index=min(st.session_state.page_idx, len(labels)-1))
+        st.session_state.page_idx = labels.index(sel_label)
+    else:
+        st.selectbox("Jump to page", options=["(no pages yet)"], index=0, disabled=True)
 
 # ---------- TOP: Speed & Play Controls ----------
 st.subheader("Playback speed")
@@ -304,14 +320,14 @@ if st.button("🔊 Generate & Play at selected speed", use_container_width=True)
 
 st.markdown("---")
 
-# ---------- Navigation ----------
+# ---------- Middle pager (optional) ----------
 left, mid, right = st.columns([1, 3, 1])
 with left:
     if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
         st.session_state.page_idx = max(0, st.session_state.page_idx - 1)
 with mid:
     st.markdown(
-        f"<div style='text-align:center;font-weight:600;'>Page {st.session_state.page_idx + 1} / {len(st.session_state.pages)}</div>",
+        f"<div style='text-align:center;font-weight:600;'>Page {min(st.session_state.page_idx + 1, max(1, len(st.session_state.pages)))} / {max(1, len(st.session_state.pages))}</div>",
         unsafe_allow_html=True
     )
 with right:
@@ -326,7 +342,7 @@ st.text_area("MCQs + Options + Explanation (no 'Correct')", page_text, height=48
 st.download_button(
     "⬇️ Download this page (txt)",
     data=(page_text or "").encode("utf-8"),
-    file_name=f"mcqs_page_{st.session_state.page_idx+1}.txt",
+    file_name=f"mcqs_page_{min(st.session_state.page_idx + 1, max(1, len(st.session_state.pages)))}.txt",
     mime="text/plain",
     disabled=not page_text,
 )
