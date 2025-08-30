@@ -1,8 +1,7 @@
-# psychology.py — Question + Referenced Option (from Explanation) + Explanation
+# psychology.py — Question + Referenced Option + Explanation
 # - Passages removed
-# - Sidebar 'select question' control
-# - Robust against None items (fixes TypeError in paginator)
-# - If Explanation mentions a letter (A–H), we print that option text before the Explanation
+# - Sidebar "pick a question"
+# - Fix: avoid st.session_state.items() collision by using 'q_items' + bracket access
 
 import re
 import base64
@@ -72,13 +71,8 @@ EXPL_PAT   = re.compile(r"""^\s*(?:explanation|rationale|why|reason(?:ing)?)\s*[
 PASSAGE_HEADER_PAT   = re.compile(r"^\s*passage(\s*[ivx]+|\s*\d+|\s*[a-z])?\b", re.IGNORECASE)
 QUESTIONS_HEADER_PAT = re.compile(r"^\s*questions?\b", re.IGNORECASE)
 
-# Explanation might say: "Explanation: B is correct..." or "…option (c) …" or "…choice D…"
-EXPL_REF_PAT = re.compile(
-    r"""(?ix)
-    \b(?:option|choice|answer)?\s*       # optional word
-    [\(\[]?\s*([A-H])\s*[\)\]]?\b       # the letter
-    """
-)
+# Explanation might say: "... B is correct ..." or "option (c)" etc.
+EXPL_REF_PAT = re.compile(r"""(?ix)\b(?:option|choice|answer)?\s*[\(\[]?\s*([A-H])\s*[\)\]]?\b""")
 
 def looks_like_question(line: str) -> bool:
     return bool(MCQ_START_PAT.match(line))
@@ -95,16 +89,11 @@ def clean_line(line: str) -> str:
     return re.sub(r"\s+", " ", line).strip()
 
 def remove_passages(full_text: str):
-    """
-    Remove passage blocks. If a line starts with 'Passage...' we skip lines
-    until we hit a question line or a 'Questions' header.
-    """
     lines = [l.rstrip() for l in full_text.split("\n")]
     filtered = []
     in_passage = False
     for raw in lines:
         line = raw.strip()
-
         if PASSAGE_HEADER_PAT.match(line):
             in_passage = True
             continue
@@ -115,15 +104,11 @@ def remove_passages(full_text: str):
                 in_passage = False
             else:
                 continue
-
         filtered.append(raw)
     return filtered
 
-# ---------- Core extraction: Question + referenced Option (from Explanation) + Explanation ----------
+# ---------- Core extraction ----------
 def strip_option_label(line: str) -> tuple[str, str]:
-    """
-    If line is like 'A) text' or 'b. text', return ('A','text'). Otherwise ('', line).
-    """
     m = OPTION_PAT.match(line)
     if not m:
         return "", clean_line(line)
@@ -132,10 +117,6 @@ def strip_option_label(line: str) -> tuple[str, str]:
     return label, text
 
 def resolve_option_from_explanation(expl: str, options: dict) -> tuple[str, str]:
-    """
-    Checks Explanation text for a referenced letter (A–H), returns (label, option_text).
-    If letter not present or no matching option text found, returns ("","").
-    """
     if not expl:
         return "", ""
     m = EXPL_REF_PAT.search(expl)
@@ -148,14 +129,13 @@ def extract_items_q_opt_expl(full_text: str):
     """
     Items contain:
       - Question: <stem>
-      - <Referenced option line> e.g. "B) <full option text>"  (only if Explanation references a letter)
+      - <Referenced option line> e.g. "B) <full option text>" (if Explanation mentions a letter)
       - Explanation: <text> (optional)
     """
     lines = remove_passages(full_text)
-
     items = []
     cur_stem_parts = []
-    cur_options = {}          # {'A': 'text', ...}
+    cur_options = {}
     cur_answer_raw, cur_expl = None, None
     in_mcq = False
     options_started = False
@@ -165,17 +145,12 @@ def extract_items_q_opt_expl(full_text: str):
         stem_text = " ".join([clean_line(s) for s in cur_stem_parts if s is not None]).strip()
         if stem_text:
             block = [f"Question: {stem_text}"]
-            # If explanation references an option letter, print that option line first
             lbl, opt_text = resolve_option_from_explanation(cur_expl or "", cur_options)
             if lbl:
                 block.append(f"{lbl}) {opt_text}" if opt_text else f"{lbl})")
             if cur_expl:
                 block.append(f"Explanation: {cur_expl}")
-            # Keep items that have at least a Question (and optionally the rest)
-            if len(block) >= 1:
-                items.append("\n".join(block).strip())
-
-        # reset
+            items.append("\n".join(block).strip())
         cur_stem_parts = []
         cur_options = {}
         cur_answer_raw, cur_expl = None, None
@@ -186,10 +161,9 @@ def extract_items_q_opt_expl(full_text: str):
         line = raw.strip()
         if not line:
             if in_mcq and cur_stem_parts and not options_started:
-                cur_stem_parts.append("")  # paragraph spacing in stem
+                cur_stem_parts.append("")
             continue
 
-        # New question
         if looks_like_question(line):
             if in_mcq:
                 flush()
@@ -203,7 +177,6 @@ def extract_items_q_opt_expl(full_text: str):
         if not in_mcq:
             continue
 
-        # Option lines (store for later lookup, not shown directly)
         mopt = OPTION_PAT.match(line)
         if mopt:
             options_started = True
@@ -212,19 +185,16 @@ def extract_items_q_opt_expl(full_text: str):
                 cur_options[lbl] = txt
             continue
 
-        # Answer (we don't show it, but we still consume it if present)
         ans = parse_answer(line)
         if ans is not None:
             cur_answer_raw = ans if ans != "" else cur_answer_raw
             continue
 
-        # Explanation (kept)
         expl = parse_expl(line)
         if expl is not None:
             cur_expl = (cur_expl + " " + expl).strip() if cur_expl else expl
             continue
 
-        # Extra prose: join to stem before options; after options, extend explanation if present
         if not options_started:
             cur_stem_parts.append(clean_line(line))
         else:
@@ -236,7 +206,7 @@ def extract_items_q_opt_expl(full_text: str):
 
     return items
 
-# ---------- Pagination (hardened) ----------
+# ---------- Pagination ----------
 def pages_from_items(items, per_page: int):
     if not isinstance(items, (list, tuple)):
         items = []
@@ -246,7 +216,6 @@ def pages_from_items(items, per_page: int):
         per_page = 3
     if per_page < 1:
         per_page = 1
-
     pages = []
     sep = "\n\n"
     for i in range(0, len(items), per_page):
@@ -267,7 +236,6 @@ def tts_mp3(text: str) -> BytesIO:
     return combined
 
 def render_speedy_audio(audio_bytes: BytesIO, rate: float = 2.5, autoplay: bool = False):
-    """Render a custom HTML5 audio player with adjustable playbackRate (default 2.5x)."""
     audio_bytes.seek(0)
     b64 = base64.b64encode(audio_bytes.read()).decode("ascii")
     auto = "autoplay" if autoplay else ""
@@ -293,30 +261,30 @@ def render_speedy_audio(audio_bytes: BytesIO, rate: float = 2.5, autoplay: bool 
 st.title("📖 Question + Referenced Option + Explanation")
 st.caption("Passages are removed. If the Explanation mentions a letter (A–H), that option’s full text is shown before the Explanation.")
 
-# ---------- Session state (hardened defaults) ----------
+# ---------- Session state (use bracket access; avoid '.items' collision) ----------
 if "loaded_url" not in st.session_state:
-    st.session_state.loaded_url = ""
-if "items" not in st.session_state:
-    st.session_state.items = []
+    st.session_state["loaded_url"] = ""
+if "q_items" not in st.session_state:
+    st.session_state["q_items"] = []
 if "pages" not in st.session_state:
-    st.session_state.pages = []
+    st.session_state["pages"] = []
 if "page_idx" not in st.session_state:
-    st.session_state.page_idx = 0
+    st.session_state["page_idx"] = 0
 if "playback_rate" not in st.session_state:
-    st.session_state.playback_rate = 2.5
+    st.session_state["playback_rate"] = 2.5
 if "per_page" not in st.session_state:
-    st.session_state.per_page = 3
+    st.session_state["per_page"] = 3
 if "selected_question_idx" not in st.session_state:
-    st.session_state.selected_question_idx = 0
+    st.session_state["selected_question_idx"] = 0
 
 # ---------- Sidebar ----------
 with st.sidebar:
     url = st.text_input("GitHub RAW file URL", value=DEFAULT_URL)
-    per_page = st.slider("Items per page", 1, 10, st.session_state.per_page, 1)
+    per_page = st.slider("Items per page", 1, 10, st.session_state["per_page"], 1)
     st.markdown("- Use a **raw** URL (`https://raw.githubusercontent.com/...`). Best with **.docx** or **.txt**.")
 
 # ---------- Load → decode → extract ----------
-need_parse = (url != st.session_state.loaded_url)
+need_parse = (url != st.session_state["loaded_url"])
 if need_parse:
     try:
         with st.spinner("Fetching file..."):
@@ -336,57 +304,57 @@ if need_parse:
             full_text = normalize_text(best_effort_bytes_to_text(data))
 
         items = extract_items_q_opt_expl(full_text)
-        st.session_state.items = items or []
-        st.session_state.loaded_url = url
-        st.session_state.page_idx = 0
+        st.session_state["q_items"] = items or []
+        st.session_state["loaded_url"] = url
+        st.session_state["page_idx"] = 0
     except Exception as e:
-        st.session_state.items = []
+        st.session_state["q_items"] = []
         st.error(f"Could not load/parse: {e}")
         st.stop()
 
 # Build pages safely every time
-st.session_state.per_page = int(per_page) if per_page else 3
-st.session_state.pages = pages_from_items(st.session_state.items, st.session_state.per_page)
+st.session_state["per_page"] = int(per_page) if per_page else 3
+st.session_state["pages"] = pages_from_items(st.session_state["q_items"], st.session_state["per_page"])
 
 # ---------- Sidebar: question selector ----------
 def _shorten(s: str, n: int = 80) -> str:
-    s = s.splitlines()[0] if s else ""
+    s = (s or "").splitlines()[0]
     s = s.replace("Question:", "").strip()
     return (s[: n - 1] + "…") if len(s) > n else s
 
 with st.sidebar:
-    if st.session_state.items:
-        labels = [f"{i+1}. {_shorten(it)}" for i, it in enumerate(st.session_state.items)]
-        st.session_state.selected_question_idx = st.selectbox(
+    if st.session_state["q_items"]:
+        labels = [f"{i+1}. {_shorten(it)}" for i, it in enumerate(st.session_state["q_items"])]
+        st.session_state["selected_question_idx"] = st.selectbox(
             "Pick a specific question",
             options=list(range(len(labels))),
             format_func=lambda i: labels[i],
-            index=min(st.session_state.selected_question_idx, max(0, len(labels)-1))
+            index=min(st.session_state["selected_question_idx"], max(0, len(labels)-1))
         )
         if st.button("📌 Show selected question"):
-            target_q = int(st.session_state.selected_question_idx)
-            st.session_state.page_idx = target_q // max(1, st.session_state.per_page)
+            target_q = int(st.session_state["selected_question_idx"])
+            st.session_state["page_idx"] = target_q // max(1, st.session_state["per_page"])
 
 # ---------- TOP: Speed & Play Controls ----------
 st.subheader("Playback speed")
 c1, c2, c3, c4, c5, c6 = st.columns(6)
-if c1.button("1.0×"): st.session_state.playback_rate = 1.0
-if c2.button("1.5×"): st.session_state.playback_rate = 1.5
-if c3.button("2.0×"): st.session_state.playback_rate = 2.0
-if c4.button("2.5× (default)"): st.session_state.playback_rate = 2.5
-if c5.button("3.0×"): st.session_state.playback_rate = 3.0
-if c6.button("0.75×"): st.session_state.playback_rate = 0.75
-st.caption(f"Current speed: **{st.session_state.playback_rate}×**")
+if c1.button("1.0×"): st.session_state["playback_rate"] = 1.0
+if c2.button("1.5×"): st.session_state["playback_rate"] = 1.5
+if c3.button("2.0×"): st.session_state["playback_rate"] = 2.0
+if c4.button("2.5× (default)"): st.session_state["playback_rate"] = 2.5
+if c5.button("3.0×"): st.session_state["playback_rate"] = 3.0
+if c6.button("0.75×"): st.session_state["playback_rate"] = 0.75
+st.caption(f"Current speed: **{st.session_state['playback_rate']}×**")
 
 if st.button("🔊 Generate & Play at selected speed", use_container_width=True):
     try:
-        page_text_top = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
+        page_text_top = st.session_state["pages"][st.session_state["page_idx"]] if st.session_state["pages"] else ""
         if not page_text_top:
             st.warning("Nothing to read on this page.")
         else:
             with st.spinner("Generating audio..."):
                 audio_buf = tts_mp3(page_text_top)
-            render_speedy_audio(audio_buf, rate=st.session_state.playback_rate, autoplay=True)
+            render_speedy_audio(audio_buf, rate=st.session_state["playback_rate"], autoplay=True)
     except Exception as e:
         st.error(f"TTS failed: {e}")
 
@@ -395,40 +363,40 @@ st.markdown("---")
 # ---------- Navigation ----------
 left, mid, right = st.columns([1, 3, 1])
 with left:
-    if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
-        st.session_state.page_idx = max(0, st.session_state.page_idx - 1)
+    if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state["page_idx"] == 0):
+        st.session_state["page_idx"] = max(0, st.session_state["page_idx"] - 1)
 with mid:
     st.markdown(
-        f"<div style='text-align:center;font-weight:600;'>Page {st.session_state.page_idx + 1} / {len(st.session_state.pages)}</div>",
+        f"<div style='text-align:center;font-weight:600;'>Page {st.session_state['page_idx'] + 1} / {len(st.session_state['pages'])}</div>",
         unsafe_allow_html=True
     )
 with right:
-    if st.button("Next ➡️", use_container_width=True, disabled=st.session_state.page_idx >= len(st.session_state.pages) - 1):
-        st.session_state.page_idx = min(len(st.session_state.pages) - 1, st.session_state.page_idx + 1)
+    if st.button("Next ➡️", use_container_width=True, disabled=st.session_state["page_idx"] >= len(st.session_state["pages"]) - 1):
+        st.session_state["page_idx"] = min(len(st.session_state["pages"]) - 1, st.session_state["page_idx"] + 1)
 
 # ---------- Current page ----------
-page_text = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
+page_text = st.session_state["pages"][st.session_state["page_idx"]] if st.session_state["pages"] else ""
 st.text_area("Question + Referenced Option + Explanation", page_text, height=520)
 
 # ---------- Download ----------
 st.download_button(
     "⬇️ Download this page (txt)",
     data=(page_text or "").encode("utf-8"),
-    file_name=f"qoe_page_{st.session_state.page_idx+1}.txt",
+    file_name=f"qoe_page_{st.session_state['page_idx']+1}.txt",
     mime="text/plain",
     disabled=not page_text,
 )
 
 # ---------- Jump ----------
 with st.expander("Jump to page"):
-    total = max(1, len(st.session_state.pages))
+    total = max(1, len(st.session_state["pages"]))
     idx = st.number_input(
         "Go to page #",
         min_value=1,
         max_value=total,
-        value=min(st.session_state.page_idx + 1, total),
+        value=min(st.session_state["page_idx"] + 1, total),
         step=1
     )
     if st.button("Go"):
-        st.session_state.page_idx = int(idx) - 1
+        st.session_state["page_idx"] = int(idx) - 1
         st.experimental_rerun()
