@@ -7,6 +7,14 @@ import requests
 import streamlit as st
 from gtts import gTTS
 
+# --- Safe rerun helper (handles older/newer Streamlit) ---
+def _safe_rerun():
+    if hasattr(st, "rerun"):
+        st.rerun()
+    else:
+        # for older Streamlit versions
+        st.experimental_rerun()  # noqa: F401
+
 # .docx extraction
 try:
     from docx import Document
@@ -164,7 +172,6 @@ def extract_mcqs_no_answer(full_text: str):
         if not options_started:
             cur_stem.append(clean_line(line))
         else:
-            # After options, extra prose becomes part of explanation
             cur_expl = (cur_expl + " " + clean_line(line)).strip() if cur_expl else clean_line(line)
 
     if in_mcq:
@@ -232,13 +239,15 @@ with st.sidebar:
     mcqs_per_page = st.slider("MCQs per page", 1, 10, 3, 1)
     st.markdown("- Use a **raw** URL (`https://raw.githubusercontent.com/...`). Best with **.docx** or **.txt**.")
     st.divider()
-    # NEW: Sidebar page selector
     total_pages = max(1, len(st.session_state.pages))
-    sel_page = st.number_input("Go to page #", min_value=1, max_value=total_pages,
-                               value=min(st.session_state.page_idx + 1, total_pages), step=1)
+    sel_page = st.number_input(
+        "Go to page #",
+        min_value=1, max_value=total_pages,
+        value=min(st.session_state.page_idx + 1, total_pages), step=1
+    )
     if st.button("📌 Show page"):
         st.session_state.page_idx = int(sel_page) - 1
-        st.experimental_rerun()
+        _safe_rerun()  # <- FIX: use safe rerun wrapper
 
 # ---------- Load → decode → extract ----------
 if url != st.session_state.loaded_url:
