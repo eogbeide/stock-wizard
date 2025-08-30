@@ -1,4 +1,4 @@
-# psychology.py — Question + Correct Option + Explanation (Passages removed)
+# psychology.py — Question + Explanation only (Passages removed) + Sidebar question selector
 import re
 import base64
 from io import BytesIO
@@ -16,7 +16,7 @@ except Exception:
     DOCX_OK = False
 
 # ---------- App config ----------
-st.set_page_config(page_title="📖 Q + Correct Option + Explanation (GitHub → TTS)", page_icon="🎧", layout="wide")
+st.set_page_config(page_title="📖 Question + Explanation (GitHub → TTS)", page_icon="🎧", layout="wide")
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/psychbooks.docx"
 
 # ---------- Helpers ----------
@@ -106,14 +106,11 @@ def remove_passages(full_text: str):
         filtered.append(raw)
     return filtered
 
-# ---------- Core extraction: Question + Correct Option text + Explanation ----------
+# ---------- Core extraction: Question + Explanation (no Correct Option in output) ----------
 LETTER_ONLY = re.compile(r"\b([A-Ha-h])\b")
 LETTER_PARENS = re.compile(r"^\s*[\(\[]?([A-Ha-h])[\)\]]?\s*$")
 
 def strip_option_label(line: str) -> tuple[str, str]:
-    """
-    If line is like 'A) text' or 'b. text', return ('A','text'). Otherwise ('', line).
-    """
     m = OPTION_PAT.match(line)
     if not m:
         return "", clean_line(line)
@@ -121,62 +118,33 @@ def strip_option_label(line: str) -> tuple[str, str]:
     text = clean_line(line[m.end():])
     return label, text
 
-def resolve_correct_option(answer_raw: str, options: dict) -> tuple[str, str]:
-    """
-    From 'answer_raw' try to resolve the letter and fetch its option text.
-    Returns (label, text). If not found, returns ("", answer_raw_text_or_blank).
-    """
-    if not answer_raw:
-        return "", ""
-    # Try compact patterns like 'C' or '(c)'
-    m = LETTER_ONLY.search(answer_raw) or LETTER_PARENS.match(answer_raw)
-    if m:
-        lbl = m.group(1).upper()
-        if lbl in options:
-            return lbl, options[lbl]
-        return lbl, ""  # letter present but not in parsed options
-    # If no clear letter, fall back to raw text (rare format)
-    return "", answer_raw.strip()
-
-def extract_q_correct_expl(full_text: str):
+def extract_q_expl_only(full_text: str):
     """
     Items contain:
       - Question: <stem>
-      - Correct Option: <Letter>) <Option text>   (or raw answer text if letter not found)
       - Explanation: <text> (optional)
+    Options/answers are parsed to help capture explanations, but NOT shown.
     """
     lines = remove_passages(full_text)
 
     items = []
     cur_stem_parts = []
-    cur_options = {}  # {'A': 'text', ...}
     cur_answer_raw, cur_expl = None, None
     in_mcq = False
     options_started = False
 
     def flush():
-        nonlocal cur_stem_parts, cur_options, cur_answer_raw, cur_expl, in_mcq, options_started
+        nonlocal cur_stem_parts, cur_answer_raw, cur_expl, in_mcq, options_started
         stem_text = " ".join([clean_line(s) for s in cur_stem_parts if s is not None]).strip()
         if stem_text:
-            # resolve correct
-            lbl, opt_text = resolve_correct_option(cur_answer_raw or "", cur_options)
             block = [f"Question: {stem_text}"]
-            if lbl:
-                if opt_text:
-                    block.append(f"Correct Option: {lbl}) {opt_text}")
-                else:
-                    block.append(f"Correct Option: {lbl}")
-            elif cur_answer_raw:
-                block.append(f"Correct Option: {cur_answer_raw}")
             if cur_expl:
                 block.append(f"Explanation: {cur_expl}")
-            # Only keep items with a Correct Option or an Explanation
-            if len(block) > 1:
+            # keep items that have at least a Question (and optionally Explanation)
+            if len(block) >= 1:
                 items.append("\n".join(block).strip())
 
-        # reset
         cur_stem_parts = []
-        cur_options = {}
         cur_answer_raw, cur_expl = None, None
         in_mcq = False
         options_started = False
@@ -185,7 +153,7 @@ def extract_q_correct_expl(full_text: str):
         line = raw.strip()
         if not line:
             if in_mcq and cur_stem_parts and not options_started:
-                cur_stem_parts.append("")  # keep paragraph spacing in stem
+                cur_stem_parts.append("")  # preserve paragraph spacing
             continue
 
         # New question
@@ -195,38 +163,36 @@ def extract_q_correct_expl(full_text: str):
             in_mcq = True
             options_started = False
             cur_stem_parts = [clean_line(line)]
-            cur_options = {}
             cur_answer_raw, cur_expl = None, None
             continue
 
         if not in_mcq:
             continue
 
-        # Option?
-        mopt = OPTION_PAT.match(line)
-        if mopt:
+        # Option? (ignored in output)
+        if OPTION_PAT.match(line):
             options_started = True
-            lbl, txt = strip_option_label(line)
-            if lbl:
-                cur_options[lbl] = txt
+            # we still parse/consume, but don't store
+            _lbl, _txt = strip_option_label(line)
             continue
 
-        # Answer?
+        # Answer? (ignored in output)
         ans = parse_answer(line)
         if ans is not None:
             cur_answer_raw = ans if ans != "" else cur_answer_raw
             continue
 
-        # Explanation?
+        # Explanation? (kept)
         expl = parse_expl(line)
         if expl is not None:
             cur_expl = (cur_expl + " " + expl).strip() if cur_expl else expl
             continue
 
-        # Extra prose: if before options -> part of stem; after -> extend explanation if present
+        # Extra prose
         if not options_started:
             cur_stem_parts.append(clean_line(line))
         else:
+            # after options, treat extra prose as extension of explanation if present
             if (cur_answer_raw is not None) or (cur_expl is not None):
                 cur_expl = (cur_expl + " " + clean_line(line)).strip() if cur_expl else clean_line(line)
 
@@ -240,7 +206,7 @@ def pages_from_items(items, per_page: int):
     sep = "\n\n"
     for i in range(0, len(items), per_page):
         pages.append(sep.join(items[i:i+per_page]))
-    return pages or ["No Questions with correct option found."]
+    return pages or ["No Questions found."]
 
 def tts_mp3(text: str) -> BytesIO:
     step = 4500
@@ -277,28 +243,35 @@ def render_speedy_audio(audio_bytes: BytesIO, rate: float = 2.5, autoplay: bool 
         height=80,
     )
 
-# ---------- UI (Top Controls First) ----------
-st.title("📖 Question + Correct Option + Explanation")
-st.caption("Passages are removed. Options are parsed, and only the **correct option** is shown with each question.")
+# ---------- UI ----------
+st.title("📖 Question + Explanation")
+st.caption("Passages and options are removed from the display. Shows only the Question and its Explanation.")
 
 # ---------- Session state ----------
 if "loaded_url" not in st.session_state:
     st.session_state.loaded_url = ""
+if "items" not in st.session_state:
+    st.session_state.items = []          # individual questions
 if "pages" not in st.session_state:
-    st.session_state.pages = []
+    st.session_state.pages = []          # paginated view
 if "page_idx" not in st.session_state:
     st.session_state.page_idx = 0
 if "playback_rate" not in st.session_state:
-    st.session_state.playback_rate = 2.5  # default 2.5×
+    st.session_state.playback_rate = 2.5
+if "per_page" not in st.session_state:
+    st.session_state.per_page = 3
+if "selected_question_idx" not in st.session_state:
+    st.session_state.selected_question_idx = 0
 
-# ---------- Sidebar ----------
+# ---------- Sidebar (top controls) ----------
 with st.sidebar:
     url = st.text_input("GitHub RAW file URL", value=DEFAULT_URL)
-    per_page = st.slider("Items per page", 1, 10, 3, 1)
+    per_page = st.slider("Items per page", 1, 10, st.session_state.per_page, 1)
     st.markdown("- Use a **raw** URL (`https://raw.githubusercontent.com/...`). Best with **.docx** or **.txt**.")
 
 # ---------- Load → decode → extract ----------
-if url != st.session_state.loaded_url:
+need_parse = (url != st.session_state.loaded_url)
+if need_parse:
     try:
         with st.spinner("Fetching file..."):
             data = fetch_bytes(url)
@@ -316,18 +289,38 @@ if url != st.session_state.loaded_url:
         else:
             full_text = normalize_text(best_effort_bytes_to_text(data))
 
-        items = extract_q_correct_expl(full_text)
-        pages = pages_from_items(items, per_page)
-
-        st.session_state.pages = pages
-        st.session_state.page_idx = 0
+        items = extract_q_expl_only(full_text)
+        st.session_state.items = items
         st.session_state.loaded_url = url
-
-        if pages and pages[0].startswith("No Questions with correct option"):
-            st.warning("No questions with answers detected. Ensure options are labeled like 'A) text' and answers contain a letter (e.g., 'Answer: C').")
+        # reset paging to start
+        st.session_state.page_idx = 0
     except Exception as e:
         st.error(f"Could not load/parse: {e}")
         st.stop()
+
+# Always (re)build pages from items & current per_page
+st.session_state.per_page = per_page
+st.session_state.pages = pages_from_items(st.session_state.items, st.session_state.per_page)
+
+# ---------- Sidebar (question selector) ----------
+def _shorten(s: str, n: int = 80) -> str:
+    s = s.splitlines()[0] if s else ""
+    s = s.replace("Question:", "").strip()
+    return (s[: n - 1] + "…") if len(s) > n else s
+
+with st.sidebar:
+    if st.session_state.items:
+        labels = [f"{i+1}. {_shorten(it)}" for i, it in enumerate(st.session_state.items)]
+        st.session_state.selected_question_idx = st.selectbox(
+            "Pick a specific question",
+            options=list(range(len(labels))),
+            format_func=lambda i: labels[i],
+            index=min(st.session_state.selected_question_idx, max(0, len(labels)-1))
+        )
+        if st.button("📌 Show selected question"):
+            # compute the page that contains this question
+            target_q = st.session_state.selected_question_idx
+            st.session_state.page_idx = target_q // st.session_state.per_page
 
 # ---------- TOP: Speed & Play Controls ----------
 st.subheader("Playback speed")
@@ -370,13 +363,13 @@ with right:
 
 # ---------- Current page ----------
 page_text = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
-st.text_area("Question + Correct Option + Explanation", page_text, height=520)
+st.text_area("Question + Explanation", page_text, height=520)
 
 # ---------- Download ----------
 st.download_button(
     "⬇️ Download this page (txt)",
     data=(page_text or "").encode("utf-8"),
-    file_name=f"qce_page_{st.session_state.page_idx+1}.txt",
+    file_name=f"qe_page_{st.session_state.page_idx+1}.txt",
     mime="text/plain",
     disabled=not page_text,
 )
