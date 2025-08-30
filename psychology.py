@@ -124,7 +124,7 @@ def strip_option_label(line: str) -> tuple[str, str]:
 def resolve_correct_option(answer_raw: str, options: dict) -> tuple[str, str]:
     """
     From 'answer_raw' try to resolve the letter and fetch its option text.
-    Returns (label, text). If not found, returns ("", answer_raw).
+    Returns (label, text). If not found, returns ("", answer_raw_text_or_blank).
     """
     if not answer_raw:
         return "", ""
@@ -134,15 +134,15 @@ def resolve_correct_option(answer_raw: str, options: dict) -> tuple[str, str]:
         lbl = m.group(1).upper()
         if lbl in options:
             return lbl, options[lbl]
-        return lbl, ""  # letter present but not found in options
-    # If no clear letter, fall back to raw
+        return lbl, ""  # letter present but not in parsed options
+    # If no clear letter, fall back to raw text (rare format)
     return "", answer_raw.strip()
 
 def extract_q_correct_expl(full_text: str):
     """
     Items contain:
       - Question: <stem>
-      - Correct: <Letter>) <Option text>   (or just the raw answer if no letter found)
+      - Correct Option: <Letter>) <Option text>   (or raw answer text if letter not found)
       - Explanation: <text> (optional)
     """
     lines = remove_passages(full_text)
@@ -163,14 +163,14 @@ def extract_q_correct_expl(full_text: str):
             block = [f"Question: {stem_text}"]
             if lbl:
                 if opt_text:
-                    block.append(f"Correct: {lbl}) {opt_text}")
+                    block.append(f"Correct Option: {lbl}) {opt_text}")
                 else:
-                    block.append(f"Correct: {lbl}")
+                    block.append(f"Correct Option: {lbl}")
             elif cur_answer_raw:
-                block.append(f"Correct: {cur_answer_raw}")
+                block.append(f"Correct Option: {cur_answer_raw}")
             if cur_expl:
                 block.append(f"Explanation: {cur_expl}")
-            # Only keep items with a Correct or an Explanation
+            # Only keep items with a Correct Option or an Explanation
             if len(block) > 1:
                 items.append("\n".join(block).strip())
 
@@ -376,7 +376,7 @@ st.text_area("Question + Correct Option + Explanation", page_text, height=520)
 st.download_button(
     "⬇️ Download this page (txt)",
     data=(page_text or "").encode("utf-8"),
-    file_name=f"qa_page_{st.session_state.page_idx+1}.txt",
+    file_name=f"qce_page_{st.session_state.page_idx+1}.txt",
     mime="text/plain",
     disabled=not page_text,
 )
