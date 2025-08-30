@@ -203,7 +203,6 @@ def render_speedy_audio(audio_bytes: BytesIO, rate: float = 2.5, autoplay: bool 
     audio_bytes.seek(0)
     b64 = base64.b64encode(audio_bytes.read()).decode("ascii")
     auto = "autoplay" if autoplay else ""
-    # Use a deterministic element id so JS can set playback speed
     elem_id = "tts_player"
     st.components.v1.html(
         f"""
@@ -222,14 +221,9 @@ def render_speedy_audio(audio_bytes: BytesIO, rate: float = 2.5, autoplay: bool 
         height=80,
     )
 
-# ---------- UI ----------
+# ---------- UI (Top Controls First) ----------
 st.title("📖 MCQs + Answers Reader (Passages removed)")
 st.caption("Reads only Multiple-Choice Questions, Options, Answers, and Explanations — no passages.")
-
-with st.sidebar:
-    url = st.text_input("GitHub RAW file URL", value=DEFAULT_URL)
-    mcqs_per_page = st.slider("MCQs per page", 1, 10, 3, 1)
-    st.markdown("- Use a **raw** URL (`https://raw.githubusercontent.com/...`). Best with **.docx** or **.txt**.")
 
 # ---------- Session state ----------
 if "loaded_url" not in st.session_state:
@@ -241,6 +235,12 @@ if "page_idx" not in st.session_state:
 # default playback speed = 2.5x
 if "playback_rate" not in st.session_state:
     st.session_state.playback_rate = 2.5
+
+# ---------- Sidebar ----------
+with st.sidebar:
+    url = st.text_input("GitHub RAW file URL", value=DEFAULT_URL)
+    mcqs_per_page = st.slider("MCQs per page", 1, 10, 3, 1)
+    st.markdown("- Use a **raw** URL (`https://raw.githubusercontent.com/...`). Best with **.docx** or **.txt**.")
 
 # ---------- Load → decode → extract ----------
 if url != st.session_state.loaded_url:
@@ -274,6 +274,32 @@ if url != st.session_state.loaded_url:
         st.error(f"Could not load/parse: {e}")
         st.stop()
 
+# ---------- TOP: Speed & Play Controls ----------
+st.subheader("Playback speed")
+c1, c2, c3, c4, c5, c6 = st.columns(6)
+if c1.button("1.0×"): st.session_state.playback_rate = 1.0
+if c2.button("1.5×"): st.session_state.playback_rate = 1.5
+if c3.button("2.0×"): st.session_state.playback_rate = 2.0
+if c4.button("2.5× (default)"): st.session_state.playback_rate = 2.5
+if c5.button("3.0×"): st.session_state.playback_rate = 3.0
+if c6.button("0.75×"): st.session_state.playback_rate = 0.75
+st.caption(f"Current speed: **{st.session_state.playback_rate}×**")
+
+# Generate & Play sits at the top now
+if st.button("🔊 Generate & Play at selected speed", use_container_width=True):
+    try:
+        page_text_top = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
+        if not page_text_top:
+            st.warning("Nothing to read on this page.")
+        else:
+            with st.spinner("Generating audio..."):
+                audio_buf = tts_mp3(page_text_top)
+            render_speedy_audio(audio_buf, rate=st.session_state.playback_rate, autoplay=True)
+    except Exception as e:
+        st.error(f"TTS failed: {e}")
+
+st.markdown("---")
+
 # ---------- Navigation ----------
 left, mid, right = st.columns([1, 3, 1])
 with left:
@@ -289,47 +315,26 @@ with right:
         st.session_state.page_idx = min(len(st.session_state.pages) - 1, st.session_state.page_idx + 1)
 
 # ---------- Current page ----------
-page_text = st.session_state.pages[st.session_state.page_idx]
+page_text = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
 st.text_area("MCQs + Answers (no passage)", page_text, height=480)
 
-# ---------- Speed controls ----------
-st.subheader("Playback speed")
-c1, c2, c3, c4, c5, c6 = st.columns(6)
-if c1.button("1.0×"): st.session_state.playback_rate = 1.0
-if c2.button("1.5×"): st.session_state.playback_rate = 1.5
-if c3.button("2.0×"): st.session_state.playback_rate = 2.0
-if c4.button("2.5× (default)"): st.session_state.playback_rate = 2.5
-if c5.button("3.0×"): st.session_state.playback_rate = 3.0
-if c6.button("0.75×"): st.session_state.playback_rate = 0.75
-st.caption(f"Current speed: **{st.session_state.playback_rate}×**")
-
-# ---------- Audio render (with speed) ----------
-col_play, col_dl = st.columns([2, 1])
-with col_play:
-    if st.button("🔊 Generate & Play at selected speed"):
-        try:
-            with st.spinner("Generating audio..."):
-                audio_buf = tts_mp3(page_text)
-            # Play via custom HTML so we can set playbackRate
-            render_speedy_audio(audio_buf, rate=st.session_state.playback_rate, autoplay=True)
-        except Exception as e:
-            st.error(f"TTS failed: {e}")
-
-with col_dl:
-    st.download_button(
-        "⬇️ Download this page (txt)",
-        data=page_text.encode("utf-8"),
-        file_name=f"mcqs_page_{st.session_state.page_idx+1}.txt",
-        mime="text/plain",
-    )
+# ---------- Download ----------
+st.download_button(
+    "⬇️ Download this page (txt)",
+    data=(page_text or "").encode("utf-8"),
+    file_name=f"mcqs_page_{st.session_state.page_idx+1}.txt",
+    mime="text/plain",
+    disabled=not page_text,
+)
 
 # ---------- Jump ----------
 with st.expander("Jump to page"):
+    total = max(1, len(st.session_state.pages))
     idx = st.number_input(
         "Go to page #",
         min_value=1,
-        max_value=len(st.session_state.pages),
-        value=st.session_state.page_idx + 1,
+        max_value=total,
+        value=min(st.session_state.page_idx + 1, total),
         step=1
     )
     if st.button("Go"):
