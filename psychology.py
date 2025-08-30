@@ -16,7 +16,7 @@ except Exception:
     DOCX_OK = False
 
 # ---------- App config ----------
-st.set_page_config(page_title="📖 Questions + Explanations (GitHub → TTS)", page_icon="🎧", layout="wide")
+st.set_page_config(page_title="📖 Multiple Choice Questions (Q + Explanation)", page_icon="🎧", layout="wide")
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/psychbooks.docx"
 
 # ---------- Helpers ----------
@@ -180,9 +180,22 @@ def extract_q_expl_only(full_text: str):
 
     return items
 
+def _number_block(block: str, n: int) -> str:
+    """
+    Prefix only the first line of a block with 'n) ', keep following lines intact.
+    """
+    lines = block.splitlines()
+    if not lines:
+        return f"{n})"
+    lines[0] = f"{n}) {lines[0]}"
+    return "\n".join(lines)
+
 def pages_from_items(items, per_page: int):
     """
-    Build pages and ensure each page STARTS with 'Multiple Choice Question'.
+    Build pages. Each page:
+      - Starts with 'Multiple Choice Questions'
+      - Lists exactly per_page items (or fewer on the last page)
+      - Numbers items locally as 1), 2), 3) ...
     """
     try:
         per_page = int(per_page)
@@ -190,10 +203,12 @@ def pages_from_items(items, per_page: int):
         per_page = 3
     per_page = max(1, per_page)
 
+    header = "Multiple Choice Questions"
     pages = []
-    header = "Multiple Choice Question"
     for i in range(0, len(items), per_page):
-        body = "\n\n".join(items[i:i+per_page])
+        chunk = items[i:i+per_page]
+        numbered = [_number_block(b, j+1) for j, b in enumerate(chunk)]
+        body = "\n\n".join(numbered)
         pages.append(f"{header}\n\n{body}" if body else header)
     return pages or [f"{header}\n\nNo questions found."]
 
@@ -233,8 +248,8 @@ def render_speedy_audio(audio_bytes: BytesIO, rate: float = 2.5, autoplay: bool 
     )
 
 # ---------- UI ----------
-st.title("📖 Questions + Explanations (No Options)")
-st.caption("Passages and options are removed. Each item shows only the Question and (if present) the Explanation.")
+st.title("📖 Multiple Choice Questions (Question + Explanation)")
+st.caption("Passages and options are removed. Each page shows **Questions 1, 2, 3** (or per your per-page setting).")
 
 # ---------- Session state ----------
 if "loaded_url" not in st.session_state: st.session_state.loaded_url = ""
@@ -246,7 +261,7 @@ if "per_page" not in st.session_state:   st.session_state.per_page = 3
 # ---------- Sidebar ----------
 with st.sidebar:
     url = st.text_input("GitHub RAW file URL", value=DEFAULT_URL)
-    st.session_state.per_page = st.slider("Items per page", 1, 10, st.session_state.per_page, 1)
+    st.session_state.per_page = st.slider("Questions per page", 1, 10, st.session_state.per_page, 1)
     st.markdown("- Use a **raw** URL (`https://raw.githubusercontent.com/...`). Best with **.docx** or **.txt**.")
     st.divider()
 
@@ -284,17 +299,24 @@ if url != st.session_state.loaded_url:
 with st.sidebar:
     def _preview_label(txt: str) -> str:
         lines = [l.strip() for l in txt.splitlines() if l.strip()]
-        if lines and lines[0].lower().startswith("multiple choice question"):
+        if lines and lines[0].lower().startswith("multiple choice questions"):
             lines = lines[1:]
-        head = lines[0] if lines else "(empty)"
-        if head.lower().startswith("question:"):
-            head = head[len("question:"):].strip()
+        # find first 'Question:' line for preview
+        head = ""
+        for ln in lines:
+            if ln.lower().startswith("1) "):
+                # local numbering line; strip number to preview
+                ln = ln[3:].strip()
+            if ln.lower().startswith("question:"):
+                head = ln[len("question:"):].strip()
+                break
+        if not head and lines:
+            head = lines[0]
         if len(head) > 80:
             head = head[:80] + "…"
-        return head
-
+        return head or "(empty)"
     if st.session_state.pages:
-        labels = [f"{i+1}. {_preview_label(p)}" for i, p in enumerate(st.session_state.pages)]
+        labels = [f"Page {i+1}: {_preview_label(p)}" for i, p in enumerate(st.session_state.pages)]
         sel = st.selectbox("Jump to page", options=labels, index=min(st.session_state.page_idx, len(labels)-1))
         st.session_state.page_idx = labels.index(sel)
     else:
@@ -341,13 +363,13 @@ with right:
 
 # ---------- Current page ----------
 page_text = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
-st.text_area("Questions + Explanations (no options)", page_text, height=520)
+st.text_area("Multiple Choice Questions — Questions + Explanations", page_text, height=520)
 
 # ---------- Download ----------
 st.download_button(
     "⬇️ Download this page (txt)",
     data=(page_text or "").encode("utf-8"),
-    file_name=f"qe_page_{min(st.session_state.page_idx + 1, max(1, len(st.session_state.pages)))}.txt",
+    file_name=f"mcq_page_{min(st.session_state.page_idx + 1, max(1, len(st.session_state.pages)))}.txt",
     mime="text/plain",
     disabled=not page_text,
 )
