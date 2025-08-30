@@ -1,4 +1,4 @@
-# psychology.py — Questions + Answers + Explanations only (Passages & Options removed)
+# psychology.py — Question + Correct Option + Explanation (Passages removed)
 import re
 import base64
 from io import BytesIO
@@ -16,7 +16,7 @@ except Exception:
     DOCX_OK = False
 
 # ---------- App config ----------
-st.set_page_config(page_title="📖 Q+A+Explanation Reader (GitHub → TTS)", page_icon="🎧", layout="wide")
+st.set_page_config(page_title="📖 Q + Correct Option + Explanation (GitHub → TTS)", page_icon="🎧", layout="wide")
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/psychbooks.docx"
 
 # ---------- Helpers ----------
@@ -60,7 +60,7 @@ MCQ_START_PAT = re.compile(
         )""",
     re.IGNORECASE | re.VERBOSE,
 )
-OPTION_PAT = re.compile(r"""^\s*([A-Ha-h])\s*[\).:,-]\s+""", re.VERBOSE)  # will be ignored
+OPTION_PAT = re.compile(r"""^\s*([A-Ha-h])\s*[\).:,-]\s+""", re.VERBOSE)
 ANSWER_PAT = re.compile(r"""^\s*(?:answer|answers?|ans|correct\s*answer|key|solution)\s*[:\-]?\s*(.*)""", re.IGNORECASE)
 EXPL_PAT   = re.compile(r"""^\s*(?:explanation|rationale|why|reason(?:ing)?)\s*[:\-]?\s*(.*)""", re.IGNORECASE)
 
@@ -81,7 +81,7 @@ def parse_expl(line: str):
 def clean_line(line: str) -> str:
     return re.sub(r"\s+", " ", line).strip()
 
-def remove_passages(full_text: str) -> list[str]:
+def remove_passages(full_text: str):
     """
     Remove passage blocks. If a line starts with 'Passage...' we skip lines
     until we hit a question line or a 'Questions' header.
@@ -106,82 +106,128 @@ def remove_passages(full_text: str) -> list[str]:
         filtered.append(raw)
     return filtered
 
-def extract_qae_only(full_text: str):
+# ---------- Core extraction: Question + Correct Option text + Explanation ----------
+LETTER_ONLY = re.compile(r"\b([A-Ha-h])\b")
+LETTER_PARENS = re.compile(r"^\s*[\(\[]?([A-Ha-h])[\)\]]?\s*$")
+
+def strip_option_label(line: str) -> tuple[str, str]:
     """
-    Build items with ONLY:
-      - Question (stem text)
-      - Answer
-      - Explanation (optional)
-    Options are ignored/omitted entirely. Passages already removed.
+    If line is like 'A) text' or 'b. text', return ('A','text'). Otherwise ('', line).
+    """
+    m = OPTION_PAT.match(line)
+    if not m:
+        return "", clean_line(line)
+    label = m.group(1).upper()
+    text = clean_line(line[m.end():])
+    return label, text
+
+def resolve_correct_option(answer_raw: str, options: dict) -> tuple[str, str]:
+    """
+    From 'answer_raw' try to resolve the letter and fetch its option text.
+    Returns (label, text). If not found, returns ("", answer_raw).
+    """
+    if not answer_raw:
+        return "", ""
+    # Try compact patterns like 'C' or '(c)'
+    m = LETTER_ONLY.search(answer_raw) or LETTER_PARENS.match(answer_raw)
+    if m:
+        lbl = m.group(1).upper()
+        if lbl in options:
+            return lbl, options[lbl]
+        return lbl, ""  # letter present but not found in options
+    # If no clear letter, fall back to raw
+    return "", answer_raw.strip()
+
+def extract_q_correct_expl(full_text: str):
+    """
+    Items contain:
+      - Question: <stem>
+      - Correct: <Letter>) <Option text>   (or just the raw answer if no letter found)
+      - Explanation: <text> (optional)
     """
     lines = remove_passages(full_text)
 
     items = []
     cur_stem_parts = []
-    cur_answer, cur_expl = None, None
+    cur_options = {}  # {'A': 'text', ...}
+    cur_answer_raw, cur_expl = None, None
     in_mcq = False
     options_started = False
 
     def flush():
-        nonlocal cur_stem_parts, cur_answer, cur_expl, in_mcq, options_started
+        nonlocal cur_stem_parts, cur_options, cur_answer_raw, cur_expl, in_mcq, options_started
         stem_text = " ".join([clean_line(s) for s in cur_stem_parts if s is not None]).strip()
-        # Keep the item if we have a stem AND (answer or explanation)
-        if stem_text and (cur_answer or cur_expl):
+        if stem_text:
+            # resolve correct
+            lbl, opt_text = resolve_correct_option(cur_answer_raw or "", cur_options)
             block = [f"Question: {stem_text}"]
-            if cur_answer:
-                block.append(f"Answer: {cur_answer}")
+            if lbl:
+                if opt_text:
+                    block.append(f"Correct: {lbl}) {opt_text}")
+                else:
+                    block.append(f"Correct: {lbl}")
+            elif cur_answer_raw:
+                block.append(f"Correct: {cur_answer_raw}")
             if cur_expl:
                 block.append(f"Explanation: {cur_expl}")
-            items.append("\n".join(block).strip())
+            # Only keep items with a Correct or an Explanation
+            if len(block) > 1:
+                items.append("\n".join(block).strip())
 
         # reset
         cur_stem_parts = []
-        cur_answer, cur_expl = None, None
+        cur_options = {}
+        cur_answer_raw, cur_expl = None, None
         in_mcq = False
         options_started = False
 
     for raw in lines:
         line = raw.strip()
         if not line:
-            # allow paragraph spacing within stem before options are seen
             if in_mcq and cur_stem_parts and not options_started:
-                cur_stem_parts.append("")
+                cur_stem_parts.append("")  # keep paragraph spacing in stem
             continue
 
-        # start of a new question
+        # New question
         if looks_like_question(line):
             if in_mcq:
                 flush()
             in_mcq = True
             options_started = False
             cur_stem_parts = [clean_line(line)]
-            cur_answer, cur_expl = None, None
+            cur_options = {}
+            cur_answer_raw, cur_expl = None, None
             continue
 
         if not in_mcq:
             continue
 
-        # Ignore/skip options entirely
-        if OPTION_PAT.match(line):
+        # Option?
+        mopt = OPTION_PAT.match(line)
+        if mopt:
             options_started = True
+            lbl, txt = strip_option_label(line)
+            if lbl:
+                cur_options[lbl] = txt
             continue
 
-        # Capture Answer / Explanation lines (may be multiple)
+        # Answer?
         ans = parse_answer(line)
         if ans is not None:
-            cur_answer = ans or cur_answer or ""
+            cur_answer_raw = ans if ans != "" else cur_answer_raw
             continue
 
+        # Explanation?
         expl = parse_expl(line)
         if expl is not None:
             cur_expl = (cur_expl + " " + expl).strip() if cur_expl else expl
             continue
 
-        # Additional text: join to stem before options; after options, treat as extra explanation if we already have A/Expl
+        # Extra prose: if before options -> part of stem; after -> extend explanation if present
         if not options_started:
             cur_stem_parts.append(clean_line(line))
         else:
-            if cur_answer is not None or cur_expl is not None:
+            if (cur_answer_raw is not None) or (cur_expl is not None):
                 cur_expl = (cur_expl + " " + clean_line(line)).strip() if cur_expl else clean_line(line)
 
     if in_mcq:
@@ -191,10 +237,10 @@ def extract_qae_only(full_text: str):
 
 def pages_from_items(items, per_page: int):
     pages = []
-    sep = "\n\n"  # space between items on a page
+    sep = "\n\n"
     for i in range(0, len(items), per_page):
         pages.append(sep.join(items[i:i+per_page]))
-    return pages or ["No Questions/Answers found."]
+    return pages or ["No Questions with correct option found."]
 
 def tts_mp3(text: str) -> BytesIO:
     step = 4500
@@ -232,8 +278,8 @@ def render_speedy_audio(audio_bytes: BytesIO, rate: float = 2.5, autoplay: bool 
     )
 
 # ---------- UI (Top Controls First) ----------
-st.title("📖 Questions + Answers + Explanations (No Options)")
-st.caption("Passages and options are removed. Each item shows only the Question, Answer, and Explanation.")
+st.title("📖 Question + Correct Option + Explanation")
+st.caption("Passages are removed. Options are parsed, and only the **correct option** is shown with each question.")
 
 # ---------- Session state ----------
 if "loaded_url" not in st.session_state:
@@ -270,15 +316,15 @@ if url != st.session_state.loaded_url:
         else:
             full_text = normalize_text(best_effort_bytes_to_text(data))
 
-        items = extract_qae_only(full_text)
+        items = extract_q_correct_expl(full_text)
         pages = pages_from_items(items, per_page)
 
         st.session_state.pages = pages
         st.session_state.page_idx = 0
         st.session_state.loaded_url = url
 
-        if pages and pages[0].startswith("No Questions/Answers"):
-            st.warning("No questions with answers detected. Make sure questions start with 'Q...' or '1.' and answer lines contain 'Answer:'.")
+        if pages and pages[0].startswith("No Questions with correct option"):
+            st.warning("No questions with answers detected. Ensure options are labeled like 'A) text' and answers contain a letter (e.g., 'Answer: C').")
     except Exception as e:
         st.error(f"Could not load/parse: {e}")
         st.stop()
@@ -324,7 +370,7 @@ with right:
 
 # ---------- Current page ----------
 page_text = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
-st.text_area("Questions + Answers + Explanations", page_text, height=520)
+st.text_area("Question + Correct Option + Explanation", page_text, height=520)
 
 # ---------- Download ----------
 st.download_button(
