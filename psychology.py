@@ -1,16 +1,11 @@
-# psychology.py — MCQs + Options + Answers/Explanations only (Passages removed) → TTS + Video
+# psychology.py — MCQs + Options + Answers/Explanations only (Passages removed)
 import re
-import textwrap
-import tempfile
+import base64
 from io import BytesIO
 
 import requests
 import streamlit as st
 from gtts import gTTS
-
-# NEW: video/image deps (no ImageMagick required)
-from PIL import Image, ImageDraw, ImageFont
-from moviepy.editor import ImageClip, AudioFileClip
 
 # .docx extraction
 try:
@@ -21,7 +16,7 @@ except Exception:
     DOCX_OK = False
 
 # ---------- App config ----------
-st.set_page_config(page_title="📖 MCQs + Answers Reader (GitHub → TTS → Video)", page_icon="🎧", layout="wide")
+st.set_page_config(page_title="📖 MCQs + Answers Reader (GitHub → TTS)", page_icon="🎧", layout="wide")
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/psychbooks.docx"
 
 # ---------- Helpers ----------
@@ -69,7 +64,7 @@ OPTION_PAT = re.compile(r"""^\s*([A-Ha-h])\s*[\).:,-]\s+""", re.VERBOSE)
 ANSWER_PAT = re.compile(r"""^\s*(?:answer|answers?|ans|correct\s*answer|key|solution)\s*[:\-]?\s*(.*)""", re.IGNORECASE)
 EXPL_PAT   = re.compile(r"""^\s*(?:explanation|rationale|why|reason(?:ing)?)\s*[:\-]?\s*(.*)""", re.IGNORECASE)
 
-PASSAGE_HEADER_PAT   = re.compile(r"^\s*passage(\s*[ivx]+|\s*\d+|\s*[a-z])?\b", re.IGNORECASE)
+PASSAGE_HEADER_PAT = re.compile(r"^\s*passage(\s*[ivx]+|\s*\d+|\s*[a-z])?\b", re.IGNORECASE)
 QUESTIONS_HEADER_PAT = re.compile(r"^\s*questions?\b", re.IGNORECASE)
 
 def looks_like_question(line: str) -> bool:
@@ -135,7 +130,6 @@ def extract_mcqs_with_answers(full_text: str):
             if cur_expl:
                 block.append(f"Explanation: {cur_expl}")
             mcqs.append("\n".join(block).strip())
-        # reset
         cur_stem, cur_opts = [], []
         cur_answer, cur_expl = None, None
         in_mcq = False
@@ -184,7 +178,6 @@ def extract_mcqs_with_answers(full_text: str):
 
     if in_mcq:
         flush()
-
     return mcqs
 
 def mcqs_to_pages(mcqs, per_page: int):
@@ -193,7 +186,6 @@ def mcqs_to_pages(mcqs, per_page: int):
         pages.append("\n\n".join(mcqs[i:i+per_page]))
     return pages or ["No MCQs (with options) found."]
 
-# ---------- TTS ----------
 def tts_mp3(text: str) -> BytesIO:
     step = 4500
     combined = BytesIO()
@@ -206,105 +198,37 @@ def tts_mp3(text: str) -> BytesIO:
     combined.seek(0)
     return combined
 
-# ---------- VIDEO (PIL + MoviePy, no ImageMagick) ----------
-def _load_font(size: int = 40):
-    # Try DejaVu (usually available); fall back to default PIL font
-    try:
-        return ImageFont.truetype("DejaVuSans.ttf", size=size)
-    except Exception:
-        return ImageFont.load_default()
-
-def render_text_slide(text: str, size=(1280, 720), margin=64, font_size=40, line_spacing=1.4) -> Image.Image:
-    """Render wrapped MCQ text to a single PNG frame."""
-    W, H = size
-    bg = Image.new("RGB", (W, H), (255, 255, 255))
-    draw = ImageDraw.Draw(bg)
-    title_font = _load_font(font_size + 6)
-    font = _load_font(font_size)
-
-    # Wrap to fit width using rough char estimate
-    chars_per_line = max(20, int((W - 2 * margin) / (font_size * 0.55)))
-    wrapped = []
-    for block in text.split("\n\n"):
-        wrapped.extend(textwrap.wrap(block, width=chars_per_line, break_long_words=False, replace_whitespace=False) or [""])
-        wrapped.append("")  # paragraph gap
-    if wrapped and wrapped[-1] == "":
-        wrapped.pop()
-
-    # Header
-    header = "MCQs + Options + Answers"
-    y = margin // 2
-    draw.text((margin, y), header, fill=(0, 0, 0), font=title_font)
-    y += int((font_size + 10) * 1.8)
-
-    # Body
-    for line in wrapped:
-        draw.text((margin, y), line, fill=(0, 0, 0), font=font)
-        y += int(font_size * line_spacing)
-        if y > H - margin:
-            break  # stop drawing if overflow; text is still narrated
-
-    # Footer
-    footer = "Auto-narrated"
-    fw, fh = draw.textbbox((0, 0), footer, font=font)[2:]
-    draw.text((W - margin - fw, H - margin - fh), footer, fill=(80, 80, 80), font=font)
-
-    return bg
-
-def video_from_audio_and_text(audio_mp3_bytes: BytesIO, text: str, size=(1280, 720), fps=24) -> BytesIO:
-    """
-    Build an MP4: single white slide with wrapped text + the audio as soundtrack.
-    No ImageMagick dependency.
-    """
-    # Save audio to a temp file so MoviePy can read duration
-    audio_mp3_bytes.seek(0)
-    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f_audio:
-        f_audio.write(audio_mp3_bytes.read())
-        audio_path = f_audio.name
-
-    # Render slide image
-    frame = render_text_slide(text, size=size)
-    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f_img:
-        frame.save(f_img.name, format="PNG")
-        img_path = f_img.name
-
-    # Compose video
-    audio_clip = AudioFileClip(audio_path)
-    duration = max(2.0, audio_clip.duration)  # at least 2s
-    img_clip = ImageClip(img_path).set_duration(duration)
-    vid_clip = img_clip.set_audio(audio_clip)
-
-    # Export MP4
-    out_bytes = BytesIO()
-    with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as f_out:
-        out_path = f_out.name
-
-    vid_clip.write_videofile(
-        out_path,
-        fps=fps,
-        codec="libx264",
-        audio_codec="aac",
-        bitrate="1800k",
-        audio_bitrate="128k",
-        preset="ultrafast",
-        verbose=False,
-        logger=None,
+def render_speedy_audio(audio_bytes: BytesIO, rate: float = 2.5, autoplay: bool = False):
+    """Render a custom HTML5 audio player with adjustable playbackRate (default 2.5x)."""
+    audio_bytes.seek(0)
+    b64 = base64.b64encode(audio_bytes.read()).decode("ascii")
+    auto = "autoplay" if autoplay else ""
+    # Use a deterministic element id so JS can set playback speed
+    elem_id = "tts_player"
+    st.components.v1.html(
+        f"""
+        <div>
+          <audio id="{elem_id}" controls {auto} style="width:100%;">
+            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+          </audio>
+          <script>
+            const p = document.getElementById("{elem_id}");
+            if (p) {{
+              p.playbackRate = {rate};
+            }}
+          </script>
+        </div>
+        """,
+        height=80,
     )
-    audio_clip.close()
-    vid_clip.close()
 
-    with open(out_path, "rb") as rf:
-        out_bytes.write(rf.read())
-    out_bytes.seek(0)
-    return out_bytes
+# ---------- UI ----------
+st.title("📖 MCQs + Answers Reader (Passages removed)")
+st.caption("Reads only Multiple-Choice Questions, Options, Answers, and Explanations — no passages.")
 
-# ---------- Sidebar ----------
-st.title("📖 MCQs + Answers Reader (Passages removed) → TTS + Video")
-st.caption("Reads MCQs + options + answers/explanations (no passages), and can generate a narrated video for each page.")
 with st.sidebar:
     url = st.text_input("GitHub RAW file URL", value=DEFAULT_URL)
     mcqs_per_page = st.slider("MCQs per page", 1, 10, 3, 1)
-    make_video = st.toggle("Also make explainer video", value=True)
     st.markdown("- Use a **raw** URL (`https://raw.githubusercontent.com/...`). Best with **.docx** or **.txt**.")
 
 # ---------- Session state ----------
@@ -314,6 +238,9 @@ if "pages" not in st.session_state:
     st.session_state.pages = []
 if "page_idx" not in st.session_state:
     st.session_state.page_idx = 0
+# default playback speed = 2.5x
+if "playback_rate" not in st.session_state:
+    st.session_state.playback_rate = 2.5
 
 # ---------- Load → decode → extract ----------
 if url != st.session_state.loaded_url:
@@ -321,7 +248,6 @@ if url != st.session_state.loaded_url:
         with st.spinner("Fetching file..."):
             data = fetch_bytes(url)
         lower = url.lower()
-
         if lower.endswith(".docx"):
             full_text = extract_docx_text(data)
         elif lower.endswith(".txt") or lower.endswith(".md"):
@@ -356,7 +282,7 @@ with left:
 with mid:
     st.markdown(
         f"<div style='text-align:center;font-weight:600;'>Page {st.session_state.page_idx + 1} / {len(st.session_state.pages)}</div>",
-        unsafe_allow_html=True,
+        unsafe_allow_html=True
     )
 with right:
     if st.button("Next ➡️", use_container_width=True, disabled=st.session_state.page_idx >= len(st.session_state.pages) - 1):
@@ -366,46 +292,32 @@ with right:
 page_text = st.session_state.pages[st.session_state.page_idx]
 st.text_area("MCQs + Answers (no passage)", page_text, height=480)
 
-col1, col2, col3 = st.columns([2, 2, 1])
+# ---------- Speed controls ----------
+st.subheader("Playback speed")
+c1, c2, c3, c4, c5, c6 = st.columns(6)
+if c1.button("1.0×"): st.session_state.playback_rate = 1.0
+if c2.button("1.5×"): st.session_state.playback_rate = 1.5
+if c3.button("2.0×"): st.session_state.playback_rate = 2.0
+if c4.button("2.5× (default)"): st.session_state.playback_rate = 2.5
+if c5.button("3.0×"): st.session_state.playback_rate = 3.0
+if c6.button("0.75×"): st.session_state.playback_rate = 0.75
+st.caption(f"Current speed: **{st.session_state.playback_rate}×**")
 
-with col1:
-    if st.button("🔊 Generate TTS for this page"):
+# ---------- Audio render (with speed) ----------
+col_play, col_dl = st.columns([2, 1])
+with col_play:
+    if st.button("🔊 Generate & Play at selected speed"):
         try:
             with st.spinner("Generating audio..."):
-                audio_bytes = tts_mp3(page_text)
-            st.audio(audio_bytes, format="audio/mp3")
-            st.download_button(
-                "⬇️ Download narration (MP3)",
-                data=audio_bytes.getvalue(),
-                file_name=f"mcqs_page_{st.session_state.page_idx+1}.mp3",
-                mime="audio/mpeg",
-            )
+                audio_buf = tts_mp3(page_text)
+            # Play via custom HTML so we can set playbackRate
+            render_speedy_audio(audio_buf, rate=st.session_state.playback_rate, autoplay=True)
         except Exception as e:
             st.error(f"TTS failed: {e}")
 
-with col2:
-    if st.button("🎬 Generate Explainer Video (audio + slide)"):
-        try:
-            with st.spinner("Generating audio..."):
-                audio_bytes = tts_mp3(page_text)
-            with st.spinner("Rendering video..."):
-                video_bytes = video_from_audio_and_text(audio_bytes, page_text, size=(1280, 720), fps=24)
-            st.video(video_bytes)
-            st.download_button(
-                "⬇️ Download video (MP4)",
-                data=video_bytes.getvalue(),
-                file_name=f"mcqs_page_{st.session_state.page_idx+1}.mp4",
-                mime="video/mp4",
-            )
-        except Exception as e:
-            st.error(
-                "Video render failed. Make sure your environment has `moviepy` and `imageio-ffmpeg` installed. "
-                f"Details: {e}"
-            )
-
-with col3:
+with col_dl:
     st.download_button(
-        "⬇️ Download this page (TXT)",
+        "⬇️ Download this page (txt)",
         data=page_text.encode("utf-8"),
         file_name=f"mcqs_page_{st.session_state.page_idx+1}.txt",
         mime="text/plain",
@@ -413,7 +325,13 @@ with col3:
 
 # ---------- Jump ----------
 with st.expander("Jump to page"):
-    idx = st.number_input("Go to page #", min_value=1, max_value=len(st.session_state.pages), value=st.session_state.page_idx + 1, step=1)
+    idx = st.number_input(
+        "Go to page #",
+        min_value=1,
+        max_value=len(st.session_state.pages),
+        value=st.session_state.page_idx + 1,
+        step=1
+    )
     if st.button("Go"):
         st.session_state.page_idx = int(idx) - 1
         st.experimental_rerun()
