@@ -1,5 +1,5 @@
 # psychology.py — MCQs + Options + Answers/Explanations only (Passages removed) → TTS + Video
-import reh
+import redf
 import textwrap
 import tempfile
 from io import BytesIO
