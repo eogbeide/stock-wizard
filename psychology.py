@@ -1,4 +1,4 @@
-# psychology.py — MCQs + Options + Answers/Explanations only (Passages removed)
+# psychology.py — MCQs + Options + Explanations only (no "Correct/Answer" line)
 import re
 import base64
 from io import BytesIO
@@ -16,7 +16,7 @@ except Exception:
     DOCX_OK = False
 
 # ---------- App config ----------
-st.set_page_config(page_title="📖 MCQs + Answers Reader (GitHub → TTS)", page_icon="🎧", layout="wide")
+st.set_page_config(page_title="📖 MCQs + Explanations (GitHub → TTS)", page_icon="🎧", layout="wide")
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/psychbooks.docx"
 
 # ---------- Helpers ----------
@@ -83,16 +83,11 @@ def clean_line(line: str) -> str:
     return re.sub(r"\s+", " ", line).strip()
 
 def remove_passages(full_text: str) -> list[str]:
-    """
-    Remove passage blocks. If a line starts with 'Passage...' we skip lines
-    until we hit a question line or a 'Questions' header.
-    """
     lines = [l.rstrip() for l in full_text.split("\n")]
     filtered = []
     in_passage = False
     for raw in lines:
         line = raw.strip()
-
         if PASSAGE_HEADER_PAT.match(line):
             in_passage = True
             continue
@@ -103,35 +98,32 @@ def remove_passages(full_text: str) -> list[str]:
                 in_passage = False
             else:
                 continue
-
         filtered.append(raw)
     return filtered
 
-def extract_mcqs_with_answers(full_text: str):
+def extract_mcqs_no_answer(full_text: str):
     """
-    Return only MCQs (stem + options) and Answer/Explanation lines. Passages removed.
+    Return only MCQs (stem + options) and Explanation lines (NO 'Answer/Correct' line). Passages removed.
     """
     lines = remove_passages(full_text)
     mcqs = []
     cur_stem, cur_opts = [], []
-    cur_answer, cur_expl = None, None
+    cur_expl = None
     in_mcq = False
     options_started = False
 
     def flush():
-        nonlocal cur_stem, cur_opts, cur_answer, cur_expl, in_mcq, options_started
+        nonlocal cur_stem, cur_opts, cur_expl, in_mcq, options_started
         stem_text = " ".join([clean_line(s) for s in cur_stem if s is not None]).strip()
         if stem_text and len(cur_opts) >= 2:
             block = []
             block.append(stem_text)
             block.extend(cur_opts)
-            if cur_answer:
-                block.append(f"Answer: {cur_answer}")
             if cur_expl:
                 block.append(f"Explanation: {cur_expl}")
             mcqs.append("\n".join(block).strip())
         cur_stem, cur_opts = [], []
-        cur_answer, cur_expl = None, None
+        cur_expl = None
         in_mcq = False
         options_started = False
 
@@ -149,7 +141,7 @@ def extract_mcqs_with_answers(full_text: str):
             options_started = False
             cur_stem = [clean_line(line)]
             cur_opts = []
-            cur_answer, cur_expl = None, None
+            cur_expl = None
             continue
 
         if not in_mcq:
@@ -160,9 +152,8 @@ def extract_mcqs_with_answers(full_text: str):
             cur_opts.append(clean_line(line))
             continue
 
-        ans = parse_answer(line)
-        if ans is not None:
-            cur_answer = ans or cur_answer or ""
+        # Ignore any 'Answer/Correct' lines entirely
+        if parse_answer(line) is not None:
             continue
 
         expl = parse_expl(line)
@@ -173,14 +164,19 @@ def extract_mcqs_with_answers(full_text: str):
         if not options_started:
             cur_stem.append(clean_line(line))
         else:
-            if cur_answer is not None or cur_expl is not None:
-                cur_expl = (cur_expl + " " + clean_line(line)).strip() if cur_expl else clean_line(line)
+            # After options, extra prose becomes part of explanation
+            cur_expl = (cur_expl + " " + clean_line(line)).strip() if cur_expl else clean_line(line)
 
     if in_mcq:
         flush()
     return mcqs
 
 def mcqs_to_pages(mcqs, per_page: int):
+    try:
+        per_page = int(per_page)
+    except Exception:
+        per_page = 3
+    per_page = max(1, per_page)
     pages = []
     for i in range(0, len(mcqs), per_page):
         pages.append("\n\n".join(mcqs[i:i+per_page]))
@@ -199,7 +195,6 @@ def tts_mp3(text: str) -> BytesIO:
     return combined
 
 def render_speedy_audio(audio_bytes: BytesIO, rate: float = 2.5, autoplay: bool = False):
-    """Render a custom HTML5 audio player with adjustable playbackRate (default 2.5x)."""
     audio_bytes.seek(0)
     b64 = base64.b64encode(audio_bytes.read()).decode("ascii")
     auto = "autoplay" if autoplay else ""
@@ -221,26 +216,29 @@ def render_speedy_audio(audio_bytes: BytesIO, rate: float = 2.5, autoplay: bool 
         height=80,
     )
 
-# ---------- UI (Top Controls First) ----------
-st.title("📖 MCQs + Answers Reader (Passages removed)")
-st.caption("Reads only Multiple-Choice Questions, Options, Answers, and Explanations — no passages.")
+# ---------- UI ----------
+st.title("📖 MCQs + Options + Explanations (No Correct/Answer line)")
+st.caption("Passages removed. Shows question, options, and explanation — but hides the 'Correct/Answer' line.")
 
 # ---------- Session state ----------
-if "loaded_url" not in st.session_state:
-    st.session_state.loaded_url = ""
-if "pages" not in st.session_state:
-    st.session_state.pages = []
-if "page_idx" not in st.session_state:
-    st.session_state.page_idx = 0
-# default playback speed = 2.5x
-if "playback_rate" not in st.session_state:
-    st.session_state.playback_rate = 2.5
+if "loaded_url" not in st.session_state: st.session_state.loaded_url = ""
+if "pages" not in st.session_state:      st.session_state.pages = []
+if "page_idx" not in st.session_state:   st.session_state.page_idx = 0
+if "playback_rate" not in st.session_state: st.session_state.playback_rate = 2.5
 
-# ---------- Sidebar ----------
+# ---------- Sidebar (page selector lives here) ----------
 with st.sidebar:
     url = st.text_input("GitHub RAW file URL", value=DEFAULT_URL)
     mcqs_per_page = st.slider("MCQs per page", 1, 10, 3, 1)
     st.markdown("- Use a **raw** URL (`https://raw.githubusercontent.com/...`). Best with **.docx** or **.txt**.")
+    st.divider()
+    # NEW: Sidebar page selector
+    total_pages = max(1, len(st.session_state.pages))
+    sel_page = st.number_input("Go to page #", min_value=1, max_value=total_pages,
+                               value=min(st.session_state.page_idx + 1, total_pages), step=1)
+    if st.button("📌 Show page"):
+        st.session_state.page_idx = int(sel_page) - 1
+        st.experimental_rerun()
 
 # ---------- Load → decode → extract ----------
 if url != st.session_state.loaded_url:
@@ -261,14 +259,12 @@ if url != st.session_state.loaded_url:
         else:
             full_text = normalize_text(best_effort_bytes_to_text(data))
 
-        mcqs = extract_mcqs_with_answers(full_text)
-        pages = mcqs_to_pages(mcqs, mcqs_per_page)
-
-        st.session_state.pages = pages
+        mcqs = extract_mcqs_no_answer(full_text)
+        st.session_state.pages = mcqs_to_pages(mcqs, mcqs_per_page)
         st.session_state.page_idx = 0
         st.session_state.loaded_url = url
 
-        if pages and pages[0].startswith("No MCQs"):
+        if st.session_state.pages and st.session_state.pages[0].startswith("No MCQs"):
             st.warning("No MCQs with options detected. Ensure questions start with 'Q...' or '1.' and options like 'A) text'.")
     except Exception as e:
         st.error(f"Could not load/parse: {e}")
@@ -285,7 +281,6 @@ if c5.button("3.0×"): st.session_state.playback_rate = 3.0
 if c6.button("0.75×"): st.session_state.playback_rate = 0.75
 st.caption(f"Current speed: **{st.session_state.playback_rate}×**")
 
-# Generate & Play sits at the top now
 if st.button("🔊 Generate & Play at selected speed", use_container_width=True):
     try:
         page_text_top = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
@@ -316,7 +311,7 @@ with right:
 
 # ---------- Current page ----------
 page_text = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
-st.text_area("MCQs + Answers (no passage)", page_text, height=480)
+st.text_area("MCQs + Options + Explanation (no 'Correct')", page_text, height=480)
 
 # ---------- Download ----------
 st.download_button(
@@ -326,17 +321,3 @@ st.download_button(
     mime="text/plain",
     disabled=not page_text,
 )
-
-# ---------- Jump ----------
-with st.expander("Jump to page"):
-    total = max(1, len(st.session_state.pages))
-    idx = st.number_input(
-        "Go to page #",
-        min_value=1,
-        max_value=total,
-        value=min(st.session_state.page_idx + 1, total),
-        step=1
-    )
-    if st.button("Go"):
-        st.session_state.page_idx = int(idx) - 1
-        st.experimental_rerun()
