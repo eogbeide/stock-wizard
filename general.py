@@ -1,4 +1,4 @@
-# lab.py — All pages/passages + Auto-play + Auto-advance (pause supported) — Options removed
+# lab.py — All pages/passages + Top Play + 1.5x default + Auto-advance (pause supported) — Options removed
 import re
 import base64
 from io import BytesIO
@@ -122,19 +122,15 @@ def remove_mcq_options_from_text(text: str) -> str:
     out = []
     for ln in text.splitlines():
         if OPTION_PAT.match(ln):
-            # skip option line entirely
-            continue
+            continue  # skip option line entirely
         out.append(ln)
-    # light cleanup: collapse 3+ blanks to 2
     cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
     return cleaned
 
-def audio_player_with_autonext(audio_bytes: BytesIO, autoplay: bool, next_idx: int | None):
+def audio_player_with_autonext(audio_bytes: BytesIO, autoplay: bool, next_idx: int | None, rate: float):
     """
-    Renders an <audio> element that (optionally) auto-plays.
-    If autoplay is True and next_idx is not None, when playback ends it navigates
-    to the same app URL with ?p=<next_idx>, which advances the page.
-    (No f-string braces inside the JS—built via % formatting.)
+    Renders an <audio> element with given playback rate that (optionally) auto-plays.
+    If autoplay is True and next_idx is not None, on 'ended' it navigates to ?p=<next_idx>.
     """
     audio_bytes.seek(0)
     b64 = base64.b64encode(audio_bytes.read()).decode("ascii")
@@ -153,8 +149,12 @@ def audio_player_with_autonext(audio_bytes: BytesIO, autoplay: bool, next_idx: i
 (function() {
   const AUTO = %s;
   const NEXT = %s;
+  const RATE = %s;
   const audio = document.getElementById('tts-audio');
   if (!audio) return;
+  function setRate(){ try { audio.playbackRate = RATE; } catch(e){} }
+  audio.addEventListener('loadedmetadata', setRate);
+  setRate();
   if (AUTO) {
     audio.addEventListener('ended', function() {
       %s
@@ -164,6 +164,7 @@ def audio_player_with_autonext(audio_bytes: BytesIO, autoplay: bool, next_idx: i
 </script>
 """ % ("true" if autoplay else "false",
        "null" if next_idx is None else str(int(next_idx)),
+       str(float(rate)),
        js_jump if next_idx is not None else "")
 
     html(
@@ -178,25 +179,13 @@ def audio_player_with_autonext(audio_bytes: BytesIO, autoplay: bool, next_idx: i
     )
 
 # ---------- UI & controls ----------
-st.title("📖 Lab Reader — Auto-play each page, auto-advance unless paused")
-st.caption("Hit **Start** once (browser gesture), then it will read and jump to the next page automatically. Options (A/B/C/...) are removed from the text.")
+st.title("📖 Lab Reader — Top Play, 1.5× default, auto-advance on finish")
+st.caption("Press **Read this page aloud** once; it honors the chosen speed. On finish, it jumps to the next page (loop optional). Options (A/B/C/...) are removed from text.")
 
 with st.sidebar:
     url = st.text_input("GitHub RAW .docx URL", value=DEFAULT_URL)
     target_chars = st.slider("Target characters per page (fallback when no page breaks)", 800, 3200, DEFAULT_PAGE_CHARS, 100)
     loop_end = st.toggle("Loop to first page at the end", value=False)
-
-    # Playback controls
-    if "auto" not in st.session_state:
-        st.session_state.auto = False
-
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("▶️ Start / Resume"):
-            st.session_state.auto = True
-    with c2:
-        if st.button("⏸️ Pause"):
-            st.session_state.auto = False
 
 # ---------- Session state ----------
 if "loaded_url" not in st.session_state:
@@ -205,6 +194,10 @@ if "pages" not in st.session_state:
     st.session_state.pages = []
 if "page_idx" not in st.session_state:
     st.session_state.page_idx = 0
+if "playback_rate" not in st.session_state:
+    st.session_state.playback_rate = 1.5  # default 1.5×
+if "want_audio" not in st.session_state:
+    st.session_state.want_audio = False   # render player only after pressing play
 
 # Sync page index from URL query (?p=)
 try:
@@ -229,6 +222,7 @@ if url != st.session_state.loaded_url:
             st.session_state.pages = pages
             st.session_state.page_idx = 0
             st.session_state.loaded_url = url
+            st.session_state.want_audio = False
     except Exception as e:
         st.error(f"Could not load the document: {e}")
         st.stop()
@@ -240,11 +234,30 @@ if not st.session_state.pages:
 # Clamp index in range
 st.session_state.page_idx = max(0, min(st.session_state.page_idx, len(st.session_state.pages) - 1))
 
+# ---------- TOP: Speed & Play ----------
+st.subheader("Playback speed")
+c1, c2, c3, c4, c5, c6 = st.columns(6)
+if c1.button("0.75×"): st.session_state.playback_rate = 0.75
+if c2.button("1.0×"):  st.session_state.playback_rate = 1.0
+if c3.button("1.5× (default)"):  st.session_state.playback_rate = 1.5
+if c4.button("2.0×"):  st.session_state.playback_rate = 2.0
+if c5.button("2.5×"):  st.session_state.playback_rate = 2.5
+if c6.button("3.0×"):  st.session_state.playback_rate = 3.0
+st.caption(f"Current speed: **{st.session_state.playback_rate}×**")
+
+# Play button at the TOP (generates the player for this page and starts playing)
+if st.button("🔊 Read this page aloud", use_container_width=True):
+    st.session_state.want_audio = True
+
+st.markdown("---")
+
 # ---------- Navigation (manual) ----------
 left, mid, right = st.columns([1, 3, 1])
 with left:
     if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
         st.session_state.page_idx = max(0, st.session_state.page_idx - 1)
+        st.experimental_set_query_params(p=st.session_state.page_idx)
+        st.session_state.want_audio = False
 with mid:
     st.markdown(
         f"<div style='text-align:center;font-weight:600;'>Page {st.session_state.page_idx + 1} / {len(st.session_state.pages)}</div>",
@@ -253,8 +266,10 @@ with mid:
 with right:
     if st.button("Next ➡️", use_container_width=True, disabled=st.session_state.page_idx >= len(st.session_state.pages) - 1):
         st.session_state.page_idx = min(len(st.session_state.pages) - 1, st.session_state.page_idx + 1)
+        st.experimental_set_query_params(p=st.session_state.page_idx)
+        st.session_state.want_audio = False
 
-# Keep URL query param in sync with current page
+# Keep URL query param in sync with current page (also helps auto-advance)
 st.experimental_set_query_params(p=st.session_state.page_idx)
 
 # ---------- Current page (options removed) ----------
@@ -262,16 +277,22 @@ raw_page_text = st.session_state.pages[st.session_state.page_idx]
 page_text = remove_mcq_options_from_text(raw_page_text)
 st.text_area("Page Content (Options removed)", page_text, height=520)
 
-# ---------- Auto TTS + Auto-advance tied to audio 'ended' ----------
-last_idx = len(st.session_state.pages) - 1
-if st.session_state.page_idx < last_idx:
-    next_idx = st.session_state.page_idx + 1
-else:
-    next_idx = 0 if loop_end else None
+# ---------- Audio player (only after pressing play) + Auto-advance ----------
+if st.session_state.want_audio:
+    last_idx = len(st.session_state.pages) - 1
+    if st.session_state.page_idx < last_idx:
+        next_idx = st.session_state.page_idx + 1
+    else:
+        next_idx = 0 if loop_end else None
 
-# Generate & play audio (autoplay when auto==True). On 'ended', JS hops to ?p=next_idx.
-audio_bytes = tts_mp3(page_text)
-audio_player_with_autonext(audio_bytes, autoplay=st.session_state.auto, next_idx=next_idx)
+    audio_bytes = tts_mp3(page_text)
+    # autoplay=True (because user pressed play), honor selected rate, auto-advance on 'ended'
+    audio_player_with_autonext(
+        audio_bytes,
+        autoplay=True,
+        next_idx=next_idx,
+        rate=st.session_state.playback_rate,
+    )
 
 # ---------- Download ----------
 st.download_button(
@@ -280,18 +301,3 @@ st.download_button(
     file_name=f"page_{st.session_state.page_idx+1}.txt",
     mime="text/plain",
 )
-
-# ---------- Jump ----------
-with st.expander("Jump to page"):
-    total = max(1, len(st.session_state.pages))
-    idx = st.number_input(
-        "Go to page #",
-        min_value=1,
-        max_value=total,
-        value=min(st.session_state.page_idx + 1, total),
-        step=1,
-    )
-    if st.button("Go"):
-        st.session_state.page_idx = int(idx) - 1
-        st.experimental_set_query_params(p=st.session_state.page_idx)
-        st.experimental_rerun()
