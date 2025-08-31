@@ -74,12 +74,10 @@ def looks_like_option(line: str) -> bool:
     return bool(OPTION_PAT.match(line))
 
 def parse_answer(line: str):
-    m = ANSWER_PAT.match(line)
-    return m.group(1).strip() if m else None
+    m = ANSWER_PAT.match(line);  return m.group(1).strip() if m else None
 
 def parse_expl(line: str):
-    m = EXPL_PAT.match(line)
-    return m.group(1).strip() if m else None
+    m = EXPL_PAT.match(line);    return m.group(1).strip() if m else None
 
 def clean_line(line: str) -> str:
     return re.sub(r"\s+", " ", line).strip()
@@ -209,8 +207,8 @@ def tts_mp3(text: str) -> BytesIO:
 
 def render_speedy_audio(audio_bytes: BytesIO, rate: float = 1.5, autoplay: bool = True):
     """
-    Render a custom HTML5 audio player that **autoplays** and honors playbackRate.
-    This bypasses st.audio's lack of speed control/autoplay.
+    Render a custom HTML5 audio player that autoplays and respects playbackRate.
+    IMPORTANT: Escape JS braces in f-strings by doubling them.
     """
     audio_bytes.seek(0)
     b64 = base64.b64encode(audio_bytes.read()).decode("ascii")
@@ -226,9 +224,7 @@ def render_speedy_audio(audio_bytes: BytesIO, rate: float = 1.5, autoplay: bool 
             const p = document.getElementById("{elem_id}");
             if (p) {{
               p.playbackRate = {rate};
-              // Attempt to play immediately (some browsers require user gesture, but button click satisfies it)
-              const tryPlay = () => p.play().catch(()=>{});
-              document.addEventListener('DOMContentLoaded', tryPlay);
+              const tryPlay = () => p.play().catch(() => {{}});  // escaped braces
               tryPlay();
             }}
           </script>
@@ -276,7 +272,7 @@ if url != st.session_state.loaded_url:
         else:
             full_text = normalize_text(best_effort_bytes_to_text(data))
 
-        items = extract_qae_only(full_text)       # <-- options removed here
+        items = extract_qae_only(full_text)       # options removed here
         pages = mcqs_to_pages(items, mcqs_per_page)
 
         st.session_state.pages = pages
@@ -315,7 +311,6 @@ if st.button("🔊 Read this page aloud", use_container_width=True, disabled=not
     try:
         with st.spinner("Generating audio..."):
             audio_buf = tts_mp3(page_text_top)
-        # custom player: autoplay + playbackRate
         render_speedy_audio(audio_buf, rate=st.session_state.playback_rate, autoplay=True)
     except Exception as e:
         st.error(f"TTS failed: {e}")
