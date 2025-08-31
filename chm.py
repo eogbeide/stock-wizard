@@ -1,5 +1,8 @@
-# psychology.py — MCQs + Options + Answers/Explanations only (Passages removed)
+# psychology.py — MCQs + Options + Answers/Explanations (Passages removed)
+# Read-aloud button at the top • 1.5× default speed • Sidebar page selector
+
 import re
+import base64
 from io import BytesIO
 
 import requests
@@ -59,13 +62,11 @@ MCQ_START_PAT = re.compile(
         )""",
     re.IGNORECASE | re.VERBOSE,
 )
-
 OPTION_PAT = re.compile(r"""^\s*([A-Ha-h])\s*[\).:,-]\s+""", re.VERBOSE)
 ANSWER_PAT = re.compile(r"""^\s*(?:answer|answers?|ans|correct\s*answer|key|solution)\s*[:\-]?\s*(.*)""", re.IGNORECASE)
 EXPL_PAT   = re.compile(r"""^\s*(?:explanation|rationale|why|reason(?:ing)?)\s*[:\-]?\s*(.*)""", re.IGNORECASE)
 
-# Passage headers like: "Passage", "PASSAGE I", "Passage 2", "Passage A", etc.
-PASSAGE_HEADER_PAT = re.compile(r"^\s*passage(\s*[ivx]+|\s*\d+|\s*[a-z])?\b", re.IGNORECASE)
+PASSAGE_HEADER_PAT   = re.compile(r"^\s*passage(\s*[ivx]+|\s*\d+|\s*[a-z])?\b", re.IGNORECASE)
 QUESTIONS_HEADER_PAT = re.compile(r"^\s*questions?\b", re.IGNORECASE)
 
 def looks_like_question(line: str) -> bool:
@@ -93,29 +94,21 @@ def remove_passages(full_text: str) -> list[str]:
     in_passage = False
     for raw in lines:
         line = raw.strip()
-
-        # Start/stop passage blocks
         if PASSAGE_HEADER_PAT.match(line):
             in_passage = True
             continue
         if in_passage:
             if not line:
-                # keep skipping inside passage until a question or 'Questions' header; blank does nothing
                 continue
             if QUESTIONS_HEADER_PAT.match(line) or looks_like_question(line):
                 in_passage = False
             else:
-                # still inside passage → skip
                 continue
-
-        # If we reach here, not inside a passage block
         filtered.append(raw)
     return filtered
 
+# ---------- Extract MCQs (stem + options + Answer/Explanation) ----------
 def extract_mcqs_with_answers(full_text: str):
-    """
-    Return only MCQs (stem + options) and Answer/Explanation lines. Passages removed.
-    """
     lines = remove_passages(full_text)
     mcqs = []
     cur_stem, cur_opts = [], []
@@ -206,13 +199,32 @@ def tts_mp3(text: str) -> BytesIO:
     combined.seek(0)
     return combined
 
-# ---------- Sidebar ----------
+def render_speedy_audio(audio_bytes: BytesIO, rate: float = 1.5, autoplay: bool = True):
+    """Custom HTML5 audio with adjustable playbackRate (default 1.5×)."""
+    audio_bytes.seek(0)
+    b64 = base64.b64encode(audio_bytes.read()).decode("ascii")
+    auto = "autoplay" if autoplay else ""
+    elem_id = "tts_player"
+    st.components.v1.html(
+        f"""
+        <div>
+          <audio id="{elem_id}" controls {auto} style="width:100%;">
+            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+          </audio>
+          <script>
+            const p = document.getElementById("{elem_id}");
+            if (p) {{
+              try {{ p.playbackRate = {rate}; }} catch(e) {{}}
+            }}
+          </script>
+        </div>
+        """,
+        height=90,
+    )
+
+# ---------- UI ----------
 st.title("📖 MCQs + Answers Reader (Passages removed)")
-st.caption("Reads only Multiple-Choice Questions, Options, Answers, and Explanations — no passages.")
-with st.sidebar:
-    url = st.text_input("GitHub RAW file URL", value=DEFAULT_URL)
-    mcqs_per_page = st.slider("MCQs per page", 1, 10, 3, 1)
-    st.markdown("- Use a **raw** URL (`https://raw.githubusercontent.com/...`). Best with **.docx** or **.txt**.")
+st.caption("Reads Multiple-Choice Questions, Options, Answers, and Explanations — passages removed.")
 
 # ---------- Session state ----------
 if "loaded_url" not in st.session_state:
@@ -221,6 +233,14 @@ if "pages" not in st.session_state:
     st.session_state.pages = []
 if "page_idx" not in st.session_state:
     st.session_state.page_idx = 0
+if "playback_rate" not in st.session_state:
+    st.session_state.playback_rate = 1.5  # default 1.5×
+
+# ---------- Sidebar (inputs + page selector) ----------
+with st.sidebar:
+    url = st.text_input("GitHub RAW file URL", value=DEFAULT_URL)
+    mcqs_per_page = st.slider("MCQs per page", 1, 10, 3, 1)
+    st.markdown("- Use a **raw** URL (`https://raw.githubusercontent.com/...`). Best with **.docx** or **.txt**.")
 
 # ---------- Load → decode → extract ----------
 if url != st.session_state.loaded_url:
@@ -255,41 +275,64 @@ if url != st.session_state.loaded_url:
         st.error(f"Could not load/parse: {e}")
         st.stop()
 
+# Sidebar page selector (after pages are available)
+with st.sidebar:
+    if st.session_state.pages:
+        total_pages = len(st.session_state.pages)
+        labels = [f"Page {i}" for i in range(1, total_pages + 1)]
+        current = min(st.session_state.page_idx, total_pages - 1)
+        selected = st.selectbox("Go to page", options=labels, index=current)
+        st.session_state.page_idx = labels.index(selected)
+
+# ---------- TOP: Speed & Read Aloud ----------
+st.subheader("Playback speed")
+c1, c2, c3, c4, c5, c6 = st.columns(6)
+if c1.button("0.75×"): st.session_state.playback_rate = 0.75
+if c2.button("1.0×"):  st.session_state.playback_rate = 1.0
+if c3.button("1.5× (default)"):  st.session_state.playback_rate = 1.5
+if c4.button("2.0×"):  st.session_state.playback_rate = 2.0
+if c5.button("2.5×"):  st.session_state.playback_rate = 2.5
+if c6.button("3.0×"):  st.session_state.playback_rate = 3.0
+st.caption(f"Current speed: **{st.session_state.playback_rate}×**")
+
+# Read Aloud button at the TOP
+if st.button("🔊 Read this page aloud", use_container_width=True):
+    try:
+        page_text_top = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
+        if not page_text_top:
+            st.warning("Nothing to read on this page.")
+        else:
+            with st.spinner("Generating audio..."):
+                audio_buf = tts_mp3(page_text_top)
+            render_speedy_audio(audio_buf, rate=st.session_state.playback_rate, autoplay=True)
+    except Exception as e:
+        st.error(f"TTS failed: {e}")
+
+st.markdown("---")
+
 # ---------- Navigation ----------
 left, mid, right = st.columns([1, 3, 1])
 with left:
     if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
         st.session_state.page_idx = max(0, st.session_state.page_idx - 1)
 with mid:
-    st.markdown(f"<div style='text-align:center;font-weight:600;'>Page {st.session_state.page_idx + 1} / {len(st.session_state.pages)}</div>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div style='text-align:center;font-weight:600;'>Page {st.session_state.page_idx + 1} / {len(st.session_state.pages)}</div>",
+        unsafe_allow_html=True
+    )
 with right:
     if st.button("Next ➡️", use_container_width=True, disabled=st.session_state.page_idx >= len(st.session_state.pages) - 1):
         st.session_state.page_idx = min(len(st.session_state.pages) - 1, st.session_state.page_idx + 1)
 
 # ---------- Current page ----------
-page_text = st.session_state.pages[st.session_state.page_idx]
-st.text_area("MCQs + Answers (no passage)", page_text, height=480)
+page_text = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
+st.text_area("MCQs + Answers (no passage)", page_text, height=520)
 
-col_play, col_dl = st.columns([2, 1])
-with col_play:
-    if st.button("🔊 Read this page aloud"):
-        try:
-            with st.spinner("Generating audio..."):
-                st.audio(tts_mp3(page_text), format="audio/mp3")
-        except Exception as e:
-            st.error(f"TTS failed: {e}")
-
-with col_dl:
-    st.download_button(
-        "⬇️ Download this page (txt)",
-        data=page_text.encode("utf-8"),
-        file_name=f"mcqs_page_{st.session_state.page_idx+1}.txt",
-        mime="text/plain",
-    )
-
-# ---------- Jump ----------
-with st.expander("Jump to page"):
-    idx = st.number_input("Go to page #", min_value=1, max_value=len(st.session_state.pages), value=st.session_state.page_idx + 1, step=1)
-    if st.button("Go"):
-        st.session_state.page_idx = int(idx) - 1
-        st.experimental_rerun()
+# ---------- Download ----------
+st.download_button(
+    "⬇️ Download this page (txt)",
+    data=(page_text or "").encode("utf-8"),
+    file_name=f"mcqs_page_{st.session_state.page_idx+1}.txt",
+    mime="text/plain",
+    disabled=not page_text,
+)
