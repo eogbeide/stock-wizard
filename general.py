@@ -1,4 +1,4 @@
-# lab.py — All pages/passages + Auto-play + Auto-advance (pause supported)
+# lab.py — All pages/passages + Auto-play + Auto-advance (pause supported) — Options removed
 import re
 import base64
 from io import BytesIO
@@ -106,45 +106,80 @@ def tts_mp3(text: str) -> BytesIO:
     combined.seek(0)
     return combined
 
+# ---------- Option-stripping ----------
+# Detect typical MCQ options like:
+#  A) text   B. text   (c) text   [D] text   a) text
+OPTION_PAT = re.compile(r"""^\s*
+    (?:[\(\[]?\s*[A-Ha-h]\s*[\)\]\.:,-])   # A-H or a-h with ), ], ., :, -, etc.
+    \s+
+""", re.VERBOSE)
+
+def remove_mcq_options_from_text(text: str) -> str:
+    """
+    Remove lines that look like MCQ options (A) ... B. ... etc).
+    Keep all other lines (including 'Answer:' and 'Explanation:').
+    """
+    out = []
+    for ln in text.splitlines():
+        if OPTION_PAT.match(ln):
+            # skip option line entirely
+            continue
+        out.append(ln)
+    # light cleanup: collapse 3+ blanks to 2
+    cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+    return cleaned
+
 def audio_player_with_autonext(audio_bytes: BytesIO, autoplay: bool, next_idx: int | None):
     """
     Renders an <audio> element that (optionally) auto-plays.
     If autoplay is True and next_idx is not None, when playback ends it navigates
     to the same app URL with ?p=<next_idx>, which advances the page.
+    (No f-string braces inside the JS—built via % formatting.)
     """
     audio_bytes.seek(0)
     b64 = base64.b64encode(audio_bytes.read()).decode("ascii")
     auto_attr = "autoplay" if autoplay else ""
-    # Small delay before jumping helps on some browsers after 'ended'
-    js = f"""
-      <script>
-        (function() {{
-          const AUTO = {str(autoplay).lower()};
-          const NEXT = {('' if next_idx is None else int(next_idx))};
-          const audio = document.getElementById('tts-audio');
-          if (!audio) return;
-          if (AUTO) {{
-            audio.addEventListener('ended', function() {{
-              {"const u=new URL(window.location); u.searchParams.set('p', NEXT); setTimeout(()=>{ window.location.href = u.toString(); }, 400);" if next_idx is not None else ""}
-            }});
-          }}
-        }})();
-      </script>
-    """
+
+    js_jump = (
+        "if (NEXT!==null) { "
+        "const u=new URL(window.location); "
+        "u.searchParams.set('p', NEXT); "
+        "setTimeout(function(){ window.location.href = u.toString(); }, 400); "
+        "}"
+    )
+
+    js = """
+<script>
+(function() {
+  const AUTO = %s;
+  const NEXT = %s;
+  const audio = document.getElementById('tts-audio');
+  if (!audio) return;
+  if (AUTO) {
+    audio.addEventListener('ended', function() {
+      %s
+    });
+  }
+})();
+</script>
+""" % ("true" if autoplay else "false",
+       "null" if next_idx is None else str(int(next_idx)),
+       js_jump if next_idx is not None else "")
+
     html(
-        f"""
-        <audio id="tts-audio" controls {auto_attr} style="width:100%;">
-          <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+        """
+        <audio id="tts-audio" controls %s style="width:100%%;">
+          <source src="data:audio/mp3;base64,%s" type="audio/mp3">
           Your browser does not support the audio element.
         </audio>
-        {js}
-        """,
+        %s
+        """ % (auto_attr, b64, js),
         height=90,
     )
 
 # ---------- UI & controls ----------
 st.title("📖 Lab Reader — Auto-play each page, auto-advance unless paused")
-st.caption("Hit **Start** once (browser gesture), then it will read and jump to the next page automatically.")
+st.caption("Hit **Start** once (browser gesture), then it will read and jump to the next page automatically. Options (A/B/C/...) are removed from the text.")
 
 with st.sidebar:
     url = st.text_input("GitHub RAW .docx URL", value=DEFAULT_URL)
@@ -222,12 +257,12 @@ with right:
 # Keep URL query param in sync with current page
 st.experimental_set_query_params(p=st.session_state.page_idx)
 
-# ---------- Current page ----------
-page_text = st.session_state.pages[st.session_state.page_idx]
-st.text_area("Page Content (Full, unfiltered)", page_text, height=520)
+# ---------- Current page (options removed) ----------
+raw_page_text = st.session_state.pages[st.session_state.page_idx]
+page_text = remove_mcq_options_from_text(raw_page_text)
+st.text_area("Page Content (Options removed)", page_text, height=520)
 
 # ---------- Auto TTS + Auto-advance tied to audio 'ended' ----------
-# Decide what the *next* page index should be (or None if we should stop at the end).
 last_idx = len(st.session_state.pages) - 1
 if st.session_state.page_idx < last_idx:
     next_idx = st.session_state.page_idx + 1
