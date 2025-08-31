@@ -1,4 +1,4 @@
-# lab.py — Show only Questions + Answers + Explanations (Options excluded) + Sidebar page dropdown + TTS
+# lab.py — Read ALL pages & passages (no exclusions) + TTS
 import re
 from io import BytesIO
 
@@ -15,9 +15,9 @@ except Exception:
     DOCX_OK = False
 
 # ---------- App config ----------
-st.set_page_config(page_title="📖 Lab Reader — Q + A + Explanation (Options removed)", page_icon="🎧", layout="wide")
+st.set_page_config(page_title="📖 Lab Reader (All Pages + Passages → TTS)", page_icon="🎧", layout="wide")
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/BIO.docx"
-DEFAULT_ITEMS_PER_PAGE = 5
+DEFAULT_PAGE_CHARS = 1600  # used only if no explicit page breaks are present
 
 # ---------- Helpers ----------
 @st.cache_data(show_spinner=False)
@@ -27,7 +27,7 @@ def fetch_bytes(url: str) -> bytes:
     return r.content
 
 def normalize_text(text: str) -> str:
-    # keep ALL content; just standardize newlines and compress long blank gaps a bit
+    # keep ALL content; just standardize newlines and compress super-long blank gaps a bit
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     text = re.sub(r"\n{4,}", "\n\n\n", text)  # cap at max 3 consecutive blanks
     return text.strip()
@@ -38,12 +38,13 @@ def best_effort_bytes_to_text(data: bytes) -> str:
             return data.decode(enc)
         except UnicodeDecodeError:
             pass
+    # last resort: retain visible bytes
     return "".join(chr(b) if 32 <= b <= 126 or b in (9, 10, 13) else " " for b in data)
 
 def extract_docx_text_with_breaks(data: bytes) -> str:
     """
     Extract ALL text from .docx, inserting \f for explicit page breaks.
-    We do not drop passages; we only filter later to exclude options.
+    Nothing is filtered out.
     """
     if not DOCX_OK:
         raise RuntimeError("python-docx not available. Add 'python-docx' to requirements.txt.")
@@ -51,149 +52,67 @@ def extract_docx_text_with_breaks(data: bytes) -> str:
     out = []
     for para in doc.paragraphs:
         out.append(para.text)
+        # insert form-feed when Word page break is present
         for run in para.runs:
             if getattr(run, "break_type", None) == WD_BREAK.PAGE:
                 out.append("\f")
     text = "\n".join(out)
+    # clean duplicated newline around form feeds
     text = text.replace("\f\n", "\f").replace("\n\f", "\f")
     return normalize_text(text)
 
-# ---------- Patterns ----------
-MCQ_START_PAT = re.compile(
-    r"""^\s*(?:
-            (?:Q(?:uestion)?\s*\d*)[.)\s:-]* |   # Question, Question 12) etc
-            \d+\s*[.)-]\s+                       # 1)  2.  3-
-        )""",
-    re.IGNORECASE | re.VERBOSE,
-)
-OPTION_PAT = re.compile(r"""^\s*([A-Ha-h])\s*[\).:,-]\s+""", re.VERBOSE)  # A)  B.  c:
-ANSWER_PAT = re.compile(r"""^\s*(?:answer|answers?|ans|correct\s*answer|key|solution)\s*[:\-]?\s*(.*)""", re.IGNORECASE)
-EXPL_PAT   = re.compile(r"""^\s*(?:explanation|rationale|why|reason(?:ing)?)\s*[:\-]?\s*(.*)""", re.IGNORECASE)
+def split_by_formfeed(text: str):
+    # Prefer explicit page breaks if present
+    parts = [p for p in text.split("\f")]
+    # Keep empty pages if any (rare), then trim edges lightly
+    parts = [p.strip("\n") for p in parts]
+    return parts if len(parts) > 1 else None
 
-def looks_like_question(line: str) -> bool:
-    return bool(MCQ_START_PAT.match(line))
-
-def parse_answer(line: str):
-    m = ANSWER_PAT.match(line)
-    return m.group(1).strip() if m else None
-
-def parse_expl(line: str):
-    m = EXPL_PAT.match(line)
-    return m.group(1).strip() if m else None
-
-def clean_line(line: str) -> str:
-    return re.sub(r"\s+", " ", line).strip()
-
-# ---------- Extract ONLY Question + Answer + Explanation (Options are excluded) ----------
-def extract_qae_only(full_text: str):
+def smart_paginate(text: str, max_chars: int):
     """
-    Build items with ONLY:
-      - Question: <stem text>
-      - Answer: <answer text as written>  (no options shown)
-      - Explanation: <free text>          (optional)
-    We do not remove passages; we simply ignore option lines like "A) ...".
+    If the doc has no explicit page breaks, paginate by sentences/paragraphs
+    without dropping anything.
     """
-    lines = [l.rstrip() for l in full_text.split("\n")]
+    paragraphs = [p for p in re.split(r"\n\s*\n", text)]
+    # sentence boundaries (naive but safe)
+    sent_pat = re.compile(r'(?<=\S[.?!])\s+(?=[A-Z0-9"“(])')
 
-    items = []
-    cur_stem_parts = []
-    cur_answer = None
-    cur_expl_parts = []
-
-    in_mcq = False
-    options_seen = False
-    capturing_expl = False  # on after Explanation: or after Answer:
-
-    def flush():
-        nonlocal cur_stem_parts, cur_answer, cur_expl_parts, in_mcq, options_seen, capturing_expl
-        stem_text = " ".join([clean_line(s) for s in cur_stem_parts if s is not None]).strip()
-        expl_text = " ".join([clean_line(s) for s in cur_expl_parts if s is not None]).strip()
-
-        if stem_text:
-            block = [f"Question: {stem_text}"]
-            if cur_answer:
-                block.append(f"Answer: {cur_answer}")
-            if expl_text:
-                block.append(f"Explanation: {expl_text}")
-            items.append("\n".join(block).strip())
-
-        # reset
-        cur_stem_parts = []
-        cur_answer = None
-        cur_expl_parts = []
-        in_mcq = False
-        options_seen = False
-        capturing_expl = False
-
-    for raw in lines:
-        line = raw.strip()
-
-        # preserve paragraph breaks within stem/expl (as blank lines)
-        if not line:
-            if in_mcq:
-                if not options_seen and not capturing_expl and cur_stem_parts:
-                    cur_stem_parts.append("")
-                elif capturing_expl and cur_expl_parts:
-                    cur_expl_parts.append("")
+    sentences = []
+    for p in paragraphs:
+        if not p.strip():
+            sentences.append("")  # preserve paragraph break
             continue
+        sentences.extend(sent_pat.split(p))
 
-        # New question starts
-        if looks_like_question(line):
-            if in_mcq:
-                flush()
-            in_mcq = True
-            options_seen = False
-            capturing_expl = False
-            cur_stem_parts = [clean_line(line)]
-            cur_answer = None
-            cur_expl_parts = []
-            continue
-
-        if not in_mcq:
-            # outside questions → ignore
-            continue
-
-        # Option line? (we EXCLUDE options entirely)
-        if OPTION_PAT.match(line):
-            options_seen = True
-            continue
-
-        # Answer line?
-        ans = parse_answer(line)
-        if ans is not None:
-            cur_answer = ans if ans != "" else cur_answer
-            capturing_expl = True   # often explanation follows answer
-            continue
-
-        # Explanation line?
-        expl = parse_expl(line)
-        if expl is not None:
-            capturing_expl = True
-            if expl:
-                cur_expl_parts.append(expl)
-            continue
-
-        # Free text
-        if capturing_expl:
-            cur_expl_parts.append(clean_line(line))
-        elif not options_seen:
-            cur_stem_parts.append(clean_line(line))
+    pages, buf = [], ""
+    for s in sentences:
+        # keep paragraph breaks (blank lines) as newlines
+        s_clean = s if s == "" else s.strip()
+        candidate = (buf + ("\n\n" if s_clean == "" else (" " if buf and s_clean else "")) + s_clean).rstrip()
+        if len(candidate) <= max_chars:
+            buf = candidate
         else:
-            # Text after options but before explicit Explanation: may be distractors; skip
-            pass
+            if buf:
+                pages.append(buf.strip())
+                buf = s_clean
+            else:
+                # extremely long single chunk: hard wrap to ensure nothing is lost
+                for i in range(0, len(s_clean), max_chars):
+                    pages.append(s_clean[i : i + max_chars].strip())
+                buf = ""
+    if buf:
+        pages.append(buf.strip())
 
-    if in_mcq:
-        flush()
+    return pages if pages else [text]
 
-    return items
-
-def items_to_pages(items, per_page: int):
-    pages = []
-    for i in range(0, len(items), per_page):
-        pages.append("\n\n".join(items[i:i+per_page]))
-    return pages or ["No questions found. Ensure questions begin with 'Q...' or '1.' and answers use 'Answer:'."]
+@st.cache_data(show_spinner=False)
+def paginate_full_text(text: str, max_chars: int):
+    # First try real page breaks; otherwise paginate smartly
+    ff = split_by_formfeed(text)
+    return ff if ff else smart_paginate(text, max_chars)
 
 def tts_mp3(text: str) -> BytesIO:
+    # gTTS works best in <~4500 char chunks
     step = 4500
     combined = BytesIO()
     for i in range(0, len(text), step):
@@ -206,16 +125,15 @@ def tts_mp3(text: str) -> BytesIO:
     return combined
 
 # ---------- UI ----------
-st.title("📖 Lab Reader — Question + Answer + Explanation (Options removed)")
-st.caption("Parses your document and shows only Questions, Answers, and Explanations. Options are excluded. Passages are kept.")
+st.title("📖 Lab Reader (All Content) → Text-to-Speech")
+st.caption("Reads **everything** from the document, including all pages and passages. Nothing is excluded.")
 
-# ---------- Sidebar ----------
 with st.sidebar:
-    url = st.text_input("GitHub RAW .docx/.txt URL", value=DEFAULT_URL)
-    per_page = st.slider("Items per page", 1, 12, DEFAULT_ITEMS_PER_PAGE, 1)
+    url = st.text_input("GitHub RAW .docx URL", value=DEFAULT_URL)
+    target_chars = st.slider("Target characters per page (fallback when no page breaks)", 800, 3200, DEFAULT_PAGE_CHARS, 100)
     st.markdown(
         "- Use a **raw** URL (`https://raw.githubusercontent.com/...`).\n"
-        "- Best with **.docx** or plain text that uses lines like **Answer:** and **Explanation:**."
+        "- If your file isn’t `.docx`, convert it to `.docx` for best results."
     )
 
 # ---------- Session state ----------
@@ -226,39 +144,30 @@ if "pages" not in st.session_state:
 if "page_idx" not in st.session_state:
     st.session_state.page_idx = 0
 
-# ---------- Load & extract ----------
+# ---------- Load & paginate ----------
 if url != st.session_state.loaded_url:
     try:
-        with st.spinner("Fetching and parsing document..."):
+        with st.spinner("Fetching and preparing document..."):
             data = fetch_bytes(url)
             if url.lower().endswith(".docx"):
                 full_text = extract_docx_text_with_breaks(data)
             else:
+                # best-effort for .txt/.md
                 full_text = normalize_text(best_effort_bytes_to_text(data))
 
-            items = extract_qae_only(full_text)
-            pages = items_to_pages(items, per_page)
-
+            pages = paginate_full_text(full_text, target_chars)
             st.session_state.pages = pages
             st.session_state.page_idx = 0
             st.session_state.loaded_url = url
     except Exception as e:
-        st.error(f"Could not load or parse the document: {e}")
+        st.error(f"Could not load the document: {e}")
         st.stop()
 
 if not st.session_state.pages:
-    st.warning("No content found after parsing.")
+    st.warning("No content found.")
     st.stop()
 
-# ---------- Sidebar dropdown page selector ----------
-with st.sidebar:
-    total_pages = len(st.session_state.pages)
-    page_labels = [f"Page {i}" for i in range(1, total_pages + 1)]
-    current_index = min(st.session_state.page_idx, total_pages - 1)
-    selected_label = st.selectbox("Select page", options=page_labels, index=current_index)
-    st.session_state.page_idx = page_labels.index(selected_label)
-
-# ---------- Navigation (optional quick buttons) ----------
+# ---------- Navigation ----------
 left, mid, right = st.columns([1, 3, 1])
 with left:
     if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
@@ -274,9 +183,8 @@ with right:
 
 # ---------- Current page ----------
 page_text = st.session_state.pages[st.session_state.page_idx]
-st.text_area("Questions + Answers + Explanations (Options removed)", page_text, height=520)
+st.text_area("Page Content (Full, unfiltered)", page_text, height=520)
 
-# ---------- TTS & Download ----------
 col_play, col_dl = st.columns([2, 1])
 with col_play:
     if st.button("🔊 Read this page aloud"):
@@ -293,3 +201,11 @@ with col_dl:
         file_name=f"page_{st.session_state.page_idx+1}.txt",
         mime="text/plain",
     )
+
+# ---------- Jump ----------
+with st.expander("Jump to page"):
+    total = max(1, len(st.session_state.pages))
+    idx = st.number_input("Go to page #", min_value=1, max_value=total, value=min(st.session_state.page_idx + 1, total), step=1)
+    if st.button("Go"):
+        st.session_state.page_idx = int(idx) - 1
+        st.experimental_rerun()
