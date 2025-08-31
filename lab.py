@@ -1,5 +1,6 @@
 # lab.py — Read ALL pages & passages (no exclusions) + TTS
 import re
+import base64
 from io import BytesIO
 
 import requests
@@ -64,7 +65,6 @@ def extract_docx_text_with_breaks(data: bytes) -> str:
 def split_by_formfeed(text: str):
     # Prefer explicit page breaks if present
     parts = [p for p in text.split("\f")]
-    # Keep empty pages if any (rare), then trim edges lightly
     parts = [p.strip("\n") for p in parts]
     return parts if len(parts) > 1 else None
 
@@ -107,7 +107,6 @@ def smart_paginate(text: str, max_chars: int):
 
 @st.cache_data(show_spinner=False)
 def paginate_full_text(text: str, max_chars: int):
-    # First try real page breaks; otherwise paginate smartly
     ff = split_by_formfeed(text)
     return ff if ff else smart_paginate(text, max_chars)
 
@@ -124,17 +123,32 @@ def tts_mp3(text: str) -> BytesIO:
     combined.seek(0)
     return combined
 
+def render_speedy_audio(audio_bytes: BytesIO, rate: float = 1.5, autoplay: bool = True):
+    """Custom HTML5 audio with adjustable playbackRate (default 1.5×)."""
+    audio_bytes.seek(0)
+    b64 = base64.b64encode(audio_bytes.read()).decode("ascii")
+    auto = "autoplay" if autoplay else ""
+    elem_id = "tts_player"
+    st.components.v1.html(
+        f"""
+        <div>
+          <audio id="{elem_id}" controls {auto} style="width:100%;">
+            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+          </audio>
+          <script>
+            const p = document.getElementById("{elem_id}");
+            if (p) {{
+              p.playbackRate = {rate};
+            }}
+          </script>
+        </div>
+        """,
+        height=80,
+    )
+
 # ---------- UI ----------
 st.title("📖 Lab Reader (All Content) → Text-to-Speech")
 st.caption("Reads **everything** from the document, including all pages and passages. Nothing is excluded.")
-
-with st.sidebar:
-    url = st.text_input("GitHub RAW .docx URL", value=DEFAULT_URL)
-    target_chars = st.slider("Target characters per page (fallback when no page breaks)", 800, 3200, DEFAULT_PAGE_CHARS, 100)
-    st.markdown(
-        "- Use a **raw** URL (`https://raw.githubusercontent.com/...`).\n"
-        "- If your file isn’t `.docx`, convert it to `.docx` for best results."
-    )
 
 # ---------- Session state ----------
 if "loaded_url" not in st.session_state:
@@ -143,9 +157,27 @@ if "pages" not in st.session_state:
     st.session_state.pages = []
 if "page_idx" not in st.session_state:
     st.session_state.page_idx = 0
+if "last_target_chars" not in st.session_state:
+    st.session_state.last_target_chars = DEFAULT_PAGE_CHARS
+if "playback_rate" not in st.session_state:
+    st.session_state.playback_rate = 1.5  # default speed
 
-# ---------- Load & paginate ----------
-if url != st.session_state.loaded_url:
+# ---------- Sidebar (URL + pagination settings first) ----------
+with st.sidebar:
+    url = st.text_input("GitHub RAW .docx URL", value=DEFAULT_URL)
+    target_chars = st.slider(
+        "Target characters per page (fallback when no page breaks)",
+        800, 3200, DEFAULT_PAGE_CHARS, 100
+    )
+    st.markdown(
+        "- Use a **raw** URL (`https://raw.githubusercontent.com/...`).\n"
+        "- If your file isn’t `.docx`, convert it to `.docx` for best results."
+    )
+
+# ---------- Load & paginate (re-run on URL or target_chars change) ----------
+needs_reload = (url != st.session_state.loaded_url) or (target_chars != st.session_state.last_target_chars)
+
+if needs_reload:
     try:
         with st.spinner("Fetching and preparing document..."):
             data = fetch_bytes(url)
@@ -159,6 +191,7 @@ if url != st.session_state.loaded_url:
             st.session_state.pages = pages
             st.session_state.page_idx = 0
             st.session_state.loaded_url = url
+            st.session_state.last_target_chars = target_chars
     except Exception as e:
         st.error(f"Could not load the document: {e}")
         st.stop()
@@ -167,7 +200,38 @@ if not st.session_state.pages:
     st.warning("No content found.")
     st.stop()
 
-# ---------- Navigation ----------
+# ---------- Sidebar (page selector after pages are available) ----------
+with st.sidebar:
+    total_pages = len(st.session_state.pages)
+    options = [f"Page {i+1}" for i in range(total_pages)]
+    current_idx = min(st.session_state.page_idx, total_pages - 1)
+    chosen = st.selectbox("Go to page", options, index=current_idx)
+    st.session_state.page_idx = options.index(chosen)
+
+# ---------- TOP: Speed & Read Aloud ----------
+st.subheader("Playback speed")
+c1, c2, c3, c4, c5, c6 = st.columns(6)
+if c1.button("0.75×"): st.session_state.playback_rate = 0.75
+if c2.button("1.0×"):  st.session_state.playback_rate = 1.0
+if c3.button("1.5× (default)"):  st.session_state.playback_rate = 1.5
+if c4.button("2.0×"):  st.session_state.playback_rate = 2.0
+if c5.button("2.5×"):  st.session_state.playback_rate = 2.5
+if c6.button("3.0×"):  st.session_state.playback_rate = 3.0
+st.caption(f"Current speed: **{st.session_state.playback_rate}×**")
+
+# Read Aloud button at the top
+if st.button("🔊 Read this page aloud", use_container_width=True):
+    try:
+        page_text_top = st.session_state.pages[st.session_state.page_idx]
+        with st.spinner("Generating audio..."):
+            audio_buf = tts_mp3(page_text_top)
+        render_speedy_audio(audio_buf, rate=st.session_state.playback_rate, autoplay=True)
+    except Exception as e:
+        st.error(f"TTS failed: {e}")
+
+st.markdown("---")
+
+# ---------- Navigation buttons (optional; still available) ----------
 left, mid, right = st.columns([1, 3, 1])
 with left:
     if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
@@ -185,27 +249,10 @@ with right:
 page_text = st.session_state.pages[st.session_state.page_idx]
 st.text_area("Page Content (Full, unfiltered)", page_text, height=520)
 
-col_play, col_dl = st.columns([2, 1])
-with col_play:
-    if st.button("🔊 Read this page aloud"):
-        try:
-            with st.spinner("Generating audio..."):
-                st.audio(tts_mp3(page_text), format="audio/mp3")
-        except Exception as e:
-            st.error(f"TTS failed: {e}")
-
-with col_dl:
-    st.download_button(
-        "⬇️ Download this page (txt)",
-        data=page_text.encode("utf-8"),
-        file_name=f"page_{st.session_state.page_idx+1}.txt",
-        mime="text/plain",
-    )
-
-# ---------- Jump ----------
-with st.expander("Jump to page"):
-    total = max(1, len(st.session_state.pages))
-    idx = st.number_input("Go to page #", min_value=1, max_value=total, value=min(st.session_state.page_idx + 1, total), step=1)
-    if st.button("Go"):
-        st.session_state.page_idx = int(idx) - 1
-        st.experimental_rerun()
+# ---------- Download ----------
+st.download_button(
+    "⬇️ Download this page (txt)",
+    data=page_text.encode("utf-8"),
+    file_name=f"page_{st.session_state.page_idx+1}.txt",
+    mime="text/plain",
+)
