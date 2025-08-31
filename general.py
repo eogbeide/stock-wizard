@@ -127,7 +127,7 @@ def remove_mcq_options_from_text(text: str) -> str:
     cleaned = re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
     return cleaned
 
-def audio_player_with_autonext(audio_bytes: BytesIO, autoplay: bool, next_idx: int | None, rate: float):
+def audio_player_with_autonext(audio_bytes, autoplay, next_idx, rate):
     """
     Renders an <audio> element with given playback rate that (optionally) auto-plays.
     If autoplay is True and next_idx is not None, on 'ended' it navigates to ?p=<next_idx>.
@@ -199,13 +199,16 @@ if "playback_rate" not in st.session_state:
 if "want_audio" not in st.session_state:
     st.session_state.want_audio = False   # render player only after pressing play
 
-# Sync page index from URL query (?p=)
+# ---------- Read page index from query params (new API) ----------
 try:
-    q = st.experimental_get_query_params()
-    if "p" in q:
-        p = int(q["p"][0])
-        if 0 <= p:
-            st.session_state.page_idx = p
+    if "p" in st.query_params:
+        qp_val = st.query_params.get("p")
+        if isinstance(qp_val, list):
+            qp_val = qp_val[0] if qp_val else None
+        if qp_val is not None:
+            p = int(qp_val)
+            if p >= 0:
+                st.session_state.page_idx = p
 except Exception:
     pass  # ignore malformed values
 
@@ -256,7 +259,7 @@ left, mid, right = st.columns([1, 3, 1])
 with left:
     if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
         st.session_state.page_idx = max(0, st.session_state.page_idx - 1)
-        st.experimental_set_query_params(p=st.session_state.page_idx)
+        st.query_params["p"] = str(st.session_state.page_idx)
         st.session_state.want_audio = False
 with mid:
     st.markdown(
@@ -266,11 +269,11 @@ with mid:
 with right:
     if st.button("Next ➡️", use_container_width=True, disabled=st.session_state.page_idx >= len(st.session_state.pages) - 1):
         st.session_state.page_idx = min(len(st.session_state.pages) - 1, st.session_state.page_idx + 1)
-        st.experimental_set_query_params(p=st.session_state.page_idx)
+        st.query_params["p"] = str(st.session_state.page_idx)
         st.session_state.want_audio = False
 
 # Keep URL query param in sync with current page (also helps auto-advance)
-st.experimental_set_query_params(p=st.session_state.page_idx)
+st.query_params["p"] = str(st.session_state.page_idx)
 
 # ---------- Current page (options removed) ----------
 raw_page_text = st.session_state.pages[st.session_state.page_idx]
