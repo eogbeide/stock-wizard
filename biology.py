@@ -1,6 +1,4 @@
 # lab.py — Read ALL pages & passages (no exclusions) + TTS
-# NOW with: sidebar page selector + MCQ options removed from output/TTS
-
 import re
 from io import BytesIO
 
@@ -46,7 +44,7 @@ def best_effort_bytes_to_text(data: bytes) -> str:
 def extract_docx_text_with_breaks(data: bytes) -> str:
     """
     Extract ALL text from .docx, inserting \f for explicit page breaks.
-    Nothing is filtered out at this stage.
+    Nothing is filtered out.
     """
     if not DOCX_OK:
         raise RuntimeError("python-docx not available. Add 'python-docx' to requirements.txt.")
@@ -63,7 +61,6 @@ def extract_docx_text_with_breaks(data: bytes) -> str:
     text = text.replace("\f\n", "\f").replace("\n\f", "\f")
     return normalize_text(text)
 
-# ---------- Pagination ----------
 def split_by_formfeed(text: str):
     # Prefer explicit page breaks if present
     parts = [p for p in text.split("\f")]
@@ -114,18 +111,6 @@ def paginate_full_text(text: str, max_chars: int):
     ff = split_by_formfeed(text)
     return ff if ff else smart_paginate(text, max_chars)
 
-# ---------- MCQ option removal ----------
-# Matches leading "A) ...", "b. ...", "C: ...", "d - ...", etc.
-OPTION_LINE_PAT = re.compile(r'^\s*[A-Ha-h]\s*[\)\].:,-]\s+')
-
-def strip_mcq_option_lines(text: str) -> str:
-    """
-    Remove lines that look like MCQ options while leaving all other content intact.
-    """
-    lines = text.split("\n")
-    kept = [ln for ln in lines if not OPTION_LINE_PAT.match(ln)]
-    return "\n".join(kept)
-
 def tts_mp3(text: str) -> BytesIO:
     # gTTS works best in <~4500 char chunks
     step = 4500
@@ -140,8 +125,8 @@ def tts_mp3(text: str) -> BytesIO:
     return combined
 
 # ---------- UI ----------
-st.title("📖 Lab Reader (All Content, MCQ options removed) → Text-to-Speech")
-st.caption("Reads **everything** from the document (pages/passages) but strips out lines that look like MCQ options (A), B., C:, etc).")
+st.title("📖 Lab Reader (All Content) → Text-to-Speech")
+st.caption("Reads **everything** from the document, including all pages and passages. Nothing is excluded.")
 
 with st.sidebar:
     url = st.text_input("GitHub RAW .docx URL", value=DEFAULT_URL)
@@ -170,10 +155,7 @@ if url != st.session_state.loaded_url:
                 # best-effort for .txt/.md
                 full_text = normalize_text(best_effort_bytes_to_text(data))
 
-            # Remove MCQ options BEFORE pagination so page boundaries reflect the filtered text
-            full_text_no_options = strip_mcq_option_lines(full_text)
-
-            pages = paginate_full_text(full_text_no_options, target_chars)
+            pages = paginate_full_text(full_text, target_chars)
             st.session_state.pages = pages
             st.session_state.page_idx = 0
             st.session_state.loaded_url = url
@@ -185,15 +167,7 @@ if not st.session_state.pages:
     st.warning("No content found.")
     st.stop()
 
-# ---------- Sidebar dropdown page selector ----------
-with st.sidebar:
-    total_pages = len(st.session_state.pages)
-    page_labels = [f"Page {i}" for i in range(1, total_pages + 1)]
-    current_index = min(st.session_state.page_idx, total_pages - 1)
-    selected_label = st.selectbox("Go to page", options=page_labels, index=current_index)
-    st.session_state.page_idx = page_labels.index(selected_label)
-
-# ---------- Navigation (buttons as an alternative) ----------
+# ---------- Navigation ----------
 left, mid, right = st.columns([1, 3, 1])
 with left:
     if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
@@ -209,9 +183,8 @@ with right:
 
 # ---------- Current page ----------
 page_text = st.session_state.pages[st.session_state.page_idx]
-st.text_area("Page Content (MCQ options removed)", page_text, height=520)
+st.text_area("Page Content (Full, unfiltered)", page_text, height=520)
 
-# ---------- TTS & Download ----------
 col_play, col_dl = st.columns([2, 1])
 with col_play:
     if st.button("🔊 Read this page aloud"):
@@ -229,9 +202,10 @@ with col_dl:
         mime="text/plain",
     )
 
-# ---------- (Optional) bottom jump (kept for convenience) ----------
+# ---------- Jump ----------
 with st.expander("Jump to page"):
     total = max(1, len(st.session_state.pages))
     idx = st.number_input("Go to page #", min_value=1, max_value=total, value=min(st.session_state.page_idx + 1, total), step=1)
     if st.button("Go"):
         st.session_state.page_idx = int(idx) - 1
+        st.experimental_rerun()
