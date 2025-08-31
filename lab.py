@@ -125,7 +125,7 @@ def tts_mp3(text: str) -> BytesIO:
     combined.seek(0)
     return combined
 
-def render_speedy_audio(audio_bytes: BytesIO, rate: float = 2.5, autoplay: bool = False):
+def render_speedy_audio(audio_bytes: BytesIO, rate: float = 1.5, autoplay: bool = False):
     """Render a custom HTML5 audio player with adjustable playbackRate (default 2.5x)."""
     audio_bytes.seek(0)
     b64 = base64.b64encode(audio_bytes.read()).decode("ascii")
