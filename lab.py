@@ -1,4 +1,4 @@
-# lab.py — Read ALL pages & passages (no exclusions) + TTS
+# lab.py — Read ALL pages & passages (no exclusions) + TTS with sidebar page selector & top speed controls
 import re
 import base64
 from io import BytesIO
@@ -125,8 +125,8 @@ def tts_mp3(text: str) -> BytesIO:
     combined.seek(0)
     return combined
 
-def render_speedy_audio(audio_bytes: BytesIO, rate: float = 1.5, autoplay: bool = False):
-    """Render a custom HTML5 audio player with adjustable playbackRate (default 2.5x)."""
+def render_speedy_audio(audio_bytes: BytesIO, rate: float = 1.5, autoplay: bool = True):
+    """Custom HTML5 audio with adjustable playbackRate (default 1.5×)."""
     audio_bytes.seek(0)
     b64 = base64.b64encode(audio_bytes.read()).decode("ascii")
     auto = "autoplay" if autoplay else ""
@@ -145,7 +145,7 @@ def render_speedy_audio(audio_bytes: BytesIO, rate: float = 1.5, autoplay: bool 
           </script>
         </div>
         """,
-        height=84,
+        height=80,
     )
 
 # ---------- UI ----------
@@ -159,23 +159,35 @@ if "pages" not in st.session_state:
     st.session_state.pages = []
 if "page_idx" not in st.session_state:
     st.session_state.page_idx = 0
+if "last_target_chars" not in st.session_state:
+    st.session_state.last_target_chars = DEFAULT_PAGE_CHARS
 if "playback_rate" not in st.session_state:
-    st.session_state.playback_rate = 2.5  # default speed
+    st.session_state.playback_rate = 1.5  # default speed now 1.5×
 
-# ---------- Sidebar (inputs + page selector) ----------
+# ---------- Sidebar ----------
 with st.sidebar:
     url = st.text_input("GitHub RAW .docx URL", value=DEFAULT_URL)
     target_chars = st.slider(
         "Target characters per page (fallback when no page breaks)",
         800, 3200, DEFAULT_PAGE_CHARS, 100
     )
+    # Sidebar page selector (dropdown). Will be populated after pages are loaded.
+    if st.session_state.pages:
+        total = len(st.session_state.pages)
+        options = [f"Page {i+1}" for i in range(total)]
+        current_idx = st.session_state.page_idx if st.session_state.page_idx < total else 0
+        chosen = st.selectbox("Go to page", options, index=current_idx)
+        st.session_state.page_idx = options.index(chosen)
+
     st.markdown(
         "- Use a **raw** URL (`https://raw.githubusercontent.com/...`).\n"
         "- If your file isn’t `.docx`, convert it to `.docx` for best results."
     )
 
-# ---------- Load & paginate ----------
-if url != st.session_state.loaded_url:
+# ---------- Load & paginate (re-run on URL or target_chars change) ----------
+needs_reload = (url != st.session_state.loaded_url) or (target_chars != st.session_state.last_target_chars)
+
+if needs_reload:
     try:
         with st.spinner("Fetching and preparing document..."):
             data = fetch_bytes(url)
@@ -189,6 +201,7 @@ if url != st.session_state.loaded_url:
             st.session_state.pages = pages
             st.session_state.page_idx = 0
             st.session_state.loaded_url = url
+            st.session_state.last_target_chars = target_chars
     except Exception as e:
         st.error(f"Could not load the document: {e}")
         st.stop()
@@ -197,41 +210,30 @@ if not st.session_state.pages:
     st.warning("No content found.")
     st.stop()
 
-# ---------- Sidebar page selector (dropdown) ----------
-with st.sidebar:
-    total_pages = len(st.session_state.pages)
-    labels = [f"Page {i}" for i in range(1, total_pages + 1)]
-    current_idx = min(st.session_state.page_idx, total_pages - 1)
-    selected_label = st.selectbox("Go to page", options=labels, index=current_idx)
-    st.session_state.page_idx = labels.index(selected_label)
-
 # ---------- TOP: Speed & Read Aloud ----------
 st.subheader("Playback speed")
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 if c1.button("0.75×"): st.session_state.playback_rate = 0.75
 if c2.button("1.0×"):  st.session_state.playback_rate = 1.0
-if c3.button("1.5×"):  st.session_state.playback_rate = 1.5
+if c3.button("1.5× (default)"):  st.session_state.playback_rate = 1.5
 if c4.button("2.0×"):  st.session_state.playback_rate = 2.0
-if c5.button("2.5× (default)"): st.session_state.playback_rate = 2.5
+if c5.button("2.5×"):  st.session_state.playback_rate = 2.5
 if c6.button("3.0×"):  st.session_state.playback_rate = 3.0
 st.caption(f"Current speed: **{st.session_state.playback_rate}×**")
 
-# Read aloud button at the top
-if st.button("🔊 Generate & Play at selected speed", use_container_width=True):
+# Read Aloud button at the top
+if st.button("🔊 Read this page aloud", use_container_width=True):
     try:
-        curr_text = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
-        if not curr_text:
-            st.warning("Nothing to read on this page.")
-        else:
-            with st.spinner("Generating audio..."):
-                audio_buf = tts_mp3(curr_text)
-            render_speedy_audio(audio_buf, rate=st.session_state.playback_rate, autoplay=True)
+        page_text_top = st.session_state.pages[st.session_state.page_idx]
+        with st.spinner("Generating audio..."):
+            audio_buf = tts_mp3(page_text_top)
+        render_speedy_audio(audio_buf, rate=st.session_state.playback_rate, autoplay=True)
     except Exception as e:
         st.error(f"TTS failed: {e}")
 
 st.markdown("---")
 
-# ---------- Navigation (buttons) ----------
+# ---------- Navigation (buttons under the divider) ----------
 left, mid, right = st.columns([1, 3, 1])
 with left:
     if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
