@@ -1,5 +1,6 @@
-# lab.py — Read ALL pages & passages (no exclusions) + TTS with speed controls
+# lab.py — Read ALL pages & passages (no exclusions) + TTS with readable formatting
 import re
+import html
 import base64
 from io import BytesIO
 
@@ -126,42 +127,115 @@ def tts_mp3(text: str) -> BytesIO:
     return combined
 
 def render_speedy_audio(audio_bytes: BytesIO, rate: float = 1.5, autoplay: bool = True):
-    """Render a custom HTML5 audio player with adjustable playbackRate (default 1.5x)."""
+    """
+    Custom HTML5 audio with adjustable playbackRate. Uses base64 data URL and
+    escapes curly braces for f-strings to avoid SyntaxError.
+    """
     audio_bytes.seek(0)
     b64 = base64.b64encode(audio_bytes.read()).decode("ascii")
     auto = "autoplay" if autoplay else ""
     elem_id = "tts_player"
     st.components.v1.html(
         f"""
-        <div>
+        <div class="audio-wrap" style="margin-bottom:0.5rem;">
           <audio id="{elem_id}" controls {auto} style="width:100%;">
             <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
           </audio>
           <script>
             const p = document.getElementById("{elem_id}");
-            if (p) {{
-              p.playbackRate = {rate};
-              const tryPlay = () => p.play().catch(() => {{ }});
-              setTimeout(tryPlay, 75);
-            }}
+            if (p) {{ p.playbackRate = {rate}; }}
           </script>
         </div>
         """,
         height=80,
     )
 
+# --------- Pretty HTML rendering ----------
+READABLE_CSS = """
+<style>
+.readable {
+  max-width: 980px;
+  margin: 0 auto;
+  background: #ffffff;
+  color: #0f172a;
+  font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+  font-size: 1.05rem;
+  line-height: 1.75;
+  letter-spacing: 0.01em;
+  padding: 1.2rem 1.4rem;
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(0,0,0,.05), 0 10px 20px rgba(0,0,0,.04);
+  border: 1px solid rgba(2, 6, 23, .06);
+}
+.readable h1, .readable h2, .readable h3 {
+  line-height: 1.3; margin: 0.4rem 0 0.6rem; font-weight: 700;
+}
+.readable h1 { font-size: 1.55rem; }
+.readable h2 { font-size: 1.35rem; }
+.readable h3 { font-size: 1.2rem; }
+.readable p { margin: 0 0 0.9rem; }
+.readable ul, .readable ol { margin: 0 0 1rem 1.2rem; }
+.readable li { margin: 0.25rem 0; }
+.readable .hr { height: 1px; background: rgba(2,6,23,.08); margin: 1rem 0; }
+</style>
+"""
+
+def _is_heading(txt: str) -> int:
+    """Return 1 for h1-ish, 2 for h2-ish, 0 otherwise."""
+    s = txt.strip()
+    if not s:
+        return 0
+    if len(s) <= 80 and (s.isupper() or s.endswith(":") or re.match(r"^(chapter|section|unit|topic|lesson)\b", s, re.I)):
+        return 1
+    if len(s) <= 100 and re.match(r"^(\d+[\.)]\s+.+|[IVXLC]+\.\s+.+)$", s):
+        return 2
+    return 0
+
+def to_readable_html(text: str) -> str:
+    """
+    Convert plain text to readable HTML:
+    - Split by blank lines into paragraphs
+    - Detect headings
+    - Convert bullet-like lines to lists
+    - Preserve single newlines inside paragraphs with <br>
+    """
+    parts = re.split(r"\n\s*\n", text.strip())
+    html_parts = []
+    for block in parts:
+        raw = block.strip("\n")
+        if not raw:
+            continue
+
+        # Heading?
+        h = _is_heading(raw)
+        if h == 1:
+            html_parts.append(f"<h1>{html.escape(raw.title())}</h1>")
+            continue
+        elif h == 2:
+            html_parts.append(f"<h2>{html.escape(raw)}</h2>")
+            continue
+
+        # Bullets or numbered list?
+        lines = [ln.strip() for ln in raw.split("\n")]
+        if all(re.match(r"^([*•\-–]\s+|\d+[\.\)]\s+)", ln) for ln in lines if ln):
+            items = []
+            ordered = all(re.match(r"^\d+[\.\)]\s+", ln) for ln in lines if ln)
+            for ln in lines:
+                if not ln: 
+                    continue
+                ln = re.sub(r"^([*•\-–]\s+|\d+[\.\)]\s+)", "", ln)
+                items.append(f"<li>{html.escape(ln)}</li>")
+            tag = "ol" if ordered else "ul"
+            html_parts.append(f"<{tag}>" + "".join(items) + f"</{tag}>")
+        else:
+            # regular paragraph; preserve single newlines
+            html_parts.append("<p>" + html.escape(raw).replace("\n", "<br>") + "</p>")
+
+    return READABLE_CSS + '<div class="readable">' + "\n".join(html_parts) + "</div>"
+
 # ---------- UI ----------
 st.title("📖 Lab Reader (All Content) → Text-to-Speech")
 st.caption("Reads **everything** from the document, including all pages and passages. Nothing is excluded.")
-
-# ---------- Sidebar ----------
-with st.sidebar:
-    url = st.text_input("GitHub RAW .docx URL", value=DEFAULT_URL)
-    target_chars = st.slider("Target characters per page (fallback when no page breaks)", 800, 3200, DEFAULT_PAGE_CHARS, 100)
-    st.markdown(
-        "- Use a **raw** URL (`https://raw.githubusercontent.com/...`).\n"
-        "- If your file isn’t `.docx`, convert it to `.docx` for best results."
-    )
 
 # ---------- Session state ----------
 if "loaded_url" not in st.session_state:
@@ -170,11 +244,27 @@ if "pages" not in st.session_state:
     st.session_state.pages = []
 if "page_idx" not in st.session_state:
     st.session_state.page_idx = 0
+if "last_target_chars" not in st.session_state:
+    st.session_state.last_target_chars = DEFAULT_PAGE_CHARS
 if "playback_rate" not in st.session_state:
-    st.session_state.playback_rate = 1.5  # default 1.5× speed
+    st.session_state.playback_rate = 1.5  # default speed
 
-# ---------- Load & paginate ----------
-if url != st.session_state.loaded_url:
+# ---------- Sidebar (URL + pagination settings first) ----------
+with st.sidebar:
+    url = st.text_input("GitHub RAW .docx URL", value=DEFAULT_URL)
+    target_chars = st.slider(
+        "Target characters per page (fallback when no page breaks)",
+        800, 3200, DEFAULT_PAGE_CHARS, 100
+    )
+    st.markdown(
+        "- Use a **raw** URL (`https://raw.githubusercontent.com/...`).\n"
+        "- If your file isn’t `.docx`, convert it to `.docx` for best results."
+    )
+
+# ---------- Load & paginate (re-run on URL or target_chars change) ----------
+needs_reload = (url != st.session_state.loaded_url) or (target_chars != st.session_state.last_target_chars)
+
+if needs_reload:
     try:
         with st.spinner("Fetching and preparing document..."):
             data = fetch_bytes(url)
@@ -188,6 +278,7 @@ if url != st.session_state.loaded_url:
             st.session_state.pages = pages
             st.session_state.page_idx = 0
             st.session_state.loaded_url = url
+            st.session_state.last_target_chars = target_chars
     except Exception as e:
         st.error(f"Could not load the document: {e}")
         st.stop()
@@ -196,25 +287,26 @@ if not st.session_state.pages:
     st.warning("No content found.")
     st.stop()
 
-# ---------- Sidebar: Page selector (dropdown) ----------
+# ---------- Sidebar (page selector after pages are available) ----------
 with st.sidebar:
     total_pages = len(st.session_state.pages)
-    page_labels = [f"Page {i}" for i in range(1, total_pages + 1)]
-    current = min(st.session_state.page_idx, total_pages - 1)
-    chosen = st.selectbox("Go to page", options=page_labels, index=current)
-    st.session_state.page_idx = page_labels.index(chosen)
+    options = [f"Page {i+1}" for i in range(total_pages)]
+    current_idx = min(st.session_state.page_idx, total_pages - 1)
+    chosen = st.selectbox("Go to page", options, index=current_idx)
+    st.session_state.page_idx = options.index(chosen)
 
-# ---------- TOP: Speed controls + Read aloud ----------
+# ---------- TOP: Speed & Read Aloud ----------
 st.subheader("Playback speed")
-b1, b2, b3, b4, b5, b6 = st.columns(6)
-if b1.button("0.75×"): st.session_state.playback_rate = 0.75
-if b2.button("1.0×"):  st.session_state.playback_rate = 1.0
-if b3.button("1.5× (default)"): st.session_state.playback_rate = 1.5
-if b4.button("2.0×"):  st.session_state.playback_rate = 2.0
-if b5.button("2.5×"):  st.session_state.playback_rate = 2.5
-if b6.button("3.0×"):  st.session_state.playback_rate = 3.0
+c1, c2, c3, c4, c5, c6 = st.columns(6)
+if c1.button("0.75×"): st.session_state.playback_rate = 0.75
+if c2.button("1.0×"):  st.session_state.playback_rate = 1.0
+if c3.button("1.5× (default)"):  st.session_state.playback_rate = 1.5
+if c4.button("2.0×"):  st.session_state.playback_rate = 2.0
+if c5.button("2.5×"):  st.session_state.playback_rate = 2.5
+if c6.button("3.0×"):  st.session_state.playback_rate = 3.0
 st.caption(f"Current speed: **{st.session_state.playback_rate}×**")
 
+# Read Aloud button at the top (autoplay)
 if st.button("🔊 Read this page aloud", use_container_width=True):
     try:
         page_text_top = st.session_state.pages[st.session_state.page_idx]
@@ -226,23 +318,9 @@ if st.button("🔊 Read this page aloud", use_container_width=True):
 
 st.markdown("---")
 
-# ---------- Navigation buttons (secondary controls) ----------
-left, mid, right = st.columns([1, 3, 1])
-with left:
-    if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
-        st.session_state.page_idx = max(0, st.session_state.page_idx - 1)
-with mid:
-    st.markdown(
-        f"<div style='text-align:center;font-weight:600;'>Page {st.session_state.page_idx + 1} / {len(st.session_state.pages)}</div>",
-        unsafe_allow_html=True,
-    )
-with right:
-    if st.button("Next ➡️", use_container_width=True, disabled=st.session_state.page_idx >= len(st.session_state.pages) - 1):
-        st.session_state.page_idx = min(len(st.session_state.pages) - 1, st.session_state.page_idx + 1)
-
-# ---------- Current page ----------
+# ---------- Current page (readable formatting) ----------
 page_text = st.session_state.pages[st.session_state.page_idx]
-st.text_area("Page Content (Full, unfiltered)", page_text, height=520)
+st.markdown(to_readable_html(page_text), unsafe_allow_html=True)
 
 # ---------- Download ----------
 st.download_button(
