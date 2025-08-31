@@ -1,5 +1,6 @@
 # psychology.py — Questions + Answers/Explanations only (Passages removed) + Sidebar page selector
 import re
+import base64
 from io import BytesIO
 
 import requests
@@ -15,7 +16,7 @@ except Exception:
     DOCX_OK = False
 
 # ---------- App config ----------
-st.set_page_config(page_title="📖 MCQs + Answers Reader (GitHub → TTS)", page_icon="🎧", layout="wide")
+st.set_page_config(page_title="📖 Questions + Answers (GitHub → TTS)", page_icon="🎧", layout="wide")
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/bchbooks.docx"
 
 # ---------- Helpers ----------
@@ -73,10 +74,12 @@ def looks_like_option(line: str) -> bool:
     return bool(OPTION_PAT.match(line))
 
 def parse_answer(line: str):
-    m = ANSWER_PAT.match(line);  return m.group(1).strip() if m else None
+    m = ANSWER_PAT.match(line)
+    return m.group(1).strip() if m else None
 
 def parse_expl(line: str):
-    m = EXPL_PAT.match(line);    return m.group(1).strip() if m else None
+    m = EXPL_PAT.match(line)
+    return m.group(1).strip() if m else None
 
 def clean_line(line: str) -> str:
     return re.sub(r"\s+", " ", line).strip()
@@ -204,8 +207,38 @@ def tts_mp3(text: str) -> BytesIO:
     combined.seek(0)
     return combined
 
+def render_speedy_audio(audio_bytes: BytesIO, rate: float = 1.5, autoplay: bool = True):
+    """
+    Render a custom HTML5 audio player that **autoplays** and honors playbackRate.
+    This bypasses st.audio's lack of speed control/autoplay.
+    """
+    audio_bytes.seek(0)
+    b64 = base64.b64encode(audio_bytes.read()).decode("ascii")
+    auto = "autoplay" if autoplay else ""
+    elem_id = "tts_player"
+    st.components.v1.html(
+        f"""
+        <div>
+          <audio id="{elem_id}" controls {auto} style="width:100%;">
+            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+          </audio>
+          <script>
+            const p = document.getElementById("{elem_id}");
+            if (p) {{
+              p.playbackRate = {rate};
+              // Attempt to play immediately (some browsers require user gesture, but button click satisfies it)
+              const tryPlay = () => p.play().catch(()=>{});
+              document.addEventListener('DOMContentLoaded', tryPlay);
+              tryPlay();
+            }}
+          </script>
+        </div>
+        """,
+        height=90,
+    )
+
 # ---------- Sidebar (input controls) ----------
-st.title("📖 MCQs + Answers Reader (no options)")
+st.title("📖 Questions + Answers/Explanations (no options)")
 st.caption("Shows only **Question**, **Answer**, and **Explanation** — options are removed.")
 
 with st.sidebar:
@@ -220,6 +253,8 @@ if "pages" not in st.session_state:
     st.session_state.pages = []
 if "page_idx" not in st.session_state:
     st.session_state.page_idx = 0
+if "playback_rate" not in st.session_state:
+    st.session_state.playback_rate = 1.5  # default 1.5×
 
 # ---------- Load → decode → extract ----------
 if url != st.session_state.loaded_url:
@@ -263,6 +298,30 @@ if st.session_state.pages:
         selected = st.selectbox("Go to page", options=labels, index=current)
         st.session_state.page_idx = labels.index(selected)
 
+# ---------- TOP: Speed controls + Read Aloud ----------
+st.subheader("Playback speed")
+c1, c2, c3, c4, c5, c6 = st.columns(6)
+if c1.button("0.75×"): st.session_state.playback_rate = 0.75
+if c2.button("1.0×"):  st.session_state.playback_rate = 1.0
+if c3.button("1.5× (default)"): st.session_state.playback_rate = 1.5
+if c4.button("2.0×"):  st.session_state.playback_rate = 2.0
+if c5.button("2.5×"):  st.session_state.playback_rate = 2.5
+if c6.button("3.0×"):  st.session_state.playback_rate = 3.0
+st.caption(f"Current speed: **{st.session_state.playback_rate}×**")
+
+# Read Aloud button at the top (autoplays with the chosen speed)
+page_text_top = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
+if st.button("🔊 Read this page aloud", use_container_width=True, disabled=not page_text_top):
+    try:
+        with st.spinner("Generating audio..."):
+            audio_buf = tts_mp3(page_text_top)
+        # custom player: autoplay + playbackRate
+        render_speedy_audio(audio_buf, rate=st.session_state.playback_rate, autoplay=True)
+    except Exception as e:
+        st.error(f"TTS failed: {e}")
+
+st.markdown("---")
+
 # ---------- Navigation ----------
 left, mid, right = st.columns([1, 3, 1])
 with left:
@@ -283,28 +342,11 @@ with right:
 page_text = st.session_state.pages[st.session_state.page_idx] if st.session_state.pages else ""
 st.text_area("Questions + Answers + Explanations (options removed)", page_text, height=480)
 
-# ---------- TTS & Download ----------
-col_play, col_dl = st.columns([2, 1])
-with col_play:
-    if st.button("🔊 Read this page aloud", disabled=not page_text):
-        try:
-            with st.spinner("Generating audio..."):
-                st.audio(tts_mp3(page_text), format="audio/mp3")
-        except Exception as e:
-            st.error(f"TTS failed: {e}")
-
-with col_dl:
-    st.download_button(
-        "⬇️ Download this page (txt)",
-        data=(page_text or "").encode("utf-8"),
-        file_name=f"mcqs_page_{st.session_state.page_idx+1}.txt",
-        mime="text/plain",
-        disabled=not page_text,
-    )
-
-# ---------- Bottom jump (optional) ----------
-with st.expander("Jump to page"):
-    total = max(1, len(st.session_state.pages))
-    idx = st.number_input("Go to page #", min_value=1, max_value=total, value=min(st.session_state.page_idx + 1, total), step=1)
-    if st.button("Go"):
-        st.session_state.page_idx = int(idx) - 1
+# ---------- Download (text) ----------
+st.download_button(
+    "⬇️ Download this page (txt)",
+    data=(page_text or "").encode("utf-8"),
+    file_name=f"qae_page_{st.session_state.page_idx+1}.txt",
+    mime="text/plain",
+    disabled=not page_text,
+)
