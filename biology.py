@@ -1,5 +1,6 @@
-# lab.py — Read ALL pages & passages (no exclusions) + TTS
+# lab.py — Read ALL pages & passages (no exclusions) + TTS with speed controls
 import re
+import base64
 from io import BytesIO
 
 import requests
@@ -124,6 +125,31 @@ def tts_mp3(text: str) -> BytesIO:
     combined.seek(0)
     return combined
 
+def render_speedy_audio(audio_bytes: BytesIO, rate: float = 1.5, autoplay: bool = True):
+    """Render a custom HTML5 audio player with adjustable playbackRate (default 1.5x)."""
+    audio_bytes.seek(0)
+    b64 = base64.b64encode(audio_bytes.read()).decode("ascii")
+    auto = "autoplay" if autoplay else ""
+    elem_id = "tts_player"
+    st.components.v1.html(
+        f"""
+        <div>
+          <audio id="{elem_id}" controls {auto} style="width:100%;">
+            <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
+          </audio>
+          <script>
+            const p = document.getElementById("{elem_id}");
+            if (p) {{
+              p.playbackRate = {rate};
+              const tryPlay = () => p.play().catch(() => {{ }});
+              setTimeout(tryPlay, 75);
+            }}
+          </script>
+        </div>
+        """,
+        height=80,
+    )
+
 # ---------- UI ----------
 st.title("📖 Lab Reader (All Content) → Text-to-Speech")
 st.caption("Reads **everything** from the document, including all pages and passages. Nothing is excluded.")
@@ -144,6 +170,8 @@ if "pages" not in st.session_state:
     st.session_state.pages = []
 if "page_idx" not in st.session_state:
     st.session_state.page_idx = 0
+if "playback_rate" not in st.session_state:
+    st.session_state.playback_rate = 1.5  # default 1.5× speed
 
 # ---------- Load & paginate ----------
 if url != st.session_state.loaded_url:
@@ -176,18 +204,29 @@ with st.sidebar:
     chosen = st.selectbox("Go to page", options=page_labels, index=current)
     st.session_state.page_idx = page_labels.index(chosen)
 
-# ---------- TOP: Read aloud ----------
-page_text_top = st.session_state.pages[st.session_state.page_idx]
+# ---------- TOP: Speed controls + Read aloud ----------
+st.subheader("Playback speed")
+b1, b2, b3, b4, b5, b6 = st.columns(6)
+if b1.button("0.75×"): st.session_state.playback_rate = 0.75
+if b2.button("1.0×"):  st.session_state.playback_rate = 1.0
+if b3.button("1.5× (default)"): st.session_state.playback_rate = 1.5
+if b4.button("2.0×"):  st.session_state.playback_rate = 2.0
+if b5.button("2.5×"):  st.session_state.playback_rate = 2.5
+if b6.button("3.0×"):  st.session_state.playback_rate = 3.0
+st.caption(f"Current speed: **{st.session_state.playback_rate}×**")
+
 if st.button("🔊 Read this page aloud", use_container_width=True):
     try:
+        page_text_top = st.session_state.pages[st.session_state.page_idx]
         with st.spinner("Generating audio..."):
-            st.audio(tts_mp3(page_text_top), format="audio/mp3")
+            audio_buf = tts_mp3(page_text_top)
+        render_speedy_audio(audio_buf, rate=st.session_state.playback_rate, autoplay=True)
     except Exception as e:
         st.error(f"TTS failed: {e}")
 
 st.markdown("---")
 
-# ---------- Navigation buttons (keep as secondary controls) ----------
+# ---------- Navigation buttons (secondary controls) ----------
 left, mid, right = st.columns([1, 3, 1])
 with left:
     if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
