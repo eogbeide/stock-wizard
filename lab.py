@@ -1,5 +1,6 @@
-# lab.py — Read ALL pages & passages (no exclusions) + TTS
+# lab.py — Read ALL pages & passages (no exclusions) + TTS, with styled HTML display
 import re
+import html
 import base64
 from io import BytesIO
 
@@ -19,6 +20,59 @@ except Exception:
 st.set_page_config(page_title="📖 Lab Reader (All Pages + Passages → TTS)", page_icon="🎧", layout="wide")
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/labbook.docx"
 DEFAULT_PAGE_CHARS = 1600  # used only if no explicit page breaks are present
+
+# ---------- Global styles (readability) ----------
+STYLE = """
+<style>
+  :root {
+    --page-max: 980px;
+    --card-bg: #ffffff;
+    --card-border: #e9eef3;
+    --ink: #0f172a;              /* slate-900 */
+    --ink-subtle: #334155;        /* slate-600 */
+    --accent: #2563eb;            /* blue-600 */
+    --shadow: 0 10px 25px rgba(15,23,42,0.06);
+  }
+  /* Tighten Streamlit's max width a bit */
+  .main > div { max-width: var(--page-max); margin-left: auto; margin-right: auto; }
+  /* Top title tweak */
+  .stApp h1, .stApp h2, .stApp h3 { letter-spacing: 0.2px; }
+  /* Page card */
+  .page-card {
+    background: var(--card-bg);
+    border: 1px solid var(--card-border);
+    border-radius: 16px;
+    box-shadow: var(--shadow);
+    padding: 22px 22px;
+    margin: 10px 0 18px 0;
+  }
+  .page-meta {
+    font-size: 13px;
+    color: var(--ink-subtle);
+    margin-bottom: 4px;
+  }
+  .page-content {
+    color: var(--ink);
+    line-height: 1.75;
+    white-space: pre-wrap;      /* preserve newlines from source text */
+    word-wrap: break-word;
+    hyphens: auto;
+  }
+  /* Optional nicer list spacing if present in text */
+  .page-content ul, .page-content ol { margin: 0.5rem 1.25rem; }
+  /* Subtle hr */
+  .soft-hr {
+    height: 1px;
+    border: none;
+    background: linear-gradient(90deg, transparent, #e5e7eb, transparent);
+    margin: 6px 0 14px 0;
+  }
+  /* Top controls spacing */
+  .controls-wrap { margin-top: 6px; margin-bottom: 8px; }
+  .speed-note { font-size: 13px; color: var(--ink-subtle); margin-top: 4px; }
+</style>
+"""
+st.markdown(STYLE, unsafe_allow_html=True)
 
 # ---------- Helpers ----------
 @st.cache_data(show_spinner=False)
@@ -131,7 +185,8 @@ def render_speedy_audio(audio_bytes: BytesIO, rate: float = 1.5, autoplay: bool 
     elem_id = "tts_player"
     st.components.v1.html(
         f"""
-        <div>
+        <div class="page-card">
+          <div style="font-weight:600;margin-bottom:6px;">Audio Player</div>
           <audio id="{elem_id}" controls {auto} style="width:100%;">
             <source src="data:audio/mp3;base64,{b64}" type="audio/mp3">
           </audio>
@@ -143,7 +198,7 @@ def render_speedy_audio(audio_bytes: BytesIO, rate: float = 1.5, autoplay: bool 
           </script>
         </div>
         """,
-        height=80,
+        height=120,
     )
 
 # ---------- UI ----------
@@ -161,14 +216,18 @@ if "last_target_chars" not in st.session_state:
     st.session_state.last_target_chars = DEFAULT_PAGE_CHARS
 if "playback_rate" not in st.session_state:
     st.session_state.playback_rate = 1.5  # default speed
+if "font_px" not in st.session_state:
+    st.session_state.font_px = 18  # comfortable default text size
 
 # ---------- Sidebar (URL + pagination settings first) ----------
 with st.sidebar:
+    st.markdown("### Settings")
     url = st.text_input("GitHub RAW .docx URL", value=DEFAULT_URL)
     target_chars = st.slider(
         "Target characters per page (fallback when no page breaks)",
         800, 3200, DEFAULT_PAGE_CHARS, 100
     )
+    st.session_state.font_px = st.slider("Text size (px)", 14, 24, st.session_state.font_px, 1)
     st.markdown(
         "- Use a **raw** URL (`https://raw.githubusercontent.com/...`).\n"
         "- If your file isn’t `.docx`, convert it to `.docx` for best results."
@@ -202,6 +261,7 @@ if not st.session_state.pages:
 
 # ---------- Sidebar (page selector after pages are available) ----------
 with st.sidebar:
+    st.markdown("### Navigate")
     total_pages = len(st.session_state.pages)
     options = [f"Page {i+1}" for i in range(total_pages)]
     current_idx = min(st.session_state.page_idx, total_pages - 1)
@@ -209,6 +269,7 @@ with st.sidebar:
     st.session_state.page_idx = options.index(chosen)
 
 # ---------- TOP: Speed & Read Aloud ----------
+st.markdown('<div class="controls-wrap">', unsafe_allow_html=True)
 st.subheader("Playback speed")
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 if c1.button("0.75×"): st.session_state.playback_rate = 0.75
@@ -217,7 +278,7 @@ if c3.button("1.5× (default)"):  st.session_state.playback_rate = 1.5
 if c4.button("2.0×"):  st.session_state.playback_rate = 2.0
 if c5.button("2.5×"):  st.session_state.playback_rate = 2.5
 if c6.button("3.0×"):  st.session_state.playback_rate = 3.0
-st.caption(f"Current speed: **{st.session_state.playback_rate}×**")
+st.markdown(f'<div class="speed-note">Current speed: <b>{st.session_state.playback_rate}×</b></div>', unsafe_allow_html=True)
 
 # Read Aloud button at the top
 if st.button("🔊 Read this page aloud", use_container_width=True):
@@ -228,8 +289,9 @@ if st.button("🔊 Read this page aloud", use_container_width=True):
         render_speedy_audio(audio_buf, rate=st.session_state.playback_rate, autoplay=True)
     except Exception as e:
         st.error(f"TTS failed: {e}")
+st.markdown("</div>", unsafe_allow_html=True)  # end controls-wrap
 
-st.markdown("---")
+st.markdown('<hr class="soft-hr" />', unsafe_allow_html=True)
 
 # ---------- Navigation buttons (optional; still available) ----------
 left, mid, right = st.columns([1, 3, 1])
@@ -245,9 +307,18 @@ with right:
     if st.button("Next ➡️", use_container_width=True, disabled=st.session_state.page_idx >= len(st.session_state.pages) - 1):
         st.session_state.page_idx = min(len(st.session_state.pages) - 1, st.session_state.page_idx + 1)
 
-# ---------- Current page ----------
+# ---------- Current page (styled HTML, preserved newlines) ----------
 page_text = st.session_state.pages[st.session_state.page_idx]
-st.text_area("Page Content (Full, unfiltered)", page_text, height=520)
+escaped = html.escape(page_text)  # prevent accidental HTML injection from source
+st.markdown(
+    f"""
+    <section class="page-card">
+      <div class="page-meta">Viewing <b>Page {st.session_state.page_idx + 1}</b> of <b>{len(st.session_state.pages)}</b></div>
+      <div class="page-content" style="font-size:{st.session_state.font_px}px;">{escaped}</div>
+    </section>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ---------- Download ----------
 st.download_button(
