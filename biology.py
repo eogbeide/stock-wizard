@@ -128,6 +128,7 @@ def tts_mp3(text: str) -> BytesIO:
 st.title("📖 Lab Reader (All Content) → Text-to-Speech")
 st.caption("Reads **everything** from the document, including all pages and passages. Nothing is excluded.")
 
+# ---------- Sidebar ----------
 with st.sidebar:
     url = st.text_input("GitHub RAW .docx URL", value=DEFAULT_URL)
     target_chars = st.slider("Target characters per page (fallback when no page breaks)", 800, 3200, DEFAULT_PAGE_CHARS, 100)
@@ -167,7 +168,26 @@ if not st.session_state.pages:
     st.warning("No content found.")
     st.stop()
 
-# ---------- Navigation ----------
+# ---------- Sidebar: Page selector (dropdown) ----------
+with st.sidebar:
+    total_pages = len(st.session_state.pages)
+    page_labels = [f"Page {i}" for i in range(1, total_pages + 1)]
+    current = min(st.session_state.page_idx, total_pages - 1)
+    chosen = st.selectbox("Go to page", options=page_labels, index=current)
+    st.session_state.page_idx = page_labels.index(chosen)
+
+# ---------- TOP: Read aloud ----------
+page_text_top = st.session_state.pages[st.session_state.page_idx]
+if st.button("🔊 Read this page aloud", use_container_width=True):
+    try:
+        with st.spinner("Generating audio..."):
+            st.audio(tts_mp3(page_text_top), format="audio/mp3")
+    except Exception as e:
+        st.error(f"TTS failed: {e}")
+
+st.markdown("---")
+
+# ---------- Navigation buttons (keep as secondary controls) ----------
 left, mid, right = st.columns([1, 3, 1])
 with left:
     if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
@@ -185,27 +205,10 @@ with right:
 page_text = st.session_state.pages[st.session_state.page_idx]
 st.text_area("Page Content (Full, unfiltered)", page_text, height=520)
 
-col_play, col_dl = st.columns([2, 1])
-with col_play:
-    if st.button("🔊 Read this page aloud"):
-        try:
-            with st.spinner("Generating audio..."):
-                st.audio(tts_mp3(page_text), format="audio/mp3")
-        except Exception as e:
-            st.error(f"TTS failed: {e}")
-
-with col_dl:
-    st.download_button(
-        "⬇️ Download this page (txt)",
-        data=page_text.encode("utf-8"),
-        file_name=f"page_{st.session_state.page_idx+1}.txt",
-        mime="text/plain",
-    )
-
-# ---------- Jump ----------
-with st.expander("Jump to page"):
-    total = max(1, len(st.session_state.pages))
-    idx = st.number_input("Go to page #", min_value=1, max_value=total, value=min(st.session_state.page_idx + 1, total), step=1)
-    if st.button("Go"):
-        st.session_state.page_idx = int(idx) - 1
-        st.experimental_rerun()
+# ---------- Download ----------
+st.download_button(
+    "⬇️ Download this page (txt)",
+    data=page_text.encode("utf-8"),
+    file_name=f"page_{st.session_state.page_idx+1}.txt",
+    mime="text/plain",
+)
