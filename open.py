@@ -19,6 +19,39 @@ st.set_page_config(page_title="📖 Lab Reader (All Pages + Passages → TTS)", 
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/opentextbook.docx"
 DEFAULT_PAGE_CHARS = 1600  # used only if no explicit page breaks are present
 
+# ---------- Global styles (readability) ----------
+st.markdown(
+    """
+    <style>
+      .page-wrap {
+        max-width: 900px;
+        margin: 0 auto;
+        padding: 1rem 1.25rem;
+        background: #ffffff;
+        border-radius: 12px;
+        box-shadow: 0 2px 8px rgba(0,0,0,.06);
+      }
+      .page-content {
+        font-size: 1.06rem;
+        line-height: 1.75;
+        color: #202124;
+        white-space: pre-wrap;      /* keep newlines */
+        word-break: break-word;     /* long words wrap */
+        hyphens: auto;
+      }
+      .page-content h1, .page-content h2, .page-content h3 {
+        line-height: 1.3;
+        margin: .6rem 0 .3rem 0;
+      }
+      .muted {
+        color: #5f6368;
+        font-size: .95rem;
+      }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 # ---------- Helpers ----------
 @st.cache_data(show_spinner=False)
 def fetch_bytes(url: str) -> bytes:
@@ -27,9 +60,9 @@ def fetch_bytes(url: str) -> bytes:
     return r.content
 
 def normalize_text(text: str) -> str:
-    # keep ALL content; just standardize newlines and compress super-long blank gaps a bit
+    # keep ALL content; standardize newlines and compress super-long blank gaps a bit
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = re.sub(r"\n{4,}", "\n\n\n", text)  # cap at max 3 consecutive blanks
+    text = re.sub(r"\n{4,}", "\n\n\n", text)  # at most 3 consecutive blanks
     return text.strip()
 
 def best_effort_bytes_to_text(data: bytes) -> str:
@@ -124,6 +157,17 @@ def tts_mp3(text: str) -> BytesIO:
     combined.seek(0)
     return combined
 
+def pretty_page(text: str) -> str:
+    """
+    Light formatting: trim trailing spaces, compress >2 blank lines to exactly 2,
+    and ensure list bullets look fine in Markdown.
+    """
+    # normalize spaces at EOL
+    text = re.sub(r"[ \t]+\n", "\n", text)
+    # collapse huge blank blocks
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
 # ---------- UI ----------
 st.title("📖 Lab Reader (All Content) → Text-to-Speech")
 st.caption("Reads **everything** from the document, including all pages and passages. Nothing is excluded.")
@@ -167,7 +211,15 @@ if not st.session_state.pages:
     st.warning("No content found.")
     st.stop()
 
-# ---------- Navigation ----------
+# ---------- Sidebar page dropdown ----------
+with st.sidebar:
+    total_pages = len(st.session_state.pages)
+    labels = [f"Page {i} of {total_pages}" for i in range(1, total_pages + 1)]
+    current = min(st.session_state.page_idx, total_pages - 1)
+    choice = st.selectbox("Jump to page", options=labels, index=current)
+    st.session_state.page_idx = labels.index(choice)
+
+# ---------- Top navigation (optional helpers) ----------
 left, mid, right = st.columns([1, 3, 1])
 with left:
     if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
@@ -181,31 +233,28 @@ with right:
     if st.button("Next ➡️", use_container_width=True, disabled=st.session_state.page_idx >= len(st.session_state.pages) - 1):
         st.session_state.page_idx = min(len(st.session_state.pages) - 1, st.session_state.page_idx + 1)
 
-# ---------- Current page ----------
-page_text = st.session_state.pages[st.session_state.page_idx]
-st.text_area("Page Content (Full, unfiltered)", page_text, height=520)
+# ---------- Current page (readable rendering) ----------
+page_text_raw = st.session_state.pages[st.session_state.page_idx]
+page_text = pretty_page(page_text_raw)
 
-col_play, col_dl = st.columns([2, 1])
-with col_play:
+st.markdown("<div class='page-wrap'>", unsafe_allow_html=True)
+st.markdown("<div class='muted'>Tip: Use the sidebar dropdown to jump between pages.</div>", unsafe_allow_html=True)
+st.markdown("<div class='page-content'>"+page_text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")+"</div>", unsafe_allow_html=True)
+st.markdown("</div>", unsafe_allow_html=True)
+
+# ---------- TTS & Download ----------
+c1, c2 = st.columns([2,1])
+with c1:
     if st.button("🔊 Read this page aloud"):
         try:
             with st.spinner("Generating audio..."):
                 st.audio(tts_mp3(page_text), format="audio/mp3")
         except Exception as e:
             st.error(f"TTS failed: {e}")
-
-with col_dl:
+with c2:
     st.download_button(
         "⬇️ Download this page (txt)",
         data=page_text.encode("utf-8"),
         file_name=f"page_{st.session_state.page_idx+1}.txt",
         mime="text/plain",
     )
-
-# ---------- Jump ----------
-with st.expander("Jump to page"):
-    total = max(1, len(st.session_state.pages))
-    idx = st.number_input("Go to page #", min_value=1, max_value=total, value=min(st.session_state.page_idx + 1, total), step=1)
-    if st.button("Go"):
-        st.session_state.page_idx = int(idx) - 1
-        st.experimental_rerun()
