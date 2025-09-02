@@ -7,6 +7,7 @@ from datetime import timedelta, datetime
 import matplotlib.pyplot as plt
 import time
 import pytz
+import requests
 
 # --- Page config & CSS ---
 st.set_page_config(
@@ -58,6 +59,12 @@ bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1
 show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly & daily)", value=True)
 slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10)
 slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120, 6)
+
+# --- NEW: Forex news controls ---
+show_news = st.sidebar.checkbox("Show Forex news markers", value=True, help="Applies in Forex mode")
+impact_filter = st.sidebar.multiselect("News impact", ["High", "Medium", "Low"], default=["High", "Medium"])
+news_window_days = st.sidebar.slider("News window (days)", 1, 14, 7,
+                                     help="Calendar window around the charted period")
 
 # Universe
 if mode == "Stock":
@@ -121,7 +128,6 @@ def compute_bb(data, window=20, num_sd=2):
 def fibonacci_levels(series: pd.Series):
     if series is None or len(series) == 0:
         return {}
-    # Ensure 1D numeric series
     if isinstance(series, pd.DataFrame):
         num_cols = [c for c in series.columns if pd.api.types.is_numeric_dtype(series[c])]
         if not num_cols:
@@ -149,7 +155,6 @@ def fibonacci_levels(series: pd.Series):
 
 # ---- Robust slope helpers ----
 def _coerce_1d_series(obj) -> pd.Series:
-    """Return a numeric Series from Series/DataFrame/array-like; empty Series if impossible."""
     if obj is None:
         return pd.Series(dtype=float)
     if isinstance(obj, pd.Series):
@@ -167,10 +172,6 @@ def _coerce_1d_series(obj) -> pd.Series:
     return pd.to_numeric(s, errors="coerce")
 
 def slope_line(series_like, lookback: int):
-    """
-    Fit y = m*x + b over the last `lookback` points of a 1D numeric series.
-    Accepts Series, DataFrame, list, ndarray. Returns (yhat Series, slope float).
-    """
     s = _coerce_1d_series(series_like).dropna()
     if s.shape[0] < 2:
         return pd.Series(dtype=float), float("nan")
@@ -184,6 +185,96 @@ def slope_line(series_like, lookback: int):
 
 def fmt_slope(m: float) -> str:
     return f"{m:.4f}" if np.isfinite(m) else "n/a"
+
+# --- NEW: Forex news helpers ---
+CURRENCY_TO_COUNTRY = {
+    "USD": "United States",
+    "EUR": "Euro Area",
+    "GBP": "United Kingdom",
+    "JPY": "Japan",
+    "AUD": "Australia",
+    "NZD": "New Zealand",
+    "CAD": "Canada",
+    "CHF": "Switzerland",
+    "CNY": "China",
+    "HKD": "Hong Kong",
+}
+
+def pair_countries(symbol: str):
+    if not symbol.endswith("=X") or len(symbol.replace("=X","")) < 6:
+        return []
+    core = symbol.replace("=X","")
+    a, b = core[:3].upper(), core[3:6].upper()
+    c1 = CURRENCY_TO_COUNTRY.get(a)
+    c2 = CURRENCY_TO_COUNTRY.get(b)
+    return [c for c in (c1, c2) if c]
+
+@st.cache_data(ttl=900)
+def fetch_forex_calendar(countries, d1: pd.Timestamp, d2: pd.Timestamp) -> pd.DataFrame:
+    """TradingEconomics Economic Calendar (guest access)."""
+    if not countries:
+        return pd.DataFrame()
+    try:
+        url = "https://api.tradingeconomics.com/calendar"
+        params = {
+            "d1": d1.strftime("%Y-%m-%d"),
+            "d2": d2.strftime("%Y-%m-%d"),
+            "c": ",".join(countries),
+            "importance": "1,2,3",  # Low/Med/High
+            "output": "json",
+            "client": "guest:guest",
+        }
+        r = requests.get(url, params=params, timeout=20)
+        r.raise_for_status()
+        df = pd.DataFrame(r.json())
+        if df.empty:
+            return df
+        # Normalize columns we use
+        # Some feeds use 'Date' or 'Date_UTC'
+        if "Date" in df.columns:
+            ts = pd.to_datetime(df["Date"], utc=True)
+        elif "Date_UTC" in df.columns:
+            ts = pd.to_datetime(df["Date_UTC"], utc=True)
+        else:
+            return pd.DataFrame()
+        df["ts"] = ts.dt.tz_convert(PACIFIC)
+        # Common impact field name variants
+        imp_col = "Importance" if "Importance" in df.columns else ("importance" if "importance" in df.columns else None)
+        if imp_col:
+            df["impact"] = df[imp_col].astype(str).str.title()
+        else:
+            df["impact"] = "Medium"
+        # Title/Category/Event
+        name_col = "Event" if "Event" in df.columns else ("event" if "event" in df.columns else None)
+        cat_col  = "Category" if "Category" in df.columns else ("category" if "category" in df.columns else None)
+        df["label"] = df[name_col].fillna(df.get(cat_col, "")).astype(str)
+        df["Country"] = df.get("Country", df.get("country", "")).astype(str)
+        # Keep only selected countries
+        df = df[df["Country"].isin(countries)]
+        return df[["ts", "impact", "label", "Country"]].sort_values("ts")
+    except Exception:
+        return pd.DataFrame()
+
+def overlay_news(ax, idx_like, news_df: pd.DataFrame, impacts=("High","Medium")):
+    """Draw vertical dashed lines for news timestamps within the visible range."""
+    if news_df is None or news_df.empty:
+        return
+    try:
+        xmin = pd.to_datetime(idx_like[0]).tz_convert(PACIFIC) if hasattr(idx_like[0], "tzinfo") else idx_like[0]
+        xmax = pd.to_datetime(idx_like[-1]).tz_convert(PACIFIC) if hasattr(idx_like[-1], "tzinfo") else idx_like[-1]
+    except Exception:
+        # Fallback for DatetimeIndex
+        xmin = idx_like.min()
+        xmax = idx_like.max()
+    events = news_df[(news_df["ts"] >= xmin - pd.Timedelta(hours=1)) &
+                     (news_df["ts"] <= xmax + pd.Timedelta(hours=1)) &
+                     (news_df["impact"].isin(impacts))]
+    if events.empty:
+        return
+    for _, r in events.iterrows():
+        ax.axvline(r["ts"], color="tab:red", linestyle="--", alpha=0.25)
+    # Legend handle
+    ax.plot([], [], color="tab:red", linestyle="--", alpha=0.25, label="FX News")
 
 # --- Session init ---
 if 'run_all' not in st.session_state:
@@ -222,6 +313,16 @@ with tab1:
         )
     )
 
+    # Pre-fetch calendar when Forex
+    news_df = pd.DataFrame()
+    if mode == "Forex" and show_news:
+        countries = pair_countries(sel)
+        if countries:
+            # Pull a small window around "today" (we'll filter to plotted ranges later)
+            d1 = (pd.Timestamp.utcnow() - pd.Timedelta(days=news_window_days)).tz_localize("UTC")
+            d2 = (pd.Timestamp.utcnow() + pd.Timedelta(days=news_window_days)).tz_localize("UTC")
+            news_df = fetch_forex_calendar(countries, d1, d2)
+
     if st.button("Run Forecast") or auto_run:
         df_hist = fetch_hist(sel)                       # Series
         fc_idx, fc_vals, fc_ci = compute_sarimax_forecast(df_hist)
@@ -235,7 +336,8 @@ with tab1:
             "ticker": sel,
             "chart": chart,
             "hour_range": hour_range,
-            "run_all": True
+            "run_all": True,
+            "news_df": news_df
         })
 
     if st.session_state.run_all and st.session_state.ticker == sel:
@@ -245,6 +347,7 @@ with tab1:
             st.session_state.fc_vals,
             st.session_state.fc_ci
         )
+        news_df = st.session_state.get("news_df", pd.DataFrame())
 
         last_price = float(df.iloc[-1])
         p_up = np.mean(vals.to_numpy() > last_price)
@@ -262,7 +365,6 @@ with tab1:
             res = df.rolling(30, min_periods=1).max()
             sup = df.rolling(30, min_periods=1).min()
 
-            # Robust daily slope
             yhat_d, m_d = slope_line(df, slope_lb_daily)
 
             fig, ax = plt.subplots(figsize=(14,6))
@@ -290,6 +392,10 @@ with tab1:
                 for lbl, y in fibs_d.items():
                     ax.text(df_show.index[-1], y, f" {lbl}", va="center")
 
+            # --- NEW: overlay Forex news on Daily
+            if mode == "Forex" and show_news and not news_df.empty:
+                overlay_news(ax, df_show.index, news_df, impacts=tuple(impact_filter))
+
             ax.set_xlabel("Date (PST)")
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
@@ -304,7 +410,6 @@ with tab1:
             res_h = hc.rolling(60, min_periods=1).max()
             sup_h = hc.rolling(60, min_periods=1).min()
 
-            # Robust hourly slope
             yhat_h, m_h = slope_line(hc, slope_lb_hourly)
 
             fig2, ax2 = plt.subplots(figsize=(14,4))
@@ -326,6 +431,10 @@ with tab1:
                                linestyles="dotted", linewidth=1)
                 for lbl, y in fibs_h.items():
                     ax2.text(hc.index[-1], y, f" {lbl}", va="center")
+
+            # --- NEW: overlay Forex news on Intraday
+            if mode == "Forex" and show_news and not news_df.empty:
+                overlay_news(ax2, hc.index, news_df, impacts=tuple(impact_filter))
 
             ax2.set_xlabel("Time (PST)")
             ax2.legend(loc="lower left", framealpha=0.5)
@@ -358,6 +467,7 @@ with tab2:
         p_dn = 1 - p_up
         res = df.rolling(30, min_periods=1).max()
         sup = df.rolling(30, min_periods=1).min()
+        news_df = st.session_state.get("news_df", pd.DataFrame())
 
         st.caption(f"Intraday lookback: **{st.session_state.get('hour_range','24h')}** "
                    "(change in 'Original Forecast' tab and rerun)")
@@ -388,6 +498,10 @@ with tab2:
                               linestyles="dotted", linewidth=1)
                 for lbl, y in fibs_d.items():
                     ax.text(df_show.index[-1], y, f" {lbl}", va="center")
+
+            # --- NEW: overlay Forex news on Daily (Enhanced tab)
+            if mode == "Forex" and show_news and not news_df.empty:
+                overlay_news(ax, df_show.index, news_df, impacts=tuple(impact_filter))
 
             ax.set_xlabel("Date (PST)")
             ax.legend(loc="lower left", framealpha=0.5)
@@ -430,6 +544,10 @@ with tab2:
                                linestyles="dotted", linewidth=1)
                 for lbl, y in fibs_h.items():
                     ax3.text(ic.index[-1], y, f" {lbl}", va="center")
+
+            # --- NEW: overlay Forex news on Intraday (Enhanced tab)
+            if mode == "Forex" and show_news and not news_df.empty:
+                overlay_news(ax3, ic.index, news_df, impacts=tuple(impact_filter))
 
             ax3.set_xlabel("Time (PST)")
             ax3.legend(loc="lower left", framealpha=0.5)
