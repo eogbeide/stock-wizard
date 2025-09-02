@@ -76,6 +76,9 @@ if st.button("Go to MCAT Open Textbook"):
 if st.button("Go to MCAT Chem"):
     st.markdown("[Open MCAT Chem](https://mcatchem.streamlit.app/)", unsafe_allow_html=True)
 
+if st.button("Go to MCAT Socio"):
+    st.markdown("[Open MCAT Socio](https://sociomcat.streamlit.app/)", unsafe_allow_html=True)
+
 if st.button("Go to MCAT CARS"):
     st.markdown("[Open MCAT CARS](https://mcatcars.streamlit.app/)", unsafe_allow_html=True)
 
