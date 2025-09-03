@@ -1,6 +1,7 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # - Adds Forex news markers on daily & intraday charts
 # - Adds hourly momentum indicator (ROC%) with robust handling
+# - Aligns momentum panel x-axis with hourly price chart x-axis
 # - Fixes tz_localize error by using tz-aware UTC timestamps
 # - Keeps auto-refresh, SARIMAX, RSI/BB/Fibs, slopes, etc.
 
@@ -437,9 +438,14 @@ with tab1:
 
                 ax2.set_xlabel("Time (PST)")
                 ax2.legend(loc="lower left", framealpha=0.5)
-                st.pyplot(fig2)
 
-                # Momentum panel (ROC%)
+                # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+                # NEW: capture x-limits to reuse in momentum panel for perfect match
+                xlim_price = ax2.get_xlim()
+                st.pyplot(fig2)
+                # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+                # Momentum panel (ROC%) — x-axis aligned with price chart
                 if show_mom_hourly:
                     roc = compute_roc(hc, n=mom_lb_hourly)
                     fig2m, ax2m = plt.subplots(figsize=(14,2.8))
@@ -448,6 +454,9 @@ with tab1:
                     ax2m.axhline(0, linestyle="--", linewidth=1)
                     ax2m.set_xlabel("Time (PST)")
                     ax2m.legend(loc="lower left", framealpha=0.5)
+                    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+                    ax2m.set_xlim(xlim_price)
+                    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
                     st.pyplot(fig2m)
 
         # Optional: small table of recent FX news
@@ -566,9 +575,14 @@ with tab2:
 
                 ax3.set_xlabel("Time (PST)")
                 ax3.legend(loc="lower left", framealpha=0.5)
-                st.pyplot(fig3)
 
-                # Momentum panel (ROC%)
+                # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+                # NEW: capture x-limits for momentum panel alignment
+                xlim_price2 = ax3.get_xlim()
+                st.pyplot(fig3)
+                # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
+                # Momentum panel (ROC%) — x-axis aligned with price chart
                 if show_mom_hourly:
                     roc_i = compute_roc(ic, n=mom_lb_hourly)
                     fig3m, ax3m = plt.subplots(figsize=(14,2.8))
@@ -577,6 +591,9 @@ with tab2:
                     ax3m.axhline(0, linestyle="--", linewidth=1)
                     ax3m.set_xlabel("Time (PST)")
                     ax3m.legend(loc="lower left", framealpha=0.5)
+                    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+                    ax3m.set_xlim(xlim_price2)
+                    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
                     st.pyplot(fig3m)
 
                 fig4, ax4 = plt.subplots(figsize=(14,3))
@@ -661,3 +678,18 @@ with tab4:
         ax0.plot(df0.index, df0['MA30'], label="30 MA")
         ax0.plot(df0.index, res0, ":", label="Resistance")
         ax0.plot(df0.index, sup0, ":", label="Support")
+        ax0.plot(df0.index, trend0, "--", label="Trend")
+        ax0.set_xlabel("Date (PST)")
+        ax0.legend()
+        st.pyplot(fig0)
+
+        st.markdown("---")
+        st.subheader("Daily % Change")
+        st.line_chart(df0['PctChange'], use_container_width=True)
+
+        st.subheader("Bull/Bear Distribution")
+        dist = pd.DataFrame({
+            "Type": ["Bull", "Bear"],
+            "Days": [int(df0['Bull'].sum()), int((~df0['Bull']).sum())]
+        }).set_index("Type")
+        st.bar_chart(dist, use_container_width=True)
