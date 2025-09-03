@@ -1,7 +1,7 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # - Adds Forex news markers on daily & intraday charts
+# - Adds hourly momentum indicator (ROC%) with robust handling
 # - Fixes tz_localize error by using tz-aware UTC timestamps
-# - Adds Momentum (ROC) indicator to hourly charts
 # - Keeps auto-refresh, SARIMAX, RSI/BB/Fibs, slopes, etc.
 
 import streamlit as st
@@ -64,7 +64,10 @@ bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1
 show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly & daily)", value=True)
 slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10)
 slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120, 6)
-mom_lb_hourly    = st.sidebar.slider("Hourly momentum lookback (bars)", 5, 60, 10, 1)  # NEW
+
+# Hourly Momentum controls
+show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True)
+mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1)
 
 # Forex news controls (only shown in Forex mode)
 if mode == "Forex":
@@ -162,11 +165,6 @@ def fibonacci_levels(series: pd.Series):
         "100%": lo,
     }
 
-def compute_roc(series: pd.Series, n: int = 10) -> pd.Series:
-    """Rate of Change (percentage): 100 * (Close/Close_n - 1)"""
-    s = pd.to_numeric(series, errors="coerce")
-    return (s / s.shift(n) - 1.0) * 100.0
-
 # ---- Robust slope helpers ----
 def _coerce_1d_series(obj) -> pd.Series:
     """Return a numeric Series from Series/DataFrame/array-like; empty Series if impossible."""
@@ -204,6 +202,20 @@ def slope_line(series_like, lookback: int):
 
 def fmt_slope(m: float) -> str:
     return f"{m:.4f}" if np.isfinite(m) else "n/a"
+
+# ---- Momentum (Rate of Change) ----
+def compute_roc(series_like, n: int = 10) -> pd.Series:
+    """
+    Rate of Change (percentage): 100 * (Close / Close_n - 1)
+    Robust to Series/DataFrame/array-like/Index inputs and returns a Series
+    aligned to the original index.
+    """
+    orig = _coerce_1d_series(series_like)  # may be empty
+    s = orig.dropna()
+    if s.empty:
+        return pd.Series(index=orig.index, dtype=float)
+    roc = s.pct_change(n) * 100.0
+    return roc.reindex(orig.index)
 
 # ---- Forex News (Yahoo Finance) ----
 @st.cache_data(ttl=300, show_spinner=False)
@@ -382,58 +394,61 @@ with tab1:
         # ----- Hourly -----
         if chart in ("Hourly","Both"):
             intr = st.session_state.intraday              # DataFrame
-            hc = intr["Close"].ffill()
-            he = hc.ewm(span=20).mean()
-            xh = np.arange(len(hc))
-            slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
-            trend_h = slope_h * xh + intercept_h
-            res_h = hc.rolling(60, min_periods=1).max()
-            sup_h = hc.rolling(60, min_periods=1).min()
+            if intr is None or intr.empty or "Close" not in intr:
+                st.warning("No intraday data available.")
+            else:
+                hc = intr["Close"].ffill()
+                he = hc.ewm(span=20).mean()
+                xh = np.arange(len(hc))
+                slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
+                trend_h = slope_h * xh + intercept_h
+                res_h = hc.rolling(60, min_periods=1).max()
+                sup_h = hc.rolling(60, min_periods=1).min()
 
-            yhat_h, m_h = slope_line(hc, slope_lb_hourly)
+                yhat_h, m_h = slope_line(hc, slope_lb_hourly)
 
-            fig2, ax2 = plt.subplots(figsize=(14,4))
-            ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{p_up:.1%}  ↓{p_dn:.1%}")
-            ax2.plot(hc.index, hc, label="Intraday")
-            ax2.plot(hc.index, he, "--", label="20 EMA")
-            ax2.plot(hc.index, res_h, ":", label="Resistance")
-            ax2.plot(hc.index, sup_h, ":", label="Support")
-            ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
+                fig2, ax2 = plt.subplots(figsize=(14,4))
+                ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+                ax2.plot(hc.index, hc, label="Intraday")
+                ax2.plot(hc.index, he, "--", label="20 EMA")
+                ax2.plot(hc.index, res_h, ":", label="Resistance")
+                ax2.plot(hc.index, sup_h, ":", label="Support")
+                ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
 
-            if not yhat_h.empty:
-                ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
-                         label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
+                if not yhat_h.empty:
+                    ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
+                             label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
-            if show_fibs and not hc.empty:
-                fibs_h = fibonacci_levels(hc)
-                for lbl, y in fibs_h.items():
-                    ax2.hlines(y, xmin=hc.index[0], xmax=hc.index[-1],
-                               linestyles="dotted", linewidth=1)
-                for lbl, y in fibs_h.items():
-                    ax2.text(hc.index[-1], y, f" {lbl}", va="center")
+                if show_fibs and not hc.empty:
+                    fibs_h = fibonacci_levels(hc)
+                    for lbl, y in fibs_h.items():
+                        ax2.hlines(y, xmin=hc.index[0], xmax=hc.index[-1],
+                                   linestyles="dotted", linewidth=1)
+                    for lbl, y in fibs_h.items():
+                        ax2.text(hc.index[-1], y, f" {lbl}", va="center")
 
-            # Forex news markers on intraday
-            if not hc.empty and not fx_news.empty:
-                t0, t1 = hc.index[0], hc.index[-1]
-                times = [t for t in fx_news["time"] if t0 <= t <= t1]
-                if times:
-                    ymin, ymax = float(hc.min()), float(hc.max())
-                    draw_news_markers(ax2, times, ymin, ymax, label="News")
+                # Forex news markers on intraday
+                if mode == "Forex" and show_fx_news and not hc.empty and 'time' in fx_news:
+                    t0, t1 = hc.index[0], hc.index[-1]
+                    times = [t for t in fx_news["time"] if t0 <= t <= t1]
+                    if times:
+                        ymin, ymax = float(hc.min()), float(hc.max())
+                        draw_news_markers(ax2, times, ymin, ymax, label="News")
 
-            ax2.set_xlabel("Time (PST)")
-            ax2.legend(loc="lower left", framealpha=0.5)
-            st.pyplot(fig2)
+                ax2.set_xlabel("Time (PST)")
+                ax2.legend(loc="lower left", framealpha=0.5)
+                st.pyplot(fig2)
 
-            # --- NEW: Hourly Momentum (ROC) panel ---
-            if not hc.empty:
-                roc = compute_roc(hc, n=mom_lb_hourly)
-                fig2m, ax2m = plt.subplots(figsize=(14,2.6))
-                ax2m.set_title(f"Hourly Momentum (ROC {mom_lb_hourly})")
-                ax2m.plot(roc.index, roc, label=f"ROC({mom_lb_hourly})")
-                ax2m.axhline(0, linestyle="--", linewidth=1)
-                ax2m.set_xlabel("Time (PST)")
-                ax2m.legend(loc="lower left", framealpha=0.5)
-                st.pyplot(fig2m)
+                # Momentum panel (ROC%)
+                if show_mom_hourly:
+                    roc = compute_roc(hc, n=mom_lb_hourly)
+                    fig2m, ax2m = plt.subplots(figsize=(14,2.8))
+                    ax2m.set_title(f"Momentum (ROC% over {mom_lb_hourly} bars)")
+                    ax2m.plot(roc.index, roc, label=f"ROC%({mom_lb_hourly})")
+                    ax2m.axhline(0, linestyle="--", linewidth=1)
+                    ax2m.set_xlabel("Time (PST)")
+                    ax2m.legend(loc="lower left", framealpha=0.5)
+                    st.pyplot(fig2m)
 
         # Optional: small table of recent FX news
         if mode == "Forex" and show_fx_news:
@@ -515,58 +530,62 @@ with tab2:
             st.pyplot(fig2)
 
         if view in ("Intraday","Both"):
-            ic = st.session_state.intraday["Close"].ffill()
-            ie = ic.ewm(span=20).mean()
-            xi = np.arange(len(ic))
-            slope_i, intercept_i = np.polyfit(xi, ic.values, 1)
-            trend_i = slope_i * xi + intercept_i
-            res_i = ic.rolling(60, min_periods=1).max()
-            sup_i = ic.rolling(60, min_periods=1).min()
+            intr = st.session_state.intraday
+            if intr is None or intr.empty or "Close" not in intr:
+                st.warning("No intraday data available.")
+            else:
+                ic = intr["Close"].ffill()
+                ie = ic.ewm(span=20).mean()
+                xi = np.arange(len(ic))
+                slope_i, intercept_i = np.polyfit(xi, ic.values, 1)
+                trend_i = slope_i * xi + intercept_i
+                res_i = ic.rolling(60, min_periods=1).max()
+                sup_i = ic.rolling(60, min_periods=1).min()
 
-            yhat_h, m_h = slope_line(ic, slope_lb_hourly)
+                yhat_h, m_h = slope_line(ic, slope_lb_hourly)
 
-            fig3, ax3 = plt.subplots(figsize=(14,4))
-            ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{p_up:.1%}  ↓{p_dn:.1%}")
-            ax3.plot(ic.index, ic, label="Intraday")
-            ax3.plot(ic.index, ie, "--", label="20 EMA")
-            ax3.plot(ic.index, res_i, ":", label="Resistance")
-            ax3.plot(ic.index, sup_i, ":", label="Support")
-            ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
+                fig3, ax3 = plt.subplots(figsize=(14,4))
+                ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+                ax3.plot(ic.index, ic, label="Intraday")
+                ax3.plot(ic.index, ie, "--", label="20 EMA")
+                ax3.plot(ic.index, res_i, ":", label="Resistance")
+                ax3.plot(ic.index, sup_i, ":", label="Support")
+                ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
 
-            if not yhat_h.empty:
-                ax3.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
-                         label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
+                if not yhat_h.empty:
+                    ax3.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
+                             label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
-            if show_fibs and not ic.empty:
-                fibs_h = fibonacci_levels(ic)
-                for lbl, y in fibs_h.items():
-                    ax3.hlines(y, xmin=ic.index[0], xmax=ic.index[-1],
-                               linestyles="dotted", linewidth=1)
-                for lbl, y in fibs_h.items():
-                    ax3.text(ic.index[-1], y, f" {lbl}", va="center")
+                if show_fibs and not ic.empty:
+                    fibs_h = fibonacci_levels(ic)
+                    for lbl, y in fibs_h.items():
+                        ax3.hlines(y, xmin=ic.index[0], xmax=ic.index[-1],
+                                   linestyles="dotted", linewidth=1)
+                    for lbl, y in fibs_h.items():
+                        ax3.text(ic.index[-1], y, f" {lbl}", va="center")
 
-            ax3.set_xlabel("Time (PST)")
-            ax3.legend(loc="lower left", framealpha=0.5)
-            st.pyplot(fig3)
+                ax3.set_xlabel("Time (PST)")
+                ax3.legend(loc="lower left", framealpha=0.5)
+                st.pyplot(fig3)
 
-            fig4, ax4 = plt.subplots(figsize=(14,3))
-            ri = compute_rsi(ic)
-            ax4.plot(ri, label="RSI(14)")
-            ax4.axhline(70, linestyle="--"); ax4.axhline(30, linestyle="--")
-            ax4.set_xlabel("Time (PST)")
-            ax4.legend()
-            st.pyplot(fig4)
+                # Momentum panel (ROC%)
+                if show_mom_hourly:
+                    roc_i = compute_roc(ic, n=mom_lb_hourly)
+                    fig3m, ax3m = plt.subplots(figsize=(14,2.8))
+                    ax3m.set_title(f"Momentum (ROC% over {mom_lb_hourly} bars)")
+                    ax3m.plot(roc_i.index, roc_i, label=f"ROC%({mom_lb_hourly})")
+                    ax3m.axhline(0, linestyle="--", linewidth=1)
+                    ax3m.set_xlabel("Time (PST)")
+                    ax3m.legend(loc="lower left", framealpha=0.5)
+                    st.pyplot(fig3m)
 
-            # --- NEW: Hourly Momentum (ROC) panel in Enhanced view ---
-            if not ic.empty:
-                roc_i = compute_roc(ic, n=mom_lb_hourly)
-                fig5, ax5 = plt.subplots(figsize=(14,2.6))
-                ax5.set_title(f"Hourly Momentum (ROC {mom_lb_hourly})")
-                ax5.plot(roc_i.index, roc_i, label=f"ROC({mom_lb_hourly})")
-                ax5.axhline(0, linestyle="--", linewidth=1)
-                ax5.set_xlabel("Time (PST)")
-                ax5.legend(loc="lower left", framealpha=0.5)
-                st.pyplot(fig5)
+                fig4, ax4 = plt.subplots(figsize=(14,3))
+                ri = compute_rsi(ic)
+                ax4.plot(ri, label="RSI(14)")
+                ax4.axhline(70, linestyle="--"); ax4.axhline(30, linestyle="--")
+                ax4.set_xlabel("Time (PST)")
+                ax4.legend()
+                st.pyplot(fig4)
 
         st.write(pd.DataFrame({
             "Forecast": vals,
@@ -642,18 +661,3 @@ with tab4:
         ax0.plot(df0.index, df0['MA30'], label="30 MA")
         ax0.plot(df0.index, res0, ":", label="Resistance")
         ax0.plot(df0.index, sup0, ":", label="Support")
-        ax0.plot(df0.index, trend0, "--", label="Trend")
-        ax0.set_xlabel("Date (PST)")
-        ax0.legend()
-        st.pyplot(fig0)
-
-        st.markdown("---")
-        st.subheader("Daily % Change")
-        st.line_chart(df0['PctChange'], use_container_width=True)
-
-        st.subheader("Bull/Bear Distribution")
-        dist = pd.DataFrame({
-            "Type": ["Bull", "Bear"],
-            "Days": [int(df0['Bull'].sum()), int((~df0['Bull']).sum())]
-        }).set_index("Type")
-        st.bar_chart(dist, use_container_width=True)
