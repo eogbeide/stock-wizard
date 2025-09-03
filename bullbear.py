@@ -2,6 +2,7 @@
 # - Adds Forex news markers on daily & intraday charts
 # - Adds hourly momentum indicator (ROC%) with robust handling
 # - Aligns momentum panel x-axis with hourly price chart x-axis
+# - Adds momentum trendline (slope over lookback)
 # - Fixes tz_localize error by using tz-aware UTC timestamps
 # - Keeps auto-refresh, SARIMAX, RSI/BB/Fibs, slopes, etc.
 
@@ -439,11 +440,9 @@ with tab1:
                 ax2.set_xlabel("Time (PST)")
                 ax2.legend(loc="lower left", framealpha=0.5)
 
-                # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-                # NEW: capture x-limits to reuse in momentum panel for perfect match
+                # capture x-limits to reuse in momentum panel for perfect match
                 xlim_price = ax2.get_xlim()
                 st.pyplot(fig2)
-                # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
                 # Momentum panel (ROC%) — x-axis aligned with price chart
                 if show_mom_hourly:
@@ -451,12 +450,16 @@ with tab1:
                     fig2m, ax2m = plt.subplots(figsize=(14,2.8))
                     ax2m.set_title(f"Momentum (ROC% over {mom_lb_hourly} bars)")
                     ax2m.plot(roc.index, roc, label=f"ROC%({mom_lb_hourly})")
+                    # --- Momentum trendline ---
+                    yhat_m, m_m = slope_line(roc, slope_lb_hourly)
+                    if not yhat_m.empty:
+                        ax2m.plot(yhat_m.index, yhat_m.values, "--", linewidth=2,
+                                  label=f"Trend {slope_lb_hourly} ({fmt_slope(m_m)}%/bar)")
+                    # ---------------------------
                     ax2m.axhline(0, linestyle="--", linewidth=1)
                     ax2m.set_xlabel("Time (PST)")
                     ax2m.legend(loc="lower left", framealpha=0.5)
-                    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-                    ax2m.set_xlim(xlim_price)
-                    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+                    ax2m.set_xlim(xlim_price)  # align with price panel
                     st.pyplot(fig2m)
 
         # Optional: small table of recent FX news
@@ -576,11 +579,9 @@ with tab2:
                 ax3.set_xlabel("Time (PST)")
                 ax3.legend(loc="lower left", framealpha=0.5)
 
-                # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-                # NEW: capture x-limits for momentum panel alignment
+                # capture x-limits for momentum panel alignment
                 xlim_price2 = ax3.get_xlim()
                 st.pyplot(fig3)
-                # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
                 # Momentum panel (ROC%) — x-axis aligned with price chart
                 if show_mom_hourly:
@@ -588,12 +589,16 @@ with tab2:
                     fig3m, ax3m = plt.subplots(figsize=(14,2.8))
                     ax3m.set_title(f"Momentum (ROC% over {mom_lb_hourly} bars)")
                     ax3m.plot(roc_i.index, roc_i, label=f"ROC%({mom_lb_hourly})")
+                    # --- Momentum trendline ---
+                    yhat_m2, m_m2 = slope_line(roc_i, slope_lb_hourly)
+                    if not yhat_m2.empty:
+                        ax3m.plot(yhat_m2.index, yhat_m2.values, "--", linewidth=2,
+                                  label=f"Trend {slope_lb_hourly} ({fmt_slope(m_m2)}%/bar)")
+                    # ---------------------------
                     ax3m.axhline(0, linestyle="--", linewidth=1)
                     ax3m.set_xlabel("Time (PST)")
                     ax3m.legend(loc="lower left", framealpha=0.5)
-                    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-                    ax3m.set_xlim(xlim_price2)
-                    # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+                    ax3m.set_xlim(xlim_price2)  # align with price panel
                     st.pyplot(fig3m)
 
                 fig4, ax4 = plt.subplots(figsize=(14,3))
