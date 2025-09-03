@@ -1,6 +1,7 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # - Adds Forex news markers on daily & intraday charts
 # - Fixes tz_localize error by using tz-aware UTC timestamps
+# - Adds Momentum (ROC) indicator to hourly charts
 # - Keeps auto-refresh, SARIMAX, RSI/BB/Fibs, slopes, etc.
 
 import streamlit as st
@@ -63,6 +64,7 @@ bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1
 show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly & daily)", value=True)
 slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10)
 slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120, 6)
+mom_lb_hourly    = st.sidebar.slider("Hourly momentum lookback (bars)", 5, 60, 10, 1)  # NEW
 
 # Forex news controls (only shown in Forex mode)
 if mode == "Forex":
@@ -160,6 +162,11 @@ def fibonacci_levels(series: pd.Series):
         "100%": lo,
     }
 
+def compute_roc(series: pd.Series, n: int = 10) -> pd.Series:
+    """Rate of Change (percentage): 100 * (Close/Close_n - 1)"""
+    s = pd.to_numeric(series, errors="coerce")
+    return (s / s.shift(n) - 1.0) * 100.0
+
 # ---- Robust slope helpers ----
 def _coerce_1d_series(obj) -> pd.Series:
     """Return a numeric Series from Series/DataFrame/array-like; empty Series if impossible."""
@@ -215,7 +222,6 @@ def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
     for item in news_list:
         ts = item.get("providerPublishTime")
         if ts is None:
-            # sometimes 'providerPublishTime' missing; try 'pubDate' (ms/ns safe-casting)
             ts = item.get("pubDate")
         if ts is None:
             continue
@@ -238,21 +244,17 @@ def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
     if df.empty:
         return df
 
-    # Use tz-aware UTC "now" (fixes tz_localize TypeError on newer pandas)
     now_utc = pd.Timestamp.now(tz="UTC")
     d1 = (now_utc - pd.Timedelta(days=window_days)).tz_convert(PACIFIC)
     return df[df["time"] >= d1].sort_values("time")
 
 def draw_news_markers(ax, times, ymin, ymax, label="News"):
-    """
-    Plot faint vertical lines at given times. Returns nothing.
-    """
+    """Plot faint vertical lines at given times."""
     for t in times:
         try:
             ax.axvline(t, color="tab:red", alpha=0.18, linewidth=1)
         except Exception:
             pass
-    # tiny legend proxy
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
 
 # --- Session init ---
@@ -367,7 +369,6 @@ with tab1:
 
             # Forex news markers on daily
             if not fx_news.empty:
-                # Limit events to window in view
                 t0, t1 = df_show.index[0], df_show.index[-1]
                 times = [t for t in fx_news["time"] if t0 <= t <= t1]
                 if times:
@@ -412,7 +413,7 @@ with tab1:
                     ax2.text(hc.index[-1], y, f" {lbl}", va="center")
 
             # Forex news markers on intraday
-            if not fx_news.empty and not hc.empty:
+            if not hc.empty and not fx_news.empty:
                 t0, t1 = hc.index[0], hc.index[-1]
                 times = [t for t in fx_news["time"] if t0 <= t <= t1]
                 if times:
@@ -422,6 +423,17 @@ with tab1:
             ax2.set_xlabel("Time (PST)")
             ax2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig2)
+
+            # --- NEW: Hourly Momentum (ROC) panel ---
+            if not hc.empty:
+                roc = compute_roc(hc, n=mom_lb_hourly)
+                fig2m, ax2m = plt.subplots(figsize=(14,2.6))
+                ax2m.set_title(f"Hourly Momentum (ROC {mom_lb_hourly})")
+                ax2m.plot(roc.index, roc, label=f"ROC({mom_lb_hourly})")
+                ax2m.axhline(0, linestyle="--", linewidth=1)
+                ax2m.set_xlabel("Time (PST)")
+                ax2m.legend(loc="lower left", framealpha=0.5)
+                st.pyplot(fig2m)
 
         # Optional: small table of recent FX news
         if mode == "Forex" and show_fx_news:
@@ -544,6 +556,17 @@ with tab2:
             ax4.set_xlabel("Time (PST)")
             ax4.legend()
             st.pyplot(fig4)
+
+            # --- NEW: Hourly Momentum (ROC) panel in Enhanced view ---
+            if not ic.empty:
+                roc_i = compute_roc(ic, n=mom_lb_hourly)
+                fig5, ax5 = plt.subplots(figsize=(14,2.6))
+                ax5.set_title(f"Hourly Momentum (ROC {mom_lb_hourly})")
+                ax5.plot(roc_i.index, roc_i, label=f"ROC({mom_lb_hourly})")
+                ax5.axhline(0, linestyle="--", linewidth=1)
+                ax5.set_xlabel("Time (PST)")
+                ax5.legend(loc="lower left", framealpha=0.5)
+                st.pyplot(fig5)
 
         st.write(pd.DataFrame({
             "Forecast": vals,
