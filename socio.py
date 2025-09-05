@@ -1,4 +1,7 @@
 # lab.py — Read ALL pages & passages (no exclusions) + TTS
+# - Sidebar page navigation
+# - Default TTS speed 1.5× with selectable speeds
+# - NEW: Automatically condense MCQs to "Question / Answer / Explanation" (removes options)
 import re
 from io import BytesIO
 from base64 import b64encode
@@ -29,9 +32,8 @@ def fetch_bytes(url: str) -> bytes:
     return r.content
 
 def normalize_text(text: str) -> str:
-    # keep ALL content; just standardize newlines and compress super-long blank gaps a bit
     text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = re.sub(r"\n{4,}", "\n\n\n", text)  # cap at max 3 consecutive blanks
+    text = re.sub(r"\n{4,}", "\n\n\n", text)
     return text.strip()
 
 def best_effort_bytes_to_text(data: bytes) -> str:
@@ -40,55 +42,40 @@ def best_effort_bytes_to_text(data: bytes) -> str:
             return data.decode(enc)
         except UnicodeDecodeError:
             pass
-    # last resort: retain visible bytes
     return "".join(chr(b) if 32 <= b <= 126 or b in (9, 10, 13) else " " for b in data)
 
 def extract_docx_text_with_breaks(data: bytes) -> str:
-    """
-    Extract ALL text from .docx, inserting \f for explicit page breaks.
-    Nothing is filtered out.
-    """
     if not DOCX_OK:
         raise RuntimeError("python-docx not available. Add 'python-docx' to requirements.txt.")
     doc = Document(BytesIO(data))
     out = []
     for para in doc.paragraphs:
         out.append(para.text)
-        # insert form-feed when Word page break is present
         for run in para.runs:
             if getattr(run, "break_type", None) == WD_BREAK.PAGE:
                 out.append("\f")
     text = "\n".join(out)
-    # clean duplicated newline around form feeds
     text = text.replace("\f\n", "\f").replace("\n\f", "\f")
     return normalize_text(text)
 
 def split_by_formfeed(text: str):
-    # Prefer explicit page breaks if present
     parts = [p for p in text.split("\f")]
-    # Keep empty pages if any (rare), then trim edges lightly
     parts = [p.strip("\n") for p in parts]
     return parts if len(parts) > 1 else None
 
 def smart_paginate(text: str, max_chars: int):
-    """
-    If the doc has no explicit page breaks, paginate by sentences/paragraphs
-    without dropping anything.
-    """
     paragraphs = [p for p in re.split(r"\n\s*\n", text)]
-    # sentence boundaries (naive but safe)
     sent_pat = re.compile(r'(?<=\S[.?!])\s+(?=[A-Z0-9"“(])')
 
     sentences = []
     for p in paragraphs:
         if not p.strip():
-            sentences.append("")  # preserve paragraph break
+            sentences.append("")
             continue
         sentences.extend(sent_pat.split(p))
 
     pages, buf = [], ""
     for s in sentences:
-        # keep paragraph breaks (blank lines) as newlines
         s_clean = s if s == "" else s.strip()
         candidate = (buf + ("\n\n" if s_clean == "" else (" " if buf and s_clean else "")) + s_clean).rstrip()
         if len(candidate) <= max_chars:
@@ -98,23 +85,19 @@ def smart_paginate(text: str, max_chars: int):
                 pages.append(buf.strip())
                 buf = s_clean
             else:
-                # extremely long single chunk: hard wrap to ensure nothing is lost
                 for i in range(0, len(s_clean), max_chars):
                     pages.append(s_clean[i : i + max_chars].strip())
                 buf = ""
     if buf:
         pages.append(buf.strip())
-
     return pages if pages else [text]
 
 @st.cache_data(show_spinner=False)
 def paginate_full_text(text: str, max_chars: int):
-    # First try real page breaks; otherwise paginate smartly
     ff = split_by_formfeed(text)
     return ff if ff else smart_paginate(text, max_chars)
 
 def tts_mp3(text: str) -> BytesIO:
-    # gTTS works best in <~4500 char chunks
     step = 4500
     combined = BytesIO()
     for i in range(0, len(text), step):
@@ -127,9 +110,6 @@ def tts_mp3(text: str) -> BytesIO:
     return combined
 
 def render_audio_player(audio_bytes: BytesIO, rate: float = 1.5):
-    """
-    Render an HTML5 audio player with a specified playbackRate.
-    """
     b64 = b64encode(audio_bytes.getvalue()).decode("utf-8")
     html = f"""
     <audio id="tts_player" controls style="width:100%;">
@@ -146,9 +126,140 @@ def render_audio_player(audio_bytes: BytesIO, rate: float = 1.5):
     """
     components.html(html, height=80, scrolling=False)
 
+# ---------- NEW: Condense to Q / A / Explanation ----------
+_Q_START_RE = re.compile(r'^\s*(\d+)[\).\s]+(.*\S)?\s*$')               # "1. ..." or "1) ..."
+_Q_LABEL_RE = re.compile(r'^\s*question\s*[:\-]\s*(.*)$', re.I)         # "Question: ..."
+_A_LABEL_RE = re.compile(r'^\s*answer\s*[:\-]\s*(.*)$', re.I)           # "Answer: ..."
+_E_LABEL_RE = re.compile(r'^\s*explanation\s*[:\-]\s*(.*)$', re.I)      # "Explanation: ..."
+_OPT_RE     = re.compile(r'^\s*(?:[\-\*•]|\(?[A-Ea-e1-9]\)?)[\.\)]?\s+(.*?)(\s*✅.*)?\s*$')
+
+def condense_to_qae(page: str) -> str:
+    """
+    Removes multiple-choice options and returns a clean 'Question / Answer / Explanation' format.
+    Heuristics:
+      - Detects numbered questions "1. ..." / "1) ..." or "Question: ..."
+      - Keeps 'Answer:' & 'Explanation:' lines (multi-line explanations supported)
+      - If no explicit Answer: but an option has ✅ or '(correct)', uses that option as Answer
+      - Drops all option lines
+    """
+    lines = [ln.rstrip() for ln in page.splitlines()]
+    i, N = 0, len(lines)
+    out = []
+
+    def is_qstart(s: str) -> bool:
+        return bool(_Q_START_RE.match(s) or _Q_LABEL_RE.match(s))
+
+    while i < N:
+        line = lines[i]
+        qmatch_num = _Q_START_RE.match(line)
+        qmatch_lbl = _Q_LABEL_RE.match(line)
+
+        if qmatch_num or qmatch_lbl:
+            # Extract question text
+            if qmatch_num:
+                qnum = qmatch_num.group(1)
+                qtext = (qmatch_num.group(2) or "").strip()
+                if not qtext:
+                    # if the question line is just "12." and text is on next line
+                    j = i + 1
+                    while j < N and not lines[j].strip():
+                        j += 1
+                    if j < N:
+                        qtext = lines[j].strip()
+                        i = j  # advance to the line with actual text
+                q_prefix = f"{qnum}) "
+            else:
+                qtext = (qmatch_lbl.group(1) or "").strip()
+                q_prefix = ""  # already labeled
+
+            # Collect block until next question start
+            i += 1
+            block = []
+            while i < N and not is_qstart(lines[i]):
+                block.append(lines[i])
+                i += 1
+
+            # Parse block for Answer/Explanation; remove options
+            answer = None
+            explanation_lines = []
+            k = 0
+            while k < len(block):
+                cur = block[k].strip()
+
+                # Explicit labels
+                mA = _A_LABEL_RE.match(cur)
+                mE = _E_LABEL_RE.match(cur)
+
+                if mA:
+                    ans = mA.group(1).strip()
+                    # If explicit answer spans multiple following non-empty lines, join them
+                    k += 1
+                    cont = []
+                    while k < len(block) and block[k].strip() and not _E_LABEL_RE.match(block[k]) and not _A_LABEL_RE.match(block[k]):
+                        cont.append(block[k].strip())
+                        k += 1
+                    if cont:
+                        ans = (ans + " " + " ".join(cont)).strip()
+                    answer = ans or answer
+                    continue
+
+                if mE:
+                    exp = mE.group(1).strip()
+                    k += 1
+                    # Accumulate following explanation lines until blank or next labeled segment
+                    cont = []
+                    while k < len(block):
+                        nxt = block[k]
+                        if not nxt.strip():
+                            cont.append("")  # preserve paragraph breaks
+                            k += 1
+                            continue
+                        if _A_LABEL_RE.match(nxt) or _E_LABEL_RE.match(nxt):
+                            break
+                        cont.append(nxt.strip())
+                        k += 1
+                    explanation_lines.append(exp)
+                    if cont:
+                        explanation_lines.append(" ".join([c for c in cont if c != ""]))
+                    continue
+
+                # Option lines (possibly with ✅)
+                mOpt = _OPT_RE.match(cur)
+                if mOpt:
+                    opt_text = mOpt.group(1).strip()
+                    has_check = bool(mOpt.group(2)) or ("(correct" in cur.lower())
+                    if has_check and not answer:
+                        answer = opt_text
+                    k += 1
+                    continue
+
+                # Unlabeled lines — ignore (likely options or filler)
+                k += 1
+
+            # Write cleaned block
+            if qtext:
+                out.append(f"{q_prefix}Question: {qtext}")
+            if answer:
+                out.append(f"Answer: {answer}")
+            if explanation_lines:
+                joined_exp = " ".join([s for s in explanation_lines if s]).strip()
+                if joined_exp:
+                    out.append(f"Explanation: {joined_exp}")
+            out.append("")  # blank spacer between Qs
+
+            continue  # (while loop continues at current i)
+
+        # Not a question start — skip
+        i += 1
+
+    cleaned = "\n".join(out).strip()
+    # If nothing got parsed (no questions detected), just return original page
+    return cleaned if cleaned else page
+
 # ---------- UI ----------
 st.title("📖 Lab Reader (All Content) → Text-to-Speech")
-st.caption("Reads **everything** from the document, including all pages and passages. Nothing is excluded.")
+st.caption("Reads **everything** from the document, including all pages and passages. Nothing is excluded. "
+           "Options in MCQs are automatically removed; only Question / Answer / Explanation are shown.")
 
 # ---------- Session state ----------
 if "loaded_url" not in st.session_state:
@@ -165,11 +276,28 @@ if "playback_rate" not in st.session_state:
 # ---------- Sidebar: inputs + navigation + speed ----------
 with st.sidebar:
     url = st.text_input("GitHub RAW .docx URL", value=DEFAULT_URL)
-    target_chars = st.slider("Target characters per page (fallback when no page breaks)", 800, 3200, DEFAULT_PAGE_CHARS, 100)
-    st.markdown(
-        "- Use a **raw** URL (https://raw.githubusercontent.com/...).\n"
-        "- If your file isn’t .docx, convert it to .docx for best results."
+    target_chars = st.slider("Target characters per page (no page breaks)", 800, 3200, DEFAULT_PAGE_CHARS, 100)
+    total_pages = len(st.session_state.pages) if st.session_state.pages else 1
+    current_display_idx = (st.session_state.page_idx + 1) if st.session_state.pages else 1
+    page_choice = st.selectbox(
+        "Jump to page",
+        options=list(range(1, total_pages + 1)),
+        index=(current_display_idx - 1) if current_display_idx - 1 >= 0 else 0,
+        help="Navigate directly to a page.",
+        key="page_select_sidebar"
     )
+    # Playback speed selector (default 1.5×)
+    speed_options = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+    default_index = speed_options.index(1.5)
+    playback_rate = st.selectbox(
+        "Playback speed",
+        options=speed_options,
+        index=default_index if st.session_state.playback_rate not in speed_options
+              else speed_options.index(st.session_state.playback_rate),
+        format_func=lambda x: f"{x}×",
+        help="Controls audio playback speed."
+    )
+    st.session_state.playback_rate = playback_rate
 
 # ---------- Load & paginate ----------
 if url != st.session_state.loaded_url:
@@ -185,7 +313,7 @@ if url != st.session_state.loaded_url:
             st.session_state.pages = pages
             st.session_state.page_idx = 0
             st.session_state.loaded_url = url
-            st.session_state.last_audio = None  # clear previous audio on new load
+            st.session_state.last_audio = None
     except Exception as e:
         st.error(f"Could not load the document: {e}")
         st.stop()
@@ -194,35 +322,11 @@ if not st.session_state.pages:
     st.warning("No content found.")
     st.stop()
 
-# ---------- Sidebar: page navigation & playback speed ----------
-with st.sidebar:
-    total_pages = len(st.session_state.pages)
-    # Page dropdown (1-based)
-    current_display_idx = st.session_state.page_idx + 1
-    page_choice = st.selectbox(
-        "Jump to page",
-        options=list(range(1, total_pages + 1)),
-        index=current_display_idx - 1,
-        help="Navigate directly to a page.",
-        key="page_select_sidebar"
-    )
-    if page_choice != current_display_idx:
-        st.session_state.page_idx = page_choice - 1
+# Apply page choice from sidebar
+if page_choice != (st.session_state.page_idx + 1):
+    st.session_state.page_idx = page_choice - 1
 
-    # Playback speed selector (default 1.5×)
-    speed_options = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
-    default_index = speed_options.index(1.5)
-    playback_rate = st.selectbox(
-        "Playback speed",
-        options=speed_options,
-        index=default_index if st.session_state.playback_rate not in speed_options
-              else speed_options.index(st.session_state.playback_rate),
-        format_func=lambda x: f"{x}×",
-        help="Controls audio playback speed."
-    )
-    st.session_state.playback_rate = playback_rate
-
-# ---------- Top navigation buttons (optional) ----------
+# ---------- Top navigation (optional) ----------
 left, mid, right = st.columns([1, 3, 1])
 with left:
     if st.button("⬅️ Previous", use_container_width=True, disabled=st.session_state.page_idx == 0):
@@ -237,28 +341,35 @@ with right:
         st.session_state.page_idx = min(len(st.session_state.pages) - 1, st.session_state.page_idx + 1)
 
 # ---------- Current page ----------
-page_text = st.session_state.pages[st.session_state.page_idx]
-st.text_area("Page Content (Full, unfiltered)", page_text, height=520)
+raw_page = st.session_state.pages[st.session_state.page_idx]
+clean_page = condense_to_qae(raw_page)
 
+# Main viewer shows cleaned Q/A/Explanation
+st.text_area("Page (Question / Answer / Explanation)", clean_page, height=520)
+
+# Optional: show original for reference
+with st.expander("Original page (raw)"):
+    st.text_area("Raw content", raw_page, height=320)
+
+# ---------- Audio: read the CLEANED page ----------
 col_play, col_dl = st.columns([2, 1])
 with col_play:
     if st.button("🔊 Read this page aloud"):
         try:
             with st.spinner("Generating audio..."):
-                audio_buf = tts_mp3(page_text)
+                audio_buf = tts_mp3(clean_page)
                 st.session_state.last_audio = audio_buf
         except Exception as e:
             st.error(f"TTS failed: {e}")
 
-    # If we have audio, render player at selected speed (updates when speed changes)
     if st.session_state.last_audio is not None:
         render_audio_player(st.session_state.last_audio, rate=st.session_state.playback_rate)
 
 with col_dl:
     st.download_button(
-        "⬇️ Download this page (txt)",
-        data=page_text.encode("utf-8"),
-        file_name=f"page_{st.session_state.page_idx+1}.txt",
+        "⬇️ Download this page (Q/A/Explanation, txt)",
+        data=clean_page.encode("utf-8"),
+        file_name=f"page_{st.session_state.page_idx+1}_QAE.txt",
         mime="text/plain",
     )
 
