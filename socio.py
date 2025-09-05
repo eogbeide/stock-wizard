@@ -1,4 +1,6 @@
 # lab.py — Read ALL pages & passages (no exclusions) + TTS
+# - Sidebar page navigation + default TTS speed 1.5×
+# - Displays ONLY: Question, Correct Answer and Explanation (removes options)
 import re
 from io import BytesIO
 from base64 import b64encode
@@ -17,7 +19,7 @@ except Exception:
     DOCX_OK = False
 
 # ---------- App config ----------
-st.set_page_config(page_title="📖 Lab Reader (All Pages + Passages → TTS)", page_icon="🎧", layout="wide")
+st.set_page_config(page_title="📖 Lab Reader (Q • Correct Answer • Explanation) → TTS", page_icon="🎧", layout="wide")
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Socio.docx"
 DEFAULT_PAGE_CHARS = 1600  # used only if no explicit page breaks are present
 
@@ -146,9 +148,138 @@ def render_audio_player(audio_bytes: BytesIO, rate: float = 1.5):
     """
     components.html(html, height=80, scrolling=False)
 
+# ---------- Condense to "Question, Correct Answer and Explanation" ----------
+# Patterns
+_Q_START_RE = re.compile(r'^\s*(\d+)[\).\s]+(.*\S)?\s*$')               # "1. ..." or "1) ..."
+_Q_LABEL_RE = re.compile(r'^\s*question\s*[:\-]\s*(.*)$', re.I)         # "Question: ..."
+_A_LABEL_RE = re.compile(r'^\s*answer\s*[:\-]\s*(.*)$', re.I)           # "Answer: ..."
+_E_LABEL_RE = re.compile(r'^\s*explanation\s*[:\-]\s*(.*)$', re.I)      # "Explanation: ..."
+# Options like "- text", "* text", "a) text", "A. text", "1) text", possibly with ✅/✓ or "(correct)" marker.
+_OPT_RE     = re.compile(r'^\s*(?:[\-\*•]|\(?[A-Ea-e1-9]\)?)[\.\)]?\s+(.*?)(\s*(?:✅|✓|\(correct\)|\[correct\]))?\s*$')
+
+def _is_qstart(s: str) -> bool:
+    return bool(_Q_START_RE.match(s) or _Q_LABEL_RE.match(s))
+
+def condense_to_qce(page: str) -> str:
+    """
+    Scan a page, remove MCQ options, and keep:
+      - Question:
+      - Correct Answer:
+      - Explanation:
+    Correct Answer is taken from an explicit "Answer:" label or from an option
+    line carrying ✅ / ✓ / (correct) / [correct].
+    """
+    lines = [ln.rstrip() for ln in page.splitlines()]
+    i, N = 0, len(lines)
+    out = []
+
+    while i < N:
+        line = lines[i]
+        qmatch_num = _Q_START_RE.match(line)
+        qmatch_lbl = _Q_LABEL_RE.match(line)
+
+        if qmatch_num or qmatch_lbl:
+            # ---- Extract question text ----
+            if qmatch_num:
+                qnum = qmatch_num.group(1)
+                qtext = (qmatch_num.group(2) or "").strip()
+                if not qtext:
+                    j = i + 1
+                    while j < N and not lines[j].strip():
+                        j += 1
+                    if j < N:
+                        qtext = lines[j].strip()
+                        i = j
+                q_prefix = f"{qnum}) "
+            else:
+                qtext = (qmatch_lbl.group(1) or "").strip()
+                q_prefix = ""
+
+            i += 1
+            # ---- Gather the rest of the block until next question ----
+            block = []
+            while i < N and not _is_qstart(lines[i]):
+                block.append(lines[i])
+                i += 1
+
+            # ---- Parse for Correct Answer + Explanation ----
+            correct_answer = None
+            explanation_lines = []
+            k = 0
+            while k < len(block):
+                cur = block[k].strip()
+                if not cur:
+                    k += 1
+                    continue
+
+                mA = _A_LABEL_RE.match(cur)
+                if mA:
+                    # Take everything after "Answer:" up to either blank or another label
+                    ans = mA.group(1).strip()
+                    k += 1
+                    cont = []
+                    while k < len(block):
+                        nxt = block[k].strip()
+                        if not nxt or _E_LABEL_RE.match(nxt) or _A_LABEL_RE.match(nxt):
+                            break
+                        cont.append(nxt)
+                        k += 1
+                    if cont:
+                        ans = (ans + " " + " ".join(cont)).strip()
+                    if ans:
+                        correct_answer = ans
+                    continue
+
+                mE = _E_LABEL_RE.match(cur)
+                if mE:
+                    exp = mE.group(1).strip()
+                    k += 1
+                    cont = []
+                    while k < len(block):
+                        nxt = block[k]
+                        if _A_LABEL_RE.match(nxt) or _E_LABEL_RE.match(nxt):
+                            break
+                        cont.append(nxt.strip())
+                        k += 1
+                    expl = " ".join([s for s in [exp] + cont if s]).strip()
+                    if expl:
+                        explanation_lines.append(expl)
+                    continue
+
+                # Options: capture only if marked as correct (✅/✓ or "(correct)"/"[correct]")
+                mOpt = _OPT_RE.match(cur)
+                if mOpt:
+                    opt_text = (mOpt.group(1) or "").strip()
+                    marked = bool(mOpt.group(2))
+                    if marked and not correct_answer and opt_text:
+                        correct_answer = opt_text
+                    k += 1
+                    continue
+
+                k += 1
+
+            # ---- Emit Q / Correct Answer / Explanation ----
+            if qtext:
+                out.append(f"{q_prefix}Question: {qtext}")
+            out.append(f"Correct Answer: {correct_answer if correct_answer else '(not specified)'}")
+            if explanation_lines:
+                out.append(f"Explanation: {' '.join(explanation_lines).strip()}")
+            out.append("")  # blank line between items
+
+            continue  # move to next question block
+
+        i += 1  # not a question start, keep scanning
+
+    cleaned = "\n".join(out).strip()
+    # If we couldn't parse anything, just return the original page text
+    return cleaned if cleaned else page
+
 # ---------- UI ----------
-st.title("📖 Lab Reader (All Content) → Text-to-Speech")
-st.caption("Reads **everything** from the document, including all pages and passages. Nothing is excluded.")
+st.title("📖 Lab Reader → **Question, Correct Answer and Explanation**")
+st.caption(
+    "Shows only **Question, Correct Answer and Explanation** from each page. "
+    "Multiple-choice options are removed. Use the sidebar to navigate pages and set playback speed."
+)
 
 # ---------- Session state ----------
 if "loaded_url" not in st.session_state:
@@ -160,16 +291,12 @@ if "page_idx" not in st.session_state:
 if "last_audio" not in st.session_state:
     st.session_state.last_audio = None
 if "playback_rate" not in st.session_state:
-    st.session_state.playback_rate = 1.5  # default 1.5× speed
+    st.session_state.playback_rate = 1.5  # default 1.5×
 
 # ---------- Sidebar: inputs + navigation + speed ----------
 with st.sidebar:
     url = st.text_input("GitHub RAW .docx URL", value=DEFAULT_URL)
     target_chars = st.slider("Target characters per page (fallback when no page breaks)", 800, 3200, DEFAULT_PAGE_CHARS, 100)
-    st.markdown(
-        "- Use a **raw** URL (https://raw.githubusercontent.com/...).\n"
-        "- If your file isn’t .docx, convert it to .docx for best results."
-    )
 
 # ---------- Load & paginate ----------
 if url != st.session_state.loaded_url:
@@ -179,6 +306,7 @@ if url != st.session_state.loaded_url:
             if url.lower().endswith(".docx"):
                 full_text = extract_docx_text_with_breaks(data)
             else:
+                # best-effort for .txt/.md
                 full_text = normalize_text(best_effort_bytes_to_text(data))
 
             pages = paginate_full_text(full_text, target_chars)
@@ -237,15 +365,23 @@ with right:
         st.session_state.page_idx = min(len(st.session_state.pages) - 1, st.session_state.page_idx + 1)
 
 # ---------- Current page ----------
-page_text = st.session_state.pages[st.session_state.page_idx]
-st.text_area("Page Content (Full, unfiltered)", page_text, height=520)
+raw_page = st.session_state.pages[st.session_state.page_idx]
+clean_page = condense_to_qce(raw_page)
 
+# Main viewer shows cleaned "Question, Correct Answer and Explanation"
+st.text_area("Question, Correct Answer and Explanation", clean_page, height=520)
+
+# Optional: show original for reference
+with st.expander("Original page (raw)"):
+    st.text_area("Raw content", raw_page, height=320)
+
+# ---------- Audio: read the CLEANED page ----------
 col_play, col_dl = st.columns([2, 1])
 with col_play:
     if st.button("🔊 Read this page aloud"):
         try:
             with st.spinner("Generating audio..."):
-                audio_buf = tts_mp3(page_text)
+                audio_buf = tts_mp3(clean_page)
                 st.session_state.last_audio = audio_buf
         except Exception as e:
             st.error(f"TTS failed: {e}")
@@ -256,9 +392,9 @@ with col_play:
 
 with col_dl:
     st.download_button(
-        "⬇️ Download this page (txt)",
-        data=page_text.encode("utf-8"),
-        file_name=f"page_{st.session_state.page_idx+1}.txt",
+        "⬇️ Download this page (Question, Correct Answer and Explanation)",
+        data=clean_page.encode("utf-8"),
+        file_name=f"page_{st.session_state.page_idx+1}_Q-Ans-Expl.txt",
         mime="text/plain",
     )
 
