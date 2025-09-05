@@ -1,7 +1,7 @@
 # lab.py — Read ALL pages & passages (no exclusions) + TTS
 # - Sidebar page navigation
 # - Default TTS speed 1.5× with selectable speeds
-# - NEW: Automatically condense MCQs to "Question / Answer / Explanation" (removes options)
+# - Condenses MCQs to "Question, Answer and Explanation" (removes options)
 import re
 from io import BytesIO
 from base64 import b64encode
@@ -66,14 +66,12 @@ def split_by_formfeed(text: str):
 def smart_paginate(text: str, max_chars: int):
     paragraphs = [p for p in re.split(r"\n\s*\n", text)]
     sent_pat = re.compile(r'(?<=\S[.?!])\s+(?=[A-Z0-9"“(])')
-
     sentences = []
     for p in paragraphs:
         if not p.strip():
             sentences.append("")
             continue
         sentences.extend(sent_pat.split(p))
-
     pages, buf = [], ""
     for s in sentences:
         s_clean = s if s == "" else s.strip()
@@ -126,7 +124,7 @@ def render_audio_player(audio_bytes: BytesIO, rate: float = 1.5):
     """
     components.html(html, height=80, scrolling=False)
 
-# ---------- NEW: Condense to Q / A / Explanation ----------
+# ---------- Condense to "Question, Answer and Explanation" ----------
 _Q_START_RE = re.compile(r'^\s*(\d+)[\).\s]+(.*\S)?\s*$')               # "1. ..." or "1) ..."
 _Q_LABEL_RE = re.compile(r'^\s*question\s*[:\-]\s*(.*)$', re.I)         # "Question: ..."
 _A_LABEL_RE = re.compile(r'^\s*answer\s*[:\-]\s*(.*)$', re.I)           # "Answer: ..."
@@ -135,12 +133,8 @@ _OPT_RE     = re.compile(r'^\s*(?:[\-\*•]|\(?[A-Ea-e1-9]\)?)[\.\)]?\s+(.*?)(\s
 
 def condense_to_qae(page: str) -> str:
     """
-    Removes multiple-choice options and returns a clean 'Question / Answer / Explanation' format.
-    Heuristics:
-      - Detects numbered questions "1. ..." / "1) ..." or "Question: ..."
-      - Keeps 'Answer:' & 'Explanation:' lines (multi-line explanations supported)
-      - If no explicit Answer: but an option has ✅ or '(correct)', uses that option as Answer
-      - Drops all option lines
+    Removes multiple-choice options and returns 'Question, Answer and Explanation'.
+    Keeps labels as "Question:", "Answer:", "Explanation:".
     """
     lines = [ln.rstrip() for ln in page.splitlines()]
     i, N = 0, len(lines)
@@ -155,44 +149,37 @@ def condense_to_qae(page: str) -> str:
         qmatch_lbl = _Q_LABEL_RE.match(line)
 
         if qmatch_num or qmatch_lbl:
-            # Extract question text
             if qmatch_num:
                 qnum = qmatch_num.group(1)
                 qtext = (qmatch_num.group(2) or "").strip()
                 if not qtext:
-                    # if the question line is just "12." and text is on next line
                     j = i + 1
                     while j < N and not lines[j].strip():
                         j += 1
                     if j < N:
                         qtext = lines[j].strip()
-                        i = j  # advance to the line with actual text
+                        i = j
                 q_prefix = f"{qnum}) "
             else:
                 qtext = (qmatch_lbl.group(1) or "").strip()
-                q_prefix = ""  # already labeled
+                q_prefix = ""
 
-            # Collect block until next question start
             i += 1
             block = []
             while i < N and not is_qstart(lines[i]):
                 block.append(lines[i])
                 i += 1
 
-            # Parse block for Answer/Explanation; remove options
             answer = None
             explanation_lines = []
             k = 0
             while k < len(block):
                 cur = block[k].strip()
-
-                # Explicit labels
                 mA = _A_LABEL_RE.match(cur)
                 mE = _E_LABEL_RE.match(cur)
 
                 if mA:
                     ans = mA.group(1).strip()
-                    # If explicit answer spans multiple following non-empty lines, join them
                     k += 1
                     cont = []
                     while k < len(block) and block[k].strip() and not _E_LABEL_RE.match(block[k]) and not _A_LABEL_RE.match(block[k]):
@@ -206,12 +193,11 @@ def condense_to_qae(page: str) -> str:
                 if mE:
                     exp = mE.group(1).strip()
                     k += 1
-                    # Accumulate following explanation lines until blank or next labeled segment
                     cont = []
                     while k < len(block):
                         nxt = block[k]
                         if not nxt.strip():
-                            cont.append("")  # preserve paragraph breaks
+                            cont.append("")
                             k += 1
                             continue
                         if _A_LABEL_RE.match(nxt) or _E_LABEL_RE.match(nxt):
@@ -223,7 +209,6 @@ def condense_to_qae(page: str) -> str:
                         explanation_lines.append(" ".join([c for c in cont if c != ""]))
                     continue
 
-                # Option lines (possibly with ✅)
                 mOpt = _OPT_RE.match(cur)
                 if mOpt:
                     opt_text = mOpt.group(1).strip()
@@ -233,10 +218,8 @@ def condense_to_qae(page: str) -> str:
                     k += 1
                     continue
 
-                # Unlabeled lines — ignore (likely options or filler)
                 k += 1
 
-            # Write cleaned block
             if qtext:
                 out.append(f"{q_prefix}Question: {qtext}")
             if answer:
@@ -245,21 +228,20 @@ def condense_to_qae(page: str) -> str:
                 joined_exp = " ".join([s for s in explanation_lines if s]).strip()
                 if joined_exp:
                     out.append(f"Explanation: {joined_exp}")
-            out.append("")  # blank spacer between Qs
+            out.append("")
+            continue
 
-            continue  # (while loop continues at current i)
-
-        # Not a question start — skip
         i += 1
 
     cleaned = "\n".join(out).strip()
-    # If nothing got parsed (no questions detected), just return original page
     return cleaned if cleaned else page
 
 # ---------- UI ----------
 st.title("📖 Lab Reader (All Content) → Text-to-Speech")
-st.caption("Reads **everything** from the document, including all pages and passages. Nothing is excluded. "
-           "Options in MCQs are automatically removed; only Question / Answer / Explanation are shown.")
+st.caption(
+    "Reads **everything** from the document, including all pages and passages. "
+    "Multiple-choice options are removed; only **Question, Answer and Explanation** are shown."
+)
 
 # ---------- Session state ----------
 if "loaded_url" not in st.session_state:
@@ -271,7 +253,7 @@ if "page_idx" not in st.session_state:
 if "last_audio" not in st.session_state:
     st.session_state.last_audio = None
 if "playback_rate" not in st.session_state:
-    st.session_state.playback_rate = 1.5  # default 1.5× speed
+    st.session_state.playback_rate = 1.5  # default 1.5×
 
 # ---------- Sidebar: inputs + navigation + speed ----------
 with st.sidebar:
@@ -286,7 +268,6 @@ with st.sidebar:
         help="Navigate directly to a page.",
         key="page_select_sidebar"
     )
-    # Playback speed selector (default 1.5×)
     speed_options = [0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
     default_index = speed_options.index(1.5)
     playback_rate = st.selectbox(
@@ -308,7 +289,6 @@ if url != st.session_state.loaded_url:
                 full_text = extract_docx_text_with_breaks(data)
             else:
                 full_text = normalize_text(best_effort_bytes_to_text(data))
-
             pages = paginate_full_text(full_text, target_chars)
             st.session_state.pages = pages
             st.session_state.page_idx = 0
@@ -344,8 +324,8 @@ with right:
 raw_page = st.session_state.pages[st.session_state.page_idx]
 clean_page = condense_to_qae(raw_page)
 
-# Main viewer shows cleaned Q/A/Explanation
-st.text_area("Page (Question / Answer / Explanation)", clean_page, height=520)
+# Main viewer shows cleaned "Question, Answer and Explanation"
+st.text_area("Question, Answer and Explanation", clean_page, height=520)
 
 # Optional: show original for reference
 with st.expander("Original page (raw)"):
@@ -361,13 +341,12 @@ with col_play:
                 st.session_state.last_audio = audio_buf
         except Exception as e:
             st.error(f"TTS failed: {e}")
-
     if st.session_state.last_audio is not None:
         render_audio_player(st.session_state.last_audio, rate=st.session_state.playback_rate)
 
 with col_dl:
     st.download_button(
-        "⬇️ Download this page (Q/A/Explanation, txt)",
+        "⬇️ Download this page (Question, Answer and Explanation, txt)",
         data=clean_page.encode("utf-8"),
         file_name=f"page_{st.session_state.page_idx+1}_QAE.txt",
         mime="text/plain",
