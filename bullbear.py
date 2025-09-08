@@ -3,6 +3,7 @@
 # - Adds hourly momentum indicator (ROC%) with robust handling
 # - Aligns momentum panel x-axis with hourly price chart x-axis
 # - Adds momentum trendline (slope over lookback)
+# - Adds momentum resistance/support (rolling max/min)
 # - Fixes tz_localize error by using tz-aware UTC timestamps
 # - Keeps auto-refresh, SARIMAX, RSI/BB/Fibs, slopes, etc.
 
@@ -447,6 +448,11 @@ with tab1:
                 # Momentum panel (ROC%) — x-axis aligned with price chart
                 if show_mom_hourly:
                     roc = compute_roc(hc, n=mom_lb_hourly)
+
+                    # NEW: momentum resistance/support over 60 bars (same as price panel)
+                    res_m = roc.rolling(60, min_periods=1).max()
+                    sup_m = roc.rolling(60, min_periods=1).min()
+
                     fig2m, ax2m = plt.subplots(figsize=(14,2.8))
                     ax2m.set_title(f"Momentum (ROC% over {mom_lb_hourly} bars)")
                     ax2m.plot(roc.index, roc, label=f"ROC%({mom_lb_hourly})")
@@ -455,7 +461,10 @@ with tab1:
                     if not yhat_m.empty:
                         ax2m.plot(yhat_m.index, yhat_m.values, "--", linewidth=2,
                                   label=f"Trend {slope_lb_hourly} ({fmt_slope(m_m)}%/bar)")
-                    # ---------------------------
+                    # --- Momentum resistance/support ---
+                    ax2m.plot(res_m.index, res_m, ":", label="Mom Resistance")
+                    ax2m.plot(sup_m.index, sup_m, ":", label="Mom Support")
+
                     ax2m.axhline(0, linestyle="--", linewidth=1)
                     ax2m.set_xlabel("Time (PST)")
                     ax2m.legend(loc="lower left", framealpha=0.5)
@@ -586,6 +595,11 @@ with tab2:
                 # Momentum panel (ROC%) — x-axis aligned with price chart
                 if show_mom_hourly:
                     roc_i = compute_roc(ic, n=mom_lb_hourly)
+
+                    # NEW: momentum resistance/support over 60 bars (same as price panel)
+                    res_m2 = roc_i.rolling(60, min_periods=1).max()
+                    sup_m2 = roc_i.rolling(60, min_periods=1).min()
+
                     fig3m, ax3m = plt.subplots(figsize=(14,2.8))
                     ax3m.set_title(f"Momentum (ROC% over {mom_lb_hourly} bars)")
                     ax3m.plot(roc_i.index, roc_i, label=f"ROC%({mom_lb_hourly})")
@@ -594,7 +608,10 @@ with tab2:
                     if not yhat_m2.empty:
                         ax3m.plot(yhat_m2.index, yhat_m2.values, "--", linewidth=2,
                                   label=f"Trend {slope_lb_hourly} ({fmt_slope(m_m2)}%/bar)")
-                    # ---------------------------
+                    # --- Momentum resistance/support ---
+                    ax3m.plot(res_m2.index, res_m2, ":", label="Mom Resistance")
+                    ax3m.plot(sup_m2.index, sup_m2, ":", label="Mom Support")
+
                     ax3m.axhline(0, linestyle="--", linewidth=1)
                     ax3m.set_xlabel("Time (PST)")
                     ax3m.legend(loc="lower left", framealpha=0.5)
