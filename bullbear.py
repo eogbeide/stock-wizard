@@ -5,7 +5,7 @@
 # - Adds momentum trendline (slope over lookback)
 # - Adds momentum resistance/support (rolling max/min)
 # - Daily chart shows ONLY: History, 30 EMA, 30 Support/Resistance, Daily slope, Pivot lines (P, R1/S1, R2/S2)
-# - NEW: Supertrend added to Daily and Hourly charts (configurable ATR period & multiplier)
+# - NEW: Supertrend overlay added to HOURLY chart (configurable ATR period & multiplier)
 # - Fixes tz_localize error by using tz-aware UTC timestamps
 # - Keeps auto-refresh, SARIMAX (used for metrics/probabilities), RSI, etc.
 
@@ -76,8 +76,8 @@ slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 1
 show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True)
 mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1)
 
-# NEW: Supertrend controls (applies to both daily & hourly overlays)
-st.sidebar.subheader("Supertrend")
+# NEW: Supertrend controls (hourly overlay)
+st.sidebar.subheader("Hourly Supertrend")
 atr_period = st.sidebar.slider("ATR period", 5, 50, 10, 1)
 atr_mult   = st.sidebar.slider("ATR multiplier", 1.0, 5.0, 3.0, 0.5)
 
@@ -114,7 +114,7 @@ def fetch_hist(ticker: str) -> pd.Series:
 
 @st.cache_data(ttl=900)
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
-    """Daily OHLC for pivots and daily Supertrend."""
+    """Daily OHLC for pivots."""
     df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Open','High','Low','Close']].dropna()
     try:
         df = df.tz_localize(PACIFIC)
@@ -183,10 +183,6 @@ def fibonacci_levels(series: pd.Series):
 
 # ---- Pivots (using previous day's OHLC) ----
 def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
-    """
-    Compute floor-trader pivots from the previous trading day's OHLC.
-    Returns dict with P, R1, S1, R2, S2 (floats). Empty dict if insufficient data.
-    """
     if ohlc is None or ohlc.empty:
         return {}
     ohlc = ohlc.sort_index()
@@ -244,26 +240,28 @@ def compute_roc(series_like, n: int = 10) -> pd.Series:
     roc = s.pct_change(n) * 100.0
     return roc.reindex(orig.index)
 
-# ---- Supertrend helpers (for Daily & Hourly overlays) ----
+# ---- Supertrend helpers (for HOURLY overlay) ----
 def _true_range(df: pd.DataFrame):
     hl = (df["High"] - df["Low"]).abs()
     hc = (df["High"] - df["Close"].shift()).abs()
     lc = (df["Low"]  - df["Close"].shift()).abs()
-    tr = pd.concat([hl, hc, lc], axis=1).max(axis=1)
-    return tr
+    return pd.concat([hl, hc, lc], axis=1).max(axis=1)
 
 def compute_atr(df: pd.DataFrame, period: int = 10) -> pd.Series:
     tr = _true_range(df[['High','Low','Close']])
+    # Using EMA ATR keeps it responsive intraday
     return tr.ewm(alpha=1/period, adjust=False).mean()
 
 def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float = 3.0):
     """
-    Returns DataFrame with:
+    Returns DataFrame with columns:
       'ST' (supertrend line), 'in_uptrend' (bool), 'upperband', 'lowerband'
     Requires High/Low/Close columns.
     """
-    if not {'High','Low','Close'}.issubset(df.columns):
-        return pd.DataFrame(index=df.index, columns=["ST","in_uptrend","upperband","lowerband"])
+    required = {'High','Low','Close'}
+    if df is None or df.empty or not required.issubset(df.columns):
+        return pd.DataFrame(index=df.index if df is not None else pd.Index([]),
+                            columns=["ST","in_uptrend","upperband","lowerband"])
 
     ohlc = df[['High','Low','Close']].copy()
     hl2 = (ohlc['High'] + ohlc['Low']) / 2.0
@@ -275,6 +273,7 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
     st_line = pd.Series(index=ohlc.index, dtype=float)
     in_up   = pd.Series(index=ohlc.index, dtype=bool)
 
+    # initialize
     st_line.iloc[0] = upperband.iloc[0]
     in_up.iloc[0]   = True
 
@@ -285,13 +284,12 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
         up_i = upperband.iloc[i]
         dn_i = lowerband.iloc[i]
 
-        # Trail the band on the current trend side
+        # trail bands on trend side
         if prev_up:
             up_i = min(up_i, prev_st)
         else:
             dn_i = max(dn_i, prev_st)
 
-        # Flip conditions
         close_i = ohlc['Close'].iloc[i]
         if close_i > up_i:
             curr_up = True
@@ -388,9 +386,9 @@ with tab1:
 
     if st.button("Run Forecast") or auto_run:
         df_hist = fetch_hist(sel)                       # Series (Close)
-        df_ohlc = fetch_hist_ohlc(sel)                  # DataFrame (OHLC) for pivots & daily supertrend
+        df_ohlc = fetch_hist_ohlc(sel)                  # DataFrame (OHLC) for pivots
         fc_idx, fc_vals, fc_ci = compute_sarimax_forecast(df_hist)  # used for metrics only
-        intraday = fetch_intraday(sel, period=period_map[hour_range])  # DataFrame with OHLCV
+        intraday = fetch_intraday(sel, period=period_map[hour_range])  # DataFrame
         st.session_state.update({
             "df_hist": df_hist,
             "df_ohlc": df_ohlc,
@@ -417,21 +415,19 @@ with tab1:
         if mode == "Forex" and show_fx_news:
             fx_news = fetch_yf_news(sel, window_days=news_window_days)
 
-        # ----- Daily (ONLY: History, 30 EMA, 30 S/R, Daily slope, Pivots) + Supertrend -----
+        # ----- Daily (ONLY: History, 30 EMA, 30 S/R, Daily slope, Pivots) -----
         if chart in ("Daily","Both"):
             df_show = df[-360:]
             ema30 = df.ewm(span=30).mean()
             res30 = df.rolling(30, min_periods=1).max()
             sup30 = df.rolling(30, min_periods=1).min()
             yhat_d, m_d = slope_line(df, slope_lb_daily)
+
+            # Compute pivots from previous day's OHLC
             piv = current_daily_pivots(df_ohlc)
 
-            # Compute daily Supertrend from daily OHLC and align to Close index
-            st_daily = compute_supertrend(df_ohlc, atr_period=atr_period, atr_mult=atr_mult)
-            st_line_daily = st_daily["ST"].reindex(df.index).loc[df_show.index]
-
             fig, ax = plt.subplots(figsize=(14,6))
-            ax.set_title(f"{sel} Daily — History, 30 EMA, 30 S/R, Slope, Pivots, Supertrend")
+            ax.set_title(f"{sel} Daily — History, 30 EMA, 30 S/R, Slope, Pivots")
             ax.plot(df_show, label="History")
             ax.plot(ema30[-360:], "--", label="30 EMA")
             ax.plot(res30[-360:], ":", label="30 Resistance")
@@ -439,11 +435,8 @@ with tab1:
             if not yhat_d.empty:
                 ax.plot(yhat_d.index, yhat_d.values, "-", linewidth=2,
                         label=f"Daily Slope {slope_lb_daily} bars ({fmt_slope(m_d)}/bar)")
-            # Supertrend overlay
-            if not st_line_daily.dropna().empty:
-                ax.plot(st_line_daily.index, st_line_daily.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
 
-            # Draw pivot lines
+            # Draw pivot lines across the visible daily range
             if piv:
                 x0, x1 = df_show.index[0], df_show.index[-1]
                 for lbl, y in piv.items():
@@ -455,7 +448,7 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (adds Supertrend overlay) -----
+        # ----- Hourly (NOW includes Supertrend overlay) -----
         if chart in ("Hourly","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -469,9 +462,9 @@ with tab1:
                 res_h = hc.rolling(60, min_periods=1).max()
                 sup_h = hc.rolling(60, min_periods=1).min()
 
-                # Intraday Supertrend (needs High/Low/Close)
+                # --- Supertrend from intraday OHLC ---
                 st_intraday = compute_supertrend(intr, atr_period=atr_period, atr_mult=atr_mult)
-                st_line_intr = st_intraday["ST"].reindex(hc.index)
+                st_line_intr = st_intraday["ST"].reindex(hc.index) if "ST" in st_intraday else pd.Series(index=hc.index, dtype=float)
 
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
 
@@ -482,8 +475,7 @@ with tab1:
                 ax2.plot(hc.index, res_h, ":", label="Resistance")
                 ax2.plot(hc.index, sup_h, ":", label="Support")
                 ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
-
-                # Supertrend overlay (hourly)
+                # Supertrend overlay
                 if not st_line_intr.dropna().empty:
                     ax2.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
 
@@ -576,7 +568,7 @@ with tab2:
 
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
 
-        # ----- Daily (ONLY: History, 30 EMA, 30 S/R, Daily slope, Pivots) + Supertrend -----
+        # ----- Daily (unchanged here) -----
         if view in ("Daily","Both"):
             df_show = df[-360:]
             ema30 = df.ewm(span=30).mean()
@@ -585,11 +577,8 @@ with tab2:
             yhat_d, m_d = slope_line(df, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
-            st_daily = compute_supertrend(df_ohlc, atr_period=atr_period, atr_mult=atr_mult)
-            st_line_daily = st_daily["ST"].reindex(df.index).loc[df_show.index]
-
             fig, ax = plt.subplots(figsize=(14,6))
-            ax.set_title(f"{st.session_state.ticker} Daily — History, 30 EMA, 30 S/R, Slope, Pivots, Supertrend")
+            ax.set_title(f"{st.session_state.ticker} Daily — History, 30 EMA, 30 S/R, Slope, Pivots")
             ax.plot(df_show, label="History")
             ax.plot(ema30[-360:], "--", label="30 EMA")
             ax.plot(res30[-360:], ":", label="30 Resistance")
@@ -597,8 +586,6 @@ with tab2:
             if not yhat_d.empty:
                 ax.plot(yhat_d.index, yhat_d.values, "-", linewidth=2,
                         label=f"Daily Slope {slope_lb_daily} bars ({fmt_slope(m_d)}/bar)")
-            if not st_line_daily.dropna().empty:
-                ax.plot(st_line_daily.index, st_line_daily.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
             if piv:
                 x0, x1 = df_show.index[0], df_show.index[-1]
                 for lbl, y in piv.items():
@@ -609,7 +596,6 @@ with tab2:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-            # RSI panel (kept for Enhanced view)
             fig2, ax2 = plt.subplots(figsize=(14,3))
             ax2.plot(rsi[-360:], label="RSI(14)")
             ax2.axhline(70, linestyle="--"); ax2.axhline(30, linestyle="--")
@@ -617,7 +603,7 @@ with tab2:
             ax2.legend()
             st.pyplot(fig2)
 
-        # ----- Intraday (with Supertrend overlay) -----
+        # ----- Intraday (inherits hourly Supertrend overlay) -----
         if view in ("Intraday","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -631,8 +617,9 @@ with tab2:
                 res_i = ic.rolling(60, min_periods=1).max()
                 sup_i = ic.rolling(60, min_periods=1).min()
 
+                # Supertrend on intraday OHLC
                 st_intraday = compute_supertrend(intr, atr_period=atr_period, atr_mult=atr_mult)
-                st_line_intr = st_intraday["ST"].reindex(ic.index)
+                st_line_intr = st_intraday["ST"].reindex(ic.index) if "ST" in st_intraday else pd.Series(index=ic.index, dtype=float)
 
                 yhat_h, m_h = slope_line(ic, slope_lb_hourly)
 
