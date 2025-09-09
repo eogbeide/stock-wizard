@@ -9,7 +9,7 @@
 # - Fixes tz_localize error by using tz-aware UTC timestamps
 # - Keeps auto-refresh, SARIMAX (used for metrics/probabilities), RSI, etc.
 
-import streamlit as st
+import streamlit as std
 import pandas as pd
 import numpy as np
 import yfinance as yf
