@@ -6,6 +6,7 @@
 # - Adds momentum resistance/support (rolling max/min)
 # - Daily chart shows ONLY: History, 30 EMA, 30 Support/Resistance, Daily slope, Pivot lines (P, R1/S1, R2/S2) + VALUE LABELS
 # - Adds EMA30 slope overlay on Daily chart
+# - Adds slope overlays on 30-day Support & Resistance edges (Daily)
 # - Hourly chart includes Supertrend overlay (configurable ATR period & multiplier)
 # - Fixes tz_localize error by using tz-aware UTC timestamps
 # - Keeps auto-refresh, SARIMAX (used for metrics/probabilities), RSI, etc.
@@ -405,8 +406,12 @@ with tab1:
             res30 = df.rolling(30, min_periods=1).max()
             sup30 = df.rolling(30, min_periods=1).min()
             yhat_d, m_d = slope_line(df, slope_lb_daily)
-            # NEW: EMA30 slope
+            # EMA30 slope
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
+            # NEW: slopes of the 30-day Resistance/Support edges
+            yhat_res30, m_res30 = slope_line(res30, slope_lb_daily)
+            yhat_sup30, m_sup30 = slope_line(sup30, slope_lb_daily)
+
             piv = current_daily_pivots(df_ohlc)
 
             fig, ax = plt.subplots(figsize=(14,6))
@@ -415,13 +420,20 @@ with tab1:
             ax.plot(ema30[-360:], "--", label="30 EMA")
             ax.plot(res30[-360:], ":", label="30 Resistance")
             ax.plot(sup30[-360:], ":", label="30 Support")
+
             if not yhat_d.empty:
                 ax.plot(yhat_d.index, yhat_d.values, "-", linewidth=2,
-                        label=f"Daily Slope {slope_lb_daily} bars ({fmt_slope(m_d)}/bar)")
-            # NEW: EMA30 slope overlay
+                        label=f"Daily Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
             if not yhat_ema30.empty:
                 ax.plot(yhat_ema30.index, yhat_ema30.values, "-", linewidth=2,
                         label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
+            # NEW: draw slope overlays on edges of S/R
+            if not yhat_res30.empty:
+                ax.plot(yhat_res30.index, yhat_res30.values, "-", linewidth=2,
+                        label=f"30R Slope {slope_lb_daily} ({fmt_slope(m_res30)}/bar)")
+            if not yhat_sup30.empty:
+                ax.plot(yhat_sup30.index, yhat_sup30.values, "-", linewidth=2,
+                        label=f"30S Slope {slope_lb_daily} ({fmt_slope(m_sup30)}/bar)")
 
             # Pivot lines + numeric labels
             if piv:
@@ -557,8 +569,12 @@ with tab2:
             res30 = df.rolling(30, min_periods=1).max()
             sup30 = df.rolling(30, min_periods=1).min()
             yhat_d, m_d = slope_line(df, slope_lb_daily)
-            # NEW: EMA30 slope
+            # EMA30 slope
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
+            # NEW: slopes of the 30-day Resistance/Support edges
+            yhat_res30, m_res30 = slope_line(res30, slope_lb_daily)
+            yhat_sup30, m_sup30 = slope_line(sup30, slope_lb_daily)
+
             piv = current_daily_pivots(df_ohlc)
 
             fig, ax = plt.subplots(figsize=(14,6))
@@ -567,13 +583,20 @@ with tab2:
             ax.plot(ema30[-360:], "--", label="30 EMA")
             ax.plot(res30[-360:], ":", label="30 Resistance")
             ax.plot(sup30[-360:], ":", label="30 Support")
+
             if not yhat_d.empty:
                 ax.plot(yhat_d.index, yhat_d.values, "-", linewidth=2,
-                        label=f"Daily Slope {slope_lb_daily} bars ({fmt_slope(m_d)}/bar)")
-            # NEW: EMA30 slope overlay
+                        label=f"Daily Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
             if not yhat_ema30.empty:
                 ax.plot(yhat_ema30.index, yhat_ema30.values, "-", linewidth=2,
                         label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
+            # NEW: draw slope overlays on edges of S/R
+            if not yhat_res30.empty:
+                ax.plot(yhat_res30.index, yhat_res30.values, "-", linewidth=2,
+                        label=f"30R Slope {slope_lb_daily} ({fmt_slope(m_res30)}/bar)")
+            if not yhat_sup30.empty:
+                ax.plot(yhat_sup30.index, yhat_sup30.values, "-", linewidth=2,
+                        label=f"30S Slope {slope_lb_daily} ({fmt_slope(m_sup30)}/bar)")
 
             # Pivot lines + numeric labels
             if piv:
