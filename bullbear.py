@@ -4,7 +4,7 @@
 # - Aligns momentum panel x-axis with hourly price chart x-axis
 # - Adds momentum trendline (slope over lookback)
 # - Adds momentum resistance/support (rolling max/min)
-# - Daily chart shows ONLY: History, 30 EMA, 30 Support/Resistance, Daily slope, Pivot lines (P, R1/S1, R2/S2)
+# - Daily chart shows ONLY: History, 30 EMA, 30 Support/Resistance, Daily slope, Pivot lines (P, R1/S1, R2/S2) + VALUE LABELS
 # - Hourly chart includes Supertrend overlay (configurable ATR period & multiplier)
 # - Fixes tz_localize error by using tz-aware UTC timestamps
 # - Keeps auto-refresh, SARIMAX (used for metrics/probabilities), RSI, etc.
@@ -174,6 +174,17 @@ def fibonacci_levels(series: pd.Series):
         "78.6%": hi - 0.786 * diff,
         "100%": lo,
     }
+
+# ---- Value formatter for labels ----
+def fmt_price_val(y: float) -> str:
+    y = float(y)
+    ay = abs(y)
+    if ay >= 1000:
+        return f"{y:,.0f}"
+    if ay >= 1:
+        return f"{y:,.2f}"
+    # small (fx-style) prices
+    return f"{y:,.5f}"
 
 # ---- Pivots (using previous day's OHLC) ----
 def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
@@ -386,7 +397,7 @@ with tab1:
         if mode == "Forex" and show_fx_news:
             fx_news = fetch_yf_news(sel, window_days=news_window_days)
 
-        # ----- Daily (ONLY: History, 30 EMA, 30 S/R, Daily slope, Pivots) -----
+        # ----- Daily (ONLY: History, 30 EMA, 30 S/R, Daily slope, Pivots + VALUE LABELS) -----
         if chart in ("Daily","Both"):
             df_show = df[-360:]
             ema30 = df.ewm(span=30).mean()
@@ -404,12 +415,21 @@ with tab1:
             if not yhat_d.empty:
                 ax.plot(yhat_d.index, yhat_d.values, "-", linewidth=2,
                         label=f"Daily Slope {slope_lb_daily} bars ({fmt_slope(m_d)}/bar)")
+
+            # --- Pivot lines + numeric labels ---
             if piv:
                 x0, x1 = df_show.index[0], df_show.index[-1]
                 for lbl, y in piv.items():
                     ax.hlines(y, xmin=x0, xmax=x1, linestyles="dashed", linewidth=1.0)
                 for lbl, y in piv.items():
-                    ax.text(x1, y, f" {lbl}", va="center")
+                    ax.text(x1, y, f" {lbl} = {fmt_price_val(y)}", va="center")
+
+            # --- 30-day S/R numeric labels at right edge ---
+            r30_last = float(res30.iloc[-1])
+            s30_last = float(sup30.iloc[-1])
+            ax.text(df_show.index[-1], r30_last, f"  30R = {fmt_price_val(r30_last)}", va="bottom")
+            ax.text(df_show.index[-1], s30_last, f"  30S = {fmt_price_val(s30_last)}", va="top")
+
             ax.set_xlabel("Date (PST)")
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
@@ -541,12 +561,21 @@ with tab2:
             if not yhat_d.empty:
                 ax.plot(yhat_d.index, yhat_d.values, "-", linewidth=2,
                         label=f"Daily Slope {slope_lb_daily} bars ({fmt_slope(m_d)}/bar)")
+
+            # --- Pivot lines + numeric labels ---
             if piv:
                 x0, x1 = df_show.index[0], df_show.index[-1]
                 for lbl, y in piv.items():
                     ax.hlines(y, xmin=x0, xmax=x1, linestyles="dashed", linewidth=1.0)
                 for lbl, y in piv.items():
-                    ax.text(x1, y, f" {lbl}", va="center")
+                    ax.text(x1, y, f" {lbl} = {fmt_price_val(y)}", va="center")
+
+            # --- 30-day S/R numeric labels at right edge ---
+            r30_last = float(res30.iloc[-1])
+            s30_last = float(sup30.iloc[-1])
+            ax.text(df_show.index[-1], r30_last, f"  30R = {fmt_price_val(r30_last)}", va="bottom")
+            ax.text(df_show.index[-1], s30_last, f"  30S = {fmt_price_val(s30_last)}", va="top")
+
             ax.set_xlabel("Date (PST)")
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
