@@ -5,6 +5,7 @@
 # - Adds momentum trendline (slope over lookback)
 # - Adds momentum resistance/support (rolling max/min)
 # - Daily chart shows ONLY: History, 30 EMA, 30 Support/Resistance, Daily slope, Pivot lines (P, R1/S1, R2/S2) + VALUE LABELS
+# - Adds EMA30 slope overlay on Daily chart
 # - Hourly chart includes Supertrend overlay (configurable ATR period & multiplier)
 # - Fixes tz_localize error by using tz-aware UTC timestamps
 # - Keeps auto-refresh, SARIMAX (used for metrics/probabilities), RSI, etc.
@@ -404,6 +405,8 @@ with tab1:
             res30 = df.rolling(30, min_periods=1).max()
             sup30 = df.rolling(30, min_periods=1).min()
             yhat_d, m_d = slope_line(df, slope_lb_daily)
+            # NEW: EMA30 slope
+            yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
             fig, ax = plt.subplots(figsize=(14,6))
@@ -415,8 +418,12 @@ with tab1:
             if not yhat_d.empty:
                 ax.plot(yhat_d.index, yhat_d.values, "-", linewidth=2,
                         label=f"Daily Slope {slope_lb_daily} bars ({fmt_slope(m_d)}/bar)")
+            # NEW: EMA30 slope overlay
+            if not yhat_ema30.empty:
+                ax.plot(yhat_ema30.index, yhat_ema30.values, "-", linewidth=2,
+                        label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
 
-            # --- Pivot lines + numeric labels ---
+            # Pivot lines + numeric labels
             if piv:
                 x0, x1 = df_show.index[0], df_show.index[-1]
                 for lbl, y in piv.items():
@@ -424,7 +431,7 @@ with tab1:
                 for lbl, y in piv.items():
                     ax.text(x1, y, f" {lbl} = {fmt_price_val(y)}", va="center")
 
-            # --- 30-day S/R numeric labels at right edge ---
+            # 30-day S/R numeric labels at right edge
             r30_last = float(res30.iloc[-1])
             s30_last = float(sup30.iloc[-1])
             ax.text(df_show.index[-1], r30_last, f"  30R = {fmt_price_val(r30_last)}", va="bottom")
@@ -550,6 +557,8 @@ with tab2:
             res30 = df.rolling(30, min_periods=1).max()
             sup30 = df.rolling(30, min_periods=1).min()
             yhat_d, m_d = slope_line(df, slope_lb_daily)
+            # NEW: EMA30 slope
+            yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
             fig, ax = plt.subplots(figsize=(14,6))
@@ -561,8 +570,12 @@ with tab2:
             if not yhat_d.empty:
                 ax.plot(yhat_d.index, yhat_d.values, "-", linewidth=2,
                         label=f"Daily Slope {slope_lb_daily} bars ({fmt_slope(m_d)}/bar)")
+            # NEW: EMA30 slope overlay
+            if not yhat_ema30.empty:
+                ax.plot(yhat_ema30.index, yhat_ema30.values, "-", linewidth=2,
+                        label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
 
-            # --- Pivot lines + numeric labels ---
+            # Pivot lines + numeric labels
             if piv:
                 x0, x1 = df_show.index[0], df_show.index[-1]
                 for lbl, y in piv.items():
@@ -570,7 +583,7 @@ with tab2:
                 for lbl, y in piv.items():
                     ax.text(x1, y, f" {lbl} = {fmt_price_val(y)}", va="center")
 
-            # --- 30-day S/R numeric labels at right edge ---
+            # 30-day S/R numeric labels at right edge
             r30_last = float(res30.iloc[-1])
             s30_last = float(sup30.iloc[-1])
             ax.text(df_show.index[-1], r30_last, f"  30R = {fmt_price_val(r30_last)}", va="bottom")
