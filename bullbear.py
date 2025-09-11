@@ -10,6 +10,7 @@
 # - Hourly chart includes Supertrend overlay (configurable ATR period & multiplier)
 # - Fixes tz_localize error by using tz-aware UTC timestamps
 # - Keeps auto-refresh, SARIMAX (used for metrics/probabilities), RSI, etc.
+# - Cache TTLs reduced to 2 minutes (120s)
 
 import streamlit as st
 import pandas as pd
@@ -100,8 +101,8 @@ else:
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X'
     ]
 
-# --- Cache helpers ---
-@st.cache_data(ttl=900)
+# --- Cache helpers (TTL = 120 seconds) ---
+@st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
     s = (
         yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
@@ -109,7 +110,7 @@ def fetch_hist(ticker: str) -> pd.Series:
     )
     return s.tz_localize(PACIFIC)
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=120)
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
     df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Open','High','Low','Close']].dropna()
     try:
@@ -118,7 +119,7 @@ def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
         df = df.tz_convert(PACIFIC)
     return df
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=120)
 def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
     df = yf.download(ticker, period=period, interval="5m")
     try:
@@ -127,7 +128,7 @@ def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
         pass
     return df.tz_convert(PACIFIC)
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=120)
 def compute_sarimax_forecast(series: pd.Series):
     try:
         model = SARIMAX(series, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
@@ -291,7 +292,7 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
     })
 
 # ---- Forex News (Yahoo Finance) ----
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
     rows = []
     try:
@@ -348,7 +349,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # --- Tab 1: Original Forecast ---
 with tab1:
     st.header("Original Forecast")
-    st.info("Pick a ticker; data will be cached for 15 minutes after first fetch.")
+    st.info("Pick a ticker; data will be cached for 2 minutes after first fetch.")
 
     sel = st.selectbox("Ticker:", universe, key="orig_ticker")
     chart = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_chart")
@@ -408,7 +409,7 @@ with tab1:
             yhat_d, m_d = slope_line(df, slope_lb_daily)
             # EMA30 slope
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
-            # NEW: slopes of the 30-day Resistance/Support edges
+            # slopes of the 30-day Resistance/Support edges
             yhat_res30, m_res30 = slope_line(res30, slope_lb_daily)
             yhat_sup30, m_sup30 = slope_line(sup30, slope_lb_daily)
 
@@ -427,7 +428,6 @@ with tab1:
             if not yhat_ema30.empty:
                 ax.plot(yhat_ema30.index, yhat_ema30.values, "-", linewidth=2,
                         label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
-            # NEW: draw slope overlays on edges of S/R
             if not yhat_res30.empty:
                 ax.plot(yhat_res30.index, yhat_res30.values, "-", linewidth=2,
                         label=f"30R Slope {slope_lb_daily} ({fmt_slope(m_res30)}/bar)")
@@ -571,7 +571,7 @@ with tab2:
             yhat_d, m_d = slope_line(df, slope_lb_daily)
             # EMA30 slope
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
-            # NEW: slopes of the 30-day Resistance/Support edges
+            # slopes of the 30-day Resistance/Support edges
             yhat_res30, m_res30 = slope_line(res30, slope_lb_daily)
             yhat_sup30, m_sup30 = slope_line(sup30, slope_lb_daily)
 
@@ -590,7 +590,6 @@ with tab2:
             if not yhat_ema30.empty:
                 ax.plot(yhat_ema30.index, yhat_ema30.values, "-", linewidth=2,
                         label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
-            # NEW: draw slope overlays on edges of S/R
             if not yhat_res30.empty:
                 ax.plot(yhat_res30.index, yhat_res30.values, "-", linewidth=2,
                         label=f"30R Slope {slope_lb_daily} ({fmt_slope(m_res30)}/bar)")
