@@ -6,7 +6,6 @@
 # - Adds momentum resistance/support (rolling max/min)
 # - Daily chart shows ONLY: History, 30 EMA, 30 Support/Resistance, Daily slope, Pivot lines (P, R1/S1, R2/S2) + VALUE LABELS
 # - Adds EMA30 slope overlay on Daily chart
-# - Adds slope overlays on 30-day Support & Resistance edges (Daily)
 # - Hourly chart includes Supertrend overlay (configurable ATR period & multiplier)
 # - Fixes tz_localize error by using tz-aware UTC timestamps
 # - Keeps auto-refresh, SARIMAX (used for metrics/probabilities), RSI, etc.
@@ -186,8 +185,7 @@ def fmt_price_val(y: float) -> str:
         return f"{y:,.0f}"
     if ay >= 1:
         return f"{y:,.2f}"
-    # small (fx-style) prices
-    return f"{y:,.5f}"
+    return f"{y:,.5f}"  # small (fx-style) prices
 
 # ---- Pivots (using previous day's OHLC) ----
 def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
@@ -409,9 +407,6 @@ with tab1:
             yhat_d, m_d = slope_line(df, slope_lb_daily)
             # EMA30 slope
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
-            # slopes of the 30-day Resistance/Support edges
-            yhat_res30, m_res30 = slope_line(res30, slope_lb_daily)
-            yhat_sup30, m_sup30 = slope_line(sup30, slope_lb_daily)
 
             piv = current_daily_pivots(df_ohlc)
 
@@ -428,12 +423,6 @@ with tab1:
             if not yhat_ema30.empty:
                 ax.plot(yhat_ema30.index, yhat_ema30.values, "-", linewidth=2,
                         label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
-            if not yhat_res30.empty:
-                ax.plot(yhat_res30.index, yhat_res30.values, "-", linewidth=2,
-                        label=f"30R Slope {slope_lb_daily} ({fmt_slope(m_res30)}/bar)")
-            if not yhat_sup30.empty:
-                ax.plot(yhat_sup30.index, yhat_sup30.values, "-", linewidth=2,
-                        label=f"30S Slope {slope_lb_daily} ({fmt_slope(m_sup30)}/bar)")
 
             # Pivot lines + numeric labels
             if piv:
@@ -571,9 +560,6 @@ with tab2:
             yhat_d, m_d = slope_line(df, slope_lb_daily)
             # EMA30 slope
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
-            # slopes of the 30-day Resistance/Support edges
-            yhat_res30, m_res30 = slope_line(res30, slope_lb_daily)
-            yhat_sup30, m_sup30 = slope_line(sup30, slope_lb_daily)
 
             piv = current_daily_pivots(df_ohlc)
 
@@ -590,12 +576,6 @@ with tab2:
             if not yhat_ema30.empty:
                 ax.plot(yhat_ema30.index, yhat_ema30.values, "-", linewidth=2,
                         label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
-            if not yhat_res30.empty:
-                ax.plot(yhat_res30.index, yhat_res30.values, "-", linewidth=2,
-                        label=f"30R Slope {slope_lb_daily} ({fmt_slope(m_res30)}/bar)")
-            if not yhat_sup30.empty:
-                ax.plot(yhat_sup30.index, yhat_sup30.values, "-", linewidth=2,
-                        label=f"30S Slope {slope_lb_daily} ({fmt_slope(m_sup30)}/bar)")
 
             # Pivot lines + numeric labels
             if piv:
