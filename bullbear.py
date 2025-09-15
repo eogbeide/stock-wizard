@@ -12,7 +12,7 @@
 # - Keeps auto-refresh, SARIMAX (used for metrics/probabilities), RSI, etc.
 
 import streamlit as st
-import pandas as pds
+import pandas as pd
 import numpy as np
 import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
