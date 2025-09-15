@@ -6,10 +6,10 @@
 # - Adds momentum resistance/support (rolling max/min)
 # - Daily chart shows ONLY: History, 30 EMA, 30 Support/Resistance, Daily slope, Pivot lines (P, R1/S1, R2/S2) + VALUE LABELS
 # - Adds EMA30 slope overlay on Daily chart
-# - Adds slope overlays on 30-day Support & Resistance edges (Daily)
 # - Hourly chart includes Supertrend overlay (configurable ATR period & multiplier)
 # - Fixes tz_localize error by using tz-aware UTC timestamps
 # - Keeps auto-refresh, SARIMAX (used for metrics/probabilities), RSI, etc.
+# - Cache TTLs reduced to 2 minutes (120s)
 
 import streamlit as st
 import pandas as pd
@@ -58,30 +58,62 @@ auto_refresh()
 pst_dt = datetime.fromtimestamp(st.session_state.last_refresh, tz=PACIFIC)
 st.sidebar.markdown(f"**Last refresh:** {pst_dt.strftime('%Y-%m-%d %H:%M:%S')} PST")
 
-# --- Sidebar config ---
+# ---------- Helpers ----------
+def _coerce_1d_series(obj) -> pd.Series:
+    """Return a 1-D numeric Series from Series/DataFrame/iterable; NaNs preserved."""
+    if obj is None:
+        return pd.Series(dtype=float)
+    if isinstance(obj, pd.Series):
+        s = obj
+    elif isinstance(obj, pd.DataFrame):
+        num_cols = [c for c in obj.columns if pd.api.types.is_numeric_dtype(obj[c])]
+        if not num_cols:
+            return pd.Series(dtype=float)
+        s = obj[num_cols[0]]
+    else:
+        try:
+            s = pd.Series(obj)
+        except Exception:
+            return pd.Series(dtype=float)
+    return pd.to_numeric(s, errors="coerce")
+
+def _safe_last_float(obj) -> float:
+    """Safely extract the last numeric value as float from any series-like object."""
+    s = _coerce_1d_series(obj).dropna()
+    return float(s.iloc[-1]) if len(s) else float("nan")
+
+def fmt_pct(x, digits: int = 1) -> str:
+    """Format probability like 12.3% or return 'n/a' if not finite."""
+    try:
+        xv = float(x)
+    except Exception:
+        return "n/a"
+    return f"{xv:.{digits}%}" if np.isfinite(xv) else "n/a"
+
+# --- Sidebar config (ALL widgets have explicit keys) ---
 st.sidebar.title("Configuration")
-mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"])
-bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2)
+mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
+bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2, key="sb_bb_period")
 
-# Intraday fibs (daily view ignores fibs by design)
-show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=False)
+# Intraday fibs (daily view ignores fibs by design in this version)
+show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=False, key="sb_show_fibs")
 
-slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10)
-slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120, 6)
+slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10, key="sb_slope_lb_daily")
+slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120, 6, key="sb_slope_lb_hourly")
 
 # Hourly Momentum controls
-show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True)
-mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1)
+show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True, key="sb_show_mom_hourly")
+mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, key="sb_mom_lb_hourly")
 
 # Hourly Supertrend controls
 st.sidebar.subheader("Hourly Supertrend")
-atr_period = st.sidebar.slider("ATR period", 5, 50, 10, 1)
-atr_mult   = st.sidebar.slider("ATR multiplier", 1.0, 5.0, 3.0, 0.5)
+atr_period = st.sidebar.slider("ATR period", 5, 50, 10, 1, key="sb_atr_period")
+atr_mult   = st.sidebar.slider("ATR multiplier", 1.0, 5.0, 3.0, 0.5, key="sb_atr_mult")
 
 # Forex news controls (only shown in Forex mode)
 if mode == "Forex":
-    show_fx_news = st.sidebar.checkbox("Show Forex news markers (intraday)", value=True)
-    news_window_days = st.sidebar.slider("Forex news window (days)", 1, 14, 7)
+    show_fx_news = st.sidebar.checkbox("Show Forex news markers (intraday)", value=True, key="sb_show_fx_news")
+    news_window_days = st.sidebar.slider("Forex news window (days)", 1, 14, 7, key="sb_news_window_days")
 else:
     show_fx_news = False
     news_window_days = 7  # unused in stock mode
@@ -100,16 +132,20 @@ else:
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X'
     ]
 
-# --- Cache helpers ---
-@st.cache_data(ttl=900)
+# --- Cache helpers (TTL = 120 seconds) ---
+@st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
     s = (
         yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
         .asfreq("D").fillna(method="ffill")
     )
-    return s.tz_localize(PACIFIC)
+    try:
+        s = s.tz_localize(PACIFIC)
+    except TypeError:
+        s = s.tz_convert(PACIFIC)
+    return s
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=120)
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
     df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Open','High','Low','Close']].dropna()
     try:
@@ -118,7 +154,7 @@ def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
         df = df.tz_convert(PACIFIC)
     return df
 
-@st.cache_data(ttl=900)
+@st.cache_data(ttl=120)
 def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
     df = yf.download(ticker, period=period, interval="5m")
     try:
@@ -127,8 +163,15 @@ def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
         pass
     return df.tz_convert(PACIFIC)
 
-@st.cache_data(ttl=900)
-def compute_sarimax_forecast(series: pd.Series):
+@st.cache_data(ttl=120)
+def compute_sarimax_forecast(series_like):
+    series = _coerce_1d_series(series_like).dropna()
+    # ensure tz-aware PACIFIC index
+    if isinstance(series.index, pd.DatetimeIndex):
+        if series.index.tz is None:
+            series.index = series.index.tz_localize(PACIFIC)
+        else:
+            series.index = series.index.tz_convert(PACIFIC)
     try:
         model = SARIMAX(series, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
     except np.linalg.LinAlgError:
@@ -137,30 +180,21 @@ def compute_sarimax_forecast(series: pd.Series):
             enforce_stationarity=False, enforce_invertibility=False
         ).fit(disp=False)
     fc = model.get_forecast(steps=30)
-    idx = pd.date_range(series.index[-1] + timedelta(1),
+    idx = pd.date_range(series.index[-1] + timedelta(days=1),
                         periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
 
 # ---- Indicators ----
 def compute_rsi(data, window=14):
-    d = data.diff()
+    s = _coerce_1d_series(data)
+    d = s.diff()
     gain = d.where(d>0,0).rolling(window).mean()
     loss = -d.where(d<0,0).rolling(window).mean()
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-def fibonacci_levels(series: pd.Series):
-    if series is None or len(series) == 0:
-        return {}
-    if isinstance(series, pd.DataFrame):
-        num_cols = [c for c in series.columns if pd.api.types.is_numeric_dtype(series[c])]
-        if not num_cols:
-            return {}
-        s = series[num_cols[0]].dropna()
-    elif isinstance(series, pd.Series):
-        s = pd.to_numeric(series, errors="coerce").dropna()
-    else:
-        s = pd.Series(series).dropna()
+def fibonacci_levels(series_like):
+    s = _coerce_1d_series(series_like).dropna()
     if s.empty:
         return {}
     hi = float(s.max()); lo = float(s.min())
@@ -185,8 +219,7 @@ def fmt_price_val(y: float) -> str:
         return f"{y:,.0f}"
     if ay >= 1:
         return f"{y:,.2f}"
-    # small (fx-style) prices
-    return f"{y:,.5f}"
+    return f"{y:,.5f}"  # small (fx-style) prices
 
 # ---- Pivots (using previous day's OHLC) ----
 def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
@@ -206,23 +239,6 @@ def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
     return {"P": P, "R1": R1, "S1": S1, "R2": R2, "S2": S2}
 
 # ---- Robust slope helpers ----
-def _coerce_1d_series(obj) -> pd.Series:
-    if obj is None:
-        return pd.Series(dtype=float)
-    if isinstance(obj, pd.Series):
-        s = obj
-    elif isinstance(obj, pd.DataFrame):
-        num_cols = [c for c in obj.columns if pd.api.types.is_numeric_dtype(obj[c])]
-        if not num_cols:
-            return pd.Series(dtype=float)
-        s = obj[num_cols[0]]
-    else:
-        try:
-            s = pd.Series(obj)
-        except Exception:
-            return pd.Series(dtype=float)
-    return pd.to_numeric(s, errors="coerce")
-
 def slope_line(series_like, lookback: int):
     s = _coerce_1d_series(series_like).dropna()
     if s.shape[0] < 2:
@@ -240,12 +256,12 @@ def fmt_slope(m: float) -> str:
 
 # ---- Momentum (Rate of Change) ----
 def compute_roc(series_like, n: int = 10) -> pd.Series:
-    orig = _coerce_1d_series(series_like)
-    s = orig.dropna()
-    if s.empty:
-        return pd.Series(index=orig.index, dtype=float)
-    roc = s.pct_change(n) * 100.0
-    return roc.reindex(orig.index)
+    s = _coerce_1d_series(series_like)
+    base = s.dropna()
+    if base.empty:
+        return pd.Series(index=s.index, dtype=float)
+    roc = base.pct_change(n) * 100.0
+    return roc.reindex(s.index)
 
 # ---- Supertrend helpers (hourly overlay) ----
 def _true_range(df: pd.DataFrame):
@@ -291,7 +307,7 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
     })
 
 # ---- Forex News (Yahoo Finance) ----
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=120, show_spinner=False)
 def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
     rows = []
     try:
@@ -348,7 +364,7 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # --- Tab 1: Original Forecast ---
 with tab1:
     st.header("Original Forecast")
-    st.info("Pick a ticker; data will be cached for 15 minutes after first fetch.")
+    st.info("Pick a ticker; data will be cached for 2 minutes after first fetch.")
 
     sel = st.selectbox("Ticker:", universe, key="orig_ticker")
     chart = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_chart")
@@ -368,7 +384,7 @@ with tab1:
         )
     )
 
-    if st.button("Run Forecast") or auto_run:
+    if st.button("Run Forecast", key="btn_run_forecast") or auto_run:
         df_hist = fetch_hist(sel)                       # Series (Close)
         df_ohlc = fetch_hist_ohlc(sel)                  # DataFrame (OHLC) for pivots
         fc_idx, fc_vals, fc_ci = compute_sarimax_forecast(df_hist)  # used for metrics only
@@ -390,27 +406,23 @@ with tab1:
         df = st.session_state.df_hist
         df_ohlc = st.session_state.df_ohlc
 
-        last_price = float(df.iloc[-1])
-        p_up = np.mean(st.session_state.fc_vals.to_numpy() > last_price)
-        p_dn = 1 - p_up
+        last_price = _safe_last_float(df)
+        p_up = np.mean(st.session_state.fc_vals.to_numpy() > last_price) if np.isfinite(last_price) else np.nan
+        p_dn = 1 - p_up if np.isfinite(p_up) else np.nan
 
         # Pre-fetch Forex news (intraday only)
         fx_news = pd.DataFrame()
         if mode == "Forex" and show_fx_news:
             fx_news = fetch_yf_news(sel, window_days=news_window_days)
 
-        # ----- Daily (ONLY: History, 30 EMA, 30 S/R, Daily slope, Pivots + VALUE LABELS) -----
+        # ----- Daily (History, 30 EMA, 30 S/R, Daily slope, Pivots + labels) -----
         if chart in ("Daily","Both"):
             df_show = df[-360:]
             ema30 = df.ewm(span=30).mean()
             res30 = df.rolling(30, min_periods=1).max()
             sup30 = df.rolling(30, min_periods=1).min()
             yhat_d, m_d = slope_line(df, slope_lb_daily)
-            # EMA30 slope
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
-            # NEW: slopes of the 30-day Resistance/Support edges
-            yhat_res30, m_res30 = slope_line(res30, slope_lb_daily)
-            yhat_sup30, m_sup30 = slope_line(sup30, slope_lb_daily)
 
             piv = current_daily_pivots(df_ohlc)
 
@@ -427,13 +439,6 @@ with tab1:
             if not yhat_ema30.empty:
                 ax.plot(yhat_ema30.index, yhat_ema30.values, "-", linewidth=2,
                         label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
-            # NEW: draw slope overlays on edges of S/R
-            if not yhat_res30.empty:
-                ax.plot(yhat_res30.index, yhat_res30.values, "-", linewidth=2,
-                        label=f"30R Slope {slope_lb_daily} ({fmt_slope(m_res30)}/bar)")
-            if not yhat_sup30.empty:
-                ax.plot(yhat_sup30.index, yhat_sup30.values, "-", linewidth=2,
-                        label=f"30S Slope {slope_lb_daily} ({fmt_slope(m_sup30)}/bar)")
 
             # Pivot lines + numeric labels
             if piv:
@@ -474,7 +479,7 @@ with tab1:
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
-                ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+                ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
                 ax2.plot(hc.index, hc, label="Intraday")
                 ax2.plot(hc.index, he, "--", label="20 EMA")
                 ax2.plot(hc.index, res_h, ":", label="Resistance")
@@ -555,9 +560,9 @@ with tab2:
             st.session_state.fc_vals,
             st.session_state.fc_ci
         )
-        last_price = float(df.iloc[-1])
-        p_up = np.mean(vals.to_numpy() > last_price)
-        p_dn = 1 - p_up
+        last_price = _safe_last_float(df)
+        p_up = np.mean(vals.to_numpy() > last_price) if np.isfinite(last_price) else np.nan
+        p_dn = 1 - p_up if np.isfinite(p_up) else np.nan
 
         st.caption(f"Intraday lookback: **{st.session_state.get('hour_range','24h')}** (change in 'Original Forecast' tab and rerun)")
 
@@ -569,11 +574,7 @@ with tab2:
             res30 = df.rolling(30, min_periods=1).max()
             sup30 = df.rolling(30, min_periods=1).min()
             yhat_d, m_d = slope_line(df, slope_lb_daily)
-            # EMA30 slope
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
-            # NEW: slopes of the 30-day Resistance/Support edges
-            yhat_res30, m_res30 = slope_line(res30, slope_lb_daily)
-            yhat_sup30, m_sup30 = slope_line(sup30, slope_lb_daily)
 
             piv = current_daily_pivots(df_ohlc)
 
@@ -590,13 +591,6 @@ with tab2:
             if not yhat_ema30.empty:
                 ax.plot(yhat_ema30.index, yhat_ema30.values, "-", linewidth=2,
                         label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
-            # NEW: draw slope overlays on edges of S/R
-            if not yhat_res30.empty:
-                ax.plot(yhat_res30.index, yhat_res30.values, "-", linewidth=2,
-                        label=f"30R Slope {slope_lb_daily} ({fmt_slope(m_res30)}/bar)")
-            if not yhat_sup30.empty:
-                ax.plot(yhat_sup30.index, yhat_sup30.values, "-", linewidth=2,
-                        label=f"30S Slope {slope_lb_daily} ({fmt_slope(m_sup30)}/bar)")
 
             # Pivot lines + numeric labels
             if piv:
@@ -640,7 +634,7 @@ with tab2:
                 yhat_h, m_h = slope_line(ic, slope_lb_hourly)
 
                 fig3, ax3 = plt.subplots(figsize=(14,4))
-                ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+                ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
                 ax3.plot(ic.index, ic, label="Intraday")
                 ax3.plot(ic.index, ie, "--", label="20 EMA")
                 ax3.plot(ic.index, res_i, ":", label="Resistance")
@@ -705,12 +699,12 @@ with tab4:
         st.info("Run Tab 1 first.")
     else:
         df_hist = fetch_hist(st.session_state.ticker)
-        last_price = float(df_hist.iloc[-1])
+        last_price = _safe_last_float(df_hist)
         idx, vals, ci = compute_sarimax_forecast(df_hist)
-        p_up = np.mean(vals.to_numpy() > last_price)
-        p_dn = 1 - p_up
+        p_up = np.mean(vals.to_numpy() > last_price) if np.isfinite(last_price) else np.nan
+        p_dn = 1 - p_up if np.isfinite(p_up) else np.nan
 
-        st.subheader(f"Last 3 Months  ↑{p_up:.1%}  ↓{p_dn:.1%}")
+        st.subheader(f"Last 3 Months  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
         cutoff = df_hist.index.max() - pd.Timedelta(days=90)
         df3m = df_hist[df_hist.index >= cutoff]
         ma30_3m = df3m.rolling(30, min_periods=1).mean()
