@@ -6,9 +6,8 @@
 # - EMA30 slope overlay on Daily
 # - Hourly includes Supertrend overlay (configurable ATR period & multiplier)
 # - Fixes tz_localize error by using tz-aware UTC timestamps
-# - Auto-refresh, SARIMAX (for probabilities), RSI, etc.
+# - Auto-refresh, SARIMAX (for probabilities)
 # - Cache TTLs = 2 minutes (120s)
-# - NEW: Normalized RSI overlay on hourly charts (mapped to price axis)
 
 import streamlit as st
 import pandas as pd
@@ -86,20 +85,6 @@ def fmt_pct(x, digits: int = 1) -> str:
         return "n/a"
     return f"{xv:.{digits}%}" if np.isfinite(xv) else "n/a"
 
-def map_rsi_to_price_axis(rsi_series: pd.Series, price_series: pd.Series) -> pd.Series:
-    """Normalize RSI (0-100) into the price axis [min(price), max(price)]."""
-    rs = _coerce_1d_series(rsi_series).clip(0, 100)
-    ps = _coerce_1d_series(price_series)
-    if rs.empty or ps.empty:
-        return pd.Series(index=ps.index, dtype=float)
-    ymin = float(np.nanmin(ps.values))
-    ymax = float(np.nanmax(ps.values))
-    if not np.isfinite(ymin) or not np.isfinite(ymax) or ymax <= ymin:
-        return pd.Series(index=ps.index, dtype=float)
-    rs = rs.reindex(ps.index)
-    scaled = (rs / 100.0) * (ymax - ymin) + ymin
-    return scaled
-
 # --- Sidebar config (explicit keys everywhere) ---
 st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
@@ -109,11 +94,6 @@ show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=False, key
 
 slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10, key="sb_slope_lb_daily")
 slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120, 6, key="sb_slope_lb_hourly")
-
-# Hourly RSI overlay (normalized)
-st.sidebar.subheader("Hourly RSI Overlay")
-show_rsi_hourly = st.sidebar.checkbox("Overlay RSI (normalized) on hourly", value=True, key="sb_show_rsi_hourly")
-rsi_period_hourly = st.sidebar.slider("RSI period (hourly)", 5, 50, 14, 1, key="sb_rsi_period_hourly")
 
 # Hourly Momentum controls
 st.sidebar.subheader("Hourly Momentum")
@@ -198,15 +178,7 @@ def compute_sarimax_forecast(series_like):
                         periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
 
-# ---- Indicators ----
-def compute_rsi(data, window=14):
-    s = _coerce_1d_series(data)
-    d = s.diff()
-    gain = d.where(d>0,0).rolling(window).mean()
-    loss = -d.where(d<0,0).rolling(window).mean()
-    rs = gain / loss
-    return 100 - (100 / (1 + rs))
-
+# ---- Indicators (no RSI) ----
 def fibonacci_levels(series_like):
     s = _coerce_1d_series(series_like).dropna()
     if s.empty:
@@ -494,19 +466,6 @@ with tab1:
                 ax2.plot(hc.index, sup_h, ":", label="Support")
                 ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
 
-                # NEW: normalized RSI overlay on price axis
-                if show_rsi_hourly:
-                    rsi_h = compute_rsi(hc, window=rsi_period_hourly)
-                    rsi_scaled = map_rsi_to_price_axis(rsi_h, hc)
-                    if not rsi_scaled.dropna().empty:
-                        ax2.plot(rsi_scaled.index, rsi_scaled.values, label=f"RSI{rsi_period_hourly} (norm.)")
-                        # Optional guide lines for RSI 30/70 mapped to price axis
-                        ymin, ymax = float(hc.min()), float(hc.max())
-                        lvl30 = (30/100.0)*(ymax - ymin) + ymin
-                        lvl70 = (70/100.0)*(ymax - ymin) + ymin
-                        ax2.hlines([lvl30, lvl70], xmin=hc.index[0], xmax=hc.index[-1],
-                                   linestyles="dashed", linewidth=0.8)
-
                 if not st_line_intr.dropna().empty:
                     ax2.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
                 if not yhat_h.empty:
@@ -573,7 +532,6 @@ with tab2:
     else:
         df     = st.session_state.df_hist
         df_ohlc = st.session_state.df_ohlc
-        rsi    = compute_rsi(df)
         idx, vals, ci = (
             st.session_state.fc_idx,
             st.session_state.fc_vals,
@@ -626,13 +584,6 @@ with tab2:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-            fig2, ax2 = plt.subplots(figsize=(14,3))
-            ax2.plot(rsi[-360:], label="RSI(14)")
-            ax2.axhline(70, linestyle="--"); ax2.axhline(30, linestyle="--")
-            ax2.set_xlabel("Date (PST)")
-            ax2.legend()
-            st.pyplot(fig2)
-
         if view in ("Intraday","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -656,18 +607,6 @@ with tab2:
                 ax3.plot(ic.index, res_i, ":", label="Resistance")
                 ax3.plot(ic.index, sup_i, ":", label="Support")
                 ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
-
-                # NEW: normalized RSI overlay on price axis (Enhanced view)
-                if show_rsi_hourly:
-                    rsi_i = compute_rsi(ic, window=rsi_period_hourly)
-                    rsi_scaled_i = map_rsi_to_price_axis(rsi_i, ic)
-                    if not rsi_scaled_i.dropna().empty:
-                        ax3.plot(rsi_scaled_i.index, rsi_scaled_i.values, label=f"RSI{rsi_period_hourly} (norm.)")
-                        ymin, ymax = float(ic.min()), float(ic.max())
-                        lvl30 = (30/100.0)*(ymax - ymin) + ymin
-                        lvl70 = (70/100.0)*(ymax - ymin) + ymin
-                        ax3.hlines([lvl30, lvl70], xmin=ic.index[0], xmax=ic.index[-1],
-                                   linestyles="dashed", linewidth=0.8)
 
                 if not st_line_intr.dropna().empty:
                     ax3.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
