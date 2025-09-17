@@ -5,7 +5,6 @@
 # - Daily shows: History, 30 EMA, 30 S/R, Daily slope, Pivots (P, R1/S1, R2/S2) + value labels
 # - EMA30 slope overlay on Daily
 # - Hourly includes Supertrend overlay (configurable ATR period & multiplier)
-# - NEW (FX help): Hourly trade signals (Supertrend flips, EMA cross, Prev-day breakouts) with ATR stops & 1R/2R targets
 # - Fixes tz_localize error by using tz-aware UTC timestamps
 # - Auto-refresh, SARIMAX (for probabilities)
 # - Cache TTLs = 2 minutes (120s)
@@ -15,7 +14,7 @@ import pandas as pd
 import numpy as np
 import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
-from datetime import timedelta, datetime, date
+from datetime import timedelta, datetime
 import matplotlib.pyplot as plt
 import time
 import pytz
@@ -86,17 +85,6 @@ def fmt_pct(x, digits: int = 1) -> str:
         return "n/a"
     return f"{xv:.{digits}%}" if np.isfinite(xv) else "n/a"
 
-def _last_full_day(ts: pd.Timestamp) -> date:
-    """Return the most recent completed calendar date before ts (PST)."""
-    ts_pst = ts.tz_convert(PACIFIC)
-    d = ts_pst.date()
-    today_pst = datetime.now(PACIFIC).date()
-    # If we're still in the same day, 'last full day' is yesterday; otherwise also yesterday
-    prev_day = d - timedelta(days=1)
-    if d > today_pst:
-        prev_day = today_pst - timedelta(days=1)
-    return prev_day
-
 # --- Sidebar config (explicit keys everywhere) ---
 st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
@@ -116,17 +104,6 @@ mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, k
 st.sidebar.subheader("Hourly Supertrend")
 atr_period = st.sidebar.slider("ATR period", 5, 50, 10, 1, key="sb_atr_period")
 atr_mult   = st.sidebar.slider("ATR multiplier", 1.0, 5.0, 3.0, 0.5, key="sb_atr_mult")
-
-# NEW: Hourly Trade Signals (FX-friendly)
-st.sidebar.subheader("Hourly Trade Signals (FX)")
-show_trade_signals = st.sidebar.checkbox("Show trade signals", value=False, key="sb_show_trade_signals")
-use_st_flips       = st.sidebar.checkbox("Use Supertrend flips", value=True, key="sb_use_st_flips")
-use_ema_cross      = st.sidebar.checkbox("Use EMA cross", value=True, key="sb_use_ema_cross")
-ema_fast           = st.sidebar.slider("Fast EMA (hourly)", 5, 50, 20, 1, key="sb_ema_fast")
-ema_slow           = st.sidebar.slider("Slow EMA (hourly)", 10, 200, 50, 1, key="sb_ema_slow")
-show_prev_day_lvls = st.sidebar.checkbox("Show prev-day High/Low (breakouts)", value=True, key="sb_show_prevday")
-atr_stop_mult      = st.sidebar.slider("ATR stop multiple", 0.5, 3.0, 1.5, 0.1, key="sb_atr_stop_mult")
-signals_to_show    = st.sidebar.slider("Signals to display (latest)", 3, 20, 8, 1, key="sb_signals_to_show")
 
 # Forex news controls (only shown in Forex mode)
 if mode == "Forex":
@@ -352,106 +329,6 @@ def draw_news_markers(ax, times, ymin, ymax, label="News"):
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
 
-# ---- Prev-day levels for breakouts ----
-def get_prev_day_levels(df_daily: pd.DataFrame, ref_ts: pd.Timestamp):
-    """Return yesterday's High/Low given a reference intraday timestamp."""
-    if df_daily is None or df_daily.empty:
-        return None, None
-    prev_day = _last_full_day(ref_ts)
-    # daily df indexed by date (tz-aware). Align by date only.
-    dfd = df_daily.copy()
-    dfd["date"] = dfd.index.tz_convert(PACIFIC).date
-    row = dfd[dfd["date"] == prev_day]
-    if row.empty:
-        # fallback: take the last available day before ref_ts
-        row = dfd[dfd.index < ref_ts].tail(1)
-    if row.empty:
-        return None, None
-    return float(row["High"].iloc[0]), float(row["Low"].iloc[0])
-
-# ---- Build trade signals ----
-def build_trade_signals(hc: pd.Series,
-                        intr_ohlc: pd.DataFrame,
-                        st_df: pd.DataFrame,
-                        fast_n: int,
-                        slow_n: int,
-                        prev_high: float | None,
-                        prev_low: float | None,
-                        atr_stop_mult: float = 1.5):
-    """Return DataFrame of trade signals with entry/stop/targets."""
-    if hc is None or hc.empty:
-        return pd.DataFrame(columns=["time","signal","reason","price","stop","tp1","tp2"])
-    # EMAs
-    ema_fast = hc.ewm(span=fast_n).mean()
-    ema_slow = hc.ewm(span=slow_n).mean()
-    # ATR for stops (use same ATR as Supertrend, based on intraday OHLC)
-    atr = compute_atr(intr_ohlc[['High','Low','Close']], period=atr_period).reindex(hc.index)
-
-    events = []
-
-    # Supertrend flips
-    if st_df is not None and not st_df.empty and "in_uptrend" in st_df:
-        up = st_df["in_uptrend"].astype(float).reindex(hc.index).fillna(method="ffill")
-        flip = up.diff().fillna(0)
-        buy_flip_times  = flip[flip > 0].index
-        sell_flip_times = flip[flip < 0].index
-        for t in buy_flip_times:
-            p = float(hc.loc[t])
-            a = float(atr.loc[t]) if np.isfinite(atr.loc[t]) else np.nan
-            stop = p - atr_stop_mult * a if np.isfinite(a) else np.nan
-            r = p - stop if np.isfinite(stop) else np.nan
-            events.append((t, "BUY",  "ST Flip", p, stop, p + r if np.isfinite(r) else np.nan, p + 2*r if np.isfinite(r) else np.nan))
-        for t in sell_flip_times:
-            p = float(hc.loc[t])
-            a = float(atr.loc[t]) if np.isfinite(atr.loc[t]) else np.nan
-            stop = p + atr_stop_mult * a if np.isfinite(a) else np.nan
-            r = stop - p if np.isfinite(stop) else np.nan
-            events.append((t, "SELL", "ST Flip", p, stop, p - r if np.isfinite(r) else np.nan, p - 2*r if np.isfinite(r) else np.nan))
-
-    # EMA cross
-    if ema_fast.notna().any() and ema_slow.notna().any():
-        cross_up = (ema_fast > ema_slow) & (ema_fast.shift() <= ema_slow.shift())
-        cross_dn = (ema_fast < ema_slow) & (ema_fast.shift() >= ema_slow.shift())
-        for t in cross_up[cross_up].index:
-            p = float(hc.loc[t])
-            a = float(atr.loc[t]) if np.isfinite(atr.loc[t]) else np.nan
-            stop = p - atr_stop_mult * a if np.isfinite(a) else np.nan
-            r = p - stop if np.isfinite(stop) else np.nan
-            events.append((t, "BUY",  "EMA Cross", p, stop, p + r if np.isfinite(r) else np.nan, p + 2*r if np.isfinite(r) else np.nan))
-        for t in cross_dn[cross_dn].index:
-            p = float(hc.loc[t])
-            a = float(atr.loc[t]) if np.isfinite(atr.loc[t]) else np.nan
-            stop = p + atr_stop_mult * a if np.isfinite(a) else np.nan
-            r = stop - p if np.isfinite(stop) else np.nan
-            events.append((t, "SELL", "EMA Cross", p, stop, p - r if np.isfinite(r) else np.nan, p - 2*r if np.isfinite(r) else np.nan))
-
-    # Prev-day breakout
-    if prev_high is not None and prev_low is not None:
-        above_prev = (hc > prev_high)
-        below_prev = (hc < prev_low)
-        buy_bo = above_prev & (~above_prev.shift(1).fillna(False))
-        sell_bo = below_prev & (~below_prev.shift(1).fillna(False))
-        for t in buy_bo[buy_bo].index:
-            p = float(hc.loc[t])
-            a = float(atr.loc[t]) if np.isfinite(atr.loc[t]) else np.nan
-            stop = max(prev_low, p - atr_stop_mult * a) if np.isfinite(a) else prev_low
-            r = p - stop if np.isfinite(stop) else np.nan
-            events.append((t, "BUY",  "PrevDay Breakout", p, stop, p + r if np.isfinite(r) else np.nan, p + 2*r if np.isfinite(r) else np.nan))
-        for t in sell_bo[sell_bo].index:
-            p = float(hc.loc[t])
-            a = float(atr.loc[t]) if np.isfinite(atr.loc[t]) else np.nan
-            stop = min(prev_high, p + atr_stop_mult * a) if np.isfinite(a) else prev_high
-            r = stop - p if np.isfinite(stop) else np.nan
-            events.append((t, "SELL", "PrevDay Breakout", p, stop, p - r if np.isfinite(r) else np.nan, p - 2*r if np.isfinite(r) else np.nan))
-
-    if not events:
-        return pd.DataFrame(columns=["time","signal","reason","price","stop","tp1","tp2"])
-
-    sig = pd.DataFrame(events, columns=["time","signal","reason","price","stop","tp1","tp2"]).sort_values("time")
-    # remove obvious duplicates (same timestamp & reason)
-    sig = sig.drop_duplicates(subset=["time","reason","signal"], keep="last").reset_index(drop=True)
-    return sig
-
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -568,10 +445,6 @@ with tab1:
             else:
                 hc = intr["Close"].ffill()
                 he = hc.ewm(span=20).mean()
-                # Optional fast/slow EMAs for signals
-                ema_f = hc.ewm(span=ema_fast).mean()
-                ema_s = hc.ewm(span=ema_slow).mean()
-
                 xh = np.arange(len(hc))
                 slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
                 trend_h = slope_h * xh + intercept_h
@@ -581,12 +454,6 @@ with tab1:
                 # Supertrend from intraday OHLC
                 st_intraday = compute_supertrend(intr, atr_period=atr_period, atr_mult=atr_mult)
                 st_line_intr = st_intraday["ST"].reindex(hc.index) if "ST" in st_intraday else pd.Series(index=hc.index, dtype=float)
-
-                # Prev-day levels
-                prev_hi, prev_lo = (None, None)
-                if show_prev_day_lvls:
-                    ref_ts = intr.index[-1]
-                    prev_hi, prev_lo = get_prev_day_levels(df_ohlc, ref_ts)
 
                 # Slope on hourly close
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
@@ -598,14 +465,6 @@ with tab1:
                 ax2.plot(hc.index, res_h, ":", label="Resistance")
                 ax2.plot(hc.index, sup_h, ":", label="Support")
                 ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
-                # Fast/Slow EMA lines for signal context
-                if show_trade_signals and use_ema_cross:
-                    ax2.plot(ema_f.index, ema_f, "-", linewidth=1.2, label=f"EMA {ema_fast}")
-                    ax2.plot(ema_s.index, ema_s, "-", linewidth=1.2, label=f"EMA {ema_slow}")
-
-                if show_prev_day_lvls and prev_hi is not None and prev_lo is not None:
-                    ax2.hlines(prev_hi, xmin=hc.index[0], xmax=hc.index[-1], linestyles="dashdot", linewidth=1, label="Prev High")
-                    ax2.hlines(prev_lo, xmin=hc.index[0], xmax=hc.index[-1], linestyles="dashdot", linewidth=1, label="Prev Low")
 
                 if not st_line_intr.dropna().empty:
                     ax2.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -620,36 +479,11 @@ with tab1:
                     for lbl, y in fibs_h.items():
                         ax2.text(hc.index[-1], y, f" {lbl}", va="center")
 
-                # Draw FX news
                 if mode == "Forex" and show_fx_news and not hc.empty and 'time' in fx_news:
                     t0, t1 = hc.index[0], hc.index[-1]
                     times = [t for t in fx_news["time"] if t0 <= t <= t1]
                     if times:
                         draw_news_markers(ax2, times, float(hc.min()), float(hc.max()), label="News")
-
-                # --- NEW: Trade signals overlay & table
-                sig_df = pd.DataFrame()
-                if show_trade_signals:
-                    # limit signals by user toggles
-                    st_for_signals = st_intraday if use_st_flips else pd.DataFrame(index=hc.index)
-                    sig_df = build_trade_signals(
-                        hc=hc,
-                        intr_ohlc=intr,
-                        st_df=st_for_signals,
-                        fast_n=ema_fast,
-                        slow_n=ema_slow,
-                        prev_high=prev_hi if show_prev_day_lvls else None,
-                        prev_low=prev_lo if show_prev_day_lvls else None,
-                        atr_stop_mult=atr_stop_mult
-                    )
-                    # plot markers
-                    if not sig_df.empty:
-                        buys  = sig_df[sig_df["signal"] == "BUY"]
-                        sells = sig_df[sig_df["signal"] == "SELL"]
-                        if not buys.empty:
-                            ax2.scatter(buys["time"], buys["price"], marker="^", s=60, label="BUY", zorder=5)
-                        if not sells.empty:
-                            ax2.scatter(sells["time"], sells["price"], marker="v", s=60, label="SELL", zorder=5)
 
                 ax2.set_xlabel("Time (PST)")
                 ax2.legend(loc="lower left", framealpha=0.5)
@@ -674,16 +508,6 @@ with tab1:
                     ax2m.legend(loc="lower left", framealpha=0.5)
                     ax2m.set_xlim(xlim_price)
                     st.pyplot(fig2m)
-
-                # Latest signals table
-                if show_trade_signals:
-                    st.subheader("Latest Signals")
-                    if sig_df.empty:
-                        st.write("No recent signals in the selected lookback.")
-                    else:
-                        show = sig_df.sort_values("time").tail(signals_to_show).copy()
-                        show["time"] = show["time"].dt.strftime("%Y-%m-%d %H:%M")
-                        st.dataframe(show, use_container_width=True)
 
         if mode == "Forex" and show_fx_news:
             st.subheader("Recent Forex News (Yahoo Finance)")
@@ -767,9 +591,6 @@ with tab2:
             else:
                 ic = intr["Close"].ffill()
                 ie = ic.ewm(span=20).mean()
-                ema_f2 = ic.ewm(span=ema_fast).mean()
-                ema_s2 = ic.ewm(span=ema_slow).mean()
-
                 xi = np.arange(len(ic))
                 slope_i, intercept_i = np.polyfit(xi, ic.values, 1)
                 trend_i = slope_i * xi + intercept_i
@@ -779,11 +600,6 @@ with tab2:
                 st_line_intr = st_intraday["ST"].reindex(ic.index) if "ST" in st_intraday else pd.Series(index=ic.index, dtype=float)
                 yhat_h, m_h = slope_line(ic, slope_lb_hourly)
 
-                prev_hi2, prev_lo2 = (None, None)
-                if show_prev_day_lvls:
-                    ref_ts2 = intr.index[-1]
-                    prev_hi2, prev_lo2 = get_prev_day_levels(df_ohlc, ref_ts2)
-
                 fig3, ax3 = plt.subplots(figsize=(14,4))
                 ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
                 ax3.plot(ic.index, ic, label="Intraday")
@@ -791,12 +607,6 @@ with tab2:
                 ax3.plot(ic.index, res_i, ":", label="Resistance")
                 ax3.plot(ic.index, sup_i, ":", label="Support")
                 ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
-                if show_trade_signals and use_ema_cross:
-                    ax3.plot(ema_f2.index, ema_f2, "-", linewidth=1.2, label=f"EMA {ema_fast}")
-                    ax3.plot(ema_s2.index, ema_s2, "-", linewidth=1.2, label=f"EMA {ema_slow}")
-                if show_prev_day_lvls and prev_hi2 is not None and prev_lo2 is not None:
-                    ax3.hlines(prev_hi2, xmin=ic.index[0], xmax=ic.index[-1], linestyles="dashdot", linewidth=1, label="Prev High")
-                    ax3.hlines(prev_lo2, xmin=ic.index[0], xmax=ic.index[-1], linestyles="dashdot", linewidth=1, label="Prev Low")
 
                 if not st_line_intr.dropna().empty:
                     ax3.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -810,28 +620,6 @@ with tab2:
                         ax3.hlines(y, xmin=ic.index[0], xmax=ic.index[-1], linestyles="dotted", linewidth=1)
                     for lbl, y in fibs_h.items():
                         ax3.text(ic.index[-1], y, f" {lbl}", va="center")
-
-                # Plot signals (Enhanced tab)
-                sig_df2 = pd.DataFrame()
-                if show_trade_signals:
-                    st_for_signals2 = st_intraday if use_st_flips else pd.DataFrame(index=ic.index)
-                    sig_df2 = build_trade_signals(
-                        hc=ic,
-                        intr_ohlc=intr,
-                        st_df=st_for_signals2,
-                        fast_n=ema_fast,
-                        slow_n=ema_slow,
-                        prev_high=prev_hi2 if show_prev_day_lvls else None,
-                        prev_low=prev_lo2 if show_prev_day_lvls else None,
-                        atr_stop_mult=atr_stop_mult
-                    )
-                    if not sig_df2.empty:
-                        buys2  = sig_df2[sig_df2["signal"] == "BUY"]
-                        sells2 = sig_df2[sig_df2["signal"] == "SELL"]
-                        if not buys2.empty:
-                            ax3.scatter(buys2["time"], buys2["price"], marker="^", s=60, label="BUY", zorder=5)
-                        if not sells2.empty:
-                            ax3.scatter(sells2["time"], sells2["price"], marker="v", s=60, label="SELL", zorder=5)
 
                 ax3.set_xlabel("Time (PST)")
                 ax3.legend(loc="lower left", framealpha=0.5)
@@ -856,16 +644,6 @@ with tab2:
                     ax3m.legend(loc="lower left", framealpha=0.5)
                     ax3m.set_xlim(xlim_price2)
                     st.pyplot(fig3m)
-
-                # Latest signals (Enhanced)
-                if show_trade_signals:
-                    st.subheader("Latest Signals")
-                    if sig_df2.empty:
-                        st.write("No recent signals in the selected lookback.")
-                    else:
-                        show2 = sig_df2.sort_values("time").tail(signals_to_show).copy()
-                        show2["time"] = show2["time"].dt.strftime("%Y-%m-%d %H:%M")
-                        st.dataframe(show2, use_container_width=True)
 
 # --- Tab 3: Bull vs Bear ---
 with tab3:
