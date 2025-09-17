@@ -8,6 +8,7 @@
 # - Fixes tz_localize error by using tz-aware UTC timestamps
 # - Auto-refresh, SARIMAX (for probabilities)
 # - Cache TTLs = 2 minutes (120s)
+# - NEW: Normalized Variance overlay on hourly charts (mapped to price axis)
 
 import streamlit as st
 import pandas as pd
@@ -85,6 +86,21 @@ def fmt_pct(x, digits: int = 1) -> str:
         return "n/a"
     return f"{xv:.{digits}%}" if np.isfinite(xv) else "n/a"
 
+def map_norm_to_price_axis(norm_series: pd.Series, price_series: pd.Series) -> pd.Series:
+    """
+    Map a 0..1 normalized series to the price axis range [min(price), max(price)].
+    """
+    ns = _coerce_1d_series(norm_series).clip(lower=0, upper=1)
+    ps = _coerce_1d_series(price_series)
+    if ns.empty or ps.empty:
+        return pd.Series(index=ps.index, dtype=float)
+    ymin = float(np.nanmin(ps.values))
+    ymax = float(np.nanmax(ps.values))
+    if not np.isfinite(ymin) or not np.isfinite(ymax) or ymax <= ymin:
+        return pd.Series(index=ps.index, dtype=float)
+    ns = ns.reindex(ps.index)
+    return ns * (ymax - ymin) + ymin
+
 # --- Sidebar config (explicit keys everywhere) ---
 st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
@@ -99,6 +115,11 @@ slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 1
 st.sidebar.subheader("Hourly Momentum")
 show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True, key="sb_show_mom_hourly")
 mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, key="sb_mom_lb_hourly")
+
+# NEW: Hourly Normalized Variance overlay
+st.sidebar.subheader("Hourly Volatility")
+show_var_hourly = st.sidebar.checkbox("Overlay normalized variance (hourly)", value=True, key="sb_show_var_hourly")
+var_window_hourly = st.sidebar.slider("Variance window (bars)", 10, 240, 60, 2, key="sb_var_window_hourly")
 
 # Hourly Supertrend controls
 st.sidebar.subheader("Hourly Supertrend")
@@ -244,6 +265,24 @@ def compute_roc(series_like, n: int = 10) -> pd.Series:
         return pd.Series(index=s.index, dtype=float)
     roc = base.pct_change(n) * 100.0
     return roc.reindex(s.index)
+
+# ---- NEW: Normalized Variance (volatility) ----
+def compute_normalized_variance(price_like, window: int = 60) -> pd.Series:
+    """
+    Rolling variance of percentage returns, min-max normalized to 0..1.
+    """
+    s = _coerce_1d_series(price_like)
+    if s.dropna().shape[0] < 3:
+        return pd.Series(index=s.index, dtype=float)
+    ret = s.pct_change()
+    var = ret.rolling(window, min_periods=max(3, window//3)).var()
+    if var.dropna().empty:
+        return pd.Series(index=s.index, dtype=float)
+    vmin = float(np.nanmin(var.values))
+    vmax = float(np.nanmax(var.values))
+    if not np.isfinite(vmin) or not np.isfinite(vmax) or vmax <= vmin:
+        return pd.Series(index=s.index, dtype=float)
+    return (var - vmin) / (vmax - vmin)
 
 # ---- Supertrend helpers (hourly overlay) ----
 def _true_range(df: pd.DataFrame):
@@ -458,6 +497,10 @@ with tab1:
                 # Slope on hourly close
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
 
+                # NEW: Normalized variance overlay mapped to price axis
+                var_norm = compute_normalized_variance(hc, window=var_window_hourly) if show_var_hourly else pd.Series(index=hc.index, dtype=float)
+                var_scaled = map_norm_to_price_axis(var_norm, hc) if show_var_hourly else pd.Series(index=hc.index, dtype=float)
+
                 fig2, ax2 = plt.subplots(figsize=(14,4))
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
                 ax2.plot(hc.index, hc, label="Intraday")
@@ -465,6 +508,13 @@ with tab1:
                 ax2.plot(hc.index, res_h, ":", label="Resistance")
                 ax2.plot(hc.index, sup_h, ":", label="Support")
                 ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
+
+                if show_var_hourly and not var_scaled.dropna().empty:
+                    ax2.plot(var_scaled.index, var_scaled.values, label=f"Norm Var({var_window_hourly})")
+                    # guide lines for 25% / 75% normalized variance
+                    ymin, ymax = float(hc.min()), float(hc.max())
+                    ax2.hlines([ymin + 0.25*(ymax - ymin), ymin + 0.75*(ymax - ymin)],
+                               xmin=hc.index[0], xmax=hc.index[-1], linestyles="dashed", linewidth=0.8)
 
                 if not st_line_intr.dropna().empty:
                     ax2.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -600,6 +650,10 @@ with tab2:
                 st_line_intr = st_intraday["ST"].reindex(ic.index) if "ST" in st_intraday else pd.Series(index=ic.index, dtype=float)
                 yhat_h, m_h = slope_line(ic, slope_lb_hourly)
 
+                # NEW: Normalized variance overlay mapped to price axis
+                var_norm2 = compute_normalized_variance(ic, window=var_window_hourly) if show_var_hourly else pd.Series(index=ic.index, dtype=float)
+                var_scaled2 = map_norm_to_price_axis(var_norm2, ic) if show_var_hourly else pd.Series(index=ic.index, dtype=float)
+
                 fig3, ax3 = plt.subplots(figsize=(14,4))
                 ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
                 ax3.plot(ic.index, ic, label="Intraday")
@@ -607,6 +661,12 @@ with tab2:
                 ax3.plot(ic.index, res_i, ":", label="Resistance")
                 ax3.plot(ic.index, sup_i, ":", label="Support")
                 ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
+
+                if show_var_hourly and not var_scaled2.dropna().empty:
+                    ax3.plot(var_scaled2.index, var_scaled2.values, label=f"Norm Var({var_window_hourly})")
+                    ymin2, ymax2 = float(ic.min()), float(ic.max())
+                    ax3.hlines([ymin2 + 0.25*(ymax2 - ymin2), ymin2 + 0.75*(ymax2 - ymin2)],
+                               xmin=ic.index[0], xmax=ic.index[-1], linestyles="dashed", linewidth=0.8)
 
                 if not st_line_intr.dropna().empty:
                     ax3.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
