@@ -9,7 +9,8 @@
 # - Auto-refresh, SARIMAX (for probabilities)
 # - Cache TTLs = 2 minutes (120s)
 # - NEW: Hourly BUY/SELL signals when near S/R with >= threshold model confidence
-# - NEW: Value labels on intraday Resistance/Support placed on the LEFT; current Price remains on the right
+# - NEW: Value labels on intraday Resistance/Support placed on the LEFT; current Price value on the right
+# - NEW: Show "Current Price: <value>" centered on top of each hourly chart
 
 import streamlit as st
 import pandas as pd
@@ -499,7 +500,7 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (signals + LEFT value labels here) -----
+        # ----- Hourly (signals + LEFT value labels + TOP current price text) -----
         if chart in ("Hourly","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -528,7 +529,7 @@ with tab1:
                 ax2.plot(hc.index, sup_h, ":", label="Support")
                 ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
 
-                # ---- LEFT numeric value labels for R/S; price value on the right ----
+                # ---- LEFT numeric value labels for R/S; price value on the right + TOP "Current Price" ----
                 try:
                     res_val = float(res_h.iloc[-1])
                     sup_val = float(sup_h.iloc[-1])
@@ -543,6 +544,10 @@ with tab1:
                                  textcoords="offset points", va="bottom", color=price_line.get_color(),
                                  fontsize=9, fontweight="bold",
                                  bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6))
+                    # TOP centered text showing current price
+                    ax2.text(0.5, 1.02, f"Current Price: {fmt_price_val(px_val)}",
+                             transform=ax2.transAxes, ha="center", va="bottom",
+                             fontsize=10, fontweight="bold")
                 except Exception:
                     pass
                 # -------------------------------------------------------------
@@ -706,7 +711,7 @@ with tab2:
                 ax3.plot(ic.index, sup_i, ":", label="Support")
                 ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
 
-                # ---- LEFT numeric value labels for R/S; price value on the right (Enhanced tab) ----
+                # ---- LEFT numeric value labels for R/S; price value on the right + TOP "Current Price" (Enhanced) ----
                 try:
                     res_val2 = float(res_i.iloc[-1])
                     sup_val2 = float(sup_i.iloc[-1])
@@ -719,6 +724,9 @@ with tab2:
                                  textcoords="offset points", va="bottom", color=price_line2.get_color(),
                                  fontsize=9, fontweight="bold",
                                  bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6))
+                    ax3.text(0.5, 1.02, f"Current Price: {fmt_price_val(px_val2)}",
+                             transform=ax3.transAxes, ha="center", va="bottom",
+                             fontsize=10, fontweight="bold")
                 except Exception:
                     pass
                 # ---------------------------------------------------------------------------
