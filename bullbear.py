@@ -10,7 +10,7 @@
 # - Cache TTLs = 2 minutes (120s)
 # - NEW: Hourly BUY/SELL signals when near S/R with >= threshold model confidence
 # - NEW: Value labels on intraday Resistance/Support placed on the LEFT; current Price value on the right
-# - NEW: Show "Current price: <value>" on the TOP-LEFT of each hourly chart (moved left to avoid slope/title overlap)
+# - NEW: Show "Current price: <value>" on the TOP-RIGHT of each hourly chart
 # - NEW: All displayed price values formatted to 3 decimal places
 
 import streamlit as st
@@ -500,7 +500,7 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (signals + LEFT value labels + TOP-LEFT current price text) -----
+        # ----- Hourly (signals + LEFT value labels + TOP-RIGHT current price text) -----
         if chart in ("Hourly","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -529,7 +529,7 @@ with tab1:
                 ax2.plot(hc.index, sup_h, ":", label="Support")
                 ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
 
-                # ---- LEFT numeric value labels for R/S; price value on the right + TOP-LEFT "Current price" ----
+                # ---- LEFT numeric value labels for R/S; price value on the right + TOP-RIGHT "Current price" ----
                 try:
                     res_val = float(res_h.iloc[-1])
                     sup_val = float(sup_h.iloc[-1])
@@ -544,9 +544,9 @@ with tab1:
                                  textcoords="offset points", va="bottom", color=price_line.get_color(),
                                  fontsize=9, fontweight="bold",
                                  bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6))
-                    # TOP-LEFT text showing current price (inside axes to avoid title overlap)
-                    ax2.text(0.01, 0.98, f"Current price: {fmt_price_val(px_val)}",
-                             transform=ax2.transAxes, ha="left", va="top",
+                    # TOP-RIGHT text showing current price (inside axes to avoid title overlap)
+                    ax2.text(0.99, 0.98, f"Current price: {fmt_price_val(px_val)}",
+                             transform=ax2.transAxes, ha="right", va="top",
                              fontsize=10, fontweight="bold")
                 except Exception:
                     pass
@@ -684,7 +684,7 @@ with tab2:
             ax.text(df_show.index[-1], s30_last, f"  30S = {fmt_price_val(s30_last)}", va="top")
 
             ax.set_xlabel("Date (PST)")
-            ax.legend(loc="lower left", framealpha=0.5)
+            ax.legend()
             st.pyplot(fig)
 
         if view in ("Intraday","Both"):
@@ -711,7 +711,7 @@ with tab2:
                 ax3.plot(ic.index, sup_i, ":", label="Support")
                 ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
 
-                # ---- LEFT numeric value labels for R/S; price value on the right + TOP-LEFT "Current price" (Enhanced) ----
+                # ---- LEFT numeric value labels for R/S; price value on the right + TOP-RIGHT "Current price" (Enhanced) ----
                 try:
                     res_val2 = float(res_i.iloc[-1])
                     sup_val2 = float(sup_i.iloc[-1])
@@ -724,8 +724,8 @@ with tab2:
                                  textcoords="offset points", va="bottom", color=price_line2.get_color(),
                                  fontsize=9, fontweight="bold",
                                  bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6))
-                    ax3.text(0.01, 0.98, f"Current price: {fmt_price_val(px_val2)}",
-                             transform=ax3.transAxes, ha="left", va="top",
+                    ax3.text(0.99, 0.98, f"Current price: {fmt_price_val(px_val2)}",
+                             transform=ax3.transAxes, ha="right", va="top",
                              fontsize=10, fontweight="bold")
                 except Exception:
                     pass
