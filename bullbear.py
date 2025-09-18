@@ -12,6 +12,7 @@
 # - NEW: Value labels on intraday Resistance/Support placed on the LEFT; current Price value on the right
 # - NEW: Show "Current price: <value>" on the TOP-RIGHT of each hourly chart
 # - NEW: All displayed price values formatted to 3 decimal places
+# - NEW: Hourly Support/Resistance drawn as STRAIGHT LINES across the entire chart
 
 import streamlit as st
 import pandas as pd
@@ -295,7 +296,7 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
     for i in range(1, len(ohlc)):
         prev_st = st_line.iloc[i-1]
         prev_up = in_up.iloc[i-1]
-        up_i = min(upperband.iloc[i], prev_st) if prev_up else upperband.iloc[i]
+        up_i = min(upperband.iloci[i], prev_st) if prev_up else upperband.iloc[i]
         dn_i = max(lowerband.iloc[i], prev_st) if not prev_up else lowerband.iloc[i]
         close_i = ohlc['Close'].iloc[i]
         if close_i > up_i:
@@ -500,7 +501,7 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (signals + LEFT value labels + TOP-RIGHT current price text) -----
+        # ----- Hourly (signals + STRAIGHT R/S lines + LEFT value labels + TOP-RIGHT current price text) -----
         if chart in ("Hourly","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -511,6 +512,7 @@ with tab1:
                 xh = np.arange(len(hc))
                 slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
                 trend_h = slope_h * xh + intercept_h
+                # rolling S/R just for latest level computation
                 res_h = hc.rolling(60, min_periods=1).max()
                 sup_h = hc.rolling(60, min_periods=1).min()
 
@@ -523,34 +525,42 @@ with tab1:
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
+
                 price_line, = ax2.plot(hc.index, hc, label="Intraday")
                 ax2.plot(hc.index, he, "--", label="20 EMA")
-                ax2.plot(hc.index, res_h, ":", label="Resistance")
-                ax2.plot(hc.index, sup_h, ":", label="Support")
                 ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
 
-                # ---- LEFT numeric value labels for R/S; price value on the right + TOP-RIGHT "Current price" ----
+                # ---- STRAIGHT Support/Resistance lines across entire chart ----
+                res_val = np.nan
+                sup_val = np.nan
+                px_val  = np.nan
                 try:
                     res_val = float(res_h.iloc[-1])
                     sup_val = float(sup_h.iloc[-1])
                     px_val  = float(hc.iloc[-1])
+                except Exception:
+                    pass
+
+                if np.isfinite(res_val) and np.isfinite(sup_val):
+                    ax2.hlines(res_val, xmin=hc.index[0], xmax=hc.index[-1],
+                               colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance")
+                    ax2.hlines(sup_val, xmin=hc.index[0], xmax=hc.index[-1],
+                               colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
                     # Left-side labels for R & S
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
-                    # Current price label near last bar (right side)
+
+                # Current price label near last bar (right side) + TOP-RIGHT banner
+                if np.isfinite(px_val):
                     x_last = hc.index[-1]
                     ax2.annotate(f"{fmt_price_val(px_val)}",
                                  xy=(x_last, px_val), xytext=(8, 10),
                                  textcoords="offset points", va="bottom", color=price_line.get_color(),
                                  fontsize=9, fontweight="bold",
                                  bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6))
-                    # TOP-RIGHT text showing current price (inside axes to avoid title overlap)
                     ax2.text(0.99, 0.98, f"Current price: {fmt_price_val(px_val)}",
                              transform=ax2.transAxes, ha="right", va="top",
                              fontsize=10, fontweight="bold")
-                except Exception:
-                    pass
-                # -------------------------------------------------------------
 
                 if not st_line_intr.dropna().empty:
                     ax2.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -574,17 +584,16 @@ with tab1:
                 # ---- Signal marker ----
                 signal = sr_proximity_signal(hc, res_h, sup_h, st.session_state.fc_vals,
                                              threshold=signal_threshold, prox=sr_prox_pct)
-                if signal is not None:
+                if signal is not None and np.isfinite(px_val):
                     ts = hc.index[-1]
-                    px = float(hc.iloc[-1])
                     if signal["side"] == "BUY":
-                        ax2.scatter([ts], [px], marker="^", s=160, color="tab:green", zorder=5, label="BUY")
-                        ax2.annotate("BUY", (ts, px), xytext=(10, 14), textcoords="offset points", color="tab:green",
+                        ax2.scatter([ts], [px_val], marker="^", s=160, color="tab:green", zorder=5, label="BUY")
+                        ax2.annotate("BUY", (ts, px_val), xytext=(10, 14), textcoords="offset points", color="tab:green",
                                      fontsize=10, fontweight="bold")
                         st.success(f"**BUY signal** — {signal['reason']}")
                     elif signal["side"] == "SELL":
-                        ax2.scatter([ts], [px], marker="v", s=160, color="tab:red", zorder=5, label="SELL")
-                        ax2.annotate("SELL", (ts, px), xytext=(10, -18), textcoords="offset points", color="tab:red",
+                        ax2.scatter([ts], [px_val], marker="v", s=160, color="tab:red", zorder=5, label="SELL")
+                        ax2.annotate("SELL", (ts, px_val), xytext=(10, -18), textcoords="offset points", color="tab:red",
                                      fontsize=10, fontweight="bold")
                         st.error(f"**SELL signal** — {signal['reason']}")
 
@@ -697,6 +706,7 @@ with tab2:
                 xi = np.arange(len(ic))
                 slope_i, intercept_i = np.polyfit(xi, ic.values, 1)
                 trend_i = slope_i * xi + intercept_i
+                # rolling for latest level only
                 res_i = ic.rolling(60, min_periods=1).max()
                 sup_i = ic.rolling(60, min_periods=1).min()
                 st_intraday = compute_supertrend(intr, atr_period=atr_period, atr_mult=atr_mult)
@@ -707,17 +717,28 @@ with tab2:
                 ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
                 price_line2, = ax3.plot(ic.index, ic, label="Intraday")
                 ax3.plot(ic.index, ie, "--", label="20 EMA")
-                ax3.plot(ic.index, res_i, ":", label="Resistance")
-                ax3.plot(ic.index, sup_i, ":", label="Support")
                 ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
 
-                # ---- LEFT numeric value labels for R/S; price value on the right + TOP-RIGHT "Current price" (Enhanced) ----
+                # ---- STRAIGHT Support/Resistance lines across entire chart (Enhanced) ----
+                res_val2 = np.nan
+                sup_val2 = np.nan
+                px_val2  = np.nan
                 try:
                     res_val2 = float(res_i.iloc[-1])
                     sup_val2 = float(sup_i.iloc[-1])
                     px_val2  = float(ic.iloc[-1])
+                except Exception:
+                    pass
+
+                if np.isfinite(res_val2) and np.isfinite(sup_val2):
+                    ax3.hlines(res_val2, xmin=ic.index[0], xmax=ic.index[-1],
+                               colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance")
+                    ax3.hlines(sup_val2, xmin=ic.index[0], xmax=ic.index[-1],
+                               colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
                     label_on_left(ax3, res_val2, f"R {fmt_price_val(res_val2)}", color="tab:red")
                     label_on_left(ax3, sup_val2, f"S {fmt_price_val(sup_val2)}", color="tab:green")
+
+                if np.isfinite(px_val2):
                     x_last2 = ic.index[-1]
                     ax3.annotate(f"{fmt_price_val(px_val2)}",
                                  xy=(x_last2, px_val2), xytext=(8, 10),
@@ -727,9 +748,6 @@ with tab2:
                     ax3.text(0.99, 0.98, f"Current price: {fmt_price_val(px_val2)}",
                              transform=ax3.transAxes, ha="right", va="top",
                              fontsize=10, fontweight="bold")
-                except Exception:
-                    pass
-                # ---------------------------------------------------------------------------
 
                 if not st_line_intr.dropna().empty:
                     ax3.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -747,17 +765,16 @@ with tab2:
                 # ---- Signal marker (Enhanced) ----
                 signal2 = sr_proximity_signal(ic, res_i, sup_i, st.session_state.fc_vals,
                                               threshold=signal_threshold, prox=sr_prox_pct)
-                if signal2 is not None:
+                if signal2 is not None and np.isfinite(px_val2):
                     ts = ic.index[-1]
-                    px = float(ic.iloc[-1])
                     if signal2["side"] == "BUY":
-                        ax3.scatter([ts], [px], marker="^", s=160, color="tab:green", zorder=5, label="BUY")
-                        ax3.annotate("BUY", (ts, px), xytext=(10, 14), textcoords="offset points", color="tab:green",
+                        ax3.scatter([ts], [px_val2], marker="^", s=160, color="tab:green", zorder=5, label="BUY")
+                        ax3.annotate("BUY", (ts, px_val2), xytext=(10, 14), textcoords="offset points", color="tab:green",
                                      fontsize=10, fontweight="bold")
                         st.success(f"**BUY signal** — {signal2['reason']}")
                     elif signal2["side"] == "SELL":
-                        ax3.scatter([ts], [px], marker="v", s=160, color="tab:red", zorder=5, label="SELL")
-                        ax3.annotate("SELL", (ts, px), xytext=(10, -18), textcoords="offset points", color="tab:red",
+                        ax3.scatter([ts], [px_val2], marker="v", s=160, color="tab:red", zorder=5, label="SELL")
+                        ax3.annotate("SELL", (ts, px_val2), xytext=(10, -18), textcoords="offset points", color="tab:red",
                                      fontsize=10, fontweight="bold")
                         st.error(f"**SELL signal** — {signal2['reason']}")
 
