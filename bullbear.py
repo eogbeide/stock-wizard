@@ -8,11 +8,12 @@
 # - Fixes tz_localize error by using tz-aware UTC timestamps
 # - Auto-refresh, SARIMAX (for probabilities)
 # - Cache TTLs = 2 minutes (120s)
-# - NEW: Hourly BUY/SELL signals when near S/R with >= threshold model confidence
-# - NEW: Value labels on intraday Resistance/Support placed on the LEFT; price label outside chart (top-right)
-# - NEW: All displayed price values formatted to 3 decimal places
-# - NEW: Hourly Support/Resistance drawn as STRAIGHT LINES across the entire chart
-# - NEW: "Current price: <value>" shown OUTSIDE of chart area (top-right above axes)
+# - Hourly BUY/SELL logic (near S/R + confidence threshold)
+# - Value labels on intraday Resistance/Support placed on the LEFT; price label outside chart (top-right)
+# - All displayed price values formatted to 3 decimal places
+# - Hourly Support/Resistance drawn as STRAIGHT LINES across the entire chart
+# - Current price shown OUTSIDE of chart area (top-right above axes)
+# - UPDATE: Removed BUY/SELL triangles; the chart title ("symbol area") now shows BUY @ S and SELL @ R prices
 
 import streamlit as st
 import pandas as pd
@@ -136,7 +137,7 @@ st.sidebar.subheader("Hourly Supertrend")
 atr_period = st.sidebar.slider("ATR period", 5, 50, 10, 1, key="sb_atr_period")
 atr_mult   = st.sidebar.slider("ATR multiplier", 1.0, 5.0, 3.0, 0.5, key="sb_atr_mult")
 
-# NEW: Signal logic controls
+# Signal logic controls
 st.sidebar.subheader("Signal Logic (Hourly)")
 signal_threshold = st.sidebar.slider("Signal confidence threshold", 0.50, 0.99, 0.90, 0.01, key="sb_sig_thr")
 sr_prox_pct = st.sidebar.slider("S/R proximity (%)", 0.05, 1.00, 0.25, 0.05, key="sb_sr_prox") / 100.0
@@ -353,7 +354,7 @@ def draw_news_markers(ax, times, ymin, ymax, label="News"):
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
 
-# --- NEW: Signal helper ---
+# --- Signal helper ---
 def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
                         fc_vals: pd.Series, threshold: float, prox: float):
     """Return signal info if last price is near hourly S/R and model confidence passes threshold."""
@@ -501,7 +502,7 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (signals + STRAIGHT R/S lines + LEFT value labels + PRICE OUTSIDE) -----
+        # ----- Hourly (no triangles; title shows BUY/SELL prices) -----
         if chart in ("Hourly","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -526,7 +527,6 @@ with tab1:
                 fig2, ax2 = plt.subplots(figsize=(14,4))
                 # Give extra room on the top for the outside price label
                 plt.subplots_adjust(top=0.85, right=0.93)
-                ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
 
                 price_line, = ax2.plot(hc.index, hc, label="Intraday")
                 ax2.plot(hc.index, he, "--", label="20 EMA")
@@ -551,6 +551,14 @@ with tab1:
                     # Left-side labels for R & S
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
+
+                # Dynamic title (symbol area): include BUY/SELL levels
+                buy_sell_text = ""
+                if np.isfinite(sup_val):
+                    buy_sell_text += f" — BUY @{fmt_price_val(sup_val)}"
+                if np.isfinite(res_val):
+                    buy_sell_text += f"  SELL @{fmt_price_val(res_val)}"
+                ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text}")
 
                 # Current price label OUTSIDE (top-right above axes)
                 if np.isfinite(px_val):
@@ -581,21 +589,14 @@ with tab1:
                     if times:
                         draw_news_markers(ax2, times, float(hc.min()), float(hc.max()), label="News")
 
-                # ---- Signal marker ----
+                # ---- Signal (no plot markers; show in text only) ----
                 signal = sr_proximity_signal(hc, res_h, sup_h, st.session_state.fc_vals,
                                              threshold=signal_threshold, prox=sr_prox_pct)
                 if signal is not None and np.isfinite(px_val):
-                    ts = hc.index[-1]
                     if signal["side"] == "BUY":
-                        ax2.scatter([ts], [px_val], marker="^", s=160, color="tab:green", zorder=5, label="BUY")
-                        ax2.annotate("BUY", (ts, px_val), xytext=(10, 14), textcoords="offset points", color="tab:green",
-                                     fontsize=10, fontweight="bold")
-                        st.success(f"**BUY signal** — {signal['reason']}")
+                        st.success(f"**BUY** @ {fmt_price_val(signal['level'])} — {signal['reason']}")
                     elif signal["side"] == "SELL":
-                        ax2.scatter([ts], [px_val], marker="v", s=160, color="tab:red", zorder=5, label="SELL")
-                        ax2.annotate("SELL", (ts, px_val), xytext=(10, -18), textcoords="offset points", color="tab:red",
-                                     fontsize=10, fontweight="bold")
-                        st.error(f"**SELL signal** — {signal['reason']}")
+                        st.error(f"**SELL** @ {fmt_price_val(signal['level'])} — {signal['reason']}")
 
                 ax2.set_xlabel("Time (PST)")
                 ax2.legend(loc="lower left", framealpha=0.5)
@@ -715,7 +716,7 @@ with tab2:
 
                 fig3, ax3 = plt.subplots(figsize=(14,4))
                 plt.subplots_adjust(top=0.85, right=0.93)
-                ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
+
                 price_line2, = ax3.plot(ic.index, ic, label="Intraday")
                 ax3.plot(ic.index, ie, "--", label="20 EMA")
                 ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
@@ -738,6 +739,14 @@ with tab2:
                                colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
                     label_on_left(ax3, res_val2, f"R {fmt_price_val(res_val2)}", color="tab:red")
                     label_on_left(ax3, sup_val2, f"S {fmt_price_val(sup_val2)}", color="tab:green")
+
+                # Dynamic title (symbol area): include BUY/SELL levels
+                buy_sell_text2 = ""
+                if np.isfinite(sup_val2):
+                    buy_sell_text2 += f" — BUY @{fmt_price_val(sup_val2)}"
+                if np.isfinite(res_val2):
+                    buy_sell_text2 += f"  SELL @{fmt_price_val(res_val2)}"
+                ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text2}")
 
                 # Current price label OUTSIDE (top-right above axes)
                 if np.isfinite(px_val2):
@@ -762,21 +771,14 @@ with tab2:
                     for lbl, y in fibs_h.items():
                         ax3.text(ic.index[-1], y, f" {lbl}", va="center")
 
-                # ---- Signal marker (Enhanced) ----
+                # ---- Signal (no plot markers; text only) ----
                 signal2 = sr_proximity_signal(ic, res_i, sup_i, st.session_state.fc_vals,
                                               threshold=signal_threshold, prox=sr_prox_pct)
                 if signal2 is not None and np.isfinite(px_val2):
-                    ts = ic.index[-1]
                     if signal2["side"] == "BUY":
-                        ax3.scatter([ts], [px_val2], marker="^", s=160, color="tab:green", zorder=5, label="BUY")
-                        ax3.annotate("BUY", (ts, px_val2), xytext=(10, 14), textcoords="offset points", color="tab:green",
-                                     fontsize=10, fontweight="bold")
-                        st.success(f"**BUY signal** — {signal2['reason']}")
+                        st.success(f"**BUY** @ {fmt_price_val(signal2['level'])} — {signal2['reason']}")
                     elif signal2["side"] == "SELL":
-                        ax3.scatter([ts], [px_val2], marker="v", s=160, color="tab:red", zorder=5, label="SELL")
-                        ax3.annotate("SELL", (ts, px_val2), xytext=(10, -18), textcoords="offset points", color="tab:red",
-                                     fontsize=10, fontweight="bold")
-                        st.error(f"**SELL signal** — {signal2['reason']}")
+                        st.error(f"**SELL** @ {fmt_price_val(signal2['level'])} — {signal2['reason']}")
 
                 ax3.set_xlabel("Time (PST)")
                 ax3.legend(loc="lower left", framealpha=0.5)
