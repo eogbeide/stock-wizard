@@ -9,6 +9,7 @@
 # - Auto-refresh, SARIMAX (for probabilities)
 # - Cache TTLs = 2 minutes (120s)
 # - NEW: Hourly BUY/SELL signals when near S/R with >= threshold model confidence
+# - NEW: Value labels on intraday Resistance/Support and on the current Price
 
 import streamlit as st
 import pandas as pd
@@ -483,7 +484,7 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (signals added here) -----
+        # ----- Hourly (signals + value labels here) -----
         if chart in ("Hourly","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -506,11 +507,40 @@ with tab1:
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
-                ax2.plot(hc.index, hc, label="Intraday")
+                # Plot lines and capture color of price series for the label
+                price_line, = ax2.plot(hc.index, hc, label="Intraday")
                 ax2.plot(hc.index, he, "--", label="20 EMA")
                 ax2.plot(hc.index, res_h, ":", label="Resistance")
                 ax2.plot(hc.index, sup_h, ":", label="Support")
                 ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
+
+                # ---- NEW: numeric value labels for R/S and current Price ----
+                try:
+                    x_last = hc.index[-1]
+                    res_val = float(res_h.iloc[-1])
+                    sup_val = float(sup_h.iloc[-1])
+                    px_val  = float(hc.iloc[-1])
+                    # Resistance label
+                    ax2.annotate(f"R {fmt_price_val(res_val)}",
+                                 xy=(x_last, res_val), xytext=(8, 0),
+                                 textcoords="offset points", va="center", color="tab:red",
+                                 fontsize=9, fontweight="bold",
+                                 bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6))
+                    # Support label
+                    ax2.annotate(f"S {fmt_price_val(sup_val)}",
+                                 xy=(x_last, sup_val), xytext=(8, 0),
+                                 textcoords="offset points", va="center", color="tab:green",
+                                 fontsize=9, fontweight="bold",
+                                 bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6))
+                    # Current price label (use plotted line's color)
+                    ax2.annotate(f"{fmt_price_val(px_val)}",
+                                 xy=(x_last, px_val), xytext=(8, 10),
+                                 textcoords="offset points", va="bottom", color=price_line.get_color(),
+                                 fontsize=9, fontweight="bold",
+                                 bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6))
+                except Exception:
+                    pass
+                # -------------------------------------------------------------
 
                 if not st_line_intr.dropna().empty:
                     ax2.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -531,7 +561,7 @@ with tab1:
                     if times:
                         draw_news_markers(ax2, times, float(hc.min()), float(hc.max()), label="News")
 
-                # ---- NEW: compute and plot signal ----
+                # ---- Signal marker ----
                 signal = sr_proximity_signal(hc, res_h, sup_h, st.session_state.fc_vals,
                                              threshold=signal_threshold, prox=sr_prox_pct)
                 if signal is not None:
@@ -665,11 +695,36 @@ with tab2:
 
                 fig3, ax3 = plt.subplots(figsize=(14,4))
                 ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
-                ax3.plot(ic.index, ic, label="Intraday")
+                price_line2, = ax3.plot(ic.index, ic, label="Intraday")
                 ax3.plot(ic.index, ie, "--", label="20 EMA")
                 ax3.plot(ic.index, res_i, ":", label="Resistance")
                 ax3.plot(ic.index, sup_i, ":", label="Support")
                 ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
+
+                # ---- NEW: numeric value labels for R/S and current Price (Enhanced tab) ----
+                try:
+                    x_last2 = ic.index[-1]
+                    res_val2 = float(res_i.iloc[-1])
+                    sup_val2 = float(sup_i.iloc[-1])
+                    px_val2  = float(ic.iloc[-1])
+                    ax3.annotate(f"R {fmt_price_val(res_val2)}",
+                                 xy=(x_last2, res_val2), xytext=(8, 0),
+                                 textcoords="offset points", va="center", color="tab:red",
+                                 fontsize=9, fontweight="bold",
+                                 bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6))
+                    ax3.annotate(f"S {fmt_price_val(sup_val2)}",
+                                 xy=(x_last2, sup_val2), xytext=(8, 0),
+                                 textcoords="offset points", va="center", color="tab:green",
+                                 fontsize=9, fontweight="bold",
+                                 bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6))
+                    ax3.annotate(f"{fmt_price_val(px_val2)}",
+                                 xy=(x_last2, px_val2), xytext=(8, 10),
+                                 textcoords="offset points", va="bottom", color=price_line2.get_color(),
+                                 fontsize=9, fontweight="bold",
+                                 bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6))
+                except Exception:
+                    pass
+                # ---------------------------------------------------------------------------
 
                 if not st_line_intr.dropna().empty:
                     ax3.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -684,7 +739,7 @@ with tab2:
                     for lbl, y in fibs_h.items():
                         ax3.text(ic.index[-1], y, f" {lbl}", va="center")
 
-                # ---- NEW: compute and plot signal (Enhanced tab) ----
+                # ---- Signal marker (Enhanced) ----
                 signal2 = sr_proximity_signal(ic, res_i, sup_i, st.session_state.fc_vals,
                                               threshold=signal_threshold, prox=sr_prox_pct)
                 if signal2 is not None:
