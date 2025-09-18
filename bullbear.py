@@ -8,6 +8,7 @@
 # - Fixes tz_localize error by using tz-aware UTC timestamps
 # - Auto-refresh, SARIMAX (for probabilities)
 # - Cache TTLs = 2 minutes (120s)
+# - NEW: Hourly BUY/SELL signals when near S/R with >= threshold model confidence
 
 import streamlit as st
 import pandas as pd
@@ -85,6 +86,18 @@ def fmt_pct(x, digits: int = 1) -> str:
         return "n/a"
     return f"{xv:.{digits}%}" if np.isfinite(xv) else "n/a"
 
+def fmt_price_val(y: float) -> str:
+    y = float(y)
+    ay = abs(y)
+    if ay >= 1000:
+        return f"{y:,.0f}"
+    if ay >= 1:
+        return f"{y:,.2f}"
+    return f"{y:,.5f}"
+
+def fmt_slope(m: float) -> str:
+    return f"{m:.4f}" if np.isfinite(m) else "n/a"
+
 # --- Sidebar config (explicit keys everywhere) ---
 st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
@@ -104,6 +117,11 @@ mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, k
 st.sidebar.subheader("Hourly Supertrend")
 atr_period = st.sidebar.slider("ATR period", 5, 50, 10, 1, key="sb_atr_period")
 atr_mult   = st.sidebar.slider("ATR multiplier", 1.0, 5.0, 3.0, 0.5, key="sb_atr_mult")
+
+# NEW: Signal logic controls
+st.sidebar.subheader("Signal Logic (Hourly)")
+signal_threshold = st.sidebar.slider("Signal confidence threshold", 0.50, 0.99, 0.90, 0.01, key="sb_sig_thr")
+sr_prox_pct = st.sidebar.slider("S/R proximity (%)", 0.05, 1.00, 0.25, 0.05, key="sb_sr_prox") / 100.0
 
 # Forex news controls (only shown in Forex mode)
 if mode == "Forex":
@@ -197,15 +215,6 @@ def fibonacci_levels(series_like):
         "100%": lo,
     }
 
-def fmt_price_val(y: float) -> str:
-    y = float(y)
-    ay = abs(y)
-    if ay >= 1000:
-        return f"{y:,.0f}"
-    if ay >= 1:
-        return f"{y:,.2f}"
-    return f"{y:,.5f}"
-
 def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
     if ohlc is None or ohlc.empty:
         return {}
@@ -233,9 +242,6 @@ def slope_line(series_like, lookback: int):
     m, b = np.polyfit(x, s.to_numpy(dtype=float), 1)
     yhat = pd.Series(m * x + b, index=s.index)
     return yhat, float(m)
-
-def fmt_slope(m: float) -> str:
-    return f"{m:.4f}" if np.isfinite(m) else "n/a"
 
 def compute_roc(series_like, n: int = 10) -> pd.Series:
     s = _coerce_1d_series(series_like)
@@ -328,6 +334,46 @@ def draw_news_markers(ax, times, ymin, ymax, label="News"):
         except Exception:
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
+
+# --- NEW: Signal helper ---
+def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
+                        fc_vals: pd.Series, threshold: float, prox: float):
+    """Return signal info if last price is near hourly S/R and model confidence passes threshold."""
+    try:
+        last_close = float(hc.iloc[-1])
+        res = float(res_h.iloc[-1])
+        sup = float(sup_h.iloc[-1])
+    except Exception:
+        return None
+
+    if not np.all(np.isfinite([last_close, res, sup])) or res <= sup:
+        return None
+
+    near_support = last_close <= sup * (1.0 + prox)
+    near_resist  = last_close >= res * (1.0 - prox)
+
+    # Model "confidence": share of future daily forecasts above/below current intraday price.
+    fc = np.asarray(_coerce_1d_series(fc_vals).dropna(), dtype=float)
+    if fc.size == 0:
+        return None
+    p_up_from_here = float(np.mean(fc > last_close))
+    p_dn_from_here = float(np.mean(fc < last_close))
+
+    if near_support and p_up_from_here >= threshold:
+        return {
+            "side": "BUY",
+            "prob": p_up_from_here,
+            "level": sup,
+            "reason": f"Near support {fmt_price_val(sup)} with {fmt_pct(p_up_from_here)} up-confidence ≥ {fmt_pct(threshold)}"
+        }
+    if near_resist and p_dn_from_here >= threshold:
+        return {
+            "side": "SELL",
+            "prob": p_dn_from_here,
+            "level": res,
+            "reason": f"Near resistance {fmt_price_val(res)} with {fmt_pct(p_dn_from_here)} down-confidence ≥ {fmt_pct(threshold)}"
+        }
+    return None
 
 # --- Session init ---
 if 'run_all' not in st.session_state:
@@ -437,7 +483,7 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly -----
+        # ----- Hourly (signals added here) -----
         if chart in ("Hourly","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -484,6 +530,23 @@ with tab1:
                     times = [t for t in fx_news["time"] if t0 <= t <= t1]
                     if times:
                         draw_news_markers(ax2, times, float(hc.min()), float(hc.max()), label="News")
+
+                # ---- NEW: compute and plot signal ----
+                signal = sr_proximity_signal(hc, res_h, sup_h, st.session_state.fc_vals,
+                                             threshold=signal_threshold, prox=sr_prox_pct)
+                if signal is not None:
+                    ts = hc.index[-1]
+                    px = float(hc.iloc[-1])
+                    if signal["side"] == "BUY":
+                        ax2.scatter([ts], [px], marker="^", s=160, color="tab:green", zorder=5, label="BUY")
+                        ax2.annotate("BUY", (ts, px), xytext=(10, 14), textcoords="offset points", color="tab:green",
+                                     fontsize=10, fontweight="bold")
+                        st.success(f"**BUY signal** — {signal['reason']}")
+                    elif signal["side"] == "SELL":
+                        ax2.scatter([ts], [px], marker="v", s=160, color="tab:red", zorder=5, label="SELL")
+                        ax2.annotate("SELL", (ts, px), xytext=(10, -18), textcoords="offset points", color="tab:red",
+                                     fontsize=10, fontweight="bold")
+                        st.error(f"**SELL signal** — {signal['reason']}")
 
                 ax2.set_xlabel("Time (PST)")
                 ax2.legend(loc="lower left", framealpha=0.5)
@@ -620,6 +683,23 @@ with tab2:
                         ax3.hlines(y, xmin=ic.index[0], xmax=ic.index[-1], linestyles="dotted", linewidth=1)
                     for lbl, y in fibs_h.items():
                         ax3.text(ic.index[-1], y, f" {lbl}", va="center")
+
+                # ---- NEW: compute and plot signal (Enhanced tab) ----
+                signal2 = sr_proximity_signal(ic, res_i, sup_i, st.session_state.fc_vals,
+                                              threshold=signal_threshold, prox=sr_prox_pct)
+                if signal2 is not None:
+                    ts = ic.index[-1]
+                    px = float(ic.iloc[-1])
+                    if signal2["side"] == "BUY":
+                        ax3.scatter([ts], [px], marker="^", s=160, color="tab:green", zorder=5, label="BUY")
+                        ax3.annotate("BUY", (ts, px), xytext=(10, 14), textcoords="offset points", color="tab:green",
+                                     fontsize=10, fontweight="bold")
+                        st.success(f"**BUY signal** — {signal2['reason']}")
+                    elif signal2["side"] == "SELL":
+                        ax3.scatter([ts], [px], marker="v", s=160, color="tab:red", zorder=5, label="SELL")
+                        ax3.annotate("SELL", (ts, px), xytext=(10, -18), textcoords="offset points", color="tab:red",
+                                     fontsize=10, fontweight="bold")
+                        st.error(f"**SELL signal** — {signal2['reason']}")
 
                 ax3.set_xlabel("Time (PST)")
                 ax3.legend(loc="lower left", framealpha=0.5)
