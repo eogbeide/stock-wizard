@@ -11,6 +11,7 @@
 # - NEW: Hourly BUY/SELL signals when near S/R with >= threshold model confidence
 # - NEW: Value labels on intraday Resistance/Support placed on the LEFT; current Price value on the right
 # - NEW: Show "Current price: <value>" on the TOP-LEFT of each hourly chart (moved left to avoid slope/title overlap)
+# - NEW: All displayed price values formatted to 3 decimal places
 
 import streamlit as st
 import pandas as pd
@@ -90,13 +91,12 @@ def fmt_pct(x, digits: int = 1) -> str:
     return f"{xv:.{digits}%}" if np.isfinite(xv) else "n/a"
 
 def fmt_price_val(y: float) -> str:
-    y = float(y)
-    ay = abs(y)
-    if ay >= 1000:
-        return f"{y:,.0f}"
-    if ay >= 1:
-        return f"{y:,.2f}"
-    return f"{y:,.5f}"
+    """Format price values to exactly 3 decimal places with thousands separators."""
+    try:
+        y = float(y)
+    except Exception:
+        return "n/a"
+    return f"{y:,.3f}"
 
 def fmt_slope(m: float) -> str:
     return f"{m:.4f}" if np.isfinite(m) else "n/a"
