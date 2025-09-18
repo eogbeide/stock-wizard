@@ -13,7 +13,7 @@
 # - All displayed price values formatted to 3 decimal places
 # - Hourly Support/Resistance drawn as STRAIGHT LINES across the entire chart
 # - Current price shown OUTSIDE of chart area (top-right above axes)
-# - UPDATE: Removed BUY/SELL triangles; the chart title ("symbol area") now shows BUY @ S and SELL @ R prices
+# - UPDATE: Removed BUY/SELL triangles from charts; keep indicators in the title ("symbol area") with ▲/▼ and price values
 
 import streamlit as st
 import pandas as pd
@@ -502,7 +502,7 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (no triangles; title shows BUY/SELL prices) -----
+        # ----- Hourly (no triangles; title shows ▲ BUY / ▼ SELL with values) -----
         if chart in ("Hourly","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -528,7 +528,7 @@ with tab1:
                 # Give extra room on the top for the outside price label
                 plt.subplots_adjust(top=0.85, right=0.93)
 
-                price_line, = ax2.plot(hc.index, hc, label="Intraday")
+                ax2.plot(hc.index, hc, label="Intraday")
                 ax2.plot(hc.index, he, "--", label="20 EMA")
                 ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
 
@@ -552,12 +552,12 @@ with tab1:
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
-                # Dynamic title (symbol area): include BUY/SELL levels
+                # Dynamic title (symbol area): include ▲ BUY / ▼ SELL levels with values
                 buy_sell_text = ""
                 if np.isfinite(sup_val):
-                    buy_sell_text += f" — BUY @{fmt_price_val(sup_val)}"
+                    buy_sell_text += f" — ▲ BUY @{fmt_price_val(sup_val)}"
                 if np.isfinite(res_val):
-                    buy_sell_text += f"  SELL @{fmt_price_val(res_val)}"
+                    buy_sell_text += f"  ▼ SELL @{fmt_price_val(res_val)}"
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text}")
 
                 # Current price label OUTSIDE (top-right above axes)
@@ -717,7 +717,7 @@ with tab2:
                 fig3, ax3 = plt.subplots(figsize=(14,4))
                 plt.subplots_adjust(top=0.85, right=0.93)
 
-                price_line2, = ax3.plot(ic.index, ic, label="Intraday")
+                ax3.plot(ic.index, ic, label="Intraday")
                 ax3.plot(ic.index, ie, "--", label="20 EMA")
                 ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
 
@@ -740,12 +740,12 @@ with tab2:
                     label_on_left(ax3, res_val2, f"R {fmt_price_val(res_val2)}", color="tab:red")
                     label_on_left(ax3, sup_val2, f"S {fmt_price_val(sup_val2)}", color="tab:green")
 
-                # Dynamic title (symbol area): include BUY/SELL levels
+                # Dynamic title (symbol area): include ▲ BUY / ▼ SELL levels with values
                 buy_sell_text2 = ""
                 if np.isfinite(sup_val2):
-                    buy_sell_text2 += f" — BUY @{fmt_price_val(sup_val2)}"
+                    buy_sell_text2 += f" — ▲ BUY @{fmt_price_val(sup_val2)}"
                 if np.isfinite(res_val2):
-                    buy_sell_text2 += f"  SELL @{fmt_price_val(res_val2)}"
+                    buy_sell_text2 += f"  ▼ SELL @{fmt_price_val(res_val2)}"
                 ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text2}")
 
                 # Current price label OUTSIDE (top-right above axes)
