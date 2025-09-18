@@ -9,7 +9,7 @@
 # - Auto-refresh, SARIMAX (for probabilities)
 # - Cache TTLs = 2 minutes (120s)
 # - NEW: Hourly BUY/SELL signals when near S/R with >= threshold model confidence
-# - NEW: Value labels on intraday Resistance/Support and on the current Price
+# - NEW: Value labels on intraday Resistance/Support placed on the LEFT; current Price remains on the right
 
 import streamlit as st
 import pandas as pd
@@ -20,6 +20,7 @@ from datetime import timedelta, datetime
 import matplotlib.pyplot as plt
 import time
 import pytz
+from matplotlib.transforms import blended_transform_factory  # for left-side labels
 
 # --- Page config (must be the first Streamlit call) ---
 st.set_page_config(
@@ -98,6 +99,20 @@ def fmt_price_val(y: float) -> str:
 
 def fmt_slope(m: float) -> str:
     return f"{m:.4f}" if np.isfinite(m) else "n/a"
+
+# Place text at the left edge (x in axes coords, y in data coords)
+def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
+    try:
+        trans = blended_transform_factory(ax.transAxes, ax.transData)
+        ax.text(
+            0.01, y_val, text,
+            transform=trans, ha="left", va="center",
+            color=color, fontsize=fontsize, fontweight="bold",
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6),
+            zorder=6
+        )
+    except Exception:
+        pass
 
 # --- Sidebar config (explicit keys everywhere) ---
 st.sidebar.title("Configuration")
@@ -484,7 +499,7 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (signals + value labels here) -----
+        # ----- Hourly (signals + LEFT value labels here) -----
         if chart in ("Hourly","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -507,32 +522,22 @@ with tab1:
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
-                # Plot lines and capture color of price series for the label
                 price_line, = ax2.plot(hc.index, hc, label="Intraday")
                 ax2.plot(hc.index, he, "--", label="20 EMA")
                 ax2.plot(hc.index, res_h, ":", label="Resistance")
                 ax2.plot(hc.index, sup_h, ":", label="Support")
                 ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
 
-                # ---- NEW: numeric value labels for R/S and current Price ----
+                # ---- LEFT numeric value labels for R/S; price value on the right ----
                 try:
-                    x_last = hc.index[-1]
                     res_val = float(res_h.iloc[-1])
                     sup_val = float(sup_h.iloc[-1])
                     px_val  = float(hc.iloc[-1])
-                    # Resistance label
-                    ax2.annotate(f"R {fmt_price_val(res_val)}",
-                                 xy=(x_last, res_val), xytext=(8, 0),
-                                 textcoords="offset points", va="center", color="tab:red",
-                                 fontsize=9, fontweight="bold",
-                                 bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6))
-                    # Support label
-                    ax2.annotate(f"S {fmt_price_val(sup_val)}",
-                                 xy=(x_last, sup_val), xytext=(8, 0),
-                                 textcoords="offset points", va="center", color="tab:green",
-                                 fontsize=9, fontweight="bold",
-                                 bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6))
-                    # Current price label (use plotted line's color)
+                    # Left-side labels for R & S
+                    label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
+                    label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
+                    # Current price label near last bar (right side)
+                    x_last = hc.index[-1]
                     ax2.annotate(f"{fmt_price_val(px_val)}",
                                  xy=(x_last, px_val), xytext=(8, 10),
                                  textcoords="offset points", va="bottom", color=price_line.get_color(),
@@ -701,22 +706,14 @@ with tab2:
                 ax3.plot(ic.index, sup_i, ":", label="Support")
                 ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
 
-                # ---- NEW: numeric value labels for R/S and current Price (Enhanced tab) ----
+                # ---- LEFT numeric value labels for R/S; price value on the right (Enhanced tab) ----
                 try:
-                    x_last2 = ic.index[-1]
                     res_val2 = float(res_i.iloc[-1])
                     sup_val2 = float(sup_i.iloc[-1])
                     px_val2  = float(ic.iloc[-1])
-                    ax3.annotate(f"R {fmt_price_val(res_val2)}",
-                                 xy=(x_last2, res_val2), xytext=(8, 0),
-                                 textcoords="offset points", va="center", color="tab:red",
-                                 fontsize=9, fontweight="bold",
-                                 bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6))
-                    ax3.annotate(f"S {fmt_price_val(sup_val2)}",
-                                 xy=(x_last2, sup_val2), xytext=(8, 0),
-                                 textcoords="offset points", va="center", color="tab:green",
-                                 fontsize=9, fontweight="bold",
-                                 bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6))
+                    label_on_left(ax3, res_val2, f"R {fmt_price_val(res_val2)}", color="tab:red")
+                    label_on_left(ax3, sup_val2, f"S {fmt_price_val(sup_val2)}", color="tab:green")
+                    x_last2 = ic.index[-1]
                     ax3.annotate(f"{fmt_price_val(px_val2)}",
                                  xy=(x_last2, px_val2), xytext=(8, 10),
                                  textcoords="offset points", va="bottom", color=price_line2.get_color(),
