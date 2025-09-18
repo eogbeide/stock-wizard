@@ -9,10 +9,10 @@
 # - Auto-refresh, SARIMAX (for probabilities)
 # - Cache TTLs = 2 minutes (120s)
 # - NEW: Hourly BUY/SELL signals when near S/R with >= threshold model confidence
-# - NEW: Value labels on intraday Resistance/Support placed on the LEFT; current Price value on the right
-# - NEW: Show "Current price: <value>" on the TOP-RIGHT of each hourly chart
+# - NEW: Value labels on intraday Resistance/Support placed on the LEFT; price label outside chart (top-right)
 # - NEW: All displayed price values formatted to 3 decimal places
 # - NEW: Hourly Support/Resistance drawn as STRAIGHT LINES across the entire chart
+# - NEW: "Current price: <value>" shown OUTSIDE of chart area (top-right above axes)
 
 import streamlit as st
 import pandas as pd
@@ -296,7 +296,7 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
     for i in range(1, len(ohlc)):
         prev_st = st_line.iloc[i-1]
         prev_up = in_up.iloc[i-1]
-        up_i = min(upperband.iloci[i], prev_st) if prev_up else upperband.iloc[i]
+        up_i = min(upperband.iloc[i], prev_st) if prev_up else upperband.iloc[i]
         dn_i = max(lowerband.iloc[i], prev_st) if not prev_up else lowerband.iloc[i]
         close_i = ohlc['Close'].iloc[i]
         if close_i > up_i:
@@ -501,7 +501,7 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (signals + STRAIGHT R/S lines + LEFT value labels + TOP-RIGHT current price text) -----
+        # ----- Hourly (signals + STRAIGHT R/S lines + LEFT value labels + PRICE OUTSIDE) -----
         if chart in ("Hourly","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -524,6 +524,8 @@ with tab1:
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
+                # Give extra room on the top for the outside price label
+                plt.subplots_adjust(top=0.85, right=0.93)
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
 
                 price_line, = ax2.plot(hc.index, hc, label="Intraday")
@@ -550,17 +552,15 @@ with tab1:
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
-                # Current price label near last bar (right side) + TOP-RIGHT banner
+                # Current price label OUTSIDE (top-right above axes)
                 if np.isfinite(px_val):
-                    x_last = hc.index[-1]
-                    ax2.annotate(f"{fmt_price_val(px_val)}",
-                                 xy=(x_last, px_val), xytext=(8, 10),
-                                 textcoords="offset points", va="bottom", color=price_line.get_color(),
-                                 fontsize=9, fontweight="bold",
-                                 bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6))
-                    ax2.text(0.99, 0.98, f"Current price: {fmt_price_val(px_val)}",
-                             transform=ax2.transAxes, ha="right", va="top",
-                             fontsize=10, fontweight="bold")
+                    pos = ax2.get_position()  # Bbox in figure coords
+                    fig2.text(
+                        pos.x1, pos.y1 + 0.02,
+                        f"Current price: {fmt_price_val(px_val)}",
+                        ha="right", va="bottom",
+                        fontsize=11, fontweight="bold"
+                    )
 
                 if not st_line_intr.dropna().empty:
                     ax2.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -714,6 +714,7 @@ with tab2:
                 yhat_h, m_h = slope_line(ic, slope_lb_hourly)
 
                 fig3, ax3 = plt.subplots(figsize=(14,4))
+                plt.subplots_adjust(top=0.85, right=0.93)
                 ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
                 price_line2, = ax3.plot(ic.index, ic, label="Intraday")
                 ax3.plot(ic.index, ie, "--", label="20 EMA")
@@ -738,16 +739,15 @@ with tab2:
                     label_on_left(ax3, res_val2, f"R {fmt_price_val(res_val2)}", color="tab:red")
                     label_on_left(ax3, sup_val2, f"S {fmt_price_val(sup_val2)}", color="tab:green")
 
+                # Current price label OUTSIDE (top-right above axes)
                 if np.isfinite(px_val2):
-                    x_last2 = ic.index[-1]
-                    ax3.annotate(f"{fmt_price_val(px_val2)}",
-                                 xy=(x_last2, px_val2), xytext=(8, 10),
-                                 textcoords="offset points", va="bottom", color=price_line2.get_color(),
-                                 fontsize=9, fontweight="bold",
-                                 bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6))
-                    ax3.text(0.99, 0.98, f"Current price: {fmt_price_val(px_val2)}",
-                             transform=ax3.transAxes, ha="right", va="top",
-                             fontsize=10, fontweight="bold")
+                    pos2 = ax3.get_position()
+                    fig3.text(
+                        pos2.x1, pos2.y1 + 0.02,
+                        f"Current price: {fmt_price_val(px_val2)}",
+                        ha="right", va="bottom",
+                        fontsize=11, fontweight="bold"
+                    )
 
                 if not st_line_intr.dropna().empty:
                     ax3.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
