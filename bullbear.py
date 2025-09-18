@@ -8,10 +8,7 @@
 # - Fixes tz_localize error by using tz-aware UTC timestamps
 # - Auto-refresh, SARIMAX (for probabilities)
 # - Cache TTLs = 2 minutes (120s)
-# - Normalized StdDev panel (hourly)
-# - ZigZag (Elliott-like) overlay on hourly
-# - Hourly BUY/SELL signals when near S/R with >= threshold model confidence
-# - Historical BUY/SELL signals (declustered) + overlay
+# - NEW: Hourly BUY/SELL signals when near S/R with >= threshold model confidence
 
 import streamlit as st
 import pandas as pd
@@ -111,30 +108,20 @@ show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=False, key
 slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10, key="sb_slope_lb_daily")
 slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120, 6, key="sb_slope_lb_hourly")
 
-# Hourly Momentum & Volatility controls
-st.sidebar.subheader("Hourly Indicators")
+# Hourly Momentum controls
+st.sidebar.subheader("Hourly Momentum")
 show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True, key="sb_show_mom_hourly")
 mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, key="sb_mom_lb_hourly")
-show_vol_hourly = st.sidebar.checkbox("Show normalized StdDev (CV)", value=True, key="sb_show_vol_hourly")
-vol_lb_hourly   = st.sidebar.slider("Volatility window (bars)", 10, 240, 60, 5, key="sb_vol_lb_hourly")
-vol_use_returns = st.sidebar.checkbox("Volatility uses returns (σ of %chg)", value=False, key="sb_vol_use_ret")
 
 # Hourly Supertrend controls
 st.sidebar.subheader("Hourly Supertrend")
 atr_period = st.sidebar.slider("ATR period", 5, 50, 10, 1, key="sb_atr_period")
 atr_mult   = st.sidebar.slider("ATR multiplier", 1.0, 5.0, 3.0, 0.5, key="sb_atr_mult")
 
-# ZigZag / Elliott-like overlay
-st.sidebar.subheader("ZigZag (Elliott-like)")
-show_wave = st.sidebar.checkbox("Show ZigZag overlay", value=True, key="sb_wave")
-zigzag_pct = st.sidebar.slider("ZigZag deviation (%)", 0.5, 10.0, 3.0, 0.5, key="sb_zz_pct")
-
-# Signal logic controls
+# NEW: Signal logic controls
 st.sidebar.subheader("Signal Logic (Hourly)")
 signal_threshold = st.sidebar.slider("Signal confidence threshold", 0.50, 0.99, 0.90, 0.01, key="sb_sig_thr")
 sr_prox_pct = st.sidebar.slider("S/R proximity (%)", 0.05, 1.00, 0.25, 0.05, key="sb_sr_prox") / 100.0
-min_sep_bars = st.sidebar.slider("Min bars between signals", 1, 60, 6, 1, key="sb_min_sep")
-show_hist_signals = st.sidebar.checkbox("Overlay historical signals", value=True, key="sb_hist_sig")
 
 # Forex news controls (only shown in Forex mode)
 if mode == "Forex":
@@ -264,19 +251,6 @@ def compute_roc(series_like, n: int = 10) -> pd.Series:
     roc = base.pct_change(n) * 100.0
     return roc.reindex(s.index)
 
-def compute_normalized_std(series_like, window: int = 60, use_returns: bool = False) -> pd.Series:
-    s = _coerce_1d_series(series_like)
-    if s.empty:
-        return pd.Series(index=s.index, dtype=float)
-    if use_returns:
-        r = s.pct_change()
-        out = r.rolling(window, min_periods=1).std() * 100.0  # % points
-    else:
-        mean = s.rolling(window, min_periods=1).mean()
-        std = s.rolling(window, min_periods=1).std()
-        out = (std / mean.replace(0, np.nan)) * 100.0  # coefficient of variation, %
-    return out.reindex(s.index)
-
 # ---- Supertrend helpers (hourly overlay) ----
 def _true_range(df: pd.DataFrame):
     hl = (df["High"] - df["Low"]).abs()
@@ -320,53 +294,6 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
         "upperband": upperband, "lowerband": lowerband
     })
 
-# ---- ZigZag (Elliott-like) ----
-def compute_zigzag(series_like, pct: float = 3.0) -> pd.DataFrame:
-    """Simple % deviation ZigZag (peaks & troughs). Returns DataFrame with 'price' and 'type'."""
-    s = _coerce_1d_series(series_like).dropna()
-    if s.shape[0] < 3:
-        return pd.DataFrame(index=s.index, columns=["price","type"])
-    frac = max(pct, 0.1) / 100.0
-    idx = s.index
-    px = s.to_numpy(dtype=float)
-    n = len(px)
-    piv_idx = []
-    piv_price = []
-    piv_type = []  # 'peak' or 'trough'
-
-    # Start
-    direction = 0  # 0 unknown, +1 up leg, -1 down leg
-    extreme_i = 0
-    extreme_p = px[0]
-
-    for i in range(1, n):
-        p = px[i]
-        if direction >= 0:  # looking for highs / up leg
-            if p >= extreme_p:
-                extreme_p = p
-                extreme_i = i
-            elif (extreme_p - p) / extreme_p >= frac:  # reversal to down
-                piv_idx.append(idx[extreme_i]); piv_price.append(extreme_p); piv_type.append('peak')
-                direction = -1
-                extreme_i = i
-                extreme_p = p
-        if direction <= 0:  # looking for lows / down leg
-            if p <= extreme_p:
-                extreme_p = p
-                extreme_i = i
-            elif (p - extreme_p) / extreme_p >= frac:  # reversal to up
-                piv_idx.append(idx[extreme_i]); piv_price.append(extreme_p); piv_type.append('trough')
-                direction = +1
-                extreme_i = i
-                extreme_p = p
-
-    # Add last extreme
-    piv_idx.append(idx[extreme_i]); piv_price.append(extreme_p)
-    piv_type.append('peak' if direction == +1 else 'trough')
-
-    zz = pd.DataFrame({"price": piv_price, "type": piv_type}, index=pd.Index(piv_idx, name="time")).sort_index()
-    return zz
-
 # ---- Forex News (Yahoo Finance) ----
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
@@ -408,7 +335,7 @@ def draw_news_markers(ax, times, ymin, ymax, label="News"):
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
 
-# --- Signals (current + historical, robust) ---
+# --- NEW: Signal helper ---
 def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
                         fc_vals: pd.Series, threshold: float, prox: float):
     """Return signal info if last price is near hourly S/R and model confidence passes threshold."""
@@ -418,6 +345,7 @@ def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
         sup = float(sup_h.iloc[-1])
     except Exception:
         return None
+
     if not np.all(np.isfinite([last_close, res, sup])) or res <= sup:
         return None
 
@@ -446,74 +374,6 @@ def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
             "reason": f"Near resistance {fmt_price_val(res)} with {fmt_pct(p_dn_from_here)} down-confidence ≥ {fmt_pct(threshold)}"
         }
     return None
-
-def _thin_mask(mask: pd.Series, min_sep: int) -> pd.Series:
-    """Keep first True then require at least min_sep bars before next True."""
-    if mask is None or mask.empty or min_sep <= 0:
-        return mask
-    idxs = np.flatnonzero(mask.values)
-    keep = []
-    last = -10**9
-    for i in idxs:
-        if i - last >= min_sep:
-            keep.append(i)
-            last = i
-    keep_mask = pd.Series(False, index=mask.index)
-    if keep:
-        keep_mask.iloc[keep] = True
-    return keep_mask
-
-def historical_sr_conf_signals(hc: pd.Series,
-                               res_h: pd.Series,
-                               sup_h: pd.Series,
-                               fc_vals: pd.Series,
-                               threshold: float,
-                               prox: float,
-                               min_sep: int = 6) -> pd.DataFrame:
-    """
-    Robust & vectorized historical signals across the full intraday series.
-    Confidence uses the SARIMAX daily forecast vs each intraday price.
-    """
-    if hc is None or hc.empty:
-        return pd.DataFrame(columns=["side", "price", "prob", "level"]).set_index(pd.Index([], name="time"))
-
-    fc = np.asarray(_coerce_1d_series(fc_vals).dropna(), dtype=float)
-    if fc.size == 0:
-        return pd.DataFrame(columns=["side", "price", "prob", "level"]).set_index(pd.Index([], name="time"))
-
-    idx = hc.index
-    px = hc.to_numpy(dtype=float)
-    res_s = res_h.reindex(idx)
-    sup_s = sup_h.reindex(idx)
-    res = res_s.to_numpy(dtype=float)
-    sup = sup_s.to_numpy(dtype=float)
-
-    # Probabilities vs the daily forecast distribution
-    p_up = (fc[None, :] > px[:, None]).mean(axis=1)
-    p_dn = 1.0 - p_up
-
-    valid_sup = np.isfinite(sup)
-    valid_res = np.isfinite(res)
-    near_sup  = valid_sup & (px <= sup * (1.0 + prox))
-    near_res  = valid_res & (px >= res * (1.0 - prox))
-
-    buy_arr  = near_sup & np.isfinite(p_up) & (p_up >= threshold)
-    sell_arr = near_res & np.isfinite(p_dn) & (p_dn >= threshold)
-
-    buy_mask  = _thin_mask(pd.Series(buy_arr,  index=idx), min_sep)
-    sell_mask = _thin_mask(pd.Series(sell_arr, index=idx), min_sep)
-
-    rows = []
-    for i in np.flatnonzero(buy_mask.values):
-        rows.append({"time": idx[i], "side": "BUY",  "price": float(px[i]), "prob": float(p_up[i]), "level": float(sup[i])})
-    for i in np.flatnonzero(sell_mask.values):
-        rows.append({"time": idx[i], "side": "SELL", "price": float(px[i]), "prob": float(p_dn[i]), "level": float(res[i])})
-
-    if not rows:
-        return pd.DataFrame(columns=["side", "price", "prob", "level"]).set_index(pd.Index([], name="time"))
-
-    out = pd.DataFrame(rows).set_index("time").sort_index()
-    return out
 
 # --- Session init ---
 if 'run_all' not in st.session_state:
@@ -623,7 +483,7 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (signals + volatility + zigzag here) -----
+        # ----- Hourly (signals added here) -----
         if chart in ("Hourly","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -665,20 +525,13 @@ with tab1:
                     for lbl, y in fibs_h.items():
                         ax2.text(hc.index[-1], y, f" {lbl}", va="center")
 
-                if show_wave and not hc.empty:
-                    zz = compute_zigzag(hc, pct=zigzag_pct)
-                    if not zz.empty:
-                        ax2.plot(zz.index, zz["price"], "-.", linewidth=1.6, label=f"ZigZag {zigzag_pct:.1f}%")
-                        for k, (t, row) in enumerate(zz.iterrows(), start=1):
-                            ax2.annotate(str(k), (t, row["price"]), xytext=(3, 6), textcoords="offset points", fontsize=8)
-
                 if mode == "Forex" and show_fx_news and not hc.empty and 'time' in fx_news:
                     t0, t1 = hc.index[0], hc.index[-1]
                     times = [t for t in fx_news["time"] if t0 <= t <= t1]
                     if times:
                         draw_news_markers(ax2, times, float(hc.min()), float(hc.max()), label="News")
 
-                # Current signal
+                # ---- NEW: compute and plot signal ----
                 signal = sr_proximity_signal(hc, res_h, sup_h, st.session_state.fc_vals,
                                              threshold=signal_threshold, prox=sr_prox_pct)
                 if signal is not None:
@@ -694,21 +547,6 @@ with tab1:
                         ax2.annotate("SELL", (ts, px), xytext=(10, -18), textcoords="offset points", color="tab:red",
                                      fontsize=10, fontweight="bold")
                         st.error(f"**SELL signal** — {signal['reason']}")
-
-                # Historical signals
-                hist_df = pd.DataFrame()
-                if show_hist_signals:
-                    hist_df = historical_sr_conf_signals(
-                        hc, res_h, sup_h, st.session_state.fc_vals,
-                        threshold=signal_threshold, prox=sr_prox_pct, min_sep=min_sep_bars
-                    )
-                    if not hist_df.empty:
-                        buys = hist_df[hist_df["side"] == "BUY"]
-                        sells = hist_df[hist_df["side"] == "SELL"]
-                        if not buys.empty:
-                            ax2.scatter(buys.index, buys["price"], marker="^", s=70, color="tab:green", alpha=0.8, label="BUY(h)")
-                        if not sells.empty:
-                            ax2.scatter(sells.index, sells["price"], marker="v", s=70, color="tab:red", alpha=0.8, label="SELL(h)")
 
                 ax2.set_xlabel("Time (PST)")
                 ax2.legend(loc="lower left", framealpha=0.5)
@@ -733,31 +571,6 @@ with tab1:
                     ax2m.legend(loc="lower left", framealpha=0.5)
                     ax2m.set_xlim(xlim_price)
                     st.pyplot(fig2m)
-
-                # Normalized StdDev panel
-                if show_vol_hourly:
-                    cv = compute_normalized_std(hc, window=vol_lb_hourly, use_returns=vol_use_returns)
-                    fig2v, ax2v = plt.subplots(figsize=(14,2.8))
-                    tv = "σ of %chg" if vol_use_returns else "Std/Mean"
-                    ax2v.set_title(f"Normalized StdDev ({tv}, {vol_lb_hourly} bars)")
-                    ax2v.plot(cv.index, cv, label="Normalized σ (%)")
-                    ax2v.set_xlabel("Time (PST)")
-                    ax2v.legend(loc="lower left", framealpha=0.5)
-                    ax2v.set_xlim(xlim_price)
-                    st.pyplot(fig2v)
-
-                # Historical signals table
-                if show_hist_signals:
-                    st.subheader("Historical Signals")
-                    if hist_df.empty:
-                        st.write("No historical signals at current settings.")
-                    else:
-                        show_tbl = hist_df.copy()
-                        show_tbl["prob%"] = (show_tbl["prob"] * 100.0).round(1)
-                        st.dataframe(
-                            show_tbl[["side","price","level","prob%"]].sort_index(ascending=False).head(200),
-                            use_container_width=True
-                        )
 
         if mode == "Forex" and show_fx_news:
             st.subheader("Recent Forex News (Yahoo Finance)")
@@ -871,14 +684,7 @@ with tab2:
                     for lbl, y in fibs_h.items():
                         ax3.text(ic.index[-1], y, f" {lbl}", va="center")
 
-                if show_wave and not ic.empty:
-                    zz2 = compute_zigzag(ic, pct=zigzag_pct)
-                    if not zz2.empty:
-                        ax3.plot(zz2.index, zz2["price"], "-.", linewidth=1.6, label=f"ZigZag {zigzag_pct:.1f}%")
-                        for k, (t, row) in enumerate(zz2.iterrows(), start=1):
-                            ax3.annotate(str(k), (t, row["price"]), xytext=(3, 6), textcoords="offset points", fontsize=8)
-
-                # Historical + current signals
+                # ---- NEW: compute and plot signal (Enhanced tab) ----
                 signal2 = sr_proximity_signal(ic, res_i, sup_i, st.session_state.fc_vals,
                                               threshold=signal_threshold, prox=sr_prox_pct)
                 if signal2 is not None:
@@ -894,19 +700,6 @@ with tab2:
                         ax3.annotate("SELL", (ts, px), xytext=(10, -18), textcoords="offset points", color="tab:red",
                                      fontsize=10, fontweight="bold")
                         st.error(f"**SELL signal** — {signal2['reason']}")
-
-                if show_hist_signals:
-                    hist_df2 = historical_sr_conf_signals(
-                        ic, res_i, sup_i, st.session_state.fc_vals,
-                        threshold=signal_threshold, prox=sr_prox_pct, min_sep=min_sep_bars
-                    )
-                    if not hist_df2.empty:
-                        buys2 = hist_df2[hist_df2["side"] == "BUY"]
-                        sells2 = hist_df2[hist_df2["side"] == "SELL"]
-                        if not buys2.empty:
-                            ax3.scatter(buys2.index, buys2["price"], marker="^", s=70, color="tab:green", alpha=0.8, label="BUY(h)")
-                        if not sells2.empty:
-                            ax3.scatter(sells2.index, sells2["price"], marker="v", s=70, color="tab:red", alpha=0.8, label="SELL(h)")
 
                 ax3.set_xlabel("Time (PST)")
                 ax3.legend(loc="lower left", framealpha=0.5)
@@ -931,18 +724,6 @@ with tab2:
                     ax3m.legend(loc="lower left", framealpha=0.5)
                     ax3m.set_xlim(xlim_price2)
                     st.pyplot(fig3m)
-
-                # Normalized StdDev panel
-                if show_vol_hourly:
-                    cv2 = compute_normalized_std(ic, window=vol_lb_hourly, use_returns=vol_use_returns)
-                    fig3v, ax3v = plt.subplots(figsize=(14,2.8))
-                    tv2 = "σ of %chg" if vol_use_returns else "Std/Mean"
-                    ax3v.set_title(f"Normalized StdDev ({tv2}, {vol_lb_hourly} bars)")
-                    ax3v.plot(cv2.index, cv2, label="Normalized σ (%)")
-                    ax3v.set_xlabel("Time (PST)")
-                    ax3v.legend(loc="lower left", framealpha=0.5)
-                    ax3v.set_xlim(xlim_price2)
-                    st.pyplot(fig3v)
 
 # --- Tab 3: Bull vs Bear ---
 with tab3:
