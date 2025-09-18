@@ -9,7 +9,6 @@
 # - Auto-refresh, SARIMAX (for probabilities)
 # - Cache TTLs = 2 minutes (120s)
 # - NEW: Hourly BUY/SELL signals when near S/R with >= threshold model confidence
-# - NEW: Historical BUY/SELL signals plotted on hourly chart and listed in a table
 
 import streamlit as st
 import pandas as pd
@@ -123,9 +122,6 @@ atr_mult   = st.sidebar.slider("ATR multiplier", 1.0, 5.0, 3.0, 0.5, key="sb_atr
 st.sidebar.subheader("Signal Logic (Hourly)")
 signal_threshold = st.sidebar.slider("Signal confidence threshold", 0.50, 0.99, 0.90, 0.01, key="sb_sig_thr")
 sr_prox_pct = st.sidebar.slider("S/R proximity (%)", 0.05, 1.00, 0.25, 0.05, key="sb_sr_prox") / 100.0
-show_hist_signals = st.sidebar.checkbox("Show historical signals", value=True, key="sb_show_hist_sig")
-max_hist_markers = st.sidebar.slider("Max historical markers on chart", 10, 200, 60, 10, key="sb_max_hist")
-min_sep_bars = st.sidebar.slider("Min bars between signals", 0, 60, 6, 1, key="sb_min_sep")
 
 # Forex news controls (only shown in Forex mode)
 if mode == "Forex":
@@ -200,7 +196,7 @@ def compute_sarimax_forecast(series_like):
                         periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
 
-# ---- Indicators ----
+# ---- Indicators (no RSI) ----
 def fibonacci_levels(series_like):
     s = _coerce_1d_series(series_like).dropna()
     if s.empty:
@@ -339,10 +335,10 @@ def draw_news_markers(ax, times, ymin, ymax, label="News"):
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
 
-# --- NEW: Signal helpers ---
+# --- NEW: Signal helper ---
 def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
                         fc_vals: pd.Series, threshold: float, prox: float):
-    """Live signal at last bar: near S/R and model confidence passes threshold."""
+    """Return signal info if last price is near hourly S/R and model confidence passes threshold."""
     try:
         last_close = float(hc.iloc[-1])
         res = float(res_h.iloc[-1])
@@ -356,6 +352,7 @@ def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
     near_support = last_close <= sup * (1.0 + prox)
     near_resist  = last_close >= res * (1.0 - prox)
 
+    # Model "confidence": share of future daily forecasts above/below current intraday price.
     fc = np.asarray(_coerce_1d_series(fc_vals).dropna(), dtype=float)
     if fc.size == 0:
         return None
@@ -363,82 +360,20 @@ def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
     p_dn_from_here = float(np.mean(fc < last_close))
 
     if near_support and p_up_from_here >= threshold:
-        return {"side": "BUY","prob": p_up_from_here,"level": sup,
-                "reason": f"Near support {fmt_price_val(sup)} with {fmt_pct(p_up_from_here)} up-confidence ≥ {fmt_pct(threshold)}"}
+        return {
+            "side": "BUY",
+            "prob": p_up_from_here,
+            "level": sup,
+            "reason": f"Near support {fmt_price_val(sup)} with {fmt_pct(p_up_from_here)} up-confidence ≥ {fmt_pct(threshold)}"
+        }
     if near_resist and p_dn_from_here >= threshold:
-        return {"side": "SELL","prob": p_dn_from_here,"level": res,
-                "reason": f"Near resistance {fmt_price_val(res)} with {fmt_pct(p_dn_from_here)} down-confidence ≥ {fmt_pct(threshold)}"}
+        return {
+            "side": "SELL",
+            "prob": p_dn_from_here,
+            "level": res,
+            "reason": f"Near resistance {fmt_price_val(res)} with {fmt_pct(p_dn_from_here)} down-confidence ≥ {fmt_pct(threshold)}"
+        }
     return None
-
-def _thin_mask(mask: pd.Series, min_sep: int) -> pd.Series:
-    """Keep first True then require at least min_sep bars before next True."""
-    if mask is None or mask.empty or min_sep <= 0:
-        return mask
-    idxs = np.flatnonzero(mask.values)
-    keep = []
-    last = -10**9
-    for i in idxs:
-        if i - last >= min_sep:
-            keep.append(i)
-            last = i
-    keep_mask = pd.Series(False, index=mask.index)
-    if keep:
-        keep_mask.iloc[keep] = True
-    return keep_mask
-
-def historical_sr_conf_signals(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
-                               fc_vals: pd.Series, threshold: float, prox: float,
-                               min_sep: int = 6) -> pd.DataFrame:
-    """
-    Vectorized historical signals across the full intraday series.
-    Confidence uses the SARIMAX daily forecast vs each intraday price.
-    """
-    if hc is None or hc.empty:
-        return pd.DataFrame(columns=["side","price","prob","level"])
-    fc = np.asarray(_coerce_1d_series(fc_vals).dropna(), dtype=float)
-    if fc.size == 0:
-        return pd.DataFrame(columns=["side","price","prob","level"])
-
-    px = hc.to_numpy(dtype=float)[:, None]               # shape (n,1)
-    p_up = (fc[None, :] > px).mean(axis=1)               # shape (n,)
-    p_dn = 1.0 - p_up
-
-    res = res_h.reindex(hc.index).to_numpy(dtype=float)
-    sup = sup_h.reindex(hc.index).to_numpy(dtype=float)
-
-    near_sup = px.ravel() <= sup * (1.0 + prox)
-    near_res = px.ravel() >= res * (1.0 - prox)
-
-    buy_mask  = pd.Series(near_sup & (p_up >= threshold), index=hc.index)
-    sell_mask = pd.Series(near_res & (p_dn >= threshold), index=hc.index)
-
-    # De-cluster
-    buy_mask  = _thin_mask(buy_mask,  min_sep)
-    sell_mask = _thin_mask(sell_mask, min_sep)
-
-    # Build dataframe
-    out_rows = []
-    if buy_mask.any():
-        for ts in buy_mask[buy_mask].index:
-            out_rows.append({
-                "time": ts, "side": "BUY",
-                "price": float(hc.loc[ts]),
-                "prob": float(p_up[hc.index.get_loc(ts)]),
-                "level": float(sup_h.loc[ts])
-            })
-    if sell_mask.any():
-        for ts in sell_mask[sell_mask].index:
-            out_rows.append({
-                "time": ts, "side": "SELL",
-                "price": float(hc.loc[ts]),
-                "prob": float(p_dn[hc.index.get_loc(ts)]),
-                "level": float(res_h.loc[ts])
-            })
-    if not out_rows:
-        return pd.DataFrame(columns=["side","price","prob","level"])
-
-    df_out = pd.DataFrame(out_rows).set_index("time").sort_index()
-    return df_out
 
 # --- Session init ---
 if 'run_all' not in st.session_state:
@@ -548,7 +483,7 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (signals + historical signals) -----
+        # ----- Hourly (signals added here) -----
         if chart in ("Hourly","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -596,7 +531,7 @@ with tab1:
                     if times:
                         draw_news_markers(ax2, times, float(hc.min()), float(hc.max()), label="News")
 
-                # ---- Live signal at the last bar
+                # ---- NEW: compute and plot signal ----
                 signal = sr_proximity_signal(hc, res_h, sup_h, st.session_state.fc_vals,
                                              threshold=signal_threshold, prox=sr_prox_pct)
                 if signal is not None:
@@ -604,33 +539,14 @@ with tab1:
                     px = float(hc.iloc[-1])
                     if signal["side"] == "BUY":
                         ax2.scatter([ts], [px], marker="^", s=160, color="tab:green", zorder=5, label="BUY")
-                        ax2.annotate("BUY", (ts, px), xytext=(10, 14), textcoords="offset points",
-                                     color="tab:green", fontsize=10, fontweight="bold")
+                        ax2.annotate("BUY", (ts, px), xytext=(10, 14), textcoords="offset points", color="tab:green",
+                                     fontsize=10, fontweight="bold")
                         st.success(f"**BUY signal** — {signal['reason']}")
                     elif signal["side"] == "SELL":
                         ax2.scatter([ts], [px], marker="v", s=160, color="tab:red", zorder=5, label="SELL")
-                        ax2.annotate("SELL", (ts, px), xytext=(10, -18), textcoords="offset points",
-                                     color="tab:red", fontsize=10, fontweight="bold")
+                        ax2.annotate("SELL", (ts, px), xytext=(10, -18), textcoords="offset points", color="tab:red",
+                                     fontsize=10, fontweight="bold")
                         st.error(f"**SELL signal** — {signal['reason']}")
-
-                # ---- Historical signals
-                hist_df = pd.DataFrame()
-                if show_hist_signals:
-                    hist_df = historical_sr_conf_signals(
-                        hc, res_h, sup_h, st.session_state.fc_vals,
-                        threshold=signal_threshold, prox=sr_prox_pct, min_sep=min_sep_bars
-                    )
-                    if not hist_df.empty:
-                        # Limit markers to last N events to avoid clutter
-                        hist_plot = hist_df.tail(max_hist_markers)
-                        buys = hist_plot[hist_plot["side"] == "BUY"]
-                        sells = hist_plot[hist_plot["side"] == "SELL"]
-                        if not buys.empty:
-                            ax2.scatter(buys.index, buys["price"], marker="^", s=90, color="tab:green",
-                                        alpha=0.85, zorder=4, label="BUY (hist)")
-                        if not sells.empty:
-                            ax2.scatter(sells.index, sells["price"], marker="v", s=90, color="tab:red",
-                                        alpha=0.85, zorder=4, label="SELL (hist)")
 
                 ax2.set_xlabel("Time (PST)")
                 ax2.legend(loc="lower left", framealpha=0.5)
@@ -655,18 +571,6 @@ with tab1:
                     ax2m.legend(loc="lower left", framealpha=0.5)
                     ax2m.set_xlim(xlim_price)
                     st.pyplot(fig2m)
-
-                # ---- Table of historical signals
-                if show_hist_signals:
-                    st.subheader("Historical Signals")
-                    if hist_df.empty:
-                        st.write("No historical signals under the current settings.")
-                    else:
-                        show_tbl = hist_df.tail(max_hist_markers).copy()
-                        show_tbl["prob"] = show_tbl["prob"].map(lambda x: fmt_pct(x, 1))
-                        show_tbl["level"] = show_tbl["level"].map(fmt_price_val)
-                        show_tbl["price"] = show_tbl["price"].map(fmt_price_val)
-                        st.dataframe(show_tbl, use_container_width=True)
 
         if mode == "Forex" and show_fx_news:
             st.subheader("Recent Forex News (Yahoo Finance)")
@@ -780,7 +684,7 @@ with tab2:
                     for lbl, y in fibs_h.items():
                         ax3.text(ic.index[-1], y, f" {lbl}", va="center")
 
-                # Live signal
+                # ---- NEW: compute and plot signal (Enhanced tab) ----
                 signal2 = sr_proximity_signal(ic, res_i, sup_i, st.session_state.fc_vals,
                                               threshold=signal_threshold, prox=sr_prox_pct)
                 if signal2 is not None:
@@ -788,32 +692,14 @@ with tab2:
                     px = float(ic.iloc[-1])
                     if signal2["side"] == "BUY":
                         ax3.scatter([ts], [px], marker="^", s=160, color="tab:green", zorder=5, label="BUY")
-                        ax3.annotate("BUY", (ts, px), xytext=(10, 14), textcoords="offset points",
-                                     color="tab:green", fontsize=10, fontweight="bold")
+                        ax3.annotate("BUY", (ts, px), xytext=(10, 14), textcoords="offset points", color="tab:green",
+                                     fontsize=10, fontweight="bold")
                         st.success(f"**BUY signal** — {signal2['reason']}")
                     elif signal2["side"] == "SELL":
                         ax3.scatter([ts], [px], marker="v", s=160, color="tab:red", zorder=5, label="SELL")
-                        ax3.annotate("SELL", (ts, px), xytext=(10, -18), textcoords="offset points",
-                                     color="tab:red", fontsize=10, fontweight="bold")
+                        ax3.annotate("SELL", (ts, px), xytext=(10, -18), textcoords="offset points", color="tab:red",
+                                     fontsize=10, fontweight="bold")
                         st.error(f"**SELL signal** — {signal2['reason']}")
-
-                # Historical signals
-                hist_df2 = pd.DataFrame()
-                if show_hist_signals:
-                    hist_df2 = historical_sr_conf_signals(
-                        ic, res_i, sup_i, st.session_state.fc_vals,
-                        threshold=signal_threshold, prox=sr_prox_pct, min_sep=min_sep_bars
-                    )
-                    if not hist_df2.empty:
-                        hist_plot2 = hist_df2.tail(max_hist_markers)
-                        buys2 = hist_plot2[hist_plot2["side"] == "BUY"]
-                        sells2 = hist_plot2[hist_plot2["side"] == "SELL"]
-                        if not buys2.empty:
-                            ax3.scatter(buys2.index, buys2["price"], marker="^", s=90, color="tab:green",
-                                        alpha=0.85, zorder=4, label="BUY (hist)")
-                        if not sells2.empty:
-                            ax3.scatter(sells2.index, sells2["price"], marker="v", s=90, color="tab:red",
-                                        alpha=0.85, zorder=4, label="SELL (hist)")
 
                 ax3.set_xlabel("Time (PST)")
                 ax3.legend(loc="lower left", framealpha=0.5)
@@ -838,18 +724,6 @@ with tab2:
                     ax3m.legend(loc="lower left", framealpha=0.5)
                     ax3m.set_xlim(xlim_price2)
                     st.pyplot(fig3m)
-
-                # Table of historical signals
-                if show_hist_signals:
-                    st.subheader("Historical Signals")
-                    if hist_df2.empty:
-                        st.write("No historical signals under the current settings.")
-                    else:
-                        show_tbl2 = hist_df2.tail(max_hist_markers).copy()
-                        show_tbl2["prob"] = show_tbl2["prob"].map(lambda x: fmt_pct(x, 1))
-                        show_tbl2["level"] = show_tbl2["level"].map(fmt_price_val)
-                        show_tbl2["price"] = show_tbl2["price"].map(fmt_price_val)
-                        st.dataframe(show_tbl2, use_container_width=True)
 
 # --- Tab 3: Bull vs Bear ---
 with tab3:
