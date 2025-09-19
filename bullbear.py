@@ -8,12 +8,7 @@
 # - Fixes tz_localize error by using tz-aware UTC timestamps
 # - Auto-refresh, SARIMAX (for probabilities)
 # - Cache TTLs = 2 minutes (120s)
-# - Hourly BUY/SELL logic (near S/R + confidence threshold)
-# - Value labels on intraday Resistance/Support placed on the LEFT; price label outside chart (top-right)
-# - All displayed price values formatted to 3 decimal places
-# - Hourly Support/Resistance drawn as STRAIGHT LINES across the entire chart
-# - Current price shown OUTSIDE of chart area (top-right above axes)
-# - UPDATE: Removed BUY/SELL triangles from charts; keep indicators in the title ("symbol area") with ▲/▼ and price values
+# - NEW: Normalized Elliott Wave panel on the Hourly chart (no extra deps)
 
 import streamlit as st
 import pandas as pd
@@ -24,7 +19,6 @@ from datetime import timedelta, datetime
 import matplotlib.pyplot as plt
 import time
 import pytz
-from matplotlib.transforms import blended_transform_factory  # for left-side labels
 
 # --- Page config (must be the first Streamlit call) ---
 st.set_page_config(
@@ -93,29 +87,16 @@ def fmt_pct(x, digits: int = 1) -> str:
     return f"{xv:.{digits}%}" if np.isfinite(xv) else "n/a"
 
 def fmt_price_val(y: float) -> str:
-    """Format price values to exactly 3 decimal places with thousands separators."""
-    try:
-        y = float(y)
-    except Exception:
-        return "n/a"
-    return f"{y:,.3f}"
+    y = float(y)
+    ay = abs(y)
+    if ay >= 1000:
+        return f"{y:,.0f}"
+    if ay >= 1:
+        return f"{y:,.2f}"
+    return f"{y:,.5f}"
 
 def fmt_slope(m: float) -> str:
     return f"{m:.4f}" if np.isfinite(m) else "n/a"
-
-# Place text at the left edge (x in axes coords, y in data coords)
-def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
-    try:
-        trans = blended_transform_factory(ax.transAxes, ax.transData)
-        ax.text(
-            0.01, y_val, text,
-            transform=trans, ha="left", va="center",
-            color=color, fontsize=fontsize, fontweight="bold",
-            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6),
-            zorder=6
-        )
-    except Exception:
-        pass
 
 # --- Sidebar config (explicit keys everywhere) ---
 st.sidebar.title("Configuration")
@@ -137,10 +118,11 @@ st.sidebar.subheader("Hourly Supertrend")
 atr_period = st.sidebar.slider("ATR period", 5, 50, 10, 1, key="sb_atr_period")
 atr_mult   = st.sidebar.slider("ATR multiplier", 1.0, 5.0, 3.0, 0.5, key="sb_atr_mult")
 
-# Signal logic controls
-st.sidebar.subheader("Signal Logic (Hourly)")
-signal_threshold = st.sidebar.slider("Signal confidence threshold", 0.50, 0.99, 0.90, 0.01, key="sb_sig_thr")
-sr_prox_pct = st.sidebar.slider("S/R proximity (%)", 0.05, 1.00, 0.25, 0.05, key="sb_sr_prox") / 100.0
+# Elliott Wave controls
+st.sidebar.subheader("Normalized Elliott Wave")
+pivot_lookback = st.sidebar.slider("Pivot lookback (bars)", 3, 21, 7, 2, key="sb_pivot_lb")
+norm_window    = st.sidebar.slider("Normalization window (bars)", 30, 600, 240, 10, key="sb_norm_win")
+waves_to_annotate = st.sidebar.slider("Annotate recent waves", 3, 12, 7, 1, key="sb_wave_ann")
 
 # Forex news controls (only shown in Forex mode)
 if mode == "Forex":
@@ -215,7 +197,7 @@ def compute_sarimax_forecast(series_like):
                         periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
 
-# ---- Indicators (no RSI) ----
+# ---- Indicators / math ----
 def fibonacci_levels(series_like):
     s = _coerce_1d_series(series_like).dropna()
     if s.empty:
@@ -354,45 +336,67 @@ def draw_news_markers(ax, times, ymin, ymax, label="News"):
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
 
-# --- Signal helper ---
-def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
-                        fc_vals: pd.Series, threshold: float, prox: float):
-    """Return signal info if last price is near hourly S/R and model confidence passes threshold."""
-    try:
-        last_close = float(hc.iloc[-1])
-        res = float(res_h.iloc[-1])
-        sup = float(sup_h.iloc[-1])
-    except Exception:
-        return None
+# ---- NEW: Normalized Elliott Wave (simple, dependency-free) ----
+def compute_normalized_elliott_wave(close: pd.Series,
+                                    pivot_lb: int = 7,
+                                    norm_win: int = 240) -> tuple[pd.Series, pd.DataFrame]:
+    """
+    Returns:
+      wave_norm: pd.Series in [-1,1] (tanh(zscore) of close vs rolling mean/std)
+      pivots_df: DataFrame with 'time','price','type' ('H'/'L') and 'wave' labels (1..5 repeating)
+    """
+    s = _coerce_1d_series(close).dropna()
+    if s.empty:
+        return pd.Series(index=close.index, dtype=float), pd.DataFrame(columns=["time","price","type","wave"])
 
-    if not np.all(np.isfinite([last_close, res, sup])) or res <= sup:
-        return None
+    # Normalization (robust to outliers): zscore then squash to [-1,1]
+    mean = s.rolling(norm_win, min_periods=max(10, norm_win//10)).mean()
+    std  = s.rolling(norm_win, min_periods=max(10, norm_win//10)).std().replace(0, np.nan)
+    z = (s - mean) / std
+    wave_norm = np.tanh(z / 2.0)  # smoother, bounded [-1,1]
+    wave_norm = wave_norm.reindex(close.index)
 
-    near_support = last_close <= sup * (1.0 + prox)
-    near_resist  = last_close >= res * (1.0 - prox)
+    # Simple pivot detection (swing highs/lows) using rolling extrema (centered)
+    # Centered rolling needs odd window; enforce:
+    if pivot_lb % 2 == 0:
+        pivot_lb += 1
+    half = pivot_lb // 2
+    roll_max = s.rolling(pivot_lb, center=True).max()
+    roll_min = s.rolling(pivot_lb, center=True).min()
 
-    # Model "confidence": share of future daily forecasts above/below current intraday price.
-    fc = np.asarray(_coerce_1d_series(fc_vals).dropna(), dtype=float)
-    if fc.size == 0:
-        return None
-    p_up_from_here = float(np.mean(fc > last_close))
-    p_dn_from_here = float(np.mean(fc < last_close))
+    pivots = []
+    for i in range(half, len(s)-half):
+        if np.isfinite(s.iloc[i]):
+            if s.iloc[i] == roll_max.iloc[i]:
+                pivots.append((s.index[i], float(s.iloc[i]), 'H'))
+            elif s.iloc[i] == roll_min.iloc[i]:
+                pivots.append((s.index[i], float(s.iloc[i]), 'L'))
 
-    if near_support and p_up_from_here >= threshold:
-        return {
-            "side": "BUY",
-            "prob": p_up_from_here,
-            "level": sup,
-            "reason": f"Near support {fmt_price_val(sup)} with {fmt_pct(p_up_from_here)} up-confidence ≥ {fmt_pct(threshold)}"
-        }
-    if near_resist and p_dn_from_here >= threshold:
-        return {
-            "side": "SELL",
-            "prob": p_dn_from_here,
-            "level": res,
-            "reason": f"Near resistance {fmt_price_val(res)} with {fmt_pct(p_dn_from_here)} down-confidence ≥ {fmt_pct(threshold)}"
-        }
-    return None
+    # De-duplicate consecutive same-type pivots by keeping the more extreme one
+    dedup = []
+    for t, p, typ in pivots:
+        if not dedup:
+            dedup.append((t,p,typ))
+        else:
+            pt, pp, ptyp = dedup[-1]
+            if typ == ptyp:
+                # keep more extreme
+                if (typ == 'H' and p > pp) or (typ == 'L' and p < pp):
+                    dedup[-1] = (t,p,typ)
+            else:
+                dedup.append((t,p,typ))
+
+    # Assign simple 1..5 wave counting (alternating pivots). This is heuristic.
+    waves = []
+    wave_num = 1
+    for t, p, typ in dedup:
+        waves.append((t,p,typ,wave_num))
+        wave_num += 1
+        if wave_num > 5:
+            wave_num = 1
+
+    pivots_df = pd.DataFrame(waves, columns=["time","price","type","wave"])
+    return wave_norm, pivots_df
 
 # --- Session init ---
 if 'run_all' not in st.session_state:
@@ -502,7 +506,7 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (no triangles; title shows ▲ BUY / ▼ SELL with values) -----
+        # ----- Hourly -----
         if chart in ("Hourly","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -513,7 +517,6 @@ with tab1:
                 xh = np.arange(len(hc))
                 slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
                 trend_h = slope_h * xh + intercept_h
-                # rolling S/R just for latest level computation
                 res_h = hc.rolling(60, min_periods=1).max()
                 sup_h = hc.rolling(60, min_periods=1).min()
 
@@ -525,50 +528,12 @@ with tab1:
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
-                # Give extra room on the top for the outside price label
-                plt.subplots_adjust(top=0.85, right=0.93)
-
+                ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
                 ax2.plot(hc.index, hc, label="Intraday")
                 ax2.plot(hc.index, he, "--", label="20 EMA")
+                ax2.plot(hc.index, res_h, ":", label="Resistance")
+                ax2.plot(hc.index, sup_h, ":", label="Support")
                 ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
-
-                # ---- STRAIGHT Support/Resistance lines across entire chart ----
-                res_val = np.nan
-                sup_val = np.nan
-                px_val  = np.nan
-                try:
-                    res_val = float(res_h.iloc[-1])
-                    sup_val = float(sup_h.iloc[-1])
-                    px_val  = float(hc.iloc[-1])
-                except Exception:
-                    pass
-
-                if np.isfinite(res_val) and np.isfinite(sup_val):
-                    ax2.hlines(res_val, xmin=hc.index[0], xmax=hc.index[-1],
-                               colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance")
-                    ax2.hlines(sup_val, xmin=hc.index[0], xmax=hc.index[-1],
-                               colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
-                    # Left-side labels for R & S
-                    label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
-                    label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
-
-                # Dynamic title (symbol area): include ▲ BUY / ▼ SELL levels with values
-                buy_sell_text = ""
-                if np.isfinite(sup_val):
-                    buy_sell_text += f" — ▲ BUY @{fmt_price_val(sup_val)}"
-                if np.isfinite(res_val):
-                    buy_sell_text += f"  ▼ SELL @{fmt_price_val(res_val)}"
-                ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text}")
-
-                # Current price label OUTSIDE (top-right above axes)
-                if np.isfinite(px_val):
-                    pos = ax2.get_position()  # Bbox in figure coords
-                    fig2.text(
-                        pos.x1, pos.y1 + 0.02,
-                        f"Current price: {fmt_price_val(px_val)}",
-                        ha="right", va="bottom",
-                        fontsize=11, fontweight="bold"
-                    )
 
                 if not st_line_intr.dropna().empty:
                     ax2.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -588,15 +553,6 @@ with tab1:
                     times = [t for t in fx_news["time"] if t0 <= t <= t1]
                     if times:
                         draw_news_markers(ax2, times, float(hc.min()), float(hc.max()), label="News")
-
-                # ---- Signal (no plot markers; show in text only) ----
-                signal = sr_proximity_signal(hc, res_h, sup_h, st.session_state.fc_vals,
-                                             threshold=signal_threshold, prox=sr_prox_pct)
-                if signal is not None and np.isfinite(px_val):
-                    if signal["side"] == "BUY":
-                        st.success(f"**BUY** @ {fmt_price_val(signal['level'])} — {signal['reason']}")
-                    elif signal["side"] == "SELL":
-                        st.error(f"**SELL** @ {fmt_price_val(signal['level'])} — {signal['reason']}")
 
                 ax2.set_xlabel("Time (PST)")
                 ax2.legend(loc="lower left", framealpha=0.5)
@@ -621,6 +577,28 @@ with tab1:
                     ax2m.legend(loc="lower left", framealpha=0.5)
                     ax2m.set_xlim(xlim_price)
                     st.pyplot(fig2m)
+
+                # --- NEW: Normalized Elliott Wave panel (Hourly) ---
+                wave_norm, piv_df = compute_normalized_elliott_wave(hc, pivot_lb=pivot_lookback, norm_win=norm_window)
+                fig2w, ax2w = plt.subplots(figsize=(14,2.6))
+                ax2w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
+                ax2w.plot(wave_norm.index, wave_norm, label="Norm EW", linewidth=1.8)
+                ax2w.axhline(0.0, linestyle="--", linewidth=1)
+                ax2w.set_ylim(-1.1, 1.1)
+                ax2w.set_xlabel("Time (PST)")
+                # Annotate most recent N pivots with 1..5 labels
+                if not piv_df.empty:
+                    show_df = piv_df.tail(int(waves_to_annotate))
+                    for _, r in show_df.iterrows():
+                        t = r["time"]; w = r["wave"]; typ = r["type"]
+                        # place labels at +/-0.9 to avoid clutter
+                        ylab = 0.9 if typ == 'H' else -0.9
+                        ax2w.annotate(str(int(w)), (t, ylab),
+                                      xytext=(0, 0), textcoords="offset points",
+                                      ha="center", va="center",
+                                      fontsize=9, fontweight="bold")
+                ax2w.legend(loc="lower left", framealpha=0.5)
+                st.pyplot(fig2w)
 
         if mode == "Forex" and show_fx_news:
             st.subheader("Recent Forex News (Yahoo Finance)")
@@ -694,7 +672,7 @@ with tab2:
             ax.text(df_show.index[-1], s30_last, f"  30S = {fmt_price_val(s30_last)}", va="top")
 
             ax.set_xlabel("Date (PST)")
-            ax.legend()
+            ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
         if view in ("Intraday","Both"):
@@ -707,7 +685,6 @@ with tab2:
                 xi = np.arange(len(ic))
                 slope_i, intercept_i = np.polyfit(xi, ic.values, 1)
                 trend_i = slope_i * xi + intercept_i
-                # rolling for latest level only
                 res_i = ic.rolling(60, min_periods=1).max()
                 sup_i = ic.rolling(60, min_periods=1).min()
                 st_intraday = compute_supertrend(intr, atr_period=atr_period, atr_mult=atr_mult)
@@ -715,48 +692,12 @@ with tab2:
                 yhat_h, m_h = slope_line(ic, slope_lb_hourly)
 
                 fig3, ax3 = plt.subplots(figsize=(14,4))
-                plt.subplots_adjust(top=0.85, right=0.93)
-
+                ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
                 ax3.plot(ic.index, ic, label="Intraday")
                 ax3.plot(ic.index, ie, "--", label="20 EMA")
+                ax3.plot(ic.index, res_i, ":", label="Resistance")
+                ax3.plot(ic.index, sup_i, ":", label="Support")
                 ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
-
-                # ---- STRAIGHT Support/Resistance lines across entire chart (Enhanced) ----
-                res_val2 = np.nan
-                sup_val2 = np.nan
-                px_val2  = np.nan
-                try:
-                    res_val2 = float(res_i.iloc[-1])
-                    sup_val2 = float(sup_i.iloc[-1])
-                    px_val2  = float(ic.iloc[-1])
-                except Exception:
-                    pass
-
-                if np.isfinite(res_val2) and np.isfinite(sup_val2):
-                    ax3.hlines(res_val2, xmin=ic.index[0], xmax=ic.index[-1],
-                               colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance")
-                    ax3.hlines(sup_val2, xmin=ic.index[0], xmax=ic.index[-1],
-                               colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
-                    label_on_left(ax3, res_val2, f"R {fmt_price_val(res_val2)}", color="tab:red")
-                    label_on_left(ax3, sup_val2, f"S {fmt_price_val(sup_val2)}", color="tab:green")
-
-                # Dynamic title (symbol area): include ▲ BUY / ▼ SELL levels with values
-                buy_sell_text2 = ""
-                if np.isfinite(sup_val2):
-                    buy_sell_text2 += f" — ▲ BUY @{fmt_price_val(sup_val2)}"
-                if np.isfinite(res_val2):
-                    buy_sell_text2 += f"  ▼ SELL @{fmt_price_val(res_val2)}"
-                ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text2}")
-
-                # Current price label OUTSIDE (top-right above axes)
-                if np.isfinite(px_val2):
-                    pos2 = ax3.get_position()
-                    fig3.text(
-                        pos2.x1, pos2.y1 + 0.02,
-                        f"Current price: {fmt_price_val(px_val2)}",
-                        ha="right", va="bottom",
-                        fontsize=11, fontweight="bold"
-                    )
 
                 if not st_line_intr.dropna().empty:
                     ax3.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -770,15 +711,6 @@ with tab2:
                         ax3.hlines(y, xmin=ic.index[0], xmax=ic.index[-1], linestyles="dotted", linewidth=1)
                     for lbl, y in fibs_h.items():
                         ax3.text(ic.index[-1], y, f" {lbl}", va="center")
-
-                # ---- Signal (no plot markers; text only) ----
-                signal2 = sr_proximity_signal(ic, res_i, sup_i, st.session_state.fc_vals,
-                                              threshold=signal_threshold, prox=sr_prox_pct)
-                if signal2 is not None and np.isfinite(px_val2):
-                    if signal2["side"] == "BUY":
-                        st.success(f"**BUY** @ {fmt_price_val(signal2['level'])} — {signal2['reason']}")
-                    elif signal2["side"] == "SELL":
-                        st.error(f"**SELL** @ {fmt_price_val(signal2['level'])} — {signal2['reason']}")
 
                 ax3.set_xlabel("Time (PST)")
                 ax3.legend(loc="lower left", framealpha=0.5)
@@ -803,6 +735,26 @@ with tab2:
                     ax3m.legend(loc="lower left", framealpha=0.5)
                     ax3m.set_xlim(xlim_price2)
                     st.pyplot(fig3m)
+
+                # --- NEW: Normalized Elliott Wave panel (Intraday in Enhanced tab) ---
+                wave_norm2, piv_df2 = compute_normalized_elliott_wave(ic, pivot_lb=pivot_lookback, norm_win=norm_window)
+                fig3w, ax3w = plt.subplots(figsize=(14,2.6))
+                ax3w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
+                ax3w.plot(wave_norm2.index, wave_norm2, label="Norm EW", linewidth=1.8)
+                ax3w.axhline(0.0, linestyle="--", linewidth=1)
+                ax3w.set_ylim(-1.1, 1.1)
+                ax3w.set_xlabel("Time (PST)")
+                if not piv_df2.empty:
+                    show_df2 = piv_df2.tail(int(waves_to_annotate))
+                    for _, r in show_df2.iterrows():
+                        t = r["time"]; w = r["wave"]; typ = r["type"]
+                        ylab = 0.9 if typ == 'H' else -0.9
+                        ax3w.annotate(str(int(w)), (t, ylab),
+                                      xytext=(0, 0), textcoords="offset points",
+                                      ha="center", va="center",
+                                      fontsize=9, fontweight="bold")
+                ax3w.legend(loc="lower left", framealpha=0.5)
+                st.pyplot(fig3w)
 
 # --- Tab 3: Bull vs Bear ---
 with tab3:
