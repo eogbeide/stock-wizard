@@ -17,6 +17,7 @@
 # - Normalized Elliott Wave panel for Hourly (dates aligned to hourly chart)
 # - Normalized Elliott Wave panel for Daily (dates aligned to daily chart)
 # - NEW: EW panels show BUY/SELL signals when forecast confidence > 95% and display current price on top
+# - NEW: EW panels draw a red line at +0.5 and a green line at -0.5
 
 import streamlit as st
 import pandas as pd
@@ -601,7 +602,11 @@ with tab1:
 
             axdw.set_title("Daily Normalized Elliott Wave (tanh(z-score) & swing pivots)")
             axdw.plot(wave_norm_d.index, wave_norm_d, label="Norm EW (Daily)", linewidth=1.8)
-            axdw.axhline(0.0, linestyle="--", linewidth=1)
+            axdw.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
+            # NEW lines:
+            axdw.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
+            axdw.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
+
             axdw.set_ylim(-1.1, 1.1)
             axdw.set_xlabel("Date (PST)")
             axdw.set_xlim(xlim_daily)
@@ -620,7 +625,6 @@ with tab1:
             # Price + EW signal (top-right inside chart area)
             px_daily = _safe_last_float(df)
             ew_sig_d = elliott_conf_signal(px_daily, st.session_state.fc_vals, EW_CONFIDENCE)
-            # place text at top-right above axes area
             posdw = axdw.get_position()
             label_txt = f"Price: {fmt_price_val(px_daily)}"
             if ew_sig_d is not None:
@@ -633,7 +637,7 @@ with tab1:
             axdw.legend(loc="lower left", framealpha=0.5)
             st.pyplot(figdw)
 
-        # ----- Hourly (no triangles; title shows ▲ BUY / ▼ SELL with values) -----
+        # ----- Hourly (no triangles; title shows ▲ / ▼ with values) -----
         if chart in ("Hourly","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -656,14 +660,13 @@ with tab1:
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
-                # Give extra room on the top for the outside price label
                 plt.subplots_adjust(top=0.85, right=0.93)
 
                 ax2.plot(hc.index, hc, label="Intraday")
                 ax2.plot(hc.index, he, "--", label="20 EMA")
                 ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
 
-                # ---- STRAIGHT Support/Resistance lines across entire chart ----
+                # STRAIGHT Support/Resistance lines across entire chart
                 res_val = np.nan
                 sup_val = np.nan
                 px_val  = np.nan
@@ -679,11 +682,10 @@ with tab1:
                                colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance")
                     ax2.hlines(sup_val, xmin=hc.index[0], xmax=hc.index[-1],
                                colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
-                    # Left-side labels for R & S
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
-                # Dynamic title (symbol area): include ▲ BUY / ▼ SELL levels with values
+                # Dynamic title area
                 buy_sell_text = ""
                 if np.isfinite(sup_val):
                     buy_sell_text += f" — ▲ BUY @{fmt_price_val(sup_val)}"
@@ -693,7 +695,7 @@ with tab1:
 
                 # Current price label OUTSIDE (top-right above axes)
                 if np.isfinite(px_val):
-                    pos = ax2.get_position()  # Bbox in figure coords
+                    pos = ax2.get_position()
                     fig2.text(
                         pos.x1, pos.y1 + 0.02,
                         f"Current price: {fmt_price_val(px_val)}",
@@ -720,7 +722,7 @@ with tab1:
                     if times:
                         draw_news_markers(ax2, times, float(hc.min()), float(hc.max()), label="News")
 
-                # ---- Signal (no plot markers; show in text only) ----
+                # Signal (text only)
                 signal = sr_proximity_signal(hc, res_h, sup_h, st.session_state.fc_vals,
                                              threshold=signal_threshold, prox=sr_prox_pct)
                 if signal is not None and np.isfinite(px_val):
@@ -734,7 +736,7 @@ with tab1:
                 xlim_price = ax2.get_xlim()
                 st.pyplot(fig2)
 
-                # Momentum panel (ROC%) — x-axis aligned with hourly chart
+                # Momentum panel (ROC%)
                 if show_mom_hourly:
                     roc = compute_roc(hc, n=mom_lb_hourly)
                     res_m = roc.rolling(60, min_periods=1).max()
@@ -753,19 +755,22 @@ with tab1:
                     ax2m.set_xlim(xlim_price)
                     st.pyplot(fig2m)
 
-                # --- Normalized Elliott Wave panel (Hourly) aligned with hourly chart x-axis + signals ---
+                # --- Normalized Elliott Wave panel (Hourly) + signals ---
                 wave_norm, piv_df = compute_normalized_elliott_wave(hc, pivot_lb=pivot_lookback, norm_win=norm_window)
                 fig2w, ax2w = plt.subplots(figsize=(14,2.6))
                 plt.subplots_adjust(top=0.88, right=0.93)
 
                 ax2w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
                 ax2w.plot(wave_norm.index, wave_norm, label="Norm EW", linewidth=1.8)
-                ax2w.axhline(0.0, linestyle="--", linewidth=1)
+                ax2w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
+                # NEW lines:
+                ax2w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
+                ax2w.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
+
                 ax2w.set_ylim(-1.1, 1.1)
                 ax2w.set_xlabel("Time (PST)")
                 ax2w.set_xlim(xlim_price)
 
-                # Annotate most recent N pivots
                 if not piv_df.empty:
                     show_df = piv_df.tail(int(waves_to_annotate))
                     for _, r in show_df.iterrows():
@@ -874,7 +879,11 @@ with tab2:
 
             axdw2.set_title("Daily Normalized Elliott Wave (tanh(z-score) & swing pivots)")
             axdw2.plot(wave_norm_d2.index, wave_norm_d2, label="Norm EW (Daily)", linewidth=1.8)
-            axdw2.axhline(0.0, linestyle="--", linewidth=1)
+            axdw2.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
+            # NEW lines:
+            axdw2.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
+            axdw2.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
+
             axdw2.set_ylim(-1.1, 1.1)
             axdw2.set_xlabel("Date (PST)")
             axdw2.set_xlim(xlim_daily2)
@@ -928,7 +937,7 @@ with tab2:
                 ax3.plot(ic.index, ie, "--", label="20 EMA")
                 ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
 
-                # ---- STRAIGHT Support/Resistance lines across entire chart (Enhanced) ----
+                # STRAIGHT Support/Resistance lines
                 res_val2 = np.nan
                 sup_val2 = np.nan
                 px_val2  = np.nan
@@ -947,7 +956,6 @@ with tab2:
                     label_on_left(ax3, res_val2, f"R {fmt_price_val(res_val2)}", color="tab:red")
                     label_on_left(ax3, sup_val2, f"S {fmt_price_val(sup_val2)}", color="tab:green")
 
-                # Dynamic title (symbol area): include ▲ BUY / ▼ SELL levels with values
                 buy_sell_text2 = ""
                 if np.isfinite(sup_val2):
                     buy_sell_text2 += f" — ▲ BUY @{fmt_price_val(sup_val2)}"
@@ -955,7 +963,6 @@ with tab2:
                     buy_sell_text2 += f"  ▼ SELL @{fmt_price_val(res_val2)}"
                 ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text2}")
 
-                # Current price label OUTSIDE (top-right above axes)
                 if np.isfinite(px_val2):
                     pos2 = ax3.get_position()
                     fig3.text(
@@ -978,7 +985,6 @@ with tab2:
                     for lbl, y in fibs_h.items():
                         ax3.text(ic.index[-1], y, f" {lbl}", va="center")
 
-                # ---- Signal (no plot markers; text only) ----
                 signal2 = sr_proximity_signal(ic, res_i, sup_i, st.session_state.fc_vals,
                                               threshold=signal_threshold, prox=sr_prox_pct)
                 if signal2 is not None and np.isfinite(px_val2):
@@ -992,7 +998,7 @@ with tab2:
                 xlim_price2 = ax3.get_xlim()
                 st.pyplot(fig3)
 
-                # Momentum panel (ROC%) — x-axis aligned with hourly chart
+                # Momentum panel (ROC%)
                 if show_mom_hourly:
                     roc_i = compute_roc(ic, n=mom_lb_hourly)
                     res_m2 = roc_i.rolling(60, min_periods=1).max()
@@ -1018,7 +1024,11 @@ with tab2:
 
                 ax3w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
                 ax3w.plot(wave_norm2.index, wave_norm2, label="Norm EW", linewidth=1.8)
-                ax3w.axhline(0.0, linestyle="--", linewidth=1)
+                ax3w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
+                # NEW lines:
+                ax3w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
+                ax3w.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
+
                 ax3w.set_ylim(-1.1, 1.1)
                 ax3w.set_xlabel("Time (PST)")
                 ax3w.set_xlim(xlim_price2)
