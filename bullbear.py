@@ -14,7 +14,8 @@
 # - Hourly Support/Resistance drawn as STRAIGHT LINES across the entire chart
 # - Current price shown OUTSIDE of chart area (top-right above axes)
 # - Removed BUY/SELL triangles from charts; keep indicators in the title ("symbol area") with ▲/▼ and price values
-# - NEW: Normalized Elliott Wave panel for Hourly (dates aligned to hourly chart)
+# - Normalized Elliott Wave panel for Hourly (dates aligned to hourly chart)
+# - NEW: Normalized Elliott Wave panel for Daily (dates aligned to daily chart)
 
 import streamlit as st
 import pandas as pd
@@ -143,11 +144,17 @@ st.sidebar.subheader("Signal Logic (Hourly)")
 signal_threshold = st.sidebar.slider("Signal confidence threshold", 0.50, 0.99, 0.90, 0.01, key="sb_sig_thr")
 sr_prox_pct = st.sidebar.slider("S/R proximity (%)", 0.05, 1.00, 0.25, 0.05, key="sb_sr_prox") / 100.0
 
-# Elliott Wave controls
+# Elliott Wave controls (Hourly)
 st.sidebar.subheader("Normalized Elliott Wave (Hourly)")
 pivot_lookback = st.sidebar.slider("Pivot lookback (bars)", 3, 21, 7, 2, key="sb_pivot_lb")
 norm_window    = st.sidebar.slider("Normalization window (bars)", 30, 600, 240, 10, key="sb_norm_win")
 waves_to_annotate = st.sidebar.slider("Annotate recent waves", 3, 12, 7, 1, key="sb_wave_ann")
+
+# Elliott Wave controls (Daily)
+st.sidebar.subheader("Normalized Elliott Wave (Daily)")
+pivot_lookback_d = st.sidebar.slider("Pivot lookback (days)", 3, 31, 9, 2, key="sb_pivot_lb_d")
+norm_window_d    = st.sidebar.slider("Normalization window (days)", 30, 1200, 360, 10, key="sb_norm_win_d")
+waves_to_annotate_d = st.sidebar.slider("Annotate recent waves (daily)", 3, 12, 7, 1, key="sb_wave_ann_d")
 
 # Forex news controls (only shown in Forex mode)
 if mode == "Forex":
@@ -568,7 +575,30 @@ with tab1:
 
             ax.set_xlabel("Date (PST)")
             ax.legend(loc="lower left", framealpha=0.5)
+            xlim_daily = ax.get_xlim()
             st.pyplot(fig)
+
+            # --- Normalized Elliott Wave panel (Daily) aligned with daily chart x-axis ---
+            wave_norm_d, piv_df_d = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
+            figdw, axdw = plt.subplots(figsize=(14,2.6))
+            axdw.set_title("Daily Normalized Elliott Wave (tanh(z-score) & swing pivots)")
+            axdw.plot(wave_norm_d.index, wave_norm_d, label="Norm EW (Daily)", linewidth=1.8)
+            axdw.axhline(0.0, linestyle="--", linewidth=1)
+            axdw.set_ylim(-1.1, 1.1)
+            axdw.set_xlabel("Date (PST)")
+            # Align x-axis with the daily price chart:
+            axdw.set_xlim(xlim_daily)
+            if not piv_df_d.empty:
+                show_df_d = piv_df_d.tail(int(waves_to_annotate_d))
+                for _, r in show_df_d.iterrows():
+                    t = r["time"]; w = r["wave"]; typ = r["type"]
+                    ylab = 0.9 if typ == 'H' else -0.9
+                    axdw.annotate(str(int(w)), (t, ylab),
+                                  xytext=(0, 0), textcoords="offset points",
+                                  ha="center", va="center",
+                                  fontsize=9, fontweight="bold")
+            axdw.legend(loc="lower left", framealpha=0.5)
+            st.pyplot(figdw)
 
         # ----- Hourly (no triangles; title shows ▲ BUY / ▼ SELL with values) -----
         if chart in ("Hourly","Both"):
@@ -786,7 +816,29 @@ with tab2:
 
             ax.set_xlabel("Date (PST)")
             ax.legend()
+            xlim_daily2 = ax.get_xlim()
             st.pyplot(fig)
+
+            # --- Normalized Elliott Wave panel (Daily) aligned with daily chart x-axis ---
+            wave_norm_d2, piv_df_d2 = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
+            figdw2, axdw2 = plt.subplots(figsize=(14,2.6))
+            axdw2.set_title("Daily Normalized Elliott Wave (tanh(z-score) & swing pivots)")
+            axdw2.plot(wave_norm_d2.index, wave_norm_d2, label="Norm EW (Daily)", linewidth=1.8)
+            axdw2.axhline(0.0, linestyle="--", linewidth=1)
+            axdw2.set_ylim(-1.1, 1.1)
+            axdw2.set_xlabel("Date (PST)")
+            axdw2.set_xlim(xlim_daily2)
+            if not piv_df_d2.empty:
+                show_df_d2 = piv_df_d2.tail(int(waves_to_annotate_d))
+                for _, r in show_df_d2.iterrows():
+                    t = r["time"]; w = r["wave"]; typ = r["type"]
+                    ylab = 0.9 if typ == 'H' else -0.9
+                    axdw2.annotate(str(int(w)), (t, ylab),
+                                   xytext=(0, 0), textcoords="offset points",
+                                   ha="center", va="center",
+                                   fontsize=9, fontweight="bold")
+            axdw2.legend(loc="lower left", framealpha=0.5)
+            st.pyplot(figdw2)
 
         if view in ("Intraday","Both"):
             intr = st.session_state.intraday
