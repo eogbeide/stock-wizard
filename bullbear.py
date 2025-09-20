@@ -15,7 +15,8 @@
 # - Current price shown OUTSIDE of chart area (top-right above axes)
 # - Removed BUY/SELL triangles from charts; keep indicators in the title ("symbol area") with ▲/▼ and price values
 # - Normalized Elliott Wave panel for Hourly (dates aligned to hourly chart)
-# - NEW: Normalized Elliott Wave panel for Daily (dates aligned to daily chart)
+# - Normalized Elliott Wave panel for Daily (dates aligned to daily chart)
+# - NEW: EW panels show BUY/SELL signals when forecast confidence > 95% and display current price on top
 
 import streamlit as st
 import pandas as pd
@@ -368,7 +369,7 @@ def draw_news_markers(ax, times, ymin, ymax, label="News"):
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
 
-# --- Signal helper ---
+# --- Signal helpers ---
 def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
                         fc_vals: pd.Series, threshold: float, prox: float):
     """Return signal info if last price is near hourly S/R and model confidence passes threshold."""
@@ -405,6 +406,21 @@ def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
             "level": res,
             "reason": f"Near resistance {fmt_price_val(res)} with {fmt_pct(p_dn_from_here)} down-confidence ≥ {fmt_pct(threshold)}"
         }
+    return None
+
+EW_CONFIDENCE = 0.95  # >95% confidence for EW signals
+
+def elliott_conf_signal(price_now: float, fc_vals: pd.Series, conf: float = EW_CONFIDENCE):
+    """Signal for EW panel using SARIMAX distribution vs current price."""
+    fc = _coerce_1d_series(fc_vals).dropna().to_numpy(dtype=float)
+    if fc.size == 0 or not np.isfinite(price_now):
+        return None
+    p_up = float(np.mean(fc > price_now))
+    p_dn = float(np.mean(fc < price_now))
+    if p_up >= conf:
+        return {"side": "BUY", "prob": p_up}
+    if p_dn >= conf:
+        return {"side": "SELL", "prob": p_dn}
     return None
 
 # --- Normalized Elliott Wave (simple, dependency-free) ----
@@ -578,16 +594,19 @@ with tab1:
             xlim_daily = ax.get_xlim()
             st.pyplot(fig)
 
-            # --- Normalized Elliott Wave panel (Daily) aligned with daily chart x-axis ---
+            # --- Normalized Elliott Wave panel (Daily) aligned with daily chart x-axis + signals ---
             wave_norm_d, piv_df_d = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
             figdw, axdw = plt.subplots(figsize=(14,2.6))
+            plt.subplots_adjust(top=0.88, right=0.93)
+
             axdw.set_title("Daily Normalized Elliott Wave (tanh(z-score) & swing pivots)")
             axdw.plot(wave_norm_d.index, wave_norm_d, label="Norm EW (Daily)", linewidth=1.8)
             axdw.axhline(0.0, linestyle="--", linewidth=1)
             axdw.set_ylim(-1.1, 1.1)
             axdw.set_xlabel("Date (PST)")
-            # Align x-axis with the daily price chart:
             axdw.set_xlim(xlim_daily)
+
+            # Annotate most recent pivots
             if not piv_df_d.empty:
                 show_df_d = piv_df_d.tail(int(waves_to_annotate_d))
                 for _, r in show_df_d.iterrows():
@@ -597,6 +616,20 @@ with tab1:
                                   xytext=(0, 0), textcoords="offset points",
                                   ha="center", va="center",
                                   fontsize=9, fontweight="bold")
+
+            # Price + EW signal (top-right inside chart area)
+            px_daily = _safe_last_float(df)
+            ew_sig_d = elliott_conf_signal(px_daily, st.session_state.fc_vals, EW_CONFIDENCE)
+            # place text at top-right above axes area
+            posdw = axdw.get_position()
+            label_txt = f"Price: {fmt_price_val(px_daily)}"
+            if ew_sig_d is not None:
+                side = ew_sig_d['side']
+                prob = fmt_pct(ew_sig_d['prob'], digits=0)
+                label_txt += f"  |  {('▲ BUY' if side=='BUY' else '▼ SELL')} @ {fmt_price_val(px_daily)}  ({prob})"
+            figdw.text(posdw.x1, posdw.y1 + 0.01, label_txt, ha="right", va="bottom",
+                       fontsize=10, fontweight="bold")
+
             axdw.legend(loc="lower left", framealpha=0.5)
             st.pyplot(figdw)
 
@@ -720,16 +753,18 @@ with tab1:
                     ax2m.set_xlim(xlim_price)
                     st.pyplot(fig2m)
 
-                # --- Normalized Elliott Wave panel (Hourly) aligned with hourly chart x-axis ---
+                # --- Normalized Elliott Wave panel (Hourly) aligned with hourly chart x-axis + signals ---
                 wave_norm, piv_df = compute_normalized_elliott_wave(hc, pivot_lb=pivot_lookback, norm_win=norm_window)
                 fig2w, ax2w = plt.subplots(figsize=(14,2.6))
+                plt.subplots_adjust(top=0.88, right=0.93)
+
                 ax2w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
                 ax2w.plot(wave_norm.index, wave_norm, label="Norm EW", linewidth=1.8)
                 ax2w.axhline(0.0, linestyle="--", linewidth=1)
                 ax2w.set_ylim(-1.1, 1.1)
                 ax2w.set_xlabel("Time (PST)")
-                # Align x-axis with hourly price chart:
                 ax2w.set_xlim(xlim_price)
+
                 # Annotate most recent N pivots
                 if not piv_df.empty:
                     show_df = piv_df.tail(int(waves_to_annotate))
@@ -740,6 +775,19 @@ with tab1:
                                       xytext=(0, 0), textcoords="offset points",
                                       ha="center", va="center",
                                       fontsize=9, fontweight="bold")
+
+                # Price + EW signal label
+                px_intr = _safe_last_float(hc)
+                ew_sig_h = elliott_conf_signal(px_intr, st.session_state.fc_vals, EW_CONFIDENCE)
+                pos2w = ax2w.get_position()
+                label_txt_h = f"Price: {fmt_price_val(px_intr)}"
+                if ew_sig_h is not None:
+                    side = ew_sig_h['side']
+                    prob = fmt_pct(ew_sig_h['prob'], digits=0)
+                    label_txt_h += f"  |  {('▲ BUY' if side=='BUY' else '▼ SELL')} @ {fmt_price_val(px_intr)}  ({prob})"
+                fig2w.text(pos2w.x1, pos2w.y1 + 0.01, label_txt_h, ha="right", va="bottom",
+                           fontsize=10, fontweight="bold")
+
                 ax2w.legend(loc="lower left", framealpha=0.5)
                 st.pyplot(fig2w)
 
@@ -819,15 +867,18 @@ with tab2:
             xlim_daily2 = ax.get_xlim()
             st.pyplot(fig)
 
-            # --- Normalized Elliott Wave panel (Daily) aligned with daily chart x-axis ---
+            # --- Daily EW panel + signals ---
             wave_norm_d2, piv_df_d2 = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
             figdw2, axdw2 = plt.subplots(figsize=(14,2.6))
+            plt.subplots_adjust(top=0.88, right=0.93)
+
             axdw2.set_title("Daily Normalized Elliott Wave (tanh(z-score) & swing pivots)")
             axdw2.plot(wave_norm_d2.index, wave_norm_d2, label="Norm EW (Daily)", linewidth=1.8)
             axdw2.axhline(0.0, linestyle="--", linewidth=1)
             axdw2.set_ylim(-1.1, 1.1)
             axdw2.set_xlabel("Date (PST)")
             axdw2.set_xlim(xlim_daily2)
+
             if not piv_df_d2.empty:
                 show_df_d2 = piv_df_d2.tail(int(waves_to_annotate_d))
                 for _, r in show_df_d2.iterrows():
@@ -837,6 +888,19 @@ with tab2:
                                    xytext=(0, 0), textcoords="offset points",
                                    ha="center", va="center",
                                    fontsize=9, fontweight="bold")
+
+            # Price + EW signal label
+            px_daily2 = _safe_last_float(df)
+            ew_sig_d2 = elliott_conf_signal(px_daily2, st.session_state.fc_vals, EW_CONFIDENCE)
+            posdw2 = axdw2.get_position()
+            label_txt_d2 = f"Price: {fmt_price_val(px_daily2)}"
+            if ew_sig_d2 is not None:
+                side = ew_sig_d2['side']
+                prob = fmt_pct(ew_sig_d2['prob'], digits=0)
+                label_txt_d2 += f"  |  {('▲ BUY' if side=='BUY' else '▼ SELL')} @ {fmt_price_val(px_daily2)}  ({prob})"
+            figdw2.text(posdw2.x1, posdw2.y1 + 0.01, label_txt_d2, ha="right", va="bottom",
+                        fontsize=10, fontweight="bold")
+
             axdw2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(figdw2)
 
@@ -947,16 +1011,18 @@ with tab2:
                     ax3m.set_xlim(xlim_price2)
                     st.pyplot(fig3m)
 
-                # --- Normalized Elliott Wave panel (Hourly) aligned with hourly chart x-axis ---
+                # --- Hourly EW panel + signals ---
                 wave_norm2, piv_df2 = compute_normalized_elliott_wave(ic, pivot_lb=pivot_lookback, norm_win=norm_window)
                 fig3w, ax3w = plt.subplots(figsize=(14,2.6))
+                plt.subplots_adjust(top=0.88, right=0.93)
+
                 ax3w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
                 ax3w.plot(wave_norm2.index, wave_norm2, label="Norm EW", linewidth=1.8)
                 ax3w.axhline(0.0, linestyle="--", linewidth=1)
                 ax3w.set_ylim(-1.1, 1.1)
                 ax3w.set_xlabel("Time (PST)")
-                # Align x-axis with hourly price chart:
                 ax3w.set_xlim(xlim_price2)
+
                 if not piv_df2.empty:
                     show_df2 = piv_df2.tail(int(waves_to_annotate))
                     for _, r in show_df2.iterrows():
@@ -966,6 +1032,19 @@ with tab2:
                                       xytext=(0, 0), textcoords="offset points",
                                       ha="center", va="center",
                                       fontsize=9, fontweight="bold")
+
+                # Price + EW signal label
+                px_intr2 = _safe_last_float(ic)
+                ew_sig_h2 = elliott_conf_signal(px_intr2, st.session_state.fc_vals, EW_CONFIDENCE)
+                pos3w = ax3w.get_position()
+                label_txt_h2 = f"Price: {fmt_price_val(px_intr2)}"
+                if ew_sig_h2 is not None:
+                    side = ew_sig_h2['side']
+                    prob = fmt_pct(ew_sig_h2['prob'], digits=0)
+                    label_txt_h2 += f"  |  {('▲ BUY' if side=='BUY' else '▼ SELL')} @ {fmt_price_val(px_intr2)}  ({prob})"
+                fig3w.text(pos3w.x1, pos3w.y1 + 0.01, label_txt_h2, ha="right", va="bottom",
+                           fontsize=10, fontweight="bold")
+
                 ax3w.legend(loc="lower left", framealpha=0.5)
                 st.pyplot(fig3w)
 
