@@ -8,7 +8,7 @@
 # - Fixes tz_localize error by using tz-aware UTC timestamps
 # - Auto-refresh, SARIMAX (for probabilities)
 # - Cache TTLs = 2 minutes (120s)
-# - Normalized Elliott Wave panel on the Hourly chart (aligned x-axis with hourly chart)
+# - NEW: Normalized Elliott Wave panel on the Hourly chart (no extra deps)
 
 import streamlit as st
 import pandas as pd
@@ -336,7 +336,7 @@ def draw_news_markers(ax, times, ymin, ymax, label="News"):
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
 
-# ---- Normalized Elliott Wave (simple, dependency-free) ----
+# ---- NEW: Normalized Elliott Wave (simple, dependency-free) ----
 def compute_normalized_elliott_wave(close: pd.Series,
                                     pivot_lb: int = 7,
                                     norm_win: int = 240) -> tuple[pd.Series, pd.DataFrame]:
@@ -357,6 +357,7 @@ def compute_normalized_elliott_wave(close: pd.Series,
     wave_norm = wave_norm.reindex(close.index)
 
     # Simple pivot detection (swing highs/lows) using rolling extrema (centered)
+    # Centered rolling needs odd window; enforce:
     if pivot_lb % 2 == 0:
         pivot_lb += 1
     half = pivot_lb // 2
@@ -371,7 +372,7 @@ def compute_normalized_elliott_wave(close: pd.Series,
             elif s.iloc[i] == roll_min.iloc[i]:
                 pivots.append((s.index[i], float(s.iloc[i]), 'L'))
 
-    # De-duplicate consecutive same-type pivots
+    # De-duplicate consecutive same-type pivots by keeping the more extreme one
     dedup = []
     for t, p, typ in pivots:
         if not dedup:
@@ -379,12 +380,13 @@ def compute_normalized_elliott_wave(close: pd.Series,
         else:
             pt, pp, ptyp = dedup[-1]
             if typ == ptyp:
+                # keep more extreme
                 if (typ == 'H' and p > pp) or (typ == 'L' and p < pp):
                     dedup[-1] = (t,p,typ)
             else:
                 dedup.append((t,p,typ))
 
-    # Assign simple 1..5 wave counting
+    # Assign simple 1..5 wave counting (alternating pivots). This is heuristic.
     waves = []
     wave_num = 1
     for t, p, typ in dedup:
@@ -557,7 +559,7 @@ with tab1:
                 xlim_price = ax2.get_xlim()
                 st.pyplot(fig2)
 
-                # Momentum panel (ROC%) — align with hourly chart x-axis
+                # Momentum panel (ROC%) — x-axis aligned with price chart
                 if show_mom_hourly:
                     roc = compute_roc(hc, n=mom_lb_hourly)
                     res_m = roc.rolling(60, min_periods=1).max()
@@ -576,7 +578,7 @@ with tab1:
                     ax2m.set_xlim(xlim_price)
                     st.pyplot(fig2m)
 
-                # --- Normalized Elliott Wave panel (Hourly) aligned with hourly chart x-axis ---
+                # --- NEW: Normalized Elliott Wave panel (Hourly) ---
                 wave_norm, piv_df = compute_normalized_elliott_wave(hc, pivot_lb=pivot_lookback, norm_win=norm_window)
                 fig2w, ax2w = plt.subplots(figsize=(14,2.6))
                 ax2w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
@@ -584,13 +586,12 @@ with tab1:
                 ax2w.axhline(0.0, linestyle="--", linewidth=1)
                 ax2w.set_ylim(-1.1, 1.1)
                 ax2w.set_xlabel("Time (PST)")
-                # Align x-axis with hourly price chart:
-                ax2w.set_xlim(xlim_price)
-                # Annotate most recent N pivots
+                # Annotate most recent N pivots with 1..5 labels
                 if not piv_df.empty:
                     show_df = piv_df.tail(int(waves_to_annotate))
                     for _, r in show_df.iterrows():
                         t = r["time"]; w = r["wave"]; typ = r["type"]
+                        # place labels at +/-0.9 to avoid clutter
                         ylab = 0.9 if typ == 'H' else -0.9
                         ax2w.annotate(str(int(w)), (t, ylab),
                                       xytext=(0, 0), textcoords="offset points",
@@ -716,7 +717,7 @@ with tab2:
                 xlim_price2 = ax3.get_xlim()
                 st.pyplot(fig3)
 
-                # Momentum panel (ROC%) — align with hourly chart x-axis
+                # Momentum panel (ROC%)
                 if show_mom_hourly:
                     roc_i = compute_roc(ic, n=mom_lb_hourly)
                     res_m2 = roc_i.rolling(60, min_periods=1).max()
@@ -735,7 +736,7 @@ with tab2:
                     ax3m.set_xlim(xlim_price2)
                     st.pyplot(fig3m)
 
-                # --- Normalized Elliott Wave panel (Intraday) aligned with hourly chart x-axis ---
+                # --- NEW: Normalized Elliott Wave panel (Intraday in Enhanced tab) ---
                 wave_norm2, piv_df2 = compute_normalized_elliott_wave(ic, pivot_lb=pivot_lookback, norm_win=norm_window)
                 fig3w, ax3w = plt.subplots(figsize=(14,2.6))
                 ax3w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
@@ -743,8 +744,6 @@ with tab2:
                 ax3w.axhline(0.0, linestyle="--", linewidth=1)
                 ax3w.set_ylim(-1.1, 1.1)
                 ax3w.set_xlabel("Time (PST)")
-                # Align x-axis with hourly price chart:
-                ax3w.set_xlim(xlim_price2)
                 if not piv_df2.empty:
                     show_df2 = piv_df2.tail(int(waves_to_annotate))
                     for _, r in show_df2.iterrows():
