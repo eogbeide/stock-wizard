@@ -13,7 +13,8 @@
 # - All displayed price values formatted to 3 decimal places
 # - Hourly Support/Resistance drawn as STRAIGHT LINES across the entire chart
 # - Current price shown OUTSIDE of chart area (top-right above axes)
-# - UPDATE: Removed BUY/SELL triangles from charts; keep indicators in the title ("symbol area") with ▲/▼ and price values
+# - Removed BUY/SELL triangles from charts; keep indicators in the title ("symbol area") with ▲/▼ and price values
+# - NEW: Normalized Elliott Wave panel for Hourly (dates aligned to hourly chart)
 
 import streamlit as st
 import pandas as pd
@@ -141,6 +142,12 @@ atr_mult   = st.sidebar.slider("ATR multiplier", 1.0, 5.0, 3.0, 0.5, key="sb_atr
 st.sidebar.subheader("Signal Logic (Hourly)")
 signal_threshold = st.sidebar.slider("Signal confidence threshold", 0.50, 0.99, 0.90, 0.01, key="sb_sig_thr")
 sr_prox_pct = st.sidebar.slider("S/R proximity (%)", 0.05, 1.00, 0.25, 0.05, key="sb_sr_prox") / 100.0
+
+# Elliott Wave controls
+st.sidebar.subheader("Normalized Elliott Wave (Hourly)")
+pivot_lookback = st.sidebar.slider("Pivot lookback (bars)", 3, 21, 7, 2, key="sb_pivot_lb")
+norm_window    = st.sidebar.slider("Normalization window (bars)", 30, 600, 240, 10, key="sb_norm_win")
+waves_to_annotate = st.sidebar.slider("Annotate recent waves", 3, 12, 7, 1, key="sb_wave_ann")
 
 # Forex news controls (only shown in Forex mode)
 if mode == "Forex":
@@ -371,7 +378,6 @@ def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
     near_support = last_close <= sup * (1.0 + prox)
     near_resist  = last_close >= res * (1.0 - prox)
 
-    # Model "confidence": share of future daily forecasts above/below current intraday price.
     fc = np.asarray(_coerce_1d_series(fc_vals).dropna(), dtype=float)
     if fc.size == 0:
         return None
@@ -393,6 +399,68 @@ def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
             "reason": f"Near resistance {fmt_price_val(res)} with {fmt_pct(p_dn_from_here)} down-confidence ≥ {fmt_pct(threshold)}"
         }
     return None
+
+# --- Normalized Elliott Wave (simple, dependency-free) ----
+def compute_normalized_elliott_wave(close: pd.Series,
+                                    pivot_lb: int = 7,
+                                    norm_win: int = 240) -> tuple[pd.Series, pd.DataFrame]:
+    """
+    Returns:
+      wave_norm: pd.Series in [-1,1] (tanh(zscore) of close vs rolling mean/std)
+      pivots_df: DataFrame with 'time','price','type' ('H'/'L') and 'wave' labels (1..5 repeating)
+    """
+    s = _coerce_1d_series(close).dropna()
+    if s.empty:
+        return pd.Series(index=close.index, dtype=float), pd.DataFrame(columns=["time","price","type","wave"])
+
+    # Normalization: rolling z-score, then squash to [-1,1]
+    minp = max(10, norm_win//10)
+    mean = s.rolling(norm_win, min_periods=minp).mean()
+    std  = s.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
+    z = (s - mean) / std
+    wave_norm = np.tanh(z / 2.0)  # smoother, bounded [-1,1]
+    wave_norm = wave_norm.reindex(close.index)
+
+    # Pivot detection via centered rolling extrema
+    if pivot_lb % 2 == 0:
+        pivot_lb += 1
+    half = pivot_lb // 2
+    roll_max = s.rolling(pivot_lb, center=True).max()
+    roll_min = s.rolling(pivot_lb, center=True).min()
+
+    pivots = []
+    for i in range(half, len(s)-half):
+        if not np.isfinite(s.iloc[i]):
+            continue
+        if s.iloc[i] == roll_max.iloc[i]:
+            pivots.append((s.index[i], float(s.iloc[i]), 'H'))
+        elif s.iloc[i] == roll_min.iloc[i]:
+            pivots.append((s.index[i], float(s.iloc[i]), 'L'))
+
+    # De-duplicate consecutive same-type pivots
+    dedup = []
+    for t, p, typ in pivots:
+        if not dedup:
+            dedup.append((t,p,typ))
+        else:
+            pt, pp, ptyp = dedup[-1]
+            if typ == ptyp:
+                if (typ == 'H' and p > pp) or (typ == 'L' and p < pp):
+                    dedup[-1] = (t,p,typ)
+            else:
+                dedup.append((t,p,typ))
+
+    # Assign simple 1..5 wave counting
+    waves = []
+    wave_num = 1
+    for t, p, typ in dedup:
+        waves.append((t,p,typ,wave_num))
+        wave_num += 1
+        if wave_num > 5:
+            wave_num = 1
+
+    pivots_df = pd.DataFrame(waves, columns=["time","price","type","wave"])
+    return wave_norm, pivots_df
 
 # --- Session init ---
 if 'run_all' not in st.session_state:
@@ -603,7 +671,7 @@ with tab1:
                 xlim_price = ax2.get_xlim()
                 st.pyplot(fig2)
 
-                # Momentum panel (ROC%) — x-axis aligned with price chart
+                # Momentum panel (ROC%) — x-axis aligned with hourly chart
                 if show_mom_hourly:
                     roc = compute_roc(hc, n=mom_lb_hourly)
                     res_m = roc.rolling(60, min_periods=1).max()
@@ -621,6 +689,29 @@ with tab1:
                     ax2m.legend(loc="lower left", framealpha=0.5)
                     ax2m.set_xlim(xlim_price)
                     st.pyplot(fig2m)
+
+                # --- Normalized Elliott Wave panel (Hourly) aligned with hourly chart x-axis ---
+                wave_norm, piv_df = compute_normalized_elliott_wave(hc, pivot_lb=pivot_lookback, norm_win=norm_window)
+                fig2w, ax2w = plt.subplots(figsize=(14,2.6))
+                ax2w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
+                ax2w.plot(wave_norm.index, wave_norm, label="Norm EW", linewidth=1.8)
+                ax2w.axhline(0.0, linestyle="--", linewidth=1)
+                ax2w.set_ylim(-1.1, 1.1)
+                ax2w.set_xlabel("Time (PST)")
+                # Align x-axis with hourly price chart:
+                ax2w.set_xlim(xlim_price)
+                # Annotate most recent N pivots
+                if not piv_df.empty:
+                    show_df = piv_df.tail(int(waves_to_annotate))
+                    for _, r in show_df.iterrows():
+                        t = r["time"]; w = r["wave"]; typ = r["type"]
+                        ylab = 0.9 if typ == 'H' else -0.9
+                        ax2w.annotate(str(int(w)), (t, ylab),
+                                      xytext=(0, 0), textcoords="offset points",
+                                      ha="center", va="center",
+                                      fontsize=9, fontweight="bold")
+                ax2w.legend(loc="lower left", framealpha=0.5)
+                st.pyplot(fig2w)
 
         if mode == "Forex" and show_fx_news:
             st.subheader("Recent Forex News (Yahoo Finance)")
@@ -785,7 +876,7 @@ with tab2:
                 xlim_price2 = ax3.get_xlim()
                 st.pyplot(fig3)
 
-                # Momentum panel (ROC%)
+                # Momentum panel (ROC%) — x-axis aligned with hourly chart
                 if show_mom_hourly:
                     roc_i = compute_roc(ic, n=mom_lb_hourly)
                     res_m2 = roc_i.rolling(60, min_periods=1).max()
@@ -803,6 +894,28 @@ with tab2:
                     ax3m.legend(loc="lower left", framealpha=0.5)
                     ax3m.set_xlim(xlim_price2)
                     st.pyplot(fig3m)
+
+                # --- Normalized Elliott Wave panel (Hourly) aligned with hourly chart x-axis ---
+                wave_norm2, piv_df2 = compute_normalized_elliott_wave(ic, pivot_lb=pivot_lookback, norm_win=norm_window)
+                fig3w, ax3w = plt.subplots(figsize=(14,2.6))
+                ax3w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
+                ax3w.plot(wave_norm2.index, wave_norm2, label="Norm EW", linewidth=1.8)
+                ax3w.axhline(0.0, linestyle="--", linewidth=1)
+                ax3w.set_ylim(-1.1, 1.1)
+                ax3w.set_xlabel("Time (PST)")
+                # Align x-axis with hourly price chart:
+                ax3w.set_xlim(xlim_price2)
+                if not piv_df2.empty:
+                    show_df2 = piv_df2.tail(int(waves_to_annotate))
+                    for _, r in show_df2.iterrows():
+                        t = r["time"]; w = r["wave"]; typ = r["type"]
+                        ylab = 0.9 if typ == 'H' else -0.9
+                        ax3w.annotate(str(int(w)), (t, ylab),
+                                      xytext=(0, 0), textcoords="offset points",
+                                      ha="center", va="center",
+                                      fontsize=9, fontweight="bold")
+                ax3w.legend(loc="lower left", framealpha=0.5)
+                st.pyplot(fig3w)
 
 # --- Tab 3: Bull vs Bear ---
 with tab3:
