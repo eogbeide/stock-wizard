@@ -16,8 +16,8 @@
 # - Removed BUY/SELL triangles from charts; keep indicators in the title ("symbol area") with ▲/▼ and price values
 # - Normalized Elliott Wave panel for Hourly (dates aligned to hourly chart)
 # - Normalized Elliott Wave panel for Daily (dates aligned to daily chart)
-# - NEW: EW panels show BUY/SELL signals when forecast confidence > 95% and display current price on top
-# - NEW: EW panels draw a red line at +0.5, a green line at -0.5, and BLACK lines at -0.25 and +0.75
+# - EW panels show BUY/SELL signals when forecast confidence > 95% and display current price on top
+# - EW panels draw a red line at +0.5, a green line at -0.5, and BLACK lines at -0.75 and +0.75
 
 import streamlit as st
 import pandas as pd
@@ -595,7 +595,7 @@ with tab1:
             xlim_daily = ax.get_xlim()
             st.pyplot(fig)
 
-            # --- Normalized Elliott Wave panel (Daily) aligned with daily chart x-axis + signals ---
+            # --- Normalized Elliott Wave panel (Daily) + signals ---
             wave_norm_d, piv_df_d = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
             figdw, axdw = plt.subplots(figsize=(14,2.6))
             plt.subplots_adjust(top=0.88, right=0.93)
@@ -607,13 +607,13 @@ with tab1:
             axdw.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
             axdw.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
             axdw.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
-            axdw.axhline(-0.25, color="black", linestyle="-", linewidth=1, label="EW -0.25")
+            axdw.axhline(-0.75, color="black", linestyle="-", linewidth=1, label="EW -0.75")
 
             axdw.set_ylim(-1.1, 1.1)
             axdw.set_xlabel("Date (PST)")
             axdw.set_xlim(xlim_daily)
 
-            # Annotate most recent pivots
+            # Annotate recent pivots
             if not piv_df_d.empty:
                 show_df_d = piv_df_d.tail(int(waves_to_annotate_d))
                 for _, r in show_df_d.iterrows():
@@ -624,7 +624,7 @@ with tab1:
                                   ha="center", va="center",
                                   fontsize=9, fontweight="bold")
 
-            # Price + EW signal (top-right inside chart area)
+            # Price + EW signal (top-right)
             px_daily = _safe_last_float(df)
             ew_sig_d = elliott_conf_signal(px_daily, st.session_state.fc_vals, EW_CONFIDENCE)
             posdw = axdw.get_position()
@@ -650,15 +650,11 @@ with tab1:
                 xh = np.arange(len(hc))
                 slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
                 trend_h = slope_h * xh + intercept_h
-                # rolling S/R just for latest level computation
                 res_h = hc.rolling(60, min_periods=1).max()
                 sup_h = hc.rolling(60, min_periods=1).min()
 
-                # Supertrend from intraday OHLC
                 st_intraday = compute_supertrend(intr, atr_period=atr_period, atr_mult=atr_mult)
                 st_line_intr = st_intraday["ST"].reindex(hc.index) if "ST" in st_intraday else pd.Series(index=hc.index, dtype=float)
-
-                # Slope on hourly close
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
@@ -668,10 +664,8 @@ with tab1:
                 ax2.plot(hc.index, he, "--", label="20 EMA")
                 ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
 
-                # STRAIGHT Support/Resistance lines across entire chart
-                res_val = np.nan
-                sup_val = np.nan
-                px_val  = np.nan
+                # STRAIGHT S/R lines
+                res_val = sup_val = px_val = np.nan
                 try:
                     res_val = float(res_h.iloc[-1])
                     sup_val = float(sup_h.iloc[-1])
@@ -687,7 +681,7 @@ with tab1:
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
-                # Dynamic title area
+                # Title & current price (outside)
                 buy_sell_text = ""
                 if np.isfinite(sup_val):
                     buy_sell_text += f" — ▲ BUY @{fmt_price_val(sup_val)}"
@@ -695,15 +689,11 @@ with tab1:
                     buy_sell_text += f"  ▼ SELL @{fmt_price_val(res_val)}"
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text}")
 
-                # Current price label OUTSIDE (top-right above axes)
                 if np.isfinite(px_val):
                     pos = ax2.get_position()
-                    fig2.text(
-                        pos.x1, pos.y1 + 0.02,
-                        f"Current price: {fmt_price_val(px_val)}",
-                        ha="right", va="bottom",
-                        fontsize=11, fontweight="bold"
-                    )
+                    fig2.text(pos.x1, pos.y1 + 0.02,
+                              f"Current price: {fmt_price_val(px_val)}",
+                              ha="right", va="bottom", fontsize=11, fontweight="bold")
 
                 if not st_line_intr.dropna().empty:
                     ax2.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -738,7 +728,7 @@ with tab1:
                 xlim_price = ax2.get_xlim()
                 st.pyplot(fig2)
 
-                # Momentum panel (ROC%)
+                # Momentum (ROC%)
                 if show_mom_hourly:
                     roc = compute_roc(hc, n=mom_lb_hourly)
                     res_m = roc.rolling(60, min_periods=1).max()
@@ -765,11 +755,11 @@ with tab1:
                 ax2w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
                 ax2w.plot(wave_norm.index, wave_norm, label="Norm EW", linewidth=1.8)
                 ax2w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
-                # Threshold lines
+                # Threshold lines (updated)
                 ax2w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
                 ax2w.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
                 ax2w.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
-                ax2w.axhline(-0.25, color="black", linestyle="-", linewidth=1, label="EW -0.25")
+                ax2w.axhline(-0.75, color="black", linestyle="-", linewidth=1, label="EW -0.75")
 
                 ax2w.set_ylim(-1.1, 1.1)
                 ax2w.set_xlabel("Time (PST)")
@@ -884,11 +874,11 @@ with tab2:
             axdw2.set_title("Daily Normalized Elliott Wave (tanh(z-score) & swing pivots)")
             axdw2.plot(wave_norm_d2.index, wave_norm_d2, label="Norm EW (Daily)", linewidth=1.8)
             axdw2.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
-            # Threshold lines
+            # Threshold lines (updated)
             axdw2.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
             axdw2.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
             axdw2.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
-            axdw2.axhline(-0.25, color="black", linestyle="-", linewidth=1, label="EW -0.25")
+            axdw2.axhline(-0.75, color="black", linestyle="-", linewidth=1, label="EW -0.75")
 
             axdw2.set_ylim(-1.1, 1.1)
             axdw2.set_xlabel("Date (PST)")
@@ -929,7 +919,6 @@ with tab2:
                 xi = np.arange(len(ic))
                 slope_i, intercept_i = np.polyfit(xi, ic.values, 1)
                 trend_i = slope_i * xi + intercept_i
-                # rolling for latest level only
                 res_i = ic.rolling(60, min_periods=1).max()
                 sup_i = ic.rolling(60, min_periods=1).min()
                 st_intraday = compute_supertrend(intr, atr_period=atr_period, atr_mult=atr_mult)
@@ -943,10 +932,8 @@ with tab2:
                 ax3.plot(ic.index, ie, "--", label="20 EMA")
                 ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
 
-                # STRAIGHT Support/Resistance lines
-                res_val2 = np.nan
-                sup_val2 = np.nan
-                px_val2  = np.nan
+                # STRAIGHT S/R
+                res_val2 = sup_val2 = px_val2 = np.nan
                 try:
                     res_val2 = float(res_i.iloc[-1])
                     sup_val2 = float(sup_i.iloc[-1])
@@ -971,12 +958,9 @@ with tab2:
 
                 if np.isfinite(px_val2):
                     pos2 = ax3.get_position()
-                    fig3.text(
-                        pos2.x1, pos2.y1 + 0.02,
-                        f"Current price: {fmt_price_val(px_val2)}",
-                        ha="right", va="bottom",
-                        fontsize=11, fontweight="bold"
-                    )
+                    fig3.text(pos2.x1, pos2.y1 + 0.02,
+                              f"Current price: {fmt_price_val(px_val2)}",
+                              ha="right", va="bottom", fontsize=11, fontweight="bold")
 
                 if not st_line_intr.dropna().empty:
                     ax3.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -1004,7 +988,7 @@ with tab2:
                 xlim_price2 = ax3.get_xlim()
                 st.pyplot(fig3)
 
-                # Momentum panel (ROC%)
+                # Momentum (ROC%)
                 if show_mom_hourly:
                     roc_i = compute_roc(ic, n=mom_lb_hourly)
                     res_m2 = roc_i.rolling(60, min_periods=1).max()
@@ -1023,7 +1007,7 @@ with tab2:
                     ax3m.set_xlim(xlim_price2)
                     st.pyplot(fig3m)
 
-                # --- Hourly EW panel + signals ---
+                # --- Intraday EW panel + signals ---
                 wave_norm2, piv_df2 = compute_normalized_elliott_wave(ic, pivot_lb=pivot_lookback, norm_win=norm_window)
                 fig3w, ax3w = plt.subplots(figsize=(14,2.6))
                 plt.subplots_adjust(top=0.88, right=0.93)
@@ -1031,11 +1015,11 @@ with tab2:
                 ax3w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
                 ax3w.plot(wave_norm2.index, wave_norm2, label="Norm EW", linewidth=1.8)
                 ax3w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
-                # Threshold lines
+                # Threshold lines (updated)
                 ax3w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
                 ax3w.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
                 ax3w.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
-                ax3w.axhline(-0.25, color="black", linestyle="-", linewidth=1, label="EW -0.25")
+                ax3w.axhline(-0.75, color="black", linestyle="-", linewidth=1, label="EW -0.75")
 
                 ax3w.set_ylim(-1.1, 1.1)
                 ax3w.set_xlabel("Time (PST)")
@@ -1051,7 +1035,6 @@ with tab2:
                                       ha="center", va="center",
                                       fontsize=9, fontweight="bold")
 
-                # Price + EW signal label
                 px_intr2 = _safe_last_float(ic)
                 ew_sig_h2 = elliott_conf_signal(px_intr2, st.session_state.fc_vals, EW_CONFIDENCE)
                 pos3w = ax3w.get_position()
