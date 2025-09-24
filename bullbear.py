@@ -18,8 +18,6 @@
 # - Normalized Elliott Wave panel for Daily (dates aligned to daily chart)
 # - NEW: EW panels show BUY/SELL signals when forecast confidence > 95% and display current price on top
 # - NEW: EW panels draw a red line at +0.5 and a green line at -0.5
-# - NEW: EW panels add BLACK guides at ±0.75 (and no -0.25)
-# - NEW: Normalized OBV (tanh-zscore) overlay on EW panels (Daily & Intraday)
 
 import streamlit as st
 import pandas as pd
@@ -197,8 +195,7 @@ def fetch_hist(ticker: str) -> pd.Series:
 
 @st.cache_data(ttl=120)
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
-    # Include Volume for OBV
-    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Open','High','Low','Close','Volume']].dropna()
+    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Open','High','Low','Close']].dropna()
     try:
         df = df.tz_localize(PACIFIC)
     except TypeError:
@@ -427,41 +424,6 @@ def elliott_conf_signal(price_now: float, fc_vals: pd.Series, conf: float = EW_C
         return {"side": "SELL", "prob": p_dn}
     return None
 
-# --- Normalization utilities ---
-def _tanh_zscore(series: pd.Series, win: int) -> pd.Series:
-    """Rolling z-score, then tanh(z/2) to squash to [-1,1]."""
-    s = _coerce_1d_series(series).astype(float)
-    if s.dropna().empty:
-        return pd.Series(index=series.index, dtype=float)
-    minp = max(10, win // 10)
-    mean = s.rolling(win, min_periods=minp).mean()
-    std  = s.rolling(win, min_periods=minp).std().replace(0, np.nan)
-    z = (s - mean) / std
-    nz = np.tanh(z / 2.0)
-    return nz.reindex(series.index)
-
-# --- OBV helpers ---
-def compute_obv(close: pd.Series, volume: pd.Series) -> pd.Series:
-    """Classic OBV = cumulative sum of sign(diff(close)) * volume."""
-    c = _coerce_1d_series(close)
-    v = _coerce_1d_series(volume)
-    idx = c.index.union(v.index)
-    c = c.reindex(idx).ffill()
-    v = v.reindex(idx).fillna(0)
-    if c.dropna().empty or v.dropna().empty:
-        return pd.Series(index=idx, dtype=float)
-    sign = np.sign(c.diff()).fillna(0.0)
-    obv = (sign * v).cumsum()
-    return obv.reindex(c.index)
-
-def compute_normalized_obv(close: pd.Series, volume: pd.Series, win: int) -> pd.Series:
-    obv = compute_obv(close, volume)
-    if obv.dropna().empty:
-        return pd.Series(index=obv.index, dtype=float)
-    # Normalize OBV to [-1,1] for overlay with EW
-    nobv = _tanh_zscore(obv, win=win).clip(-1, 1)
-    return nobv
-
 # --- Normalized Elliott Wave (simple, dependency-free) ----
 def compute_normalized_elliott_wave(close: pd.Series,
                                     pivot_lb: int = 7,
@@ -475,7 +437,7 @@ def compute_normalized_elliott_wave(close: pd.Series,
     if s.empty:
         return pd.Series(index=close.index, dtype=float), pd.DataFrame(columns=["time","price","type","wave"])
 
-    # Normalization for price
+    # Normalization: rolling z-score, then squash to [-1,1]
     minp = max(10, norm_win//10)
     mean = s.rolling(norm_win, min_periods=minp).mean()
     std  = s.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
@@ -633,32 +595,23 @@ with tab1:
             xlim_daily = ax.get_xlim()
             st.pyplot(fig)
 
-            # --- Daily EW + Normalized OBV + signals ---
+            # --- Normalized Elliott Wave panel (Daily) aligned with daily chart x-axis + signals ---
             wave_norm_d, piv_df_d = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
-            vol_d = df_ohlc.get('Volume', pd.Series(index=df_ohlc.index, dtype=float)).reindex(df.index)
-            n_obv_d = compute_normalized_obv(df, vol_d, win=norm_window_d) if vol_d.notna().any() else pd.Series(index=df.index, dtype=float)
-
-            figdw, axdw = plt.subplots(figsize=(14,2.9))
+            figdw, axdw = plt.subplots(figsize=(14,2.6))
             plt.subplots_adjust(top=0.88, right=0.93)
-            axdw.set_title("Daily Normalized Elliott Wave + Normalized OBV")
 
-            # OBV overlay
-            if not n_obv_d.dropna().empty:
-                axdw.plot(n_obv_d.index, n_obv_d.values, linestyle="--", linewidth=1.2, label="Norm OBV")
-
-            # EW line + guides
-            axdw.plot(wave_norm_d.index, wave_norm_d, linewidth=1.8, label="Norm EW (Daily)")
+            axdw.set_title("Daily Normalized Elliott Wave (tanh(z-score) & swing pivots)")
+            axdw.plot(wave_norm_d.index, wave_norm_d, label="Norm EW (Daily)", linewidth=1.8)
             axdw.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
+            # NEW lines:
             axdw.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
             axdw.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
-            axdw.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
-            axdw.axhline(-0.75, color="black", linestyle="-", linewidth=1, label="EW -0.75")
 
             axdw.set_ylim(-1.1, 1.1)
             axdw.set_xlabel("Date (PST)")
             axdw.set_xlim(xlim_daily)
 
-            # Annotate pivots
+            # Annotate most recent pivots
             if not piv_df_d.empty:
                 show_df_d = piv_df_d.tail(int(waves_to_annotate_d))
                 for _, r in show_df_d.iterrows():
@@ -669,7 +622,7 @@ with tab1:
                                   ha="center", va="center",
                                   fontsize=9, fontweight="bold")
 
-            # Price + EW signal (top-right)
+            # Price + EW signal (top-right inside chart area)
             px_daily = _safe_last_float(df)
             ew_sig_d = elliott_conf_signal(px_daily, st.session_state.fc_vals, EW_CONFIDENCE)
             posdw = axdw.get_position()
@@ -680,10 +633,11 @@ with tab1:
                 label_txt += f"  |  {('▲ BUY' if side=='BUY' else '▼ SELL')} @ {fmt_price_val(px_daily)}  ({prob})"
             figdw.text(posdw.x1, posdw.y1 + 0.01, label_txt, ha="right", va="bottom",
                        fontsize=10, fontweight="bold")
+
             axdw.legend(loc="lower left", framealpha=0.5)
             st.pyplot(figdw)
 
-        # ----- Hourly -----
+        # ----- Hourly (no triangles; title shows ▲ / ▼ with values) -----
         if chart in ("Hourly","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -694,11 +648,15 @@ with tab1:
                 xh = np.arange(len(hc))
                 slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
                 trend_h = slope_h * xh + intercept_h
+                # rolling S/R just for latest level computation
                 res_h = hc.rolling(60, min_periods=1).max()
                 sup_h = hc.rolling(60, min_periods=1).min()
 
+                # Supertrend from intraday OHLC
                 st_intraday = compute_supertrend(intr, atr_period=atr_period, atr_mult=atr_mult)
                 st_line_intr = st_intraday["ST"].reindex(hc.index) if "ST" in st_intraday else pd.Series(index=hc.index, dtype=float)
+
+                # Slope on hourly close
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
@@ -708,9 +666,16 @@ with tab1:
                 ax2.plot(hc.index, he, "--", label="20 EMA")
                 ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
 
-                res_val = float(res_h.iloc[-1]) if len(res_h) else np.nan
-                sup_val = float(sup_h.iloc[-1]) if len(sup_h) else np.nan
-                px_val  = float(hc.iloc[-1])    if len(hc)   else np.nan
+                # STRAIGHT Support/Resistance lines across entire chart
+                res_val = np.nan
+                sup_val = np.nan
+                px_val  = np.nan
+                try:
+                    res_val = float(res_h.iloc[-1])
+                    sup_val = float(sup_h.iloc[-1])
+                    px_val  = float(hc.iloc[-1])
+                except Exception:
+                    pass
 
                 if np.isfinite(res_val) and np.isfinite(sup_val):
                     ax2.hlines(res_val, xmin=hc.index[0], xmax=hc.index[-1],
@@ -720,6 +685,7 @@ with tab1:
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
+                # Dynamic title area
                 buy_sell_text = ""
                 if np.isfinite(sup_val):
                     buy_sell_text += f" — ▲ BUY @{fmt_price_val(sup_val)}"
@@ -727,10 +693,15 @@ with tab1:
                     buy_sell_text += f"  ▼ SELL @{fmt_price_val(res_val)}"
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text}")
 
+                # Current price label OUTSIDE (top-right above axes)
                 if np.isfinite(px_val):
                     pos = ax2.get_position()
-                    fig2.text(pos.x1, pos.y1 + 0.02, f"Current price: {fmt_price_val(px_val)}",
-                              ha="right", va="bottom", fontsize=11, fontweight="bold")
+                    fig2.text(
+                        pos.x1, pos.y1 + 0.02,
+                        f"Current price: {fmt_price_val(px_val)}",
+                        ha="right", va="bottom",
+                        fontsize=11, fontweight="bold"
+                    )
 
                 if not st_line_intr.dropna().empty:
                     ax2.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -751,6 +722,7 @@ with tab1:
                     if times:
                         draw_news_markers(ax2, times, float(hc.min()), float(hc.max()), label="News")
 
+                # Signal (text only)
                 signal = sr_proximity_signal(hc, res_h, sup_h, st.session_state.fc_vals,
                                              threshold=signal_threshold, prox=sr_prox_pct)
                 if signal is not None and np.isfinite(px_val):
@@ -783,24 +755,17 @@ with tab1:
                     ax2m.set_xlim(xlim_price)
                     st.pyplot(fig2m)
 
-                # --- Hourly EW + Normalized OBV + signals ---
+                # --- Normalized Elliott Wave panel (Hourly) + signals ---
                 wave_norm, piv_df = compute_normalized_elliott_wave(hc, pivot_lb=pivot_lookback, norm_win=norm_window)
-                vol_h = intr.get('Volume')
-                n_obv_h = compute_normalized_obv(hc, vol_h.reindex(hc.index) if isinstance(vol_h, pd.Series) else pd.Series(index=hc.index, dtype=float), win=norm_window)
-
-                fig2w, ax2w = plt.subplots(figsize=(14,2.9))
+                fig2w, ax2w = plt.subplots(figsize=(14,2.6))
                 plt.subplots_adjust(top=0.88, right=0.93)
-                ax2w.set_title("Normalized Elliott Wave + Normalized OBV")
 
-                if not n_obv_h.dropna().empty:
-                    ax2w.plot(n_obv_h.index, n_obv_h.values, linestyle="--", linewidth=1.2, label="Norm OBV")
-
+                ax2w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
                 ax2w.plot(wave_norm.index, wave_norm, label="Norm EW", linewidth=1.8)
                 ax2w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
+                # NEW lines:
                 ax2w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
                 ax2w.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
-                ax2w.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
-                ax2w.axhline(-0.75, color="black", linestyle="-", linewidth=1, label="EW -0.75")
 
                 ax2w.set_ylim(-1.1, 1.1)
                 ax2w.set_xlabel("Time (PST)")
@@ -816,6 +781,7 @@ with tab1:
                                       ha="center", va="center",
                                       fontsize=9, fontweight="bold")
 
+                # Price + EW signal label
                 px_intr = _safe_last_float(hc)
                 ew_sig_h = elliott_conf_signal(px_intr, st.session_state.fc_vals, EW_CONFIDENCE)
                 pos2w = ax2w.get_position()
@@ -906,24 +872,17 @@ with tab2:
             xlim_daily2 = ax.get_xlim()
             st.pyplot(fig)
 
-            # --- Daily EW + Normalized OBV + signals ---
+            # --- Daily EW panel + signals ---
             wave_norm_d2, piv_df_d2 = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
-            vol_d2 = df_ohlc.get('Volume', pd.Series(index=df_ohlc.index, dtype=float)).reindex(df.index)
-            n_obv_d2 = compute_normalized_obv(df, vol_d2, win=norm_window_d) if vol_d2.notna().any() else pd.Series(index=df.index, dtype=float)
-
-            figdw2, axdw2 = plt.subplots(figsize=(14,2.9))
+            figdw2, axdw2 = plt.subplots(figsize=(14,2.6))
             plt.subplots_adjust(top=0.88, right=0.93)
-            axdw2.set_title("Daily Normalized Elliott Wave + Normalized OBV")
 
-            if not n_obv_d2.dropna().empty:
-                axdw2.plot(n_obv_d2.index, n_obv_d2.values, linestyle="--", linewidth=1.2, label="Norm OBV")
-
+            axdw2.set_title("Daily Normalized Elliott Wave (tanh(z-score) & swing pivots)")
             axdw2.plot(wave_norm_d2.index, wave_norm_d2, label="Norm EW (Daily)", linewidth=1.8)
             axdw2.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
+            # NEW lines:
             axdw2.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
             axdw2.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
-            axdw2.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
-            axdw2.axhline(-0.75, color="black", linestyle="-", linewidth=1, label="EW -0.75")
 
             axdw2.set_ylim(-1.1, 1.1)
             axdw2.set_xlabel("Date (PST)")
@@ -939,6 +898,7 @@ with tab2:
                                    ha="center", va="center",
                                    fontsize=9, fontweight="bold")
 
+            # Price + EW signal label
             px_daily2 = _safe_last_float(df)
             ew_sig_d2 = elliott_conf_signal(px_daily2, st.session_state.fc_vals, EW_CONFIDENCE)
             posdw2 = axdw2.get_position()
@@ -949,6 +909,7 @@ with tab2:
                 label_txt_d2 += f"  |  {('▲ BUY' if side=='BUY' else '▼ SELL')} @ {fmt_price_val(px_daily2)}  ({prob})"
             figdw2.text(posdw2.x1, posdw2.y1 + 0.01, label_txt_d2, ha="right", va="bottom",
                         fontsize=10, fontweight="bold")
+
             axdw2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(figdw2)
 
@@ -962,6 +923,7 @@ with tab2:
                 xi = np.arange(len(ic))
                 slope_i, intercept_i = np.polyfit(xi, ic.values, 1)
                 trend_i = slope_i * xi + intercept_i
+                # rolling for latest level only
                 res_i = ic.rolling(60, min_periods=1).max()
                 sup_i = ic.rolling(60, min_periods=1).min()
                 st_intraday = compute_supertrend(intr, atr_period=atr_period, atr_mult=atr_mult)
@@ -975,9 +937,16 @@ with tab2:
                 ax3.plot(ic.index, ie, "--", label="20 EMA")
                 ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
 
-                res_val2 = float(res_i.iloc[-1]) if len(res_i) else np.nan
-                sup_val2 = float(sup_i.iloc[-1]) if len(sup_i) else np.nan
-                px_val2  = float(ic.iloc[-1])    if len(ic)   else np.nan
+                # STRAIGHT Support/Resistance lines
+                res_val2 = np.nan
+                sup_val2 = np.nan
+                px_val2  = np.nan
+                try:
+                    res_val2 = float(res_i.iloc[-1])
+                    sup_val2 = float(sup_i.iloc[-1])
+                    px_val2  = float(ic.iloc[-1])
+                except Exception:
+                    pass
 
                 if np.isfinite(res_val2) and np.isfinite(sup_val2):
                     ax3.hlines(res_val2, xmin=ic.index[0], xmax=ic.index[-1],
@@ -996,9 +965,12 @@ with tab2:
 
                 if np.isfinite(px_val2):
                     pos2 = ax3.get_position()
-                    fig3.text(pos2.x1, pos2.y1 + 0.02,
-                              f"Current price: {fmt_price_val(px_val2)}",
-                              ha="right", va="bottom", fontsize=11, fontweight="bold")
+                    fig3.text(
+                        pos2.x1, pos2.y1 + 0.02,
+                        f"Current price: {fmt_price_val(px_val2)}",
+                        ha="right", va="bottom",
+                        fontsize=11, fontweight="bold"
+                    )
 
                 if not st_line_intr.dropna().empty:
                     ax3.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -1026,7 +998,7 @@ with tab2:
                 xlim_price2 = ax3.get_xlim()
                 st.pyplot(fig3)
 
-                # Momentum (ROC%)
+                # Momentum panel (ROC%)
                 if show_mom_hourly:
                     roc_i = compute_roc(ic, n=mom_lb_hourly)
                     res_m2 = roc_i.rolling(60, min_periods=1).max()
@@ -1045,26 +1017,17 @@ with tab2:
                     ax3m.set_xlim(xlim_price2)
                     st.pyplot(fig3m)
 
-                # --- Intraday EW + Normalized OBV + signals ---
+                # --- Hourly EW panel + signals ---
                 wave_norm2, piv_df2 = compute_normalized_elliott_wave(ic, pivot_lb=pivot_lookback, norm_win=norm_window)
-                vol_i = intr.get('Volume')
-                n_obv_i = compute_normalized_obv(ic,
-                                                 vol_i.reindex(ic.index) if isinstance(vol_i, pd.Series) else pd.Series(index=ic.index, dtype=float),
-                                                 win=norm_window)
-
-                fig3w, ax3w = plt.subplots(figsize=(14,2.9))
+                fig3w, ax3w = plt.subplots(figsize=(14,2.6))
                 plt.subplots_adjust(top=0.88, right=0.93)
-                ax3w.set_title("Normalized Elliott Wave + Normalized OBV")
 
-                if not n_obv_i.dropna().empty:
-                    ax3w.plot(n_obv_i.index, n_obv_i.values, linestyle="--", linewidth=1.2, label="Norm OBV")
-
+                ax3w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
                 ax3w.plot(wave_norm2.index, wave_norm2, label="Norm EW", linewidth=1.8)
                 ax3w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
+                # NEW lines:
                 ax3w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
                 ax3w.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
-                ax3w.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
-                ax3w.axhline(-0.75, color="black", linestyle="-", linewidth=1, label="EW -0.75")
 
                 ax3w.set_ylim(-1.1, 1.1)
                 ax3w.set_xlabel("Time (PST)")
@@ -1080,6 +1043,7 @@ with tab2:
                                       ha="center", va="center",
                                       fontsize=9, fontweight="bold")
 
+                # Price + EW signal label
                 px_intr2 = _safe_last_float(ic)
                 ew_sig_h2 = elliott_conf_signal(px_intr2, st.session_state.fc_vals, EW_CONFIDENCE)
                 pos3w = ax3w.get_position()
