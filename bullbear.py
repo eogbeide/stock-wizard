@@ -1,4 +1,5 @@
-# bullbear.py — Stocks/Forex Dashboard + Forecasts
+# file: bullbear.py
+# Stocks/Forex Dashboard + Forecasts
 # - Forex news markers on intraday charts
 # - Hourly momentum indicator (ROC%) with robust handling
 # - Momentum trendline & momentum S/R
@@ -18,6 +19,7 @@
 # - Normalized Elliott Wave panel for Daily (dates aligned to daily chart)
 # - NEW: EW panels show BUY/SELL signals when forecast confidence > 95% and display current price on top
 # - NEW: EW panels draw a red line at +0.5 and a green line at -0.5
+# - NEW: Hourly "Reversal" signal (95% confidence) near S/R or last swing pivot, aligned with opposite of recent trend
 
 import streamlit as st
 import pandas as pd
@@ -410,6 +412,7 @@ def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
     return None
 
 EW_CONFIDENCE = 0.95  # >95% confidence for EW signals
+REV_CONFIDENCE = 0.95 # ≥95% confidence for hourly reversal
 
 def elliott_conf_signal(price_now: float, fc_vals: pd.Series, conf: float = EW_CONFIDENCE):
     """Signal for EW panel using SARIMAX distribution vs current price."""
@@ -422,6 +425,80 @@ def elliott_conf_signal(price_now: float, fc_vals: pd.Series, conf: float = EW_C
         return {"side": "BUY", "prob": p_up}
     if p_dn >= conf:
         return {"side": "SELL", "prob": p_dn}
+    return None
+
+def reversal_signal_hourly(hc: pd.Series,
+                           res_h: pd.Series,
+                           sup_h: pd.Series,
+                           piv_df: pd.DataFrame,
+                           fc_vals: pd.Series,
+                           recent_slope: float,
+                           prox: float,
+                           conf: float = REV_CONFIDENCE):
+    """
+    High-confidence reversal:
+      - Opposite to recent trend (via slope sign)
+      - Price near S/R OR near latest swing pivot (H/L)
+      - Forecast distribution supports opposite direction with ≥ conf
+    """
+    try:
+        px = float(hc.iloc[-1])
+        res = float(res_h.iloc[-1])
+        sup = float(sup_h.iloc[-1])
+    except Exception:
+        return None
+    if not np.all(np.isfinite([px, res, sup])) or res <= sup:
+        return None
+
+    # Proximity checks
+    near_support = px <= sup * (1.0 + prox)
+    near_resist  = px >= res * (1.0 - prox)
+
+    # Latest swing pivot (if exists)
+    near_last_pivot = False
+    last_pivot_side = None
+    last_pivot_price = np.nan
+    if isinstance(piv_df, pd.DataFrame) and not piv_df.empty:
+        last = piv_df.iloc[-1]
+        last_pivot_price = float(last.get("price", np.nan))
+        last_pivot_side  = str(last.get("type", ""))
+        if np.isfinite(last_pivot_price) and last_pivot_price > 0:
+            near_last_pivot = abs(px - last_pivot_price) / last_pivot_price <= prox
+
+    # Forecast probabilities vs current price
+    fc = _coerce_1d_series(fc_vals).dropna().to_numpy(dtype=float)
+    if fc.size == 0:
+        return None
+    p_up = float(np.mean(fc > px))
+    p_dn = float(np.mean(fc < px))
+
+    # Reversal rules (why: avoid chasing trend; require local confluence)
+    if recent_slope < 0:
+        if (near_support or (near_last_pivot and last_pivot_side == 'L')) and p_up >= conf:
+            level = sup if near_support else last_pivot_price
+            return {
+                "kind": "REVERSAL",
+                "side": "BUY",
+                "prob": p_up,
+                "level": level,
+                "reason": (
+                    f"Downtrend with price near support/pivot and {fmt_pct(p_up)} "
+                    f"probability of moving up ≥ {fmt_pct(conf)}"
+                )
+            }
+    if recent_slope > 0:
+        if (near_resist or (near_last_pivot and last_pivot_side == 'H')) and p_dn >= conf:
+            level = res if near_resist else last_pivot_price
+            return {
+                "kind": "REVERSAL",
+                "side": "SELL",
+                "prob": p_dn,
+                "level": level,
+                "reason": (
+                    f"Uptrend with price near resistance/pivot and {fmt_pct(p_dn)} "
+                    f"probability of moving down ≥ {fmt_pct(conf)}"
+                )
+            }
     return None
 
 # --- Normalized Elliott Wave (simple, dependency-free) ----
@@ -796,6 +873,24 @@ with tab1:
                 ax2w.legend(loc="lower left", framealpha=0.5)
                 st.pyplot(fig2w)
 
+                # --- NEW: Hourly Reversal Signal (95% confidence) ---
+                rev_sig = reversal_signal_hourly(
+                    hc=hc,
+                    res_h=res_h,
+                    sup_h=sup_h,
+                    piv_df=piv_df,
+                    fc_vals=st.session_state.fc_vals,
+                    recent_slope=m_h,      # uses the same slope as chart label
+                    prox=sr_prox_pct,
+                    conf=REV_CONFIDENCE
+                )
+                if rev_sig is not None:
+                    msg = f"**{rev_sig['kind']}** — **{rev_sig['side']}** @ {fmt_price_val(rev_sig['level'])} • {rev_sig['reason']}"
+                    if rev_sig["side"] == "BUY":
+                        st.info(msg)  # neutral style to distinguish from base BUY/SELL
+                    else:
+                        st.warning(msg)
+
         if mode == "Forex" and show_fx_news:
             st.subheader("Recent Forex News (Yahoo Finance)")
             if fx_news.empty:
@@ -1057,6 +1152,24 @@ with tab2:
 
                 ax3w.legend(loc="lower left", framealpha=0.5)
                 st.pyplot(fig3w)
+
+                # --- NEW: Hourly Reversal Signal (95% confidence) ---
+                rev_sig2 = reversal_signal_hourly(
+                    hc=ic,
+                    res_h=res_i,
+                    sup_h=sup_i,
+                    piv_df=piv_df2,
+                    fc_vals=st.session_state.fc_vals,
+                    recent_slope=m_h,  # same slope used above
+                    prox=sr_prox_pct,
+                    conf=REV_CONFIDENCE
+                )
+                if rev_sig2 is not None:
+                    msg2 = f"**{rev_sig2['kind']}** — **{rev_sig2['side']}** @ {fmt_price_val(rev_sig2['level'])} • {rev_sig2['reason']}"
+                    if rev_sig2["side"] == "BUY":
+                        st.info(msg2)
+                    else:
+                        st.warning(msg2)
 
 # --- Tab 3: Bull vs Bear ---
 with tab3:
