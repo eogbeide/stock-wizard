@@ -19,7 +19,7 @@
 # - NEW: EW panels show BUY/SELL signals when forecast confidence > 95% and display current price on top
 # - NEW: EW panels draw a red line at +0.5 and a green line at -0.5
 
-import streamlit as stc
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
