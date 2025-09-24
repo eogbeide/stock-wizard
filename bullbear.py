@@ -18,6 +18,7 @@
 # - Normalized Elliott Wave panel for Daily (dates aligned to daily chart)
 # - NEW: EW panels show BUY/SELL signals when forecast confidence > 95% and display current price on top
 # - NEW: EW panels draw a red line at +0.5 and a green line at -0.5
+# - NEW: EW panels draw black lines at +0.75 and -0.25
 
 import streamlit as st
 import pandas as pd
@@ -603,9 +604,12 @@ with tab1:
             axdw.set_title("Daily Normalized Elliott Wave (tanh(z-score) & swing pivots)")
             axdw.plot(wave_norm_d.index, wave_norm_d, label="Norm EW (Daily)", linewidth=1.8)
             axdw.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
-            # NEW lines:
+            # existing colored lines
             axdw.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
             axdw.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
+            # NEW black lines
+            axdw.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
+            axdw.axhline(-0.25, color="black", linestyle="-", linewidth=1, label="EW -0.25")
 
             axdw.set_ylim(-1.1, 1.1)
             axdw.set_xlabel("Date (PST)")
@@ -763,9 +767,12 @@ with tab1:
                 ax2w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
                 ax2w.plot(wave_norm.index, wave_norm, label="Norm EW", linewidth=1.8)
                 ax2w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
-                # NEW lines:
+                # existing colored lines
                 ax2w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
                 ax2w.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
+                # NEW black lines
+                ax2w.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
+                ax2w.axhline(-0.25, color="black", linestyle="-", linewidth=1, label="EW -0.25")
 
                 ax2w.set_ylim(-1.1, 1.1)
                 ax2w.set_xlabel("Time (PST)")
@@ -880,9 +887,12 @@ with tab2:
             axdw2.set_title("Daily Normalized Elliott Wave (tanh(z-score) & swing pivots)")
             axdw2.plot(wave_norm_d2.index, wave_norm_d2, label="Norm EW (Daily)", linewidth=1.8)
             axdw2.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
-            # NEW lines:
+            # existing colored lines
             axdw2.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
             axdw2.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
+            # NEW black lines
+            axdw2.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
+            axdw2.axhline(-0.25, color="black", linestyle="-", linewidth=1, label="EW -0.25")
 
             axdw2.set_ylim(-1.1, 1.1)
             axdw2.set_xlabel("Date (PST)")
@@ -1025,9 +1035,12 @@ with tab2:
                 ax3w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
                 ax3w.plot(wave_norm2.index, wave_norm2, label="Norm EW", linewidth=1.8)
                 ax3w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
-                # NEW lines:
+                # existing colored lines
                 ax3w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
                 ax3w.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
+                # NEW black lines
+                ax3w.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
+                ax3w.axhline(-0.25, color="black", linestyle="-", linewidth=1, label="EW -0.25")
 
                 ax3w.set_ylim(-1.1, 1.1)
                 ax3w.set_xlabel("Time (PST)")
