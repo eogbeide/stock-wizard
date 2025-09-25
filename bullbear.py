@@ -1,4 +1,4 @@
-# bullbear.py — Stocks/Forex Dashboard + Forecasts
+# bullbear.py — Stocks/Forex Dashboard + Forecasts (+ Normalized Price Oscillator on EW panels)
 # - Forex news markers on intraday charts
 # - Hourly momentum indicator (ROC%) with robust handling
 # - Momentum trendline & momentum S/R
@@ -13,12 +13,12 @@
 # - All displayed price values formatted to 3 decimal places
 # - Hourly Support/Resistance drawn as STRAIGHT LINES across the entire chart
 # - Current price shown OUTSIDE of chart area (top-right above axes)
-# - Removed BUY/SELL triangles from charts; keep indicators in the title ("symbol area") with ▲/▼ and price values
 # - Normalized Elliott Wave panel for Hourly (dates aligned to hourly chart)
 # - Normalized Elliott Wave panel for Daily (dates aligned to daily chart)
 # - NEW: EW panels show BUY/SELL signals when forecast confidence > 95% and display current price on top
 # - NEW: EW panels draw a red line at +0.5 and a green line at -0.5
 # - NEW: EW panels draw black lines at +0.75 and -0.25
+# - NEW: Adds Normalized Price Oscillator (NPO) overlay to EW panels with sidebar controls
 
 import streamlit as st
 import pandas as pd
@@ -159,6 +159,13 @@ pivot_lookback_d = st.sidebar.slider("Pivot lookback (days)", 3, 31, 9, 2, key="
 norm_window_d    = st.sidebar.slider("Normalization window (days)", 30, 1200, 360, 10, key="sb_norm_win_d")
 waves_to_annotate_d = st.sidebar.slider("Annotate recent waves (daily)", 3, 12, 7, 1, key="sb_wave_ann_d")
 
+# --- NEW: Normalized Price Oscillator controls ---
+st.sidebar.subheader("Normalized Price Oscillator (overlay on EW panels)")
+show_npo = st.sidebar.checkbox("Show NPO overlay", value=True, key="sb_show_npo")
+npo_fast = st.sidebar.slider("NPO fast EMA", 5, 30, 12, 1, key="sb_npo_fast")
+npo_slow = st.sidebar.slider("NPO slow EMA", 10, 60, 26, 1, key="sb_npo_slow")
+npo_norm_win = st.sidebar.slider("NPO normalization window", 30, 600, 240, 10, key="sb_npo_norm")
+
 # Forex news controls (only shown in Forex mode)
 if mode == "Forex":
     show_fx_news = st.sidebar.checkbox("Show Forex news markers (intraday)", value=True, key="sb_show_fx_news")
@@ -286,6 +293,32 @@ def compute_roc(series_like, n: int = 10) -> pd.Series:
         return pd.Series(index=s.index, dtype=float)
     roc = base.pct_change(n) * 100.0
     return roc.reindex(s.index)
+
+# ---- NEW: Normalized Price Oscillator (PPO -> z-score -> tanh) ----
+def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int = 240) -> pd.Series:
+    """
+    Returns NPO in [-1,1]: tanh( zscore(PPO) / 2 ).
+    PPO = (EMA_fast - EMA_slow) / EMA_slow * 100
+    NOTE: If params invalid or insufficient data, returns empty/NaN series.
+    """
+    s = _coerce_1d_series(close)
+    if s.empty or not np.isfinite(fast) or not np.isfinite(slow) or fast <= 0 or slow <= 0:
+        return pd.Series(index=s.index, dtype=float)
+    # Ensure fast < slow for stable PPO
+    if fast >= slow:
+        fast, slow = max(1, slow - 1), slow
+        if fast >= slow:
+            return pd.Series(index=s.index, dtype=float)  # cannot fix
+    ema_fast = s.ewm(span=int(fast), adjust=False).mean()
+    ema_slow = s.ewm(span=int(slow), adjust=False).mean().replace(0, np.nan)
+    ppo = (ema_fast - ema_slow) / ema_slow * 100.0
+    # Normalize PPO
+    minp = max(10, int(norm_win)//10)
+    mean = ppo.rolling(int(norm_win), min_periods=minp).mean()
+    std  = ppo.rolling(int(norm_win), min_periods=minp).std().replace(0, np.nan)
+    z = (ppo - mean) / std
+    npo = np.tanh(z / 2.0)
+    return npo.reindex(s.index)
 
 # ---- Supertrend helpers (hourly overlay) ----
 def _true_range(df: pd.DataFrame):
@@ -598,16 +631,20 @@ with tab1:
 
             # --- Normalized Elliott Wave panel (Daily) aligned with daily chart x-axis + signals ---
             wave_norm_d, piv_df_d = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
-            figdw, axdw = plt.subplots(figsize=(14,2.6))
+            # NEW: NPO (Daily)
+            npo_d = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
+
+            figdw, axdw = plt.subplots(figsize=(14,2.8))
             plt.subplots_adjust(top=0.88, right=0.93)
 
-            axdw.set_title("Daily Normalized Elliott Wave (tanh(z-score) & swing pivots)")
+            axdw.set_title("Daily Normalized Elliott Wave + NPO")
             axdw.plot(wave_norm_d.index, wave_norm_d, label="Norm EW (Daily)", linewidth=1.8)
+            if show_npo and not npo_d.dropna().empty:
+                axdw.plot(npo_d.index, npo_d, "--", linewidth=1.2, label=f"NPO ({npo_fast},{npo_slow})")
+
             axdw.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
-            # existing colored lines
             axdw.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
             axdw.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
-            # NEW black lines
             axdw.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
             axdw.axhline(-0.25, color="black", linestyle="-", linewidth=1, label="EW -0.25")
 
@@ -652,7 +689,6 @@ with tab1:
                 xh = np.arange(len(hc))
                 slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
                 trend_h = slope_h * xh + intercept_h
-                # rolling S/R just for latest level computation
                 res_h = hc.rolling(60, min_periods=1).max()
                 sup_h = hc.rolling(60, min_periods=1).min()
 
@@ -761,16 +797,20 @@ with tab1:
 
                 # --- Normalized Elliott Wave panel (Hourly) + signals ---
                 wave_norm, piv_df = compute_normalized_elliott_wave(hc, pivot_lb=pivot_lookback, norm_win=norm_window)
-                fig2w, ax2w = plt.subplots(figsize=(14,2.6))
+                # NEW: NPO (Hourly)
+                npo_h = compute_npo(hc, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=hc.index, dtype=float)
+
+                fig2w, ax2w = plt.subplots(figsize=(14,2.8))
                 plt.subplots_adjust(top=0.88, right=0.93)
 
-                ax2w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
+                ax2w.set_title("Normalized Elliott Wave + NPO")
                 ax2w.plot(wave_norm.index, wave_norm, label="Norm EW", linewidth=1.8)
+                if show_npo and not npo_h.dropna().empty:
+                    ax2w.plot(npo_h.index, npo_h, "--", linewidth=1.2, label=f"NPO ({npo_fast},{npo_slow})")
+
                 ax2w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
-                # existing colored lines
                 ax2w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
                 ax2w.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
-                # NEW black lines
                 ax2w.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
                 ax2w.axhline(-0.25, color="black", linestyle="-", linewidth=1, label="EW -0.25")
 
@@ -879,18 +919,21 @@ with tab2:
             xlim_daily2 = ax.get_xlim()
             st.pyplot(fig)
 
-            # --- Daily EW panel + signals ---
+            # --- Daily EW panel + NPO + signals ---
             wave_norm_d2, piv_df_d2 = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
-            figdw2, axdw2 = plt.subplots(figsize=(14,2.6))
+            npo_d2 = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
+
+            figdw2, axdw2 = plt.subplots(figsize=(14,2.8))
             plt.subplots_adjust(top=0.88, right=0.93)
 
-            axdw2.set_title("Daily Normalized Elliott Wave (tanh(z-score) & swing pivots)")
+            axdw2.set_title("Daily Normalized Elliott Wave + NPO")
             axdw2.plot(wave_norm_d2.index, wave_norm_d2, label="Norm EW (Daily)", linewidth=1.8)
+            if show_npo and not npo_d2.dropna().empty:
+                axdw2.plot(npo_d2.index, npo_d2, "--", linewidth=1.2, label=f"NPO ({npo_fast},{npo_slow})")
+
             axdw2.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
-            # existing colored lines
             axdw2.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
             axdw2.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
-            # NEW black lines
             axdw2.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
             axdw2.axhline(-0.25, color="black", linestyle="-", linewidth=1, label="EW -0.25")
 
@@ -933,7 +976,6 @@ with tab2:
                 xi = np.arange(len(ic))
                 slope_i, intercept_i = np.polyfit(xi, ic.values, 1)
                 trend_i = slope_i * xi + intercept_i
-                # rolling for latest level only
                 res_i = ic.rolling(60, min_periods=1).max()
                 sup_i = ic.rolling(60, min_periods=1).min()
                 st_intraday = compute_supertrend(intr, atr_period=atr_period, atr_mult=atr_mult)
@@ -1027,18 +1069,21 @@ with tab2:
                     ax3m.set_xlim(xlim_price2)
                     st.pyplot(fig3m)
 
-                # --- Hourly EW panel + signals ---
+                # --- Hourly EW panel + NPO + signals ---
                 wave_norm2, piv_df2 = compute_normalized_elliott_wave(ic, pivot_lb=pivot_lookback, norm_win=norm_window)
-                fig3w, ax3w = plt.subplots(figsize=(14,2.6))
+                npo_h2 = compute_npo(ic, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=ic.index, dtype=float)
+
+                fig3w, ax3w = plt.subplots(figsize=(14,2.8))
                 plt.subplots_adjust(top=0.88, right=0.93)
 
-                ax3w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
+                ax3w.set_title("Normalized Elliott Wave + NPO")
                 ax3w.plot(wave_norm2.index, wave_norm2, label="Norm EW", linewidth=1.8)
+                if show_npo and not npo_h2.dropna().empty:
+                    ax3w.plot(npo_h2.index, npo_h2, "--", linewidth=1.2, label=f"NPO ({npo_fast},{npo_slow})")
+
                 ax3w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
-                # existing colored lines
                 ax3w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
                 ax3w.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
-                # NEW black lines
                 ax3w.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
                 ax3w.axhline(-0.25, color="black", linestyle="-", linewidth=1, label="EW -0.25")
 
@@ -1138,7 +1183,7 @@ with tab4:
         ax0.plot(df0.index, df0['Close'], label="Close")
         ax0.plot(df0.index, df0['MA30'], label="30 MA")
         ax0.plot(df0.index, res0, ":", label="Resistance")
-        ax0.plot(df0.index, sup0, ":", label="Support")
+        ax0.plot(sup0, ":", label="Support")
         ax0.plot(df0.index, trend0, "--", label="Trend")
         ax0.set_xlabel("Date (PST)")
         ax0.legend()
