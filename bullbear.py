@@ -21,7 +21,7 @@
 # - NEW: EW panels draw black lines at +0.75 and -0.25
 # - NEW: Normalized Volume line on EW panels (Daily & Hourly)
 
-import streamlit as std
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
