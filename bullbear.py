@@ -1,4 +1,4 @@
-# bullbear.py — Stocks/Forex Dashboard + Forecasts
+# file: bullbear.py — Stocks/Forex Dashboard + Forecasts
 # - Forex news markers on intraday charts
 # - Hourly momentum indicator (ROC%) with robust handling
 # - Momentum trendline & momentum S/R
@@ -19,6 +19,7 @@
 # - NEW: EW panels show BUY/SELL signals when forecast confidence > 95% and display current price on top
 # - NEW: EW panels draw a red line at +0.5 and a green line at -0.5
 # - NEW: EW panels draw black lines at +0.75 and -0.25
+# - NEW: Normalized MA Convergence line (Daily & Hourly) on EW panels
 
 import streamlit as st
 import pandas as pd
@@ -159,6 +160,14 @@ pivot_lookback_d = st.sidebar.slider("Pivot lookback (days)", 3, 31, 9, 2, key="
 norm_window_d    = st.sidebar.slider("Normalization window (days)", 30, 1200, 360, 10, key="sb_norm_win_d")
 waves_to_annotate_d = st.sidebar.slider("Annotate recent waves (daily)", 3, 12, 7, 1, key="sb_wave_ann_d")
 
+# NEW: Normalized MA Convergence settings for EW panels
+st.sidebar.subheader("EW: Normalized MA Convergence")
+show_norm_mac = st.sidebar.checkbox("Show normalized MA convergence", value=True, key="sb_show_norm_mac")
+mac_short = st.sidebar.number_input("Short MA length", min_value=2, max_value=200, value=12, step=1, key="sb_mac_short")
+mac_long  = st.sidebar.number_input("Long MA length",  min_value=3, max_value=400, value=26, step=1, key="sb_mac_long")
+mac_use_ema = st.sidebar.checkbox("Use EMA (off = SMA)", value=True, key="sb_mac_use_ema")
+mac_norm_window = st.sidebar.slider("Normalization window (bars/days)", 30, 600, 240, 10, key="sb_mac_norm_win")
+
 # Forex news controls (only shown in Forex mode)
 if mode == "Forex":
     show_fx_news = st.sidebar.checkbox("Show Forex news markers (intraday)", value=True, key="sb_show_fx_news")
@@ -286,6 +295,36 @@ def compute_roc(series_like, n: int = 10) -> pd.Series:
         return pd.Series(index=s.index, dtype=float)
     roc = base.pct_change(n) * 100.0
     return roc.reindex(s.index)
+
+# ---- Normalized MA Convergence (for EW panels) ----
+def compute_normalized_ma_convergence(close: pd.Series,
+                                      short:int = 12,
+                                      long:int = 26,
+                                      norm_win:int = 240,
+                                      use_ema:bool = True) -> pd.Series:
+    """
+    Moving Average Convergence (short MA - long MA) normalized to [-1,1] via tanh(zscore/2).
+    This is *not* MACD with signal; it's a clean convergence measure aligned to the EW scale.
+    """
+    s = _coerce_1d_series(close).dropna()
+    if s.empty:
+        return pd.Series(index=close.index, dtype=float)
+    if long <= short:
+        long = short + 1
+    if use_ema:
+        ma_s = s.ewm(span=short, adjust=False).mean()
+        ma_l = s.ewm(span=long, adjust=False).mean()
+    else:
+        ma_s = s.rolling(short, min_periods=max(2, short//3)).mean()
+        ma_l = s.rolling(long,  min_periods=max(2, long//3)).mean()
+    diff = (ma_s - ma_l).dropna()
+
+    minp = max(10, norm_win//10)
+    mean = diff.rolling(norm_win, min_periods=minp).mean()
+    std  = diff.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
+    z = (diff - mean) / std
+    norm = np.tanh(z / 2.0)
+    return norm.reindex(close.index)
 
 # ---- Supertrend helpers (hourly overlay) ----
 def _true_range(df: pd.DataFrame):
@@ -604,12 +643,17 @@ with tab1:
             axdw.set_title("Daily Normalized Elliott Wave (tanh(z-score) & swing pivots)")
             axdw.plot(wave_norm_d.index, wave_norm_d, label="Norm EW (Daily)", linewidth=1.8)
             axdw.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
-            # existing colored lines
             axdw.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
             axdw.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
-            # NEW black lines
             axdw.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
             axdw.axhline(-0.25, color="black", linestyle="-", linewidth=1, label="EW -0.25")
+
+            # NEW: Normalized MA Convergence overlay (Daily)
+            if show_norm_mac:
+                mac_d = compute_normalized_ma_convergence(df, short=mac_short, long=mac_long,
+                                                          norm_win=mac_norm_window, use_ema=mac_use_ema)
+                if not mac_d.dropna().empty:
+                    axdw.plot(mac_d.index, mac_d, linestyle="--", linewidth=1, label="Norm MAConv")
 
             axdw.set_ylim(-1.1, 1.1)
             axdw.set_xlabel("Date (PST)")
@@ -767,12 +811,17 @@ with tab1:
                 ax2w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
                 ax2w.plot(wave_norm.index, wave_norm, label="Norm EW", linewidth=1.8)
                 ax2w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
-                # existing colored lines
                 ax2w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
                 ax2w.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
-                # NEW black lines
                 ax2w.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
                 ax2w.axhline(-0.25, color="black", linestyle="-", linewidth=1, label="EW -0.25")
+
+                # NEW: Normalized MA Convergence overlay (Hourly)
+                if show_norm_mac:
+                    mac_h = compute_normalized_ma_convergence(hc, short=mac_short, long=mac_long,
+                                                              norm_win=mac_norm_window, use_ema=mac_use_ema)
+                    if not mac_h.dropna().empty:
+                        ax2w.plot(mac_h.index, mac_h, linestyle="--", linewidth=1, label="Norm MAConv")
 
                 ax2w.set_ylim(-1.1, 1.1)
                 ax2w.set_xlabel("Time (PST)")
@@ -851,7 +900,7 @@ with tab2:
 
             fig, ax = plt.subplots(figsize=(14,6))
             ax.set_title(f"{st.session_state.ticker} Daily — History, 30 EMA, 30 S/R, Slope, Pivots")
-            ax.plot(df_show, label="History")
+            ax.plot(df_show, label="Close")
             ax.plot(ema30[-360:], "--", label="30 EMA")
             ax.plot(res30[-360:], ":", label="30 Resistance")
             ax.plot(sup30[-360:], ":", label="30 Support")
@@ -887,12 +936,17 @@ with tab2:
             axdw2.set_title("Daily Normalized Elliott Wave (tanh(z-score) & swing pivots)")
             axdw2.plot(wave_norm_d2.index, wave_norm_d2, label="Norm EW (Daily)", linewidth=1.8)
             axdw2.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
-            # existing colored lines
             axdw2.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
             axdw2.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
-            # NEW black lines
             axdw2.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
             axdw2.axhline(-0.25, color="black", linestyle="-", linewidth=1, label="EW -0.25")
+
+            # NEW: Normalized MA Convergence overlay (Daily)
+            if show_norm_mac:
+                mac_d2 = compute_normalized_ma_convergence(df, short=mac_short, long=mac_long,
+                                                           norm_win=mac_norm_window, use_ema=mac_use_ema)
+                if not mac_d2.dropna().empty:
+                    axdw2.plot(mac_d2.index, mac_d2, linestyle="--", linewidth=1, label="Norm MAConv")
 
             axdw2.set_ylim(-1.1, 1.1)
             axdw2.set_xlabel("Date (PST)")
@@ -1035,12 +1089,17 @@ with tab2:
                 ax3w.set_title("Normalized Elliott Wave (tanh(z-score) & swing pivots)")
                 ax3w.plot(wave_norm2.index, wave_norm2, label="Norm EW", linewidth=1.8)
                 ax3w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
-                # existing colored lines
                 ax3w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
                 ax3w.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
-                # NEW black lines
                 ax3w.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
                 ax3w.axhline(-0.25, color="black", linestyle="-", linewidth=1, label="EW -0.25")
+
+                # NEW: Normalized MA Convergence overlay (Hourly)
+                if show_norm_mac:
+                    mac_i = compute_normalized_ma_convergence(ic, short=mac_short, long=mac_long,
+                                                              norm_win=mac_norm_window, use_ema=mac_use_ema)
+                    if not mac_i.dropna().empty:
+                        ax3w.plot(mac_i.index, mac_i, linestyle="--", linewidth=1, label="Norm MAConv")
 
                 ax3w.set_ylim(-1.1, 1.1)
                 ax3w.set_xlabel("Time (PST)")
