@@ -15,13 +15,14 @@
 # - Current price shown OUTSIDE of chart area (top-right above axes)
 # - Normalized Elliott Wave panel for Hourly (dates aligned to hourly chart)
 # - Normalized Elliott Wave panel for Daily (dates aligned to daily chart, shared x-axis with price)
-# - NEW: EW panels show BUY/SELL signals when forecast confidence > 95% and display current price on top
-# - NEW: EW panels draw a red line at +0.5 and a green line at -0.5
-# - NEW: EW panels draw black lines at +0.75 and -0.25
-# - NEW: Adds Normalized Price Oscillator (NPO) overlay to EW panels with sidebar controls
-# - NEW: Adds Normalized Trend Direction (NTD) overlay + optional green/red shading to EW panels with sidebar controls
-# - NEW: Daily view selector (Historical / 6M / 12M / 24M)
-# - NEW: Red shading under NPO curve on EW panels
+# - EW panels show BUY/SELL signals when forecast confidence > 95% and display current price on top
+# - EW panels draw a red line at +0.5 and a green line at -0.5
+# - EW panels draw black lines at +0.75 and -0.25
+# - Adds Normalized Price Oscillator (NPO) overlay to EW panels with sidebar controls
+# - Adds Normalized Trend Direction (NTD) overlay + optional green/red shading to EW panels with sidebar controls
+# - Daily view selector (Historical / 6M / 12M / 24M)
+# - Red shading under NPO curve on EW panels
+# - NEW: Daily trend-direction line (green=uptrend, red=downtrend) with slope label
 
 import streamlit as st
 import pandas as pd
@@ -184,14 +185,14 @@ pivot_lookback_d = st.sidebar.slider("Pivot lookback (days)", 3, 31, 9, 2, key="
 norm_window_d    = st.sidebar.slider("Normalization window (days)", 30, 1200, 360, 10, key="sb_norm_win_d")
 waves_to_annotate_d = st.sidebar.slider("Annotate recent waves (daily)", 3, 12, 7, 1, key="sb_wave_ann_d")
 
-# --- NEW: Normalized Price Oscillator controls ---
+# --- Normalized Price Oscillator controls ---
 st.sidebar.subheader("Normalized Price Oscillator (overlay on EW panels)")
 show_npo = st.sidebar.checkbox("Show NPO overlay", value=True, key="sb_show_npo")
 npo_fast = st.sidebar.slider("NPO fast EMA", 5, 30, 12, 1, key="sb_npo_fast")
 npo_slow = st.sidebar.slider("NPO slow EMA", 10, 60, 26, 1, key="sb_npo_slow")
 npo_norm_win = st.sidebar.slider("NPO normalization window", 30, 600, 240, 10, key="sb_npo_norm")
 
-# --- NEW: Normalized Trend Direction (overlay on EW panels) ---
+# --- Normalized Trend Direction (overlay on EW panels) ---
 st.sidebar.subheader("Normalized Trend (EW panels)")
 show_ntd = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd")
 ntd_window = st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
@@ -405,6 +406,22 @@ def shade_npo_regions(ax, npo: pd.Series):
     neg = npo.where(npo < 0)
     ax.fill_between(pos.index, 0, pos, alpha=0.15, color="tab:red")
     ax.fill_between(neg.index, 0, neg, alpha=0.08, color="tab:red")
+
+# --- NEW: Daily trend-direction line helper ---
+def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "Trend"):
+    """
+    Draws a regression line over the visible daily window and colors it by direction.
+    Green = uptrend (positive slope), Red = downtrend (negative slope).
+    """
+    s = _coerce_1d_series(series_like).dropna()
+    if s.shape[0] < 2:
+        return np.nan
+    x = np.arange(len(s), dtype=float)
+    m, b = np.polyfit(x, s.values, 1)
+    yhat = m * x + b
+    color = "tab:green" if m >= 0 else "tab:red"
+    ax.plot(s.index, yhat, "-", linewidth=2.4, color=color, label=f"{label_prefix} ({fmt_slope(m)}/bar)")
+    return m
 
 # ---- Supertrend helpers (hourly overlay) ----
 def _true_range(df: pd.DataFrame):
@@ -722,6 +739,10 @@ with tab1:
                 ax.plot(yhat_ema_show.index, yhat_ema_show.values, "-", linewidth=2,
                         label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
 
+            # NEW: Trend-direction line over the visible window
+            if len(df_show) > 1:
+                draw_trend_direction_line(ax, df_show, label_prefix="Trend")
+
             if piv and len(df_show) > 0:
                 x0, x1 = df_show.index[0], df_show.index[-1]
                 for lbl, y in piv.items():
@@ -741,7 +762,7 @@ with tab1:
             # NTD shading (optional)
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw, ntd_d_show)
-            # NPO red shading (NEW)
+            # NPO red shading
             if show_npo and not npo_d_show.dropna().empty:
                 shade_npo_regions(axdw, npo_d_show)
 
@@ -790,7 +811,7 @@ with tab1:
             axdw.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (unchanged core, EW gets NPO red shading) -----
+        # ----- Hourly (unchanged core; EW has NPO red shading) -----
         if chart in ("Hourly","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -918,7 +939,7 @@ with tab1:
                 ax2w.set_title("Normalized Elliott Wave + NPO + NTD")
                 if show_ntd and shade_ntd and not ntd_h.dropna().empty:
                     shade_ntd_regions(ax2w, ntd_h)
-                # NPO red shading (NEW)
+                # NPO red shading
                 if show_npo and not npo_h.dropna().empty:
                     shade_npo_regions(ax2w, npo_h)
 
@@ -1043,6 +1064,10 @@ with tab2:
                 ax.plot(yhat_ema_show.index, yhat_ema_show.values, "-", linewidth=2,
                         label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
 
+            # NEW: Trend-direction line over the visible window
+            if len(df_show) > 1:
+                draw_trend_direction_line(ax, df_show, label_prefix="Trend")
+
             if piv and len(df_show) > 0:
                 x0, x1 = df_show.index[0], df_show.index[-1]
                 for lbl, y in piv.items():
@@ -1062,7 +1087,7 @@ with tab2:
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw2, ntd_d_show)
             if show_npo and not npo_d_show.dropna().empty:
-                shade_npo_regions(axdw2, npo_d_show)  # NEW red shading
+                shade_npo_regions(axdw2, npo_d_show)
 
             axdw2.plot(wave_d_show.index, wave_d_show, label="Norm EW (Daily)", linewidth=1.8)
             if show_npo and not npo_d_show.dropna().empty:
@@ -1221,7 +1246,7 @@ with tab2:
                 if show_ntd and shade_ntd and not ntd_h2.dropna().empty:
                     shade_ntd_regions(ax3w, ntd_h2)
                 if show_npo and not npo_h2.dropna().empty:
-                    shade_npo_regions(ax3w, npo_h2)  # NEW red shading
+                    shade_npo_regions(ax3w, npo_h2)  # red shading
 
                 ax3w.plot(wave_norm2.index, wave_norm2, label="Norm EW", linewidth=1.8)
                 if show_npo and not npo_h2.dropna().empty:
