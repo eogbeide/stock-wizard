@@ -210,7 +210,7 @@ else:
 if mode == "Stock":
     universe = sorted([
         'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
-        'META','SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO',
+        'META','SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO','OPEN',
         'MSFT','TSM','NFLX','MP','AAL','URI','DAL','BBAI','QUBT','AMD','SMCI','ORCL'
     ])
 else:
