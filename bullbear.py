@@ -24,6 +24,7 @@
 # - Red shading under NPO curve on EW panels
 # - Daily trend-direction line (green=uptrend, red=downtrend) with slope label
 # - NEW: EW Summary tab — Daily < 0.0; Forex Hourly < 0.0 and > 0.0
+# - NEW: Forex Hourly "Upward 0.0 Crossers" for 24h / 48h / 96h
 
 import streamlit as st
 import pandas as pd
@@ -620,6 +621,75 @@ def last_hourly_ew_value(symbol: str, pivot_lb: int, norm_win: int, period: str 
         return float(ew.iloc[-1]), s.index[-1]
     except Exception:
         return np.nan, None
+# ===============================================================
+
+# ========= NEW: Upward 0.0 cross detection helpers =========
+def _bars_per_hour(interval_minutes: int = 5) -> int:
+    return int(60 // interval_minutes)  # 5m => 12 bars/hour
+
+def find_recent_up_cross_and_uptrend(ew: pd.Series,
+                                     max_lookback_hours: int = 24,
+                                     slope_window_bars: int = 24) -> tuple[bool, pd.Timestamp | None, float | None, float | None]:
+    """
+    Returns (is_match, cross_time, ew_last, ew_slope_last_window)
+    Criteria:
+      - There exists a recent crossing from <=0 to >0 within last `max_lookback_hours`
+      - Current EW > 0
+      - Short-term EW slope over `slope_window_bars` is positive
+    """
+    s = _coerce_1d_series(ew).dropna()
+    if s.size < 3:
+        return False, None, None, None
+
+    bars_last_h = _bars_per_hour() * max_lookback_hours
+    s_tail = s.iloc[-min(bars_last_h, len(s)):]  # window to check recency
+    cross_mask = (s_tail.shift(1) <= 0) & (s_tail > 0)
+    if not cross_mask.any():
+        return False, None, None, None
+
+    # Use the most recent upward cross
+    cross_idx = cross_mask[cross_mask].index[-1]
+    ew_last = float(s.iloc[-1])
+
+    # Short-term slope
+    k = max(6, min(slope_window_bars, len(s)))
+    x = np.arange(k, dtype=float)
+    y = s.iloc[-k:].to_numpy(dtype=float)
+    m, b = np.polyfit(x, y, 1)
+    return (ew_last > 0 and m > 0), cross_idx, ew_last, float(m)
+
+def scan_upward_crossers(universe: list[str],
+                         pivot_lb: int,
+                         norm_win: int,
+                         period: str,
+                         hours: int,
+                         slope_window_bars: int = 24) -> pd.DataFrame:
+    rows = []
+    for sym in universe:
+        try:
+            df = fetch_intraday(sym, period=period)
+            if df is None or df.empty or "Close" not in df:
+                continue
+            close = df["Close"].ffill()
+            ew, _ = compute_normalized_elliott_wave(close, pivot_lb=pivot_lb, norm_win=norm_win)
+            match, cross_time, ew_last, slope_last = find_recent_up_cross_and_uptrend(
+                ew, max_lookback_hours=hours, slope_window_bars=slope_window_bars
+            )
+            if match:
+                hours_since = (ew.index[-1] - cross_time).total_seconds() / 3600.0 if cross_time is not None else np.nan
+                rows.append({
+                    "Symbol": sym,
+                    "EW_Last": ew_last,
+                    "EW_Slope": slope_last,
+                    "Cross_Time": cross_time,
+                    "Hours_Since_Cross": hours_since
+                })
+        except Exception:
+            continue
+    df_out = pd.DataFrame(rows)
+    if not df_out.empty:
+        df_out = df_out.sort_values(["Hours_Since_Cross", "EW_Slope"], ascending=[True, False])
+    return df_out
 # ===============================================================
 
 # --- Session init ---
@@ -1426,3 +1496,31 @@ with tab5:
                 show_a = above_hour.copy()
                 show_a["EW_Hourly"] = show_a["EW_Hourly"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
                 st.dataframe(show_a.reset_index(drop=True), use_container_width=True)
+
+            # ---- NEW: Upward 0.0 Crossers (24h / 48h / 96h) ----
+            st.markdown("---")
+            st.subheader("Forex Hourly — Recent Upward 0.0 Crossers (EW)")
+
+            up_cols = st.columns(3)
+            lookbacks = [("24h", "1d", 24), ("48h", "2d", 48), ("96h", "4d", 96)]
+            for col, (lbl, period, hours) in zip(up_cols, lookbacks):
+                with col:
+                    st.caption(f"Lookback: **{lbl}**")
+                    df_up = scan_upward_crossers(
+                        universe=universe,
+                        pivot_lb=pivot_lookback,
+                        norm_win=norm_window,
+                        period=period,
+                        hours=hours,
+                        slope_window_bars=24  # slope over ~2 hours of 5m bars
+                    )
+                    if df_up.empty:
+                        st.info("No recent upward crossers.")
+                    else:
+                        show_u = df_up.copy()
+                        show_u["EW_Last"] = show_u["EW_Last"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
+                        show_u["EW_Slope"] = show_u["EW_Slope"].map(lambda x: f"{x:+.5f}" if np.isfinite(x) else "n/a")
+                        if pd.api.types.is_datetime64_any_dtype(show_u["Cross_Time"]):
+                            show_u["Cross_Time"] = show_u["Cross_Time"].dt.tz_convert(PACIFIC).dt.strftime("%Y-%m-%d %H:%M")
+                        show_u["Hours_Since_Cross"] = show_u["Hours_Since_Cross"].map(lambda x: f"{x:.1f}" if np.isfinite(x) else "n/a")
+                        st.dataframe(show_u.reset_index(drop=True), use_container_width=True)
