@@ -26,7 +26,7 @@
 # - NEW: EW Summary tab — Daily < 0.0; Forex Hourly < 0.0 and > 0.0
 # - NEW: Forex Hourly "Upward 0.0 Crossers" for 24h / 48h / 96h
 
-import streamlit as st
+import streamlit as stb
 import pandas as pd
 import numpy as np
 import yfinance as yf
