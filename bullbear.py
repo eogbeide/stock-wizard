@@ -24,7 +24,7 @@
 # - Red shading under NPO curve on EW panels
 # - Daily trend-direction line (green=uptrend, red=downtrend) with slope label
 # - NEW: EW Summary tab — Daily < 0.0; Forex Hourly < 0.0 and > 0.0
-# - NEW: EW Summary tab — Daily < 0.0 but > -0.25
+# - NEW: EW Summary tab — Daily < 0.0 but > -0.75
 
 import streamlit as st
 import pandas as pd
@@ -425,13 +425,8 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
     st_line.iloc[0] = upperband.iloc[0]
     in_up.iloc[0]   = True
     for i in range(1, len(ohlc)):
-        prev_st = st_line.iloc(i-1) if callable(getattr(st_line, 'iloc', None)) else st_line.iloc[i-1]
-        prev_up = in_up.iloc(i-1) if callable(getattr(in_up, 'iloc', None)) else in_up.iloc[i-1]
-        # Fallback in case of pandas internals difference
-        try:
-            prev_st = st_line.iloc[i-1]; prev_up = in_up.iloc[i-1]
-        except Exception:
-            pass
+        prev_st = st_line.iloc[i-1]
+        prev_up = in_up.iloc[i-1]
         up_i = min(upperband.iloc[i], prev_st) if prev_up else upperband.iloc[i]
         dn_i = max(lowerband.iloc[i], prev_st) if not prev_up else lowerband.iloc[i]
         close_i = ohlc['Close'].iloc[i]
@@ -1352,13 +1347,15 @@ with tab5:
         # Table 1: Daily < 0.0 (most negative first)
         below_daily = df_daily[df_daily["EW_Daily"] < 0].sort_values("EW_Daily")
 
-        # NEW Table 2: Daily < 0.0 but > -0.25
-        midzone_daily = df_daily[(df_daily["EW_Daily"] < 0) & (df_daily["EW_Daily"] > -0.25)].sort_values("EW_Daily", ascending=True)
+        # NEW Table 2: Daily < 0.0 but > -0.75
+        midzone_daily = df_daily[
+            (df_daily["EW_Daily"] < 0) & (df_daily["EW_Daily"] > -0.75)
+        ].sort_values("EW_Daily", ascending=True)
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Universe Size", len(universe))
         c2.metric("Daily < 0.0", int(below_daily.shape[0]))
-        c3.metric("-0.25 < Daily < 0.0", int(midzone_daily.shape[0]))
+        c3.metric("-0.75 < Daily < 0.0", int(midzone_daily.shape[0]))
 
         st.subheader("Daily — Below EW 0.0")
         if below_daily.empty:
@@ -1368,9 +1365,9 @@ with tab5:
             show1["EW_Daily"] = show1["EW_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
             st.dataframe(show1.reset_index(drop=True), use_container_width=True)
 
-        st.subheader("Daily — Below 0.0 but Above -0.25 EW")
+        st.subheader("Daily — Below 0.0 but Above -0.75 EW")
         if midzone_daily.empty:
-            st.info("No symbols currently between -0.25 and 0.0 on Daily EW.")
+            st.info("No symbols currently between -0.75 and 0.0 on Daily EW.")
         else:
             show2 = midzone_daily.copy()
             show2["EW_Daily"] = show2["EW_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
