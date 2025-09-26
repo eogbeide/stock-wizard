@@ -24,7 +24,6 @@
 # - Red shading under NPO curve on EW panels
 # - Daily trend-direction line (green=uptrend, red=downtrend) with slope label
 # - NEW: EW Summary tab — Daily < 0.0; Forex Hourly < 0.0 and > 0.0
-# - NEW: Stocks Daily — Recently crossed above 0.0 and rising (table)
 
 import streamlit as st
 import pandas as pd
@@ -425,8 +424,13 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
     st_line.iloc[0] = upperband.iloc[0]
     in_up.iloc[0]   = True
     for i in range(1, len(ohlc)):
-        prev_st = st_line.iloc[i-1]
-        prev_up = in_up.iloc[i-1]
+        prev_st = st_line.iloc(i-1) if callable(getattr(st_line, 'iloc', None)) else st_line.iloc[i-1]
+        prev_up = in_up.iloc(i-1) if callable(getattr(in_up, 'iloc', None)) else in_up.iloc[i-1]
+        # Fallback in case of pandas internals difference
+        try:
+            prev_st = st_line.iloc[i-1]; prev_up = in_up.iloc[i-1]
+        except Exception:
+            pass
         up_i = min(upperband.iloc[i], prev_st) if prev_up else upperband.iloc[i]
         dn_i = max(lowerband.iloc[i], prev_st) if not prev_up else lowerband.iloc[i]
         close_i = ohlc['Close'].iloc[i]
@@ -589,7 +593,7 @@ def compute_normalized_elliott_wave(close: pd.Series,
     pivots_df = pd.DataFrame(waves, columns=["time","price","type","wave"])
     return wave_norm, pivots_df
 
-# ========= NEW: Cached EW-last & series calculators for scanning =========
+# ========= NEW: Cached EW-last calculators for scanning =========
 @st.cache_data(ttl=120)
 def last_daily_ew_value(symbol: str, pivot_lb_d: int, norm_win_d: int):
     try:
@@ -616,43 +620,6 @@ def last_hourly_ew_value(symbol: str, pivot_lb: int, norm_win: int, period: str 
         return float(ew.iloc[-1]), s.index[-1]
     except Exception:
         return np.nan, None
-
-@st.cache_data(ttl=120)
-def daily_ew_series(symbol: str, pivot_lb_d: int, norm_win_d: int) -> pd.Series:
-    """Return full Daily EW series for a symbol."""
-    s = fetch_hist(symbol)
-    ew, _ = compute_normalized_elliott_wave(s, pivot_lb=pivot_lb_d, norm_win=norm_win_d)
-    return ew
-
-def find_recent_upcross_and_rising(ew: pd.Series, max_lookback: int = 10, slope_win: int = 5):
-    """
-    Find if EW recently crossed from <0 to >=0 within last `max_lookback` bars
-    AND is proceeding upward (EW last > 0 and slope over last `slope_win` bars > 0).
-    Returns dict with cross_time, ew_now, slope if condition holds; else None.
-    """
-    ew = _coerce_1d_series(ew).dropna()
-    if ew.shape[0] < max(8, slope_win + 2):
-        return None
-    sub = ew.iloc[-(max_lookback + slope_win + 2):]
-    cross_time = None
-    for i in range(1, len(sub)):
-        prev_v = sub.iloc[i-1]
-        curr_v = sub.iloc[i]
-        if prev_v < 0 <= curr_v:
-            cross_time = sub.index[i]
-    if cross_time is None:
-        return None
-    tail = ew.loc[cross_time:].tail(max(slope_win, 2))
-    if tail.shape[0] < 2:
-        return None
-    x = np.arange(len(tail), dtype=float)
-    try:
-        m, b = np.polyfit(x, tail.values, 1)
-    except Exception:
-        return None
-    if np.isfinite(m) and m > 0 and float(tail.iloc[-1]) > 0:
-        return {"cross_time": cross_time, "ew_now": float(tail.iloc[-1]), "slope": float(m)}
-    return None
 # ===============================================================
 
 # --- Session init ---
@@ -1385,8 +1352,9 @@ with tab4:
 # --- Tab 5: EW Summary (NEW) ---
 with tab5:
     st.header("EW Summary Scanner")
-    st.caption("Lists symbols based on their latest **Normalized Elliott Wave** reading and crossings.")
-    # Controls for scans
+    st.caption("Lists symbols based on their latest **Normalized Elliott Wave** reading.")
+
+    # Use the same hour range mapping as Tab 1
     period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
     scan_hour_range = st.selectbox(
         "Hourly lookback for Forex scan:",
@@ -1395,11 +1363,6 @@ with tab5:
         key="scan_hour_range"
     )
     scan_period = period_map[scan_hour_range]
-
-    # NEW: controls for "recent up-cross" detection on Stocks
-    st.markdown("##### Stocks Daily Up-Cross Parameters")
-    upcross_lookback = st.slider("Max lookback for cross (days)", 3, 30, 10, 1, key="sb_upcross_lookback")
-    upcross_slopewin = st.slider("Slope window after cross (days)", 2, 15, 5, 1, key="sb_upcross_slopewin")
 
     if st.button("Scan Universe", key="btn_scan_universe"):
         # ---- Daily scan (all modes) ----
@@ -1425,60 +1388,6 @@ with tab5:
             show = below_daily.copy()
             show["EW_Daily"] = show["EW_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
             st.dataframe(show.reset_index(drop=True), use_container_width=True)
-
-        # ---- NEW: Stocks Daily Up-Cross & Rising table ----
-        if mode == "Stock":
-            st.markdown("---")
-            st.subheader("Stocks Daily — Recently Crossed ↑ 0.0 and Rising")
-            up_rows = []
-            for sym in universe:
-                try:
-                    ew = daily_ew_series(sym, pivot_lookback_d, norm_window_d)
-                    info = find_recent_upcross_and_rising(ew, max_lookback=upcross_lookback, slope_win=upcross_slopewin)
-                    if info is not None:
-                        # optional: add days since cross and last price
-                        s_price = fetch_hist(sym)
-                        last_px = _safe_last_float(s_price)
-                        days_since = (ew.index.max() - info["cross_time"]).days if isinstance(info["cross_time"], pd.Timestamp) else None
-                        up_rows.append({
-                            "Symbol": sym,
-                            "Crossed At": info["cross_time"],
-                            "Days Since": days_since,
-                            "EW Now": info["ew_now"],
-                            f"EW Slope({upcross_slopewin})": info["slope"],
-                            "Last Price": last_px
-                        })
-                except Exception:
-                    continue
-            if not up_rows:
-                st.info("No symbols found with a recent up-cross above 0.0 and a rising EW.")
-            else:
-                df_up = pd.DataFrame(up_rows).sort_values(["Days Since","EW Now"], ascending=[True, False])
-                # formatting
-                def _fmt_ew(x): 
-                    try: 
-                        return f"{float(x):+.3f}"
-                    except Exception:
-                        return "n/a"
-                def _fmt_slope(x):
-                    try:
-                        return f"{float(x):+.4f}"
-                    except Exception:
-                        return "n/a"
-                def _fmt_price3(x):
-                    try:
-                        return f"{float(x):,.3f}"
-                    except Exception:
-                        return "n/a"
-                fmt_cols = {
-                    "EW Now": _fmt_ew,
-                    f"EW Slope({upcross_slopewin})": _fmt_slope,
-                    "Last Price": _fmt_price3
-                }
-                for col, f in fmt_cols.items():
-                    if col in df_up.columns:
-                        df_up[col] = df_up[col].map(f)
-                st.dataframe(df_up.reset_index(drop=True), use_container_width=True)
 
         # ---- Hourly scan (Forex mode only) ----
         if mode == "Forex":
