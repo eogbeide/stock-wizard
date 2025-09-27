@@ -26,7 +26,7 @@
 # - NEW: EW Summary tab — Daily < 0.0; Forex Hourly < 0.0 and > 0.0
 # - UPDATED: **Stock-only** EW Summary — Daily > -0.50 AND < 0.0 (UPTREND ONLY, EW rising toward 0.0)
 
-import streamlit as st
+import streamlit as str
 import pandas as pd
 import numpy as np
 import yfinance as yf
