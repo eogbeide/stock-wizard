@@ -24,6 +24,7 @@
 # - Red shading under NPO curve on EW panels
 # - Daily trend-direction line (green=uptrend, red=downtrend) with slope label
 # - NEW: EW Summary tab — Daily < 0.0; Forex Hourly < 0.0 and > 0.0
+# - NEW: EW Summary tab — Daily < 0.0 but > -0.25
 
 import streamlit as st
 import pandas as pd
@@ -424,13 +425,8 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
     st_line.iloc[0] = upperband.iloc[0]
     in_up.iloc[0]   = True
     for i in range(1, len(ohlc)):
-        prev_st = st_line.iloc(i-1) if callable(getattr(st_line, 'iloc', None)) else st_line.iloc[i-1]
-        prev_up = in_up.iloc(i-1) if callable(getattr(in_up, 'iloc', None)) else in_up.iloc[i-1]
-        # Fallback in case of pandas internals difference
-        try:
-            prev_st = st_line.iloc[i-1]; prev_up = in_up.iloc[i-1]
-        except Exception:
-            pass
+        prev_st = st_line.iloc[i-1]
+        prev_up = in_up.iloc[i-1]
         up_i = min(upperband.iloc[i], prev_st) if prev_up else upperband.iloc[i]
         dn_i = max(lowerband.iloc[i], prev_st) if not prev_up else lowerband.iloc[i]
         close_i = ohlc['Close'].iloc[i]
@@ -593,7 +589,7 @@ def compute_normalized_elliott_wave(close: pd.Series,
     pivots_df = pd.DataFrame(waves, columns=["time","price","type","wave"])
     return wave_norm, pivots_df
 
-# ========= NEW: Cached EW-last calculators for scanning =========
+# ========= Cached EW-last calculators for scanning =========
 @st.cache_data(ttl=120)
 def last_daily_ew_value(symbol: str, pivot_lb_d: int, norm_win_d: int):
     try:
@@ -628,7 +624,7 @@ if 'run_all' not in st.session_state:
     st.session_state.ticker = None
     st.session_state.hour_range = "24h"
 
-# Tabs (NEW: add EW Summary)
+# Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
@@ -686,12 +682,11 @@ with tab1:
         p_up = np.mean(st.session_state.fc_vals.to_numpy() > last_price) if np.isfinite(last_price) else np.nan
         p_dn = 1 - p_up if np.isfinite(p_up) else np.nan
 
-        # Pre-fetch Forex news (intraday only)
         fx_news = pd.DataFrame()
         if mode == "Forex" and show_fx_news:
             fx_news = fetch_yf_news(sel, window_days=news_window_days)
 
-        # ----- Daily (Price + EW in one figure with shared x) -----
+        # ----- Daily (Price + EW) -----
         if chart in ("Daily","Both"):
             ema30 = df.ewm(span=30).mean()
             res30 = df.rolling(30, min_periods=1).max()
@@ -825,13 +820,9 @@ with tab1:
                 ax2.plot(hc.index, he, "--", label="20 EMA")
                 ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
 
-                res_val = np.nan
-                sup_val = np.nan
-                px_val  = np.nan
+                res_val = sup_val = px_val = np.nan
                 try:
-                    res_val = float(res_h.iloc[-1])
-                    sup_val = float(sup_h.iloc[-1])
-                    px_val  = float(hc.iloc[-1])
+                    res_val = float(res_h.iloc[-1]); sup_val = float(sup_h.iloc[-1]); px_val  = float(hc.iloc[-1])
                 except Exception:
                     pass
 
@@ -844,20 +835,14 @@ with tab1:
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
                 buy_sell_text = ""
-                if np.isfinite(sup_val):
-                    buy_sell_text += f" — ▲ BUY @{fmt_price_val(sup_val)}"
-                if np.isfinite(res_val):
-                    buy_sell_text += f"  ▼ SELL @{fmt_price_val(res_val)}"
+                if np.isfinite(sup_val): buy_sell_text += f" — ▲ BUY @{fmt_price_val(sup_val)}"
+                if np.isfinite(res_val): buy_sell_text += f"  ▼ SELL @{fmt_price_val(res_val)}"
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text}")
 
                 if np.isfinite(px_val):
                     pos = ax2.get_position()
-                    fig2.text(
-                        pos.x1, pos.y1 + 0.02,
-                        f"Current price: {fmt_price_val(px_val)}",
-                        ha="right", va="bottom",
-                        fontsize=11, fontweight="bold"
-                    )
+                    fig2.text(pos.x1, pos.y1 + 0.02, f"Current price: {fmt_price_val(px_val)}",
+                              ha="right", va="bottom", fontsize=11, fontweight="bold")
 
                 if not st_line_intr.dropna().empty:
                     ax2.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -910,7 +895,7 @@ with tab1:
                     ax2m.set_xlim(xlim_price)
                     st.pyplot(fig2m)
 
-                # --- Normalized Elliott Wave panel (Hourly) + signals ---
+                # --- Hourly EW panel ---
                 wave_norm, piv_df = compute_normalized_elliott_wave(hc, pivot_lb=pivot_lookback, norm_win=norm_window)
                 npo_h = compute_npo(hc, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=hc.index, dtype=float)
                 ntd_h = compute_normalized_trend(hc, window=ntd_window) if show_ntd else pd.Series(index=hc.index, dtype=float)
@@ -955,8 +940,7 @@ with tab1:
                 pos2w = ax2w.get_position()
                 label_txt_h = f"Price: {fmt_price_val(px_intr)}"
                 if ew_sig_h is not None:
-                    side = ew_sig_h['side']
-                    prob = fmt_pct(ew_sig_h['prob'], digits=0)
+                    side = ew_sig_h['side']; prob = fmt_pct(ew_sig_h['prob'], digits=0)
                     label_txt_h += f"  |  {('▲ BUY' if side=='BUY' else '▼ SELL')} @ {fmt_price_val(px_intr)}  ({prob})"
                 fig2w.text(pos2w.x1, pos2w.y1 + 0.01, label_txt_h, ha="right", va="bottom",
                            fontsize=10, fontweight="bold")
@@ -1099,8 +1083,7 @@ with tab2:
             posdw2 = axdw2.get_position()
             label_txt_d2 = f"Price: {fmt_price_val(px_daily2)}"
             if ew_sig_d2 is not None:
-                side = ew_sig_d2['side']
-                prob = fmt_pct(ew_sig_d2['prob'], digits=0)
+                side = ew_sig_d2['side']; prob = fmt_pct(ew_sig_d2['prob'], digits=0)
                 label_txt_d2 += f"  |  {('▲ BUY' if side=='BUY' else '▼ SELL')} @ {fmt_price_val(px_daily2)}  ({prob})"
             fig.text(posdw2.x1, posdw2.y1 + 0.01, label_txt_d2, ha="right", va="bottom",
                      fontsize=10, fontweight="bold")
@@ -1132,13 +1115,9 @@ with tab2:
                 ax3.plot(ic.index, ie, "--", label="20 EMA")
                 ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
 
-                res_val2 = np.nan
-                sup_val2 = np.nan
-                px_val2  = np.nan
+                res_val2 = sup_val2 = px_val2 = np.nan
                 try:
-                    res_val2 = float(res_i.iloc[-1])
-                    sup_val2 = float(sup_i.iloc[-1])
-                    px_val2  = float(ic.iloc[-1])
+                    res_val2 = float(res_i.iloc[-1]); sup_val2 = float(sup_i.iloc[-1]); px_val2 = float(ic.iloc[-1])
                 except Exception:
                     pass
 
@@ -1151,20 +1130,14 @@ with tab2:
                     label_on_left(ax3, sup_val2, f"S {fmt_price_val(sup_val2)}", color="tab:green")
 
                 buy_sell_text2 = ""
-                if np.isfinite(sup_val2):
-                    buy_sell_text2 += f" — ▲ BUY @{fmt_price_val(sup_val2)}"
-                if np.isfinite(res_val2):
-                    buy_sell_text2 += f"  ▼ SELL @{fmt_price_val(res_val2)}"
+                if np.isfinite(sup_val2): buy_sell_text2 += f" — ▲ BUY @{fmt_price_val(sup_val2)}"
+                if np.isfinite(res_val2): buy_sell_text2 += f"  ▼ SELL @{fmt_price_val(res_val2)}"
                 ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text2}")
 
                 if np.isfinite(px_val2):
                     pos2 = ax3.get_position()
-                    fig3.text(
-                        pos2.x1, pos2.y1 + 0.02,
-                        f"Current price: {fmt_price_val(px_val2)}",
-                        ha="right", va="bottom",
-                        fontsize=11, fontweight="bold"
-                    )
+                    fig3.text(pos2.x1, pos2.y1 + 0.02, f"Current price: {fmt_price_val(px_val2)}",
+                              ha="right", va="bottom", fontsize=11, fontweight="bold")
 
                 if not st_line_intr.dropna().empty:
                     ax3.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -1211,7 +1184,7 @@ with tab2:
                     ax3m.set_xlim(xlim_price2)
                     st.pyplot(fig3m)
 
-                # --- Hourly EW panel + NPO + NTD + signals ---
+                # --- Hourly EW panel + NPO + NTD ---
                 wave_norm2, piv_df2 = compute_normalized_elliott_wave(ic, pivot_lb=pivot_lookback, norm_win=norm_window)
                 npo_h2 = compute_npo(ic, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=ic.index, dtype=float)
                 ntd_h2 = compute_normalized_trend(ic, window=ntd_window) if show_ntd else pd.Series(index=ic.index, dtype=float)
@@ -1256,8 +1229,7 @@ with tab2:
                 pos3w = ax3w.get_position()
                 label_txt_h2 = f"Price: {fmt_price_val(px_intr2)}"
                 if ew_sig_h2 is not None:
-                    side = ew_sig_h2['side']
-                    prob = fmt_pct(ew_sig_h2['prob'], digits=0)
+                    side = ew_sig_h2['side']; prob = fmt_pct(ew_sig_h2['prob'], digits=0)
                     label_txt_h2 += f"  |  {('▲ BUY' if side=='BUY' else '▼ SELL')} @ {fmt_price_val(px_intr2)}  ({prob})"
                 fig3w.text(pos3w.x1, pos3w.y1 + 0.01, label_txt_h2, ha="right", va="bottom",
                            fontsize=10, fontweight="bold")
@@ -1331,7 +1303,7 @@ with tab4:
         fig0, ax0 = plt.subplots(figsize=(14,5))
         ax0.plot(df0.index, df0['Close'], label="Close")
         ax0.plot(df0.index, df0['MA30'], label="30 MA")
-        ax0.plot(df0.index, res0, ":", label="Resistance")
+        ax0.plot(res0, ":", label="Resistance")
         ax0.plot(sup0, ":", label="Support")
         ax0.plot(df0.index, trend0, "--", label="Trend")
         ax0.set_xlabel("Date (PST)")
@@ -1349,12 +1321,12 @@ with tab4:
         }).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
 
-# --- Tab 5: EW Summary (NEW) ---
+# --- Tab 5: EW Summary ---
 with tab5:
     st.header("EW Summary Scanner")
     st.caption("Lists symbols based on their latest **Normalized Elliott Wave** reading.")
 
-    # Use the same hour range mapping as Tab 1
+    # Use same hour range mapping as Tab 1
     period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
     scan_hour_range = st.selectbox(
         "Hourly lookback for Forex scan:",
@@ -1369,25 +1341,37 @@ with tab5:
         daily_rows = []
         for sym in universe:
             val, ts = last_daily_ew_value(sym, pivot_lookback_d, norm_window_d)
-            daily_rows.append({
-                "Symbol": sym,
-                "EW_Daily": val,
-                "Timestamp": ts
-            })
+            daily_rows.append({"Symbol": sym, "EW_Daily": val, "Timestamp": ts})
         df_daily = pd.DataFrame(daily_rows)
-        below_daily = df_daily[df_daily["EW_Daily"] < 0].sort_values("EW_Daily")  # most negative first
 
-        c1, c2 = st.columns(2)
+        # Table 1: Daily < 0.0 (most negative first)
+        below_daily = df_daily[df_daily["EW_Daily"] < 0].sort_values("EW_Daily")
+
+        # NEW Table 2: Daily < 0.0 but > -0.25
+        midzone_daily = df_daily[
+            (df_daily["EW_Daily"] < 0) & (df_daily["EW_Daily"] > -0.25)
+        ].sort_values("EW_Daily", ascending=True)
+
+        c1, c2, c3 = st.columns(3)
         c1.metric("Universe Size", len(universe))
         c2.metric("Daily < 0.0", int(below_daily.shape[0]))
+        c3.metric("-0.25 < Daily < 0.0", int(midzone_daily.shape[0]))
 
         st.subheader("Daily — Below EW 0.0")
         if below_daily.empty:
             st.info("No symbols currently below EW 0.0 on Daily.")
         else:
-            show = below_daily.copy()
-            show["EW_Daily"] = show["EW_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
-            st.dataframe(show.reset_index(drop=True), use_container_width=True)
+            show1 = below_daily.copy()
+            show1["EW_Daily"] = show1["EW_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
+            st.dataframe(show1.reset_index(drop=True), use_container_width=True)
+
+        st.subheader("Daily — Below 0.0 but Above -0.25 EW")
+        if midzone_daily.empty:
+            st.info("No symbols currently between -0.25 and 0.0 on Daily EW.")
+        else:
+            show2 = midzone_daily.copy()
+            show2["EW_Daily"] = show2["EW_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
+            st.dataframe(show2.reset_index(drop=True), use_container_width=True)
 
         # ---- Hourly scan (Forex mode only) ----
         if mode == "Forex":
@@ -1396,20 +1380,16 @@ with tab5:
             hourly_rows = []
             for sym in universe:
                 hv, hts = last_hourly_ew_value(sym, pivot_lookback, norm_window, period=scan_period)
-                hourly_rows.append({
-                    "Symbol": sym,
-                    "EW_Hourly": hv,
-                    "Timestamp": hts
-                })
+                hourly_rows.append({"Symbol": sym, "EW_Hourly": hv, "Timestamp": hts})
             df_hour = pd.DataFrame(hourly_rows)
 
             below_hour = df_hour[df_hour["EW_Hourly"] < 0].sort_values("EW_Hourly")
             above_hour = df_hour[df_hour["EW_Hourly"] > 0].sort_values("EW_Hourly", ascending=False)
 
-            c3, c4, c5 = st.columns(3)
-            c3.metric("Scanned FX Pairs", len(universe))
-            c4.metric("Hourly < 0.0", int(below_hour.shape[0]))
-            c5.metric("Hourly > 0.0", int(above_hour.shape[0]))
+            c4, c5, c6 = st.columns(3)
+            c4.metric("Scanned FX Pairs", len(universe))
+            c5.metric("Hourly < 0.0", int(below_hour.shape[0]))
+            c6.metric("Hourly > 0.0", int(above_hour.shape[0]))
 
             st.write("**Below 0.0 (Hourly)**")
             if below_hour.empty:
