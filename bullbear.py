@@ -26,7 +26,7 @@
 # - NEW: EW Summary tab — Daily < 0.0; Forex Hourly scan shows **NTD relative to 0.0** (NTD below/above 0.0)
 # - NEW: EW Summary tab — Daily < 0.0 but > -0.25
 
-import streamlit as st
+import streamlit as std
 import pandas as pd
 import numpy as np
 import yfinance as yf
