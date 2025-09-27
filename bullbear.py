@@ -23,7 +23,7 @@
 # - Daily view selector (Historical / 6M / 12M / 24M)
 # - Red shading under NPO curve on EW panels
 # - Daily trend-direction line (green=uptrend, red=downtrend) with slope label
-# - NEW: EW Summary tab — Daily < 0.0; Forex Hourly < 0.0 and > 0.0
+# - NEW: EW Summary tab — Daily < 0.0; Forex Hourly scan shows **NTD relative to 0.0** (NTD below/above 0.0)
 # - NEW: EW Summary tab — Daily < 0.0 but > -0.25
 
 import streamlit as st
@@ -589,7 +589,7 @@ def compute_normalized_elliott_wave(close: pd.Series,
     pivots_df = pd.DataFrame(waves, columns=["time","price","type","wave"])
     return wave_norm, pivots_df
 
-# ========= Cached EW-last calculators for scanning =========
+# ========= Cached "last value" calculators for scanning =========
 @st.cache_data(ttl=120)
 def last_daily_ew_value(symbol: str, pivot_lb_d: int, norm_win_d: int):
     try:
@@ -614,6 +614,21 @@ def last_hourly_ew_value(symbol: str, pivot_lb: int, norm_win: int, period: str 
         if ew.empty:
             return np.nan, None
         return float(ew.iloc[-1]), s.index[-1]
+    except Exception:
+        return np.nan, None
+
+@st.cache_data(ttl=120)
+def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
+    """Return the last hourly NTD value and its timestamp (for Forex scan)."""
+    try:
+        df = fetch_intraday(symbol, period=period)
+        if df is None or df.empty or "Close" not in df:
+            return np.nan, None
+        s = df["Close"].ffill()
+        ntd = compute_normalized_trend(s, window=ntd_win).dropna()
+        if ntd.empty:
+            return np.nan, None
+        return float(ntd.iloc[-1]), ntd.index[-1]
     except Exception:
         return np.nan, None
 # ===============================================================
@@ -1324,7 +1339,7 @@ with tab4:
 # --- Tab 5: EW Summary ---
 with tab5:
     st.header("EW Summary Scanner")
-    st.caption("Lists symbols based on their latest **Normalized Elliott Wave** reading.")
+    st.caption("Lists symbols based on their latest **Daily EW** and, for **Forex**, latest **Hourly NTD** vs 0.0 (negative = downtrend bias).")
 
     # Use same hour range mapping as Tab 1
     period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
@@ -1347,7 +1362,7 @@ with tab5:
         # Table 1: Daily < 0.0 (most negative first)
         below_daily = df_daily[df_daily["EW_Daily"] < 0].sort_values("EW_Daily")
 
-        # NEW Table 2: Daily < 0.0 but > -0.25
+        # Table 2: Daily < 0.0 but > -0.25
         midzone_daily = df_daily[
             (df_daily["EW_Daily"] < 0) & (df_daily["EW_Daily"] > -0.25)
         ].sort_values("EW_Daily", ascending=True)
@@ -1373,36 +1388,36 @@ with tab5:
             show2["EW_Daily"] = show2["EW_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
             st.dataframe(show2.reset_index(drop=True), use_container_width=True)
 
-        # ---- Hourly scan (Forex mode only) ----
+        # ---- Hourly scan (Forex mode only) — UPDATED: NTD vs 0.0 ----
         if mode == "Forex":
             st.markdown("---")
-            st.subheader(f"Forex Hourly — {scan_hour_range} lookback")
+            st.subheader(f"Forex Hourly (NTD) — {scan_hour_range} lookback")
             hourly_rows = []
             for sym in universe:
-                hv, hts = last_hourly_ew_value(sym, pivot_lookback, norm_window, period=scan_period)
-                hourly_rows.append({"Symbol": sym, "EW_Hourly": hv, "Timestamp": hts})
+                ntd_v, ntd_ts = last_hourly_ntd_value(sym, ntd_window, period=scan_period)
+                hourly_rows.append({"Symbol": sym, "NTD_Hourly": ntd_v, "Timestamp": ntd_ts})
             df_hour = pd.DataFrame(hourly_rows)
 
-            below_hour = df_hour[df_hour["EW_Hourly"] < 0].sort_values("EW_Hourly")
-            above_hour = df_hour[df_hour["EW_Hourly"] > 0].sort_values("EW_Hourly", ascending=False)
+            below_ntd = df_hour[df_hour["NTD_Hourly"] < 0].sort_values("NTD_Hourly")
+            above_ntd = df_hour[df_hour["NTD_Hourly"] >= 0].sort_values("NTD_Hourly", ascending=False)
 
             c4, c5, c6 = st.columns(3)
             c4.metric("Scanned FX Pairs", len(universe))
-            c5.metric("Hourly < 0.0", int(below_hour.shape[0]))
-            c6.metric("Hourly > 0.0", int(above_hour.shape[0]))
+            c5.metric("NTD < 0.0 (Hourly)", int(below_ntd.shape[0]))
+            c6.metric("NTD ≥ 0.0 (Hourly)", int(above_ntd.shape[0]))
 
-            st.write("**Below 0.0 (Hourly)**")
-            if below_hour.empty:
-                st.info("No Forex symbols currently below EW 0.0 on Hourly.")
+            st.write("**NTD below 0.0 (Hourly)**")
+            if below_ntd.empty:
+                st.info("No Forex symbols currently with NTD < 0.0 on Hourly.")
             else:
-                show_b = below_hour.copy()
-                show_b["EW_Hourly"] = show_b["EW_Hourly"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
+                show_b = below_ntd.copy()
+                show_b["NTD_Hourly"] = show_b["NTD_Hourly"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
                 st.dataframe(show_b.reset_index(drop=True), use_container_width=True)
 
-            st.write("**Above 0.0 (Hourly)**")
-            if above_hour.empty:
-                st.info("No Forex symbols currently above EW 0.0 on Hourly.")
+            st.write("**NTD at/above 0.0 (Hourly)**")
+            if above_ntd.empty:
+                st.info("No Forex symbols currently with NTD ≥ 0.0 on Hourly.")
             else:
-                show_a = above_hour.copy()
-                show_a["EW_Hourly"] = show_a["EW_Hourly"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
+                show_a = above_ntd.copy()
+                show_a["NTD_Hourly"] = show_a["NTD_Hourly"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
                 st.dataframe(show_a.reset_index(drop=True), use_container_width=True)
