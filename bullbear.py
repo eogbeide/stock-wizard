@@ -24,7 +24,7 @@
 # - Red shading under NPO curve on EW panels
 # - Daily trend-direction line (green=uptrend, red=downtrend) with slope label
 # - NEW: EW Summary tab — Daily < 0.0; Forex Hourly < 0.0 and > 0.0
-# - NEW: EW Summary tab — Daily < 0.0 but > -0.25 (UPTREND ONLY)
+# - NEW: EW Summary tab — Daily > -0.25 AND < 0.0 (Uptrend)
 
 import streamlit as st
 import pandas as pd
@@ -333,8 +333,8 @@ def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int 
         return pd.Series(index=s.index, dtype=float)
     if fast >= slow:
         fast, slow = max(1, slow - 1), slow
-        if fast >= slow:
-            return pd.Series(index=s.index, dtype=float)
+    if fast >= slow:
+        return pd.Series(index=s.index, dtype=float)
     ema_fast = s.ewm(span=int(fast), adjust=False).mean()
     ema_slow = s.ewm(span=int(slow), adjust=False).mean().replace(0, np.nan)
     ppo = (ema_fast - ema_slow) / ema_slow * 100.0
@@ -1361,7 +1361,7 @@ with tab5:
         # Table 1: Daily < 0.0 (most negative first)
         below_daily = df_daily[df_daily["EW_Daily"] < 0].sort_values("EW_Daily")
 
-        # Table 2 (UPTREND ONLY): -0.25 < EW_Daily < 0.0 AND slope > 0
+        # Table 2 (UPTREND ONLY): greater than -0.25 AND < 0.0 with positive slope
         df_mid = df_daily[(df_daily["EW_Daily"] < 0) & (df_daily["EW_Daily"] > -0.25)].copy()
         if not df_mid.empty:
             df_mid["Slope"] = df_mid["Symbol"].map(uptrend_map)
@@ -1372,7 +1372,7 @@ with tab5:
         c1, c2, c3 = st.columns(3)
         c1.metric("Universe Size", len(universe))
         c2.metric("Daily < 0.0", int(below_daily.shape[0]))
-        c3.metric("-0.25 < Daily < 0.0 (Uptrend)", int(midzone_daily.shape[0]))
+        c3.metric("> -0.25 AND < 0.0 (Uptrend)", int(midzone_daily.shape[0]))
 
         st.subheader("Daily — Below EW 0.0")
         if below_daily.empty:
@@ -1382,9 +1382,9 @@ with tab5:
             show1["EW_Daily"] = show1["EW_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
             st.dataframe(show1.reset_index(drop=True), use_container_width=True)
 
-        st.subheader("Daily — Below 0.0 but Above -0.25 EW (UPTREND ONLY)")
+        st.subheader("Daily — > -0.25 AND < 0.0 EW (UPTREND ONLY)")
         if midzone_daily.empty:
-            st.info("No symbols currently between -0.25 and 0.0 on Daily EW with an uptrend.")
+            st.info("No symbols currently greater than -0.25 and less than 0.0 on Daily EW with an uptrend.")
         else:
             show2 = midzone_daily.copy()
             show2["EW_Daily"] = show2["EW_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
