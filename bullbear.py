@@ -26,7 +26,7 @@
 # - UPDATED: Forex Hourly scan lists ONLY NTD < 0.0
 # - NOTE: No Streamlit caching (per request)
 
-import streamlit as st
+import streamlit as stbn
 import pandas as pd
 import numpy as np
 import yfinance as yf
