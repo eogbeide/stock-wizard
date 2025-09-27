@@ -24,7 +24,7 @@
 # - Red shading under NPO curve on EW panels
 # - Daily trend-direction line (green=uptrend, red=downtrend) with slope label
 # - NEW: EW Summary tab — Daily < 0.0; Forex Hourly < 0.0 and > 0.0
-# - UPDATED: EW Summary tab — Daily > -0.50 AND < 0.0 (UPTREND ONLY, EW rising toward 0.0)
+# - UPDATED: **Stock-only** EW Summary — Daily > -0.50 AND < 0.0 (UPTREND ONLY, EW rising toward 0.0)
 
 import streamlit as st
 import pandas as pd
@@ -1347,7 +1347,7 @@ with tab4:
 # --- Tab 5: EW Summary ---
 with tab5:
     st.header("EW Summary Scanner")
-    st.caption("Lists symbols based on their latest **Normalized Elliott Wave** reading. Midzone includes only symbols with **positive price slope** and **EW rising toward 0.0**.")
+    st.caption("For **Stocks**: shows Daily EW groups. For **Forex**: shows Hourly EW groups. The Stock midzone lists symbols with **EW > -0.50 and < 0.0**, **positive price slope**, and **EW rising toward 0.0**.")
 
     # Use same hour range mapping as Tab 1
     period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
@@ -1360,66 +1360,72 @@ with tab5:
     scan_period = period_map[scan_hour_range]
 
     if st.button("Scan Universe", key="btn_scan_universe"):
-        # ---- Daily scan (all modes) ----
-        daily_rows = []
-        uptrend_map = {}
-        ew_recent_map = {}
-        for sym in universe:
-            val, ts = last_daily_ew_value(sym, pivot_lookback_d, norm_window_d)
-            slope_m = last_daily_slope(sym, slope_lb_daily)
-            ew_recent = daily_ew_recent(sym, pivot_lookback_d, norm_window_d, lookback=10)
-            daily_rows.append({"Symbol": sym, "EW_Daily": val, "Timestamp": ts})
-            uptrend_map[sym] = slope_m
-            ew_recent_map[sym] = ew_recent
+        # ---- STOCK MODE: Daily scans only (with midzone logic) ----
+        if mode == "Stock":
+            daily_rows = []
+            uptrend_map = {}
+            ew_recent_map = {}
+            for sym in universe:
+                val, ts = last_daily_ew_value(sym, pivot_lookback_d, norm_window_d)
+                slope_m = last_daily_slope(sym, slope_lb_daily)
+                ew_recent = daily_ew_recent(sym, pivot_lookback_d, norm_window_d, lookback=10)
+                daily_rows.append({"Symbol": sym, "EW_Daily": val, "Timestamp": ts})
+                uptrend_map[sym] = slope_m
+                ew_recent_map[sym] = ew_recent
 
-        df_daily = pd.DataFrame(daily_rows)
+            df_daily = pd.DataFrame(daily_rows)
 
-        # Table 1: Daily < 0.0 (most negative first)
-        below_daily = df_daily[df_daily["EW_Daily"] < 0].sort_values("EW_Daily")
+            # Group A: Daily < 0.0 (most negative first)
+            below_daily = df_daily[df_daily["EW_Daily"] < 0].sort_values("EW_Daily")
 
-        # Table 2 (UPTREND ONLY): > -0.50 AND < 0.0 with positive price slope AND EW rising toward 0.0
-        def rising_toward_zero(sr: pd.Series) -> bool:
-            sr = pd.to_numeric(sr, errors="coerce").dropna()
-            if sr.shape[0] < 3:
-                return False
-            # Recent momentum in EW should be positive (moving up)
-            recent_mean_diff = sr.diff().tail(5).mean()
-            net_change = sr.iloc[-1] - sr.iloc[0]
-            return (recent_mean_diff is not None) and np.isfinite(recent_mean_diff) and recent_mean_diff > 0 and net_change > 0
+            # Midzone (Stock-only): > -0.50 AND < 0.0 + positive slope + EW rising toward 0.0
+            def rising_toward_zero(sr: pd.Series) -> bool:
+                sr = pd.to_numeric(sr, errors="coerce").dropna()
+                if sr.shape[0] < 3:
+                    return False
+                recent_mean_diff = sr.diff().tail(5).mean()
+                net_change = sr.iloc[-1] - sr.iloc[0]
+                return (
+                    (recent_mean_diff is not None)
+                    and np.isfinite(recent_mean_diff)
+                    and recent_mean_diff > 0
+                    and net_change > 0
+                )
 
-        df_mid = df_daily[(df_daily["EW_Daily"] < 0.0) & (df_daily["EW_Daily"] > -0.50)].copy()
-        if not df_mid.empty:
-            df_mid["Slope"] = df_mid["Symbol"].map(uptrend_map)
-            df_mid["EW_Rising"] = df_mid["Symbol"].map(lambda s: rising_toward_zero(ew_recent_map.get(s, pd.Series(dtype=float))))
-            midzone_daily = df_mid[(df_mid["Slope"] > 0) & (df_mid["EW_Rising"])].sort_values("EW_Daily", ascending=True)
-        else:
-            midzone_daily = df_mid
+            df_mid = df_daily[(df_daily["EW_Daily"] < 0.0) & (df_daily["EW_Daily"] > -0.50)].copy()
+            if not df_mid.empty:
+                df_mid["Slope"] = df_mid["Symbol"].map(uptrend_map)
+                df_mid["EW_Rising"] = df_mid["Symbol"].map(
+                    lambda s: rising_toward_zero(ew_recent_map.get(s, pd.Series(dtype=float)))
+                )
+                midzone_daily = df_mid[(df_mid["Slope"] > 0) & (df_mid["EW_Rising"])].sort_values("EW_Daily", ascending=True)
+            else:
+                midzone_daily = df_mid
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Universe Size", len(universe))
-        c2.metric("Daily < 0.0", int(below_daily.shape[0]))
-        c3.metric("> -0.50 AND < 0.0 (Uptrend→0.0)", int(midzone_daily.shape[0]))
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Stock Universe Size", len(universe))
+            c2.metric("Daily < 0.0", int(below_daily.shape[0]))
+            c3.metric("> -0.50 AND < 0.0 (Uptrend→0.0)", int(midzone_daily.shape[0]))
 
-        st.subheader("Daily — Below EW 0.0")
-        if below_daily.empty:
-            st.info("No symbols currently below EW 0.0 on Daily.")
-        else:
-            show1 = below_daily.copy()
-            show1["EW_Daily"] = show1["EW_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
-            st.dataframe(show1.reset_index(drop=True), use_container_width=True)
+            st.subheader("Stocks — Daily: Below EW 0.0")
+            if below_daily.empty:
+                st.info("No stock symbols currently below EW 0.0 on Daily.")
+            else:
+                show1 = below_daily.copy()
+                show1["EW_Daily"] = show1["EW_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
+                st.dataframe(show1.reset_index(drop=True), use_container_width=True)
 
-        st.subheader("Daily — > -0.50 AND < 0.0 EW (UPTREND ONLY, EW rising toward 0.0)")
-        if midzone_daily.empty:
-            st.info("No symbols currently greater than -0.50 and less than 0.0 on Daily EW with an uptrend and EW rising toward 0.0.")
-        else:
-            show2 = midzone_daily.copy()
-            show2["EW_Daily"] = show2["EW_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
-            show2["Slope"] = show2["Slope"].map(lambda x: fmt_slope(x))
-            st.dataframe(show2.reset_index(drop=True), use_container_width=True)
+            st.subheader("Stocks — Daily: > -0.50 AND < 0.0 (UPTREND ONLY, EW rising toward 0.0)")
+            if midzone_daily.empty:
+                st.info("No stock symbols meet the midzone criteria right now.")
+            else:
+                show2 = midzone_daily.copy()
+                show2["EW_Daily"] = show2["EW_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
+                show2["Slope"] = show2["Slope"].map(lambda x: fmt_slope(x))
+                st.dataframe(show2.reset_index(drop=True), use_container_width=True)
 
-        # ---- Hourly scan (Forex mode only) ----
-        if mode == "Forex":
-            st.markdown("---")
+        # ---- FOREX MODE: Hourly scans only ----
+        elif mode == "Forex":
             st.subheader(f"Forex Hourly — {scan_hour_range} lookback")
             hourly_rows = []
             for sym in universe:
