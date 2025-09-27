@@ -24,7 +24,7 @@
 # - Red shading under NPO curve on EW panels
 # - Daily trend-direction line (green=uptrend, red=downtrend) with slope label
 # - NEW: EW Summary tab — Daily < 0.0; Forex Hourly < 0.0 and > 0.0
-# - NEW: EW Summary tab — Daily < 0.0 but > -0.25
+# - NEW: EW Summary tab — Daily < 0.0 but > -0.25 (UPTREND ONLY)
 
 import streamlit as st
 import pandas as pd
@@ -616,6 +616,16 @@ def last_hourly_ew_value(symbol: str, pivot_lb: int, norm_win: int, period: str 
         return float(ew.iloc[-1]), s.index[-1]
     except Exception:
         return np.nan, None
+
+@st.cache_data(ttl=120)
+def last_daily_slope(symbol: str, lookback: int) -> float:
+    """Return the daily slope (per bar) over the given lookback using close prices."""
+    try:
+        s = fetch_hist(symbol)
+        _, m = slope_line(s, lookback)
+        return float(m)
+    except Exception:
+        return float("nan")
 # ===============================================================
 
 # --- Session init ---
@@ -1324,7 +1334,7 @@ with tab4:
 # --- Tab 5: EW Summary ---
 with tab5:
     st.header("EW Summary Scanner")
-    st.caption("Lists symbols based on their latest **Normalized Elliott Wave** reading.")
+    st.caption("Lists symbols based on their latest **Normalized Elliott Wave** reading. The midzone table only shows symbols in an **UPTREND** (positive daily slope).")
 
     # Use same hour range mapping as Tab 1
     period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
@@ -1339,23 +1349,30 @@ with tab5:
     if st.button("Scan Universe", key="btn_scan_universe"):
         # ---- Daily scan (all modes) ----
         daily_rows = []
+        uptrend_map = {}
         for sym in universe:
             val, ts = last_daily_ew_value(sym, pivot_lookback_d, norm_window_d)
+            slope_m = last_daily_slope(sym, slope_lb_daily)
             daily_rows.append({"Symbol": sym, "EW_Daily": val, "Timestamp": ts})
+            uptrend_map[sym] = slope_m
+
         df_daily = pd.DataFrame(daily_rows)
 
         # Table 1: Daily < 0.0 (most negative first)
         below_daily = df_daily[df_daily["EW_Daily"] < 0].sort_values("EW_Daily")
 
-        # NEW Table 2: Daily < 0.0 but > -0.25
-        midzone_daily = df_daily[
-            (df_daily["EW_Daily"] < 0) & (df_daily["EW_Daily"] > -0.25)
-        ].sort_values("EW_Daily", ascending=True)
+        # Table 2 (UPTREND ONLY): -0.25 < EW_Daily < 0.0 AND slope > 0
+        df_mid = df_daily[(df_daily["EW_Daily"] < 0) & (df_daily["EW_Daily"] > -0.25)].copy()
+        if not df_mid.empty:
+            df_mid["Slope"] = df_mid["Symbol"].map(uptrend_map)
+            midzone_daily = df_mid[df_mid["Slope"] > 0].sort_values("EW_Daily", ascending=True)
+        else:
+            midzone_daily = df_mid
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Universe Size", len(universe))
         c2.metric("Daily < 0.0", int(below_daily.shape[0]))
-        c3.metric("-0.25 < Daily < 0.0", int(midzone_daily.shape[0]))
+        c3.metric("-0.25 < Daily < 0.0 (Uptrend)", int(midzone_daily.shape[0]))
 
         st.subheader("Daily — Below EW 0.0")
         if below_daily.empty:
@@ -1365,12 +1382,13 @@ with tab5:
             show1["EW_Daily"] = show1["EW_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
             st.dataframe(show1.reset_index(drop=True), use_container_width=True)
 
-        st.subheader("Daily — Below 0.0 but Above -0.25 EW")
+        st.subheader("Daily — Below 0.0 but Above -0.25 EW (UPTREND ONLY)")
         if midzone_daily.empty:
-            st.info("No symbols currently between -0.25 and 0.0 on Daily EW.")
+            st.info("No symbols currently between -0.25 and 0.0 on Daily EW with an uptrend.")
         else:
             show2 = midzone_daily.copy()
             show2["EW_Daily"] = show2["EW_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
+            show2["Slope"] = show2["Slope"].map(lambda x: fmt_slope(x))
             st.dataframe(show2.reset_index(drop=True), use_container_width=True)
 
         # ---- Hourly scan (Forex mode only) ----
