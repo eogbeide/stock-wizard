@@ -23,6 +23,7 @@
 # - Daily view selector (Historical / 6M / 12M / 24M)
 # - Red shading under NPO curve on EW panels
 # - NEW: Daily trend-direction line (green=uptrend, red=downtrend) with slope label
+# - NEW: NTD -0.5 Scanner tab for Stocks & Forex (Daily; plus Hourly for Forex)
 
 import streamlit as st
 import pandas as pd
@@ -126,7 +127,7 @@ def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: i
     except Exception:
         pass
 
-# NEW: range helper for daily views
+# Range helper for daily views
 def subset_by_daily_view(obj, view_label: str):
     """Return series/df subset for Historical / 6M / 12M / 24M based on its own max date."""
     if obj is None or len(obj.index) == 0:
@@ -140,12 +141,12 @@ def subset_by_daily_view(obj, view_label: str):
         start = end - pd.Timedelta(days=days_map.get(view_label, 365))
     return obj.loc[(idx >= start) & (idx <= end)]
 
-# --- Sidebar config (explicit keys everywhere) ---
+# --- Sidebar config ---
 st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2, key="sb_bb_period")
 
-# NEW: daily range selector
+# Daily range selector
 daily_view = st.sidebar.selectbox(
     "Daily view range:",
     ["Historical", "6M", "12M", "24M"],
@@ -185,14 +186,14 @@ pivot_lookback_d = st.sidebar.slider("Pivot lookback (days)", 3, 31, 9, 2, key="
 norm_window_d    = st.sidebar.slider("Normalization window (days)", 30, 1200, 360, 10, key="sb_norm_win_d")
 waves_to_annotate_d = st.sidebar.slider("Annotate recent waves (daily)", 3, 12, 7, 1, key="sb_wave_ann_d")
 
-# --- Normalized Price Oscillator controls ---
+# NPO overlay controls
 st.sidebar.subheader("Normalized Price Oscillator (overlay on EW panels)")
 show_npo = st.sidebar.checkbox("Show NPO overlay", value=True, key="sb_show_npo")
 npo_fast = st.sidebar.slider("NPO fast EMA", 5, 30, 12, 1, key="sb_npo_fast")
 npo_slow = st.sidebar.slider("NPO slow EMA", 10, 60, 26, 1, key="sb_npo_slow")
 npo_norm_win = st.sidebar.slider("NPO normalization window", 30, 600, 240, 10, key="sb_npo_norm")
 
-# --- Normalized Trend Direction (overlay on EW panels) ---
+# NTD overlay controls
 st.sidebar.subheader("Normalized Trend (EW panels)")
 show_ntd = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd")
 ntd_window = st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
@@ -211,7 +212,7 @@ if mode == "Stock":
     universe = sorted([
         'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
         'META','SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO',
-        'MSFT','TSM','NFLX','MP','AAL','URI','DAL','BBAI','QUBT','AMD','SMCI','ORCL'
+        'MSFT','TSM','NFLX','MP','AAL','URI','DAL','BBAI','QUBT','AMD','SMCI','ORCL','TLT'
     ])
 else:
     universe = [
@@ -326,25 +327,18 @@ def compute_roc(series_like, n: int = 10) -> pd.Series:
     roc = base.pct_change(n) * 100.0
     return roc.reindex(s.index)
 
-# ---- NEW: Normalized Price Oscillator (PPO -> z-score -> tanh) ----
+# ---- Normalized Price Oscillator ----
 def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int = 240) -> pd.Series:
-    """
-    Returns NPO in [-1,1]: tanh( zscore(PPO) / 2 ).
-    PPO = (EMA_fast - EMA_slow) / EMA_slow * 100
-    NOTE: If params invalid or insufficient data, returns empty/NaN series.
-    """
     s = _coerce_1d_series(close)
     if s.empty or not np.isfinite(fast) or not np.isfinite(slow) or fast <= 0 or slow <= 0:
         return pd.Series(index=s.index, dtype=float)
-    # Ensure fast < slow for stable PPO
     if fast >= slow:
         fast, slow = max(1, slow - 1), slow
         if fast >= slow:
-            return pd.Series(index=s.index, dtype=float)  # cannot fix
+            return pd.Series(index=s.index, dtype=float)
     ema_fast = s.ewm(span=int(fast), adjust=False).mean()
     ema_slow = s.ewm(span=int(slow), adjust=False).mean().replace(0, np.nan)
     ppo = (ema_fast - ema_slow) / ema_slow * 100.0
-    # Normalize PPO
     minp = max(10, int(norm_win)//10)
     mean = ppo.rolling(int(norm_win), min_periods=minp).mean()
     std  = ppo.rolling(int(norm_win), min_periods=minp).std().replace(0, np.nan)
@@ -352,22 +346,12 @@ def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int 
     npo = np.tanh(z / 2.0)
     return npo.reindex(s.index)
 
-# ---- NEW: Normalized Trend Direction (rolling LR slope -> volatility-normalized -> tanh) ----
+# ---- Normalized Trend Direction ----
 def compute_normalized_trend(close: pd.Series, window: int = 60) -> pd.Series:
-    """
-    Normalized Trend Direction (NTD) in [-1,1].
-    Steps:
-      - Rolling linear-regression slope over 'window' bars
-      - Scale by window and divide by rolling std (volatility)
-      - Squash with tanh to bound and stabilize
-    Interpretation:
-      >0 uptrend bias; <0 downtrend bias; magnitude ~ strength
-    """
     s = _coerce_1d_series(close).astype(float)
     if s.empty or window < 3:
         return pd.Series(index=s.index, dtype=float)
 
-    # rolling slope via polyfit on each window
     minp = max(5, window // 3)
     def _slope(y: pd.Series) -> float:
         y = pd.Series(y).dropna()
@@ -388,7 +372,6 @@ def compute_normalized_trend(close: pd.Series, window: int = 60) -> pd.Series:
     return ntd.reindex(s.index)
 
 def shade_ntd_regions(ax, ntd: pd.Series):
-    """Optional green/red shading under/over zero to emphasize direction."""
     if ntd is None or ntd.empty:
         return
     ntd = ntd.copy()
@@ -397,9 +380,8 @@ def shade_ntd_regions(ax, ntd: pd.Series):
     ax.fill_between(ntd.index, 0, pos, alpha=0.12, step=None)
     ax.fill_between(ntd.index, 0, neg, alpha=0.12, step=None)
 
-# NEW: Red shading under NPO curve
+# Red shading under NPO curve
 def shade_npo_regions(ax, npo: pd.Series):
-    """Shade area between NPO and 0 in red (lighter when below zero)."""
     if npo is None or npo.empty:
         return
     pos = npo.where(npo > 0)
@@ -407,12 +389,8 @@ def shade_npo_regions(ax, npo: pd.Series):
     ax.fill_between(pos.index, 0, pos, alpha=0.15, color="tab:red")
     ax.fill_between(neg.index, 0, neg, alpha=0.08, color="tab:red")
 
-# --- NEW: Daily trend-direction line helper ---
+# Daily trend-direction line helper
 def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "Trend"):
-    """
-    Draws a regression line over the visible daily window and colors it by direction.
-    Green = uptrend (positive slope), Red = downtrend (negative slope).
-    """
     s = _coerce_1d_series(series_like).dropna()
     if s.shape[0] < 2:
         return np.nan
@@ -564,7 +542,7 @@ def elliott_conf_signal(price_now: float, fc_vals: pd.Series, conf: float = EW_C
 # --- Normalized Elliott Wave (simple, dependency-free) ----
 def compute_normalized_elliott_wave(close: pd.Series,
                                     pivot_lb: int = 7,
-                                    norm_win: int = 240) -> tuple[pd.Series, pd.DataFrame]:
+                                    norm_win: int = 240):
     """
     Returns:
       wave_norm: pd.Series in [-1,1] (tanh(zscore) of close vs rolling mean/std)
@@ -585,11 +563,11 @@ def compute_normalized_elliott_wave(close: pd.Series,
     # Pivot detection via centered rolling extrema
     if pivot_lb % 2 == 0:
         pivot_lb += 1
-    half = pivot_lb // 2
     roll_max = s.rolling(pivot_lb, center=True).max()
     roll_min = s.rolling(pivot_lb, center=True).min()
 
     pivots = []
+    half = pivot_lb // 2
     for i in range(half, len(s)-half):
         if not np.isfinite(s.iloc[i]):
             continue
@@ -623,6 +601,33 @@ def compute_normalized_elliott_wave(close: pd.Series,
     pivots_df = pd.DataFrame(waves, columns=["time","price","type","wave"])
     return wave_norm, pivots_df
 
+# ========= Cached "last value" calculators for scanning =========
+@st.cache_data(ttl=120)
+def last_daily_ntd_value(symbol: str, ntd_win: int):
+    try:
+        s = fetch_hist(symbol)
+        ntd = compute_normalized_trend(s, window=ntd_win).dropna()
+        if ntd.empty:
+            return np.nan, None
+        return float(ntd.iloc[-1]), ntd.index[-1]
+    except Exception:
+        return np.nan, None
+
+@st.cache_data(ttl=120)
+def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
+    try:
+        df = fetch_intraday(symbol, period=period)
+        if df is None or df.empty or "Close" not in df:
+            return np.nan, None
+        s = df["Close"].ffill()
+        ntd = compute_normalized_trend(s, window=ntd_win).dropna()
+        if ntd.empty:
+            return np.nan, None
+        return float(ntd.iloc[-1]), ntd.index[-1]
+    except Exception:
+        return np.nan, None
+# ===============================================================
+
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -630,11 +635,12 @@ if 'run_all' not in st.session_state:
     st.session_state.hour_range = "24h"
 
 # Tabs
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
-    "Metrics"
+    "Metrics",
+    "NTD -0.5 Scanner"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -686,14 +692,12 @@ with tab1:
         p_up = np.mean(st.session_state.fc_vals.to_numpy() > last_price) if np.isfinite(last_price) else np.nan
         p_dn = 1 - p_up if np.isfinite(p_up) else np.nan
 
-        # Pre-fetch Forex news (intraday only)
         fx_news = pd.DataFrame()
         if mode == "Forex" and show_fx_news:
             fx_news = fetch_yf_news(sel, window_days=news_window_days)
 
-        # ----- Daily (Price + EW in one figure with shared x) -----
+        # ----- Daily (Price + EW) -----
         if chart in ("Daily","Both"):
-            # Prepare series and overlays
             ema30 = df.ewm(span=30).mean()
             res30 = df.rolling(30, min_periods=1).max()
             sup30 = df.rolling(30, min_periods=1).min()
@@ -701,12 +705,10 @@ with tab1:
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
-            # Compute EW + overlays (full history)
             wave_norm_d, piv_df_d = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
             npo_d = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
             ntd_d = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
 
-            # Subset by Daily view range (Historical/6M/12M/24M)
             df_show     = subset_by_daily_view(df, daily_view)
             ema30_show  = ema30.reindex(df_show.index)
             res30_show  = res30.reindex(df_show.index)
@@ -718,14 +720,12 @@ with tab1:
             ntd_d_show  = ntd_d.reindex(df_show.index)
             piv_df_d_show = piv_df_d[(piv_df_d["time"] >= df_show.index.min()) & (piv_df_d["time"] <= df_show.index.max())] if not piv_df_d.empty else piv_df_d
 
-            # Create a single figure with shared x-axis (perfect alignment)
             fig, (ax, axdw) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
                 gridspec_kw={"height_ratios": [3.2, 1.3]}
             )
             plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93)
 
-            # Top: Daily price panel
             ax.set_title(f"{sel} Daily — {daily_view} — History, 30 EMA, 30 S/R, Slope, Pivots")
             ax.plot(df_show, label="History")
             ax.plot(ema30_show, "--", label="30 EMA")
@@ -739,7 +739,6 @@ with tab1:
                 ax.plot(yhat_ema_show.index, yhat_ema_show.values, "-", linewidth=2,
                         label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
 
-            # NEW: Trend-direction line over the visible window
             if len(df_show) > 1:
                 draw_trend_direction_line(ax, df_show, label_prefix="Trend")
 
@@ -757,16 +756,12 @@ with tab1:
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
 
-            # Bottom: Daily EW + overlays (perfectly aligned via sharex)
             axdw.set_title("Daily Normalized Elliott Wave + NPO + NTD")
-            # NTD shading (optional)
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw, ntd_d_show)
-            # NPO red shading
             if show_npo and not npo_d_show.dropna().empty:
                 shade_npo_regions(axdw, npo_d_show)
 
-            # Lines on top of shading
             axdw.plot(wave_d_show.index, wave_d_show, label="Norm EW (Daily)", linewidth=1.8)
             if show_npo and not npo_d_show.dropna().empty:
                 axdw.plot(npo_d_show.index, npo_d_show, "--", linewidth=1.2, label=f"NPO ({npo_fast},{npo_slow})")
@@ -785,7 +780,6 @@ with tab1:
             axdw.set_ylim(-1.1, 1.1)
             axdw.set_xlabel("Date (PST)")
 
-            # Recent pivot wave numbers
             if not piv_df_d_show.empty:
                 show_df_d = piv_df_d_show.tail(int(waves_to_annotate_d))
                 for _, r in show_df_d.iterrows():
@@ -796,7 +790,6 @@ with tab1:
                                   ha="center", va="center",
                                   fontsize=9, fontweight="bold")
 
-            # Price + EW signal label (top-right, within bottom axes context)
             px_daily = _safe_last_float(df)
             ew_sig_d = elliott_conf_signal(px_daily, st.session_state.fc_vals, EW_CONFIDENCE)
             posdw = axdw.get_position()
@@ -811,13 +804,13 @@ with tab1:
             axdw.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (unchanged core; EW has NPO red shading) -----
+        # ----- Hourly -----
         if chart in ("Hourly","Both"):
-            intr = st.session_state.intraday
-            if intr is None or intr.empty or "Close" not in intr:
+            intraday = st.session_state.intraday
+            if intraday is None or intraday.empty or "Close" not in intraday:
                 st.warning("No intraday data available.")
             else:
-                hc = intr["Close"].ffill()
+                hc = intraday["Close"].ffill()
                 he = hc.ewm(span=20).mean()
                 xh = np.arange(len(hc))
                 slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
@@ -825,11 +818,9 @@ with tab1:
                 res_h = hc.rolling(60, min_periods=1).max()
                 sup_h = hc.rolling(60, min_periods=1).min()
 
-                # Supertrend from intraday OHLC
-                st_intraday = compute_supertrend(intr, atr_period=atr_period, atr_mult=atr_mult)
+                st_intraday = compute_supertrend(intraday, atr_period=atr_period, atr_mult=atr_mult)
                 st_line_intr = st_intraday["ST"].reindex(hc.index) if "ST" in st_intraday else pd.Series(index=hc.index, dtype=float)
 
-                # Slope on hourly close
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
@@ -839,14 +830,9 @@ with tab1:
                 ax2.plot(hc.index, he, "--", label="20 EMA")
                 ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
 
-                # STRAIGHT Support/Resistance lines across entire chart
-                res_val = np.nan
-                sup_val = np.nan
-                px_val  = np.nan
+                res_val = sup_val = px_val = np.nan
                 try:
-                    res_val = float(res_h.iloc[-1])
-                    sup_val = float(sup_h.iloc[-1])
-                    px_val  = float(hc.iloc[-1])
+                    res_val = float(res_h.iloc[-1]); sup_val = float(sup_h.iloc[-1]); px_val  = float(hc.iloc[-1])
                 except Exception:
                     pass
 
@@ -858,23 +844,15 @@ with tab1:
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
-                # Dynamic title area
                 buy_sell_text = ""
-                if np.isfinite(sup_val):
-                    buy_sell_text += f" — ▲ BUY @{fmt_price_val(sup_val)}"
-                if np.isfinite(res_val):
-                    buy_sell_text += f"  ▼ SELL @{fmt_price_val(res_val)}"
+                if np.isfinite(sup_val): buy_sell_text += f" — ▲ BUY @{fmt_price_val(sup_val)}"
+                if np.isfinite(res_val): buy_sell_text += f"  ▼ SELL @{fmt_price_val(res_val)}"
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text}")
 
-                # Current price label OUTSIDE (top-right above axes)
                 if np.isfinite(px_val):
                     pos = ax2.get_position()
-                    fig2.text(
-                        pos.x1, pos.y1 + 0.02,
-                        f"Current price: {fmt_price_val(px_val)}",
-                        ha="right", va="bottom",
-                        fontsize=11, fontweight="bold"
-                    )
+                    fig2.text(pos.x1, pos.y1 + 0.02, f"Current price: {fmt_price_val(px_val)}",
+                              ha="right", va="bottom", fontsize=11, fontweight="bold")
 
                 if not st_line_intr.dropna().empty:
                     ax2.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -889,13 +867,14 @@ with tab1:
                     for lbl, y in fibs_h.items():
                         ax2.text(hc.index[-1], y, f" {lbl}", va="center")
 
-                if mode == "Forex" and show_fx_news and not hc.empty and 'time' in fx_news:
-                    t0, t1 = hc.index[0], hc.index[-1]
-                    times = [t for t in fx_news["time"] if t0 <= t <= t1]
-                    if times:
-                        draw_news_markers(ax2, times, float(hc.min()), float(hc.max()), label="News")
+                if mode == "Forex" and show_fx_news and not hc.empty:
+                    fx_news = fetch_yf_news(sel, window_days=news_window_days)
+                    if not fx_news.empty:
+                        t0, t1 = hc.index[0], hc.index[-1]
+                        times = [t for t in fx_news["time"] if t0 <= t <= t1]
+                        if times:
+                            draw_news_markers(ax2, times, float(hc.min()), float(hc.max()), label="News")
 
-                # Signal (text only)
                 signal = sr_proximity_signal(hc, res_h, sup_h, st.session_state.fc_vals,
                                              threshold=signal_threshold, prox=sr_prox_pct)
                 if signal is not None and np.isfinite(px_val):
@@ -928,7 +907,7 @@ with tab1:
                     ax2m.set_xlim(xlim_price)
                     st.pyplot(fig2m)
 
-                # --- Normalized Elliott Wave panel (Hourly) + signals ---
+                # --- Hourly EW panel ---
                 wave_norm, piv_df = compute_normalized_elliott_wave(hc, pivot_lb=pivot_lookback, norm_win=norm_window)
                 npo_h = compute_npo(hc, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=hc.index, dtype=float)
                 ntd_h = compute_normalized_trend(hc, window=ntd_window) if show_ntd else pd.Series(index=hc.index, dtype=float)
@@ -939,7 +918,6 @@ with tab1:
                 ax2w.set_title("Normalized Elliott Wave + NPO + NTD")
                 if show_ntd and shade_ntd and not ntd_h.dropna().empty:
                     shade_ntd_regions(ax2w, ntd_h)
-                # NPO red shading
                 if show_npo and not npo_h.dropna().empty:
                     shade_npo_regions(ax2w, npo_h)
 
@@ -974,8 +952,7 @@ with tab1:
                 pos2w = ax2w.get_position()
                 label_txt_h = f"Price: {fmt_price_val(px_intr)}"
                 if ew_sig_h is not None:
-                    side = ew_sig_h['side']
-                    prob = fmt_pct(ew_sig_h['prob'], digits=0)
+                    side = ew_sig_h['side']; prob = fmt_pct(ew_sig_h['prob'], digits=0)
                     label_txt_h += f"  |  {('▲ BUY' if side=='BUY' else '▼ SELL')} @ {fmt_price_val(px_intr)}  ({prob})"
                 fig2w.text(pos2w.x1, pos2w.y1 + 0.01, label_txt_h, ha="right", va="bottom",
                            fontsize=10, fontweight="bold")
@@ -1019,7 +996,7 @@ with tab2:
 
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
 
-        # ----- Daily (Price + EW in one figure with shared x) -----
+        # ----- Daily -----
         if view in ("Daily","Both"):
             ema30 = df.ewm(span=30).mean()
             res30 = df.rolling(30, min_periods=1).max()
@@ -1032,7 +1009,6 @@ with tab2:
             npo_d2 = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
             ntd_d2 = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
 
-            # Apply the same daily view range
             df_show     = subset_by_daily_view(df, daily_view)
             ema30_show  = ema30.reindex(df_show.index)
             res30_show  = res30.reindex(df_show.index)
@@ -1050,7 +1026,6 @@ with tab2:
             )
             plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93)
 
-            # Top: Daily panel
             ax.set_title(f"{st.session_state.ticker} Daily — {daily_view} — History, 30 EMA, 30 S/R, Slope, Pivots")
             ax.plot(df_show, label="History")
             ax.plot(ema30_show, "--", label="30 EMA")
@@ -1064,7 +1039,6 @@ with tab2:
                 ax.plot(yhat_ema_show.index, yhat_ema_show.values, "-", linewidth=2,
                         label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
 
-            # NEW: Trend-direction line over the visible window
             if len(df_show) > 1:
                 draw_trend_direction_line(ax, df_show, label_prefix="Trend")
 
@@ -1082,7 +1056,6 @@ with tab2:
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
 
-            # Bottom: Daily EW + overlays
             axdw2.set_title("Daily Normalized Elliott Wave + NPO + NTD")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw2, ntd_d_show)
@@ -1117,14 +1090,12 @@ with tab2:
                                    ha="center", va="center",
                                    fontsize=9, fontweight="bold")
 
-            # Price + EW signal label
             px_daily2 = _safe_last_float(df)
             ew_sig_d2 = elliott_conf_signal(px_daily2, st.session_state.fc_vals, EW_CONFIDENCE)
             posdw2 = axdw2.get_position()
             label_txt_d2 = f"Price: {fmt_price_val(px_daily2)}"
             if ew_sig_d2 is not None:
-                side = ew_sig_d2['side']
-                prob = fmt_pct(ew_sig_d2['prob'], digits=0)
+                side = ew_sig_d2['side']; prob = fmt_pct(ew_sig_d2['prob'], digits=0)
                 label_txt_d2 += f"  |  {('▲ BUY' if side=='BUY' else '▼ SELL')} @ {fmt_price_val(px_daily2)}  ({prob})"
             fig.text(posdw2.x1, posdw2.y1 + 0.01, label_txt_d2, ha="right", va="bottom",
                      fontsize=10, fontweight="bold")
@@ -1155,13 +1126,9 @@ with tab2:
                 ax3.plot(ic.index, ie, "--", label="20 EMA")
                 ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
 
-                res_val2 = np.nan
-                sup_val2 = np.nan
-                px_val2  = np.nan
+                res_val2 = sup_val2 = px_val2 = np.nan
                 try:
-                    res_val2 = float(res_i.iloc[-1])
-                    sup_val2 = float(sup_i.iloc[-1])
-                    px_val2  = float(ic.iloc[-1])
+                    res_val2 = float(res_i.iloc[-1]); sup_val2 = float(sup_i.iloc[-1]); px_val2 = float(ic.iloc[-1])
                 except Exception:
                     pass
 
@@ -1174,20 +1141,14 @@ with tab2:
                     label_on_left(ax3, sup_val2, f"S {fmt_price_val(sup_val2)}", color="tab:green")
 
                 buy_sell_text2 = ""
-                if np.isfinite(sup_val2):
-                    buy_sell_text2 += f" — ▲ BUY @{fmt_price_val(sup_val2)}"
-                if np.isfinite(res_val2):
-                    buy_sell_text2 += f"  ▼ SELL @{fmt_price_val(res_val2)}"
+                if np.isfinite(sup_val2): buy_sell_text2 += f" — ▲ BUY @{fmt_price_val(sup_val2)}"
+                if np.isfinite(res_val2): buy_sell_text2 += f"  ▼ SELL @{fmt_price_val(res_val2)}"
                 ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text2}")
 
                 if np.isfinite(px_val2):
                     pos2 = ax3.get_position()
-                    fig3.text(
-                        pos2.x1, pos2.y1 + 0.02,
-                        f"Current price: {fmt_price_val(px_val2)}",
-                        ha="right", va="bottom",
-                        fontsize=11, fontweight="bold"
-                    )
+                    fig3.text(pos2.x1, pos2.y1 + 0.02, f"Current price: {fmt_price_val(px_val2)}",
+                              ha="right", va="bottom", fontsize=11, fontweight="bold")
 
                 if not st_line_intr.dropna().empty:
                     ax3.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -1234,7 +1195,7 @@ with tab2:
                     ax3m.set_xlim(xlim_price2)
                     st.pyplot(fig3m)
 
-                # --- Hourly EW panel + NPO + NTD + signals ---
+                # --- Hourly EW panel + NPO + NTD ---
                 wave_norm2, piv_df2 = compute_normalized_elliott_wave(ic, pivot_lb=pivot_lookback, norm_win=norm_window)
                 npo_h2 = compute_npo(ic, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=ic.index, dtype=float)
                 ntd_h2 = compute_normalized_trend(ic, window=ntd_window) if show_ntd else pd.Series(index=ic.index, dtype=float)
@@ -1246,7 +1207,7 @@ with tab2:
                 if show_ntd and shade_ntd and not ntd_h2.dropna().empty:
                     shade_ntd_regions(ax3w, ntd_h2)
                 if show_npo and not npo_h2.dropna().empty:
-                    shade_npo_regions(ax3w, npo_h2)  # red shading
+                    shade_npo_regions(ax3w, npo_h2)
 
                 ax3w.plot(wave_norm2.index, wave_norm2, label="Norm EW", linewidth=1.8)
                 if show_npo and not npo_h2.dropna().empty:
@@ -1279,8 +1240,7 @@ with tab2:
                 pos3w = ax3w.get_position()
                 label_txt_h2 = f"Price: {fmt_price_val(px_intr2)}"
                 if ew_sig_h2 is not None:
-                    side = ew_sig_h2['side']
-                    prob = fmt_pct(ew_sig_h2['prob'], digits=0)
+                    side = ew_sig_h2['side']; prob = fmt_pct(ew_sig_h2['prob'], digits=0)
                     label_txt_h2 += f"  |  {('▲ BUY' if side=='BUY' else '▼ SELL')} @ {fmt_price_val(px_intr2)}  ({prob})"
                 fig3w.text(pos3w.x1, pos3w.y1 + 0.01, label_txt_h2, ha="right", va="bottom",
                            fontsize=10, fontweight="bold")
@@ -1332,7 +1292,7 @@ with tab4:
         ax.plot(df3m.index, df3m, label="Close")
         ax.plot(df3m.index, ma30_3m, label="30 MA")
         ax.plot(df3m.index, res3m, ":", label="Resistance")
-        ax.plot(df3m.index, sup3m, ":", label="Support")
+        ax.plot(sup3m, ":", label="Support")
         ax.plot(df3m.index, trend3m, "--", label="Trend")
         ax.set_xlabel("Date (PST)")
         ax.legend()
@@ -1354,7 +1314,7 @@ with tab4:
         fig0, ax0 = plt.subplots(figsize=(14,5))
         ax0.plot(df0.index, df0['Close'], label="Close")
         ax0.plot(df0.index, df0['MA30'], label="30 MA")
-        ax0.plot(df0.index, res0, ":", label="Resistance")
+        ax0.plot(res0, ":", label="Resistance")
         ax0.plot(sup0, ":", label="Support")
         ax0.plot(df0.index, trend0, "--", label="Trend")
         ax0.set_xlabel("Date (PST)")
@@ -1371,3 +1331,67 @@ with tab4:
             "Days": [int(df0['Bull'].sum()), int((~df0['Bull']).sum())]
         }).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
+
+# --- Tab 5: NTD -0.5 Scanner (Stocks & Forex) ---
+with tab5:
+    st.header("NTD -0.5 Scanner")
+    st.caption("Shows **symbols with Normalized Trend Direction (NTD) < -0.5**. Daily for both Stocks & Forex; plus optional **Hourly** for Forex.")
+
+    # Hourly range selector for Forex scanning
+    period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
+    scan_hour_range = st.selectbox(
+        "Hourly lookback for Forex (for Hourly scan below):",
+        ["24h", "48h", "96h"],
+        index=["24h","48h","96h"].index(st.session_state.get("hour_range", "24h")),
+        key="ntd_scan_hour_range"
+    )
+    scan_period = period_map[scan_hour_range]
+
+    c1, c2 = st.columns(2)
+    with c1:
+        thresh = st.slider("NTD threshold", -1.0, 0.0, -0.5, 0.05, key="ntd_thresh")
+    with c2:
+        run = st.button("Scan Universe", key="btn_ntd_scan")
+
+    if run:
+        # ---- DAILY scan for both universes ----
+        daily_rows = []
+        for sym in universe:
+            ntd_val, ts = last_daily_ntd_value(sym, ntd_window)
+            daily_rows.append({"Symbol": sym, "NTD_Daily": ntd_val, "Timestamp": ts})
+        df_daily = pd.DataFrame(daily_rows)
+        below_daily = df_daily[np.isfinite(df_daily["NTD_Daily"]) & (df_daily["NTD_Daily"] < thresh)].sort_values("NTD_Daily")
+
+        c3, c4 = st.columns(2)
+        c3.metric("Universe Size", len(universe))
+        c4.metric(f"Daily NTD < {thresh:+.2f}", int(below_daily.shape[0]))
+
+        st.subheader(f"Daily — NTD < {thresh:+.2f}")
+        if below_daily.empty:
+            st.info(f"No symbols with Daily NTD < {thresh:+.2f}.")
+        else:
+            show = below_daily.copy()
+            show["NTD_Daily"] = show["NTD_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
+            st.dataframe(show.reset_index(drop=True), use_container_width=True)
+
+        # ---- HOURLY scan for Forex only ----
+        if mode == "Forex":
+            st.markdown("---")
+            st.subheader(f"Forex Hourly — NTD < {thresh:+.2f}  ({scan_hour_range} lookback)")
+            hourly_rows = []
+            for sym in universe:
+                v, ts = last_hourly_ntd_value(sym, ntd_window, period=scan_period)
+                hourly_rows.append({"Symbol": sym, "NTD_Hourly": v, "Timestamp": ts})
+            df_hour = pd.DataFrame(hourly_rows)
+            below_hour = df_hour[np.isfinite(df_hour["NTD_Hourly"]) & (df_hour["NTD_Hourly"] < thresh)].sort_values("NTD_Hourly")
+
+            c5, c6 = st.columns(2)
+            c5.metric("FX Pairs Scanned", len(universe))
+            c6.metric(f"Hourly NTD < {thresh:+.2f}", int(below_hour.shape[0]))
+
+            if below_hour.empty:
+                st.info(f"No Forex pairs with Hourly NTD < {thresh:+.2f}.")
+            else:
+                showh = below_hour.copy()
+                showh["NTD_Hourly"] = showh["NTD_Hourly"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
+                st.dataframe(showh.reset_index(drop=True), use_container_width=True)
