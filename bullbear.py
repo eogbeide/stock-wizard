@@ -17,7 +17,7 @@
 # - Normalized Elliott Wave panel for Daily (dates aligned to daily chart, shared x-axis with price)
 # - EW panels show BUY/SELL signals when forecast confidence > 95% and display current price on top
 # - EW panels draw a red line at +0.5 and a green line at -0.5
-# - EW panels draw black lines at +0.75 and -0.25
+# - EW panels draw black lines at +0.75 and -0.75
 # - Adds Normalized Price Oscillator (NPO) overlay to EW panels with sidebar controls
 # - Adds Normalized Trend Direction (NTD) overlay + optional green/red shading to EW panels with sidebar controls
 # - Daily view selector (Historical / 6M / 12M / 24M)
@@ -773,7 +773,7 @@ with tab1:
                 (0.5, "-", "tab:red", "EW +0.5"),
                 (-0.5, "-", "tab:green", "EW -0.5"),
                 (0.75, "-", "black", "EW +0.75"),
-                (-0.25, "-", "black", "EW -0.25"),
+                (-0.75, "-", "black", "EW -0.75"),
             ]:
                 axdw.axhline(yline, linestyle=style, linewidth=1, color=col, label=lbl)
 
@@ -931,7 +931,7 @@ with tab1:
                 ax2w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
                 ax2w.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
                 ax2w.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
-                ax2w.axhline(-0.25, color="black", linestyle="-", linewidth=1, label="EW -0.25")
+                ax2w.axhline(-0.75, color="black", linestyle="-", linewidth=1, label="EW -0.75")
 
                 ax2w.set_ylim(-1.1, 1.1)
                 ax2w.set_xlabel("Time (PST)")
@@ -1073,7 +1073,7 @@ with tab2:
                 (0.5, "-", "tab:red", "EW +0.5"),
                 (-0.5, "-", "tab:green", "EW -0.5"),
                 (0.75, "-", "black", "EW +0.75"),
-                (-0.25, "-", "black", "EW -0.25"),
+                (-0.75, "-", "black", "EW -0.75"),
             ]:
                 axdw2.axhline(yline, linestyle=style, linewidth=1, color=col, label=lbl)
 
@@ -1219,7 +1219,7 @@ with tab2:
                 ax3w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
                 ax3w.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
                 ax3w.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
-                ax3w.axhline(-0.25, color="black", linestyle="-", linewidth=1, label="EW -0.25")
+                ax3w.axhline(-0.75, color="black", linestyle="-", linewidth=1, label="EW -0.75")
 
                 ax3w.set_ylim(-1.1, 1.1)
                 ax3w.set_xlabel("Time (PST)")
