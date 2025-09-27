@@ -24,7 +24,7 @@
 # - Red shading under NPO curve on EW panels
 # - Daily trend-direction line (green=uptrend, red=downtrend) with slope label
 # - NEW: EW Summary tab — Daily < 0.0; Forex Hourly < 0.0 and > 0.0
-# - UPDATED: **Stock-only** EW Summary — Daily > -0.50 AND < 0.0 (UPTREND ONLY, EW rising toward 0.0)
+# - UPDATED: **Stock-only** EW Summary — Daily −0.50<EW<0.0 (UPTREND ONLY, EW rising toward 0.0)
 
 import streamlit as st
 import pandas as pd
@@ -1055,9 +1055,9 @@ with tab2:
 
             if piv and len(df_show) > 0:
                 x0, x1 = df_show.index[0], df_show.index[-1]
-                for lbl, y in piv.items():
+                for lbl, y in pivots.items():
                     ax.hlines(y, xmin=x0, xmax=x1, linestyles="dashed", linewidth=1.0)
-                for lbl, y in piv.items():
+                for lbl, y in pivots.items():
                     ax.text(x1, y, f" {lbl} = {fmt_price_val(y)}", va="center")
 
             if len(res30_show) and len(sup30_show):
@@ -1347,7 +1347,7 @@ with tab4:
 # --- Tab 5: EW Summary ---
 with tab5:
     st.header("EW Summary Scanner")
-    st.caption("For **Stocks**: shows Daily EW groups. For **Forex**: shows Hourly EW groups. The Stock midzone lists symbols with **EW > -0.50 and < 0.0**, **positive price slope**, and **EW rising toward 0.0**.")
+    st.caption("For **Stocks**: shows Daily EW groups. For **Forex**: shows Hourly EW groups. The Stock midzone lists symbols with **−0.50<EW<0.0**, **positive price slope**, and **EW rising toward 0.0**.")
 
     # Use same hour range mapping as Tab 1
     period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
@@ -1378,7 +1378,7 @@ with tab5:
             # Group A: Daily < 0.0 (most negative first)
             below_daily = df_daily[df_daily["EW_Daily"] < 0].sort_values("EW_Daily")
 
-            # Midzone (Stock-only): > -0.50 AND < 0.0 + positive slope + EW rising toward 0.0
+            # Midzone (Stock-only): −0.50<EW<0.0 + positive slope + EW rising toward 0.0
             def rising_toward_zero(sr: pd.Series) -> bool:
                 sr = pd.to_numeric(sr, errors="coerce").dropna()
                 if sr.shape[0] < 3:
@@ -1405,7 +1405,7 @@ with tab5:
             c1, c2, c3 = st.columns(3)
             c1.metric("Stock Universe Size", len(universe))
             c2.metric("Daily < 0.0", int(below_daily.shape[0]))
-            c3.metric("> -0.50 AND < 0.0 (Uptrend→0.0)", int(midzone_daily.shape[0]))
+            c3.metric("−0.50<EW<0.0", int(midzone_daily.shape[0]))
 
             st.subheader("Stocks — Daily: Below EW 0.0")
             if below_daily.empty:
@@ -1415,7 +1415,7 @@ with tab5:
                 show1["EW_Daily"] = show1["EW_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
                 st.dataframe(show1.reset_index(drop=True), use_container_width=True)
 
-            st.subheader("Stocks — Daily: > -0.50 AND < 0.0 (UPTREND ONLY, EW rising toward 0.0)")
+            st.subheader("Stocks — Daily: −0.50<EW<0.0 (UPTREND ONLY, EW rising toward 0.0)")
             if midzone_daily.empty:
                 st.info("No stock symbols meet the midzone criteria right now.")
             else:
