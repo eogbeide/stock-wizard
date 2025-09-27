@@ -7,7 +7,6 @@
 # - Hourly includes Supertrend overlay (configurable ATR period & multiplier)
 # - Fixes tz_localize error by using tz-aware UTC timestamps
 # - Auto-refresh, SARIMAX (for probabilities)
-# - Cache TTLs = 2 minutes (120s)
 # - Hourly BUY/SELL logic (near S/R + confidence threshold)
 # - Value labels on intraday Resistance/Support placed on the LEFT; price label outside chart (top-right)
 # - All displayed price values formatted to 3 decimal places
@@ -23,8 +22,9 @@
 # - Daily view selector (Historical / 6M / 12M / 24M)
 # - Red shading under NPO curve on EW panels
 # - Daily trend-direction line (green=uptrend, red=downtrend) with slope label
-# - NEW: EW Summary tab — Daily < 0.0; Forex Hourly scan shows **NTD relative to 0.0** (NTD below/above 0.0)
-# - NEW: EW Summary tab — Daily < 0.0 but > -0.25
+# - UPDATED: EW Summary tab — shows ONLY symbols where NTD < 0.0 (Elliott panels only)
+# - UPDATED: Forex Hourly scan lists ONLY NTD < 0.0
+# - NOTE: No Streamlit caching (per request)
 
 import streamlit as st
 import pandas as pd
@@ -220,8 +220,7 @@ else:
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X'
     ]
 
-# --- Cache helpers (TTL = 120 seconds) ---
-@st.cache_data(ttl=120)
+# --- No-cache data helpers ---
 def fetch_hist(ticker: str) -> pd.Series:
     s = (
         yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
@@ -233,7 +232,6 @@ def fetch_hist(ticker: str) -> pd.Series:
         s = s.tz_convert(PACIFIC)
     return s
 
-@st.cache_data(ttl=120)
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
     df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Open','High','Low','Close']].dropna()
     try:
@@ -242,7 +240,6 @@ def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
         df = df.tz_convert(PACIFIC)
     return df
 
-@st.cache_data(ttl=120)
 def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
     df = yf.download(ticker, period=period, interval="5m")
     try:
@@ -251,7 +248,6 @@ def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
         pass
     return df.tz_convert(PACIFIC)
 
-@st.cache_data(ttl=120)
 def compute_sarimax_forecast(series_like):
     series = _coerce_1d_series(series_like).dropna()
     if isinstance(series.index, pd.DatetimeIndex):
@@ -444,7 +440,6 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
     })
 
 # ---- Forex News (Yahoo Finance) ----
-@st.cache_data(ttl=120, show_spinner=False)
 def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
     rows = []
     try:
@@ -539,7 +534,7 @@ def elliott_conf_signal(price_now: float, fc_vals: pd.Series, conf: float = EW_C
 # --- Normalized Elliott Wave (simple, dependency-free) ----
 def compute_normalized_elliott_wave(close: pd.Series,
                                     pivot_lb: int = 7,
-                                    norm_win: int = 240) -> tuple[pd.Series, pd.DataFrame]:
+                                    norm_win: int = 240):
     s = _coerce_1d_series(close).dropna()
     if s.empty:
         return pd.Series(index=close.index, dtype=float), pd.DataFrame(columns=["time","price","type","wave"])
@@ -553,11 +548,11 @@ def compute_normalized_elliott_wave(close: pd.Series,
 
     if pivot_lb % 2 == 0:
         pivot_lb += 1
-    half = pivot_lb // 2
     roll_max = s.rolling(pivot_lb, center=True).max()
     roll_min = s.rolling(pivot_lb, center=True).min()
 
     pivots = []
+    half = pivot_lb // 2
     for i in range(half, len(s)-half):
         if not np.isfinite(s.iloc[i]):
             continue
@@ -589,50 +584,6 @@ def compute_normalized_elliott_wave(close: pd.Series,
     pivots_df = pd.DataFrame(waves, columns=["time","price","type","wave"])
     return wave_norm, pivots_df
 
-# ========= Cached "last value" calculators for scanning =========
-@st.cache_data(ttl=120)
-def last_daily_ew_value(symbol: str, pivot_lb_d: int, norm_win_d: int):
-    try:
-        s = fetch_hist(symbol)
-        ew, _ = compute_normalized_elliott_wave(s, pivot_lb=pivot_lb_d, norm_win=norm_win_d)
-        ew = ew.dropna()
-        if ew.empty:
-            return np.nan, None
-        return float(ew.iloc[-1]), s.index[-1]
-    except Exception:
-        return np.nan, None
-
-@st.cache_data(ttl=120)
-def last_hourly_ew_value(symbol: str, pivot_lb: int, norm_win: int, period: str = "1d"):
-    try:
-        df = fetch_intraday(symbol, period=period)
-        if df is None or df.empty or "Close" not in df:
-            return np.nan, None
-        s = df["Close"].ffill()
-        ew, _ = compute_normalized_elliott_wave(s, pivot_lb=pivot_lb, norm_win=norm_win)
-        ew = ew.dropna()
-        if ew.empty:
-            return np.nan, None
-        return float(ew.iloc[-1]), s.index[-1]
-    except Exception:
-        return np.nan, None
-
-@st.cache_data(ttl=120)
-def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
-    """Return the last hourly NTD value and its timestamp (for Forex scan)."""
-    try:
-        df = fetch_intraday(symbol, period=period)
-        if df is None or df.empty or "Close" not in df:
-            return np.nan, None
-        s = df["Close"].ffill()
-        ntd = compute_normalized_trend(s, window=ntd_win).dropna()
-        if ntd.empty:
-            return np.nan, None
-        return float(ntd.iloc[-1]), ntd.index[-1]
-    except Exception:
-        return np.nan, None
-# ===============================================================
-
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -651,7 +602,7 @@ tab1, tab2, tab3, tab4, tab5 = st.tabs([
 # --- Tab 1: Original Forecast ---
 with tab1:
     st.header("Original Forecast")
-    st.info("Pick a ticker; data will be cached for 2 minutes after first fetch.")
+    st.info("Pick a ticker to load data. (No caching)")
 
     sel = st.selectbox("Ticker:", universe, key="orig_ticker")
     chart = st.radio("Chart View:", ["Daily","Hourly","Both"], key="orig_chart")
@@ -1338,8 +1289,8 @@ with tab4:
 
 # --- Tab 5: EW Summary ---
 with tab5:
-    st.header("EW Summary Scanner")
-    st.caption("Lists symbols based on their latest **Daily EW** and, for **Forex**, latest **Hourly NTD** vs 0.0 (negative = downtrend bias).")
+    st.header("EW Summary Scanner (NTD filter: ONLY NTD < 0.0)")
+    st.caption("Lists symbols based on their latest **Daily EW** while ONLY including symbols whose **NTD** on the Elliott chart is **< 0.0**. For Forex, the hourly scan also shows ONLY pairs with Hourly NTD < 0.0.")
 
     # Use same hour range mapping as Tab 1
     period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
@@ -1352,12 +1303,22 @@ with tab5:
     scan_period = period_map[scan_hour_range]
 
     if st.button("Scan Universe", key="btn_scan_universe"):
-        # ---- Daily scan (all modes) ----
+        # ---- Daily scan (all modes) — FILTER: NTD_Daily < 0.0 ----
         daily_rows = []
         for sym in universe:
-            val, ts = last_daily_ew_value(sym, pivot_lookback_d, norm_window_d)
-            daily_rows.append({"Symbol": sym, "EW_Daily": val, "Timestamp": ts})
+            s_daily = fetch_hist(sym)
+            ew_series, _ = compute_normalized_elliott_wave(s_daily, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
+            ntd_series = compute_normalized_trend(s_daily, window=ntd_window)
+
+            ew_last = float(ew_series.dropna().iloc[-1]) if ew_series.dropna().size else np.nan
+            ntd_last = float(ntd_series.dropna().iloc[-1]) if ntd_series.dropna().size else np.nan
+            ts_last = s_daily.index[-1] if len(s_daily) else None
+
+            daily_rows.append({"Symbol": sym, "EW_Daily": ew_last, "NTD_Daily": ntd_last, "Timestamp": ts_last})
+
         df_daily = pd.DataFrame(daily_rows)
+        # Keep ONLY NTD < 0.0
+        df_daily = df_daily[np.isfinite(df_daily["NTD_Daily"]) & (df_daily["NTD_Daily"] < 0)]
 
         # Table 1: Daily < 0.0 (most negative first)
         below_daily = df_daily[df_daily["EW_Daily"] < 0].sort_values("EW_Daily")
@@ -1367,57 +1328,56 @@ with tab5:
             (df_daily["EW_Daily"] < 0) & (df_daily["EW_Daily"] > -0.25)
         ].sort_values("EW_Daily", ascending=True)
 
-        c1, c2, c3 = st.columns(3)
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("Universe Size", len(universe))
-        c2.metric("Daily < 0.0", int(below_daily.shape[0]))
-        c3.metric("-0.25 < Daily < 0.0", int(midzone_daily.shape[0]))
+        c2.metric("NTD < 0.0 (Daily) — eligible", int(df_daily.shape[0]))
+        c3.metric("Daily < 0.0 (within NTD<0)", int(below_daily.shape[0]))
+        c4.metric("-0.25 < Daily < 0.0 (within NTD<0)", int(midzone_daily.shape[0]))
 
-        st.subheader("Daily — Below EW 0.0")
+        st.subheader("Daily — Below EW 0.0 (NTD < 0.0 only)")
         if below_daily.empty:
-            st.info("No symbols currently below EW 0.0 on Daily.")
+            st.info("No symbols currently below EW 0.0 on Daily with NTD < 0.0.")
         else:
             show1 = below_daily.copy()
             show1["EW_Daily"] = show1["EW_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
+            show1["NTD_Daily"] = show1["NTD_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
             st.dataframe(show1.reset_index(drop=True), use_container_width=True)
 
-        st.subheader("Daily — Below 0.0 but Above -0.25 EW")
+        st.subheader("Daily — Below 0.0 but Above -0.25 EW (NTD < 0.0 only)")
         if midzone_daily.empty:
-            st.info("No symbols currently between -0.25 and 0.0 on Daily EW.")
+            st.info("No symbols currently between -0.25 and 0.0 on Daily EW with NTD < 0.0.")
         else:
             show2 = midzone_daily.copy()
             show2["EW_Daily"] = show2["EW_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
+            show2["NTD_Daily"] = show2["NTD_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
             st.dataframe(show2.reset_index(drop=True), use_container_width=True)
 
-        # ---- Hourly scan (Forex mode only) — UPDATED: NTD vs 0.0 ----
+        # ---- Hourly scan (Forex mode only) — ONLY NTD < 0.0 ----
         if mode == "Forex":
             st.markdown("---")
-            st.subheader(f"Forex Hourly (NTD) — {scan_hour_range} lookback")
+            st.subheader(f"Forex Hourly — NTD < 0.0 only ({scan_hour_range} lookback)")
             hourly_rows = []
             for sym in universe:
-                ntd_v, ntd_ts = last_hourly_ntd_value(sym, ntd_window, period=scan_period)
-                hourly_rows.append({"Symbol": sym, "NTD_Hourly": ntd_v, "Timestamp": ntd_ts})
+                df_i = fetch_intraday(sym, period=scan_period)
+                if df_i is None or df_i.empty or "Close" not in df_i:
+                    hourly_rows.append({"Symbol": sym, "NTD_Hourly": np.nan, "Timestamp": None})
+                    continue
+                s_i = df_i["Close"].ffill()
+                ntd_i = compute_normalized_trend(s_i, window=ntd_window)
+                ntd_last = float(ntd_i.dropna().iloc[-1]) if ntd_i.dropna().size else np.nan
+                ts_last = s_i.index[-1] if len(s_i) else None
+                hourly_rows.append({"Symbol": sym, "NTD_Hourly": ntd_last, "Timestamp": ts_last})
+
             df_hour = pd.DataFrame(hourly_rows)
+            below_ntd = df_hour[np.isfinite(df_hour["NTD_Hourly"]) & (df_hour["NTD_Hourly"] < 0)].sort_values("NTD_Hourly")
 
-            below_ntd = df_hour[df_hour["NTD_Hourly"] < 0].sort_values("NTD_Hourly")
-            above_ntd = df_hour[df_hour["NTD_Hourly"] >= 0].sort_values("NTD_Hourly", ascending=False)
+            c5, c6 = st.columns(2)
+            c5.metric("Scanned FX Pairs", len(universe))
+            c6.metric("NTD < 0.0 (Hourly)", int(below_ntd.shape[0]))
 
-            c4, c5, c6 = st.columns(3)
-            c4.metric("Scanned FX Pairs", len(universe))
-            c5.metric("NTD < 0.0 (Hourly)", int(below_ntd.shape[0]))
-            c6.metric("NTD ≥ 0.0 (Hourly)", int(above_ntd.shape[0]))
-
-            st.write("**NTD below 0.0 (Hourly)**")
             if below_ntd.empty:
-                st.info("No Forex symbols currently with NTD < 0.0 on Hourly.")
+                st.info("No Forex symbols currently with Hourly NTD < 0.0.")
             else:
                 show_b = below_ntd.copy()
                 show_b["NTD_Hourly"] = show_b["NTD_Hourly"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
                 st.dataframe(show_b.reset_index(drop=True), use_container_width=True)
-
-            st.write("**NTD at/above 0.0 (Hourly)**")
-            if above_ntd.empty:
-                st.info("No Forex symbols currently with NTD ≥ 0.0 on Hourly.")
-            else:
-                show_a = above_ntd.copy()
-                show_a["NTD_Hourly"] = show_a["NTD_Hourly"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
-                st.dataframe(show_a.reset_index(drop=True), use_container_width=True)
