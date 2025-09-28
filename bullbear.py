@@ -1446,7 +1446,7 @@ with tab4:
         fig, ax = plt.subplots(figsize=(14,5))
         ax.plot(df3m.index, df3m, label="Close")
         ax.plot(df3m.index, ma30_3m, label="30 MA")
-        ax.plot(df3m.index, res3m, ":", label="Resistance")
+        ax.plot(res3m.index, res3m, ":", label="Resistance")
         ax.plot(sup3m, ":", label="Support")
         ax.plot(df3m.index, trend3m, "--", label="Trend")
         ax.set_xlabel("Date (PST)")
