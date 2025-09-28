@@ -12,7 +12,7 @@
 # - Value labels on intraday Resistance/Support placed on the LEFT; price label outside chart (top-right)
 # - All displayed price values formatted to 3 decimal places
 # - Hourly Support/Resistance drawn as STRAIGHT LINES across the entire chart
-# - Current price shown OUTSIDE of chart area (top-right above axes)
+# - Current price shown OUTSIDE of chart area (top-right)
 # - Normalized Elliott Wave panel for Hourly (dates aligned to hourly chart)
 # - Normalized Elliott Wave panel for Daily (dates aligned to daily chart, shared x-axis with price)
 # - EW panels show BUY/SELL signals when forecast confidence > 95% and display current price on top
@@ -302,7 +302,7 @@ def fibonacci_levels(series_like):
     }
 
 def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
-    if ohlc is None or oohlc_is_empty(ohlc := ohlc if isinstance(ohlc, pd.DataFrame) else None):
+    if ohlc is None or ohlc.empty or not {'High','Low','Close'}.issubset(ohlc.columns):
         return {}
     ohlc = ohlc.sort_index()
     row = ohlc.iloc[-2] if len(ohlc) >= 2 else ohlc.iloc[-1]
@@ -316,9 +316,6 @@ def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
     R2 = P + (H - L)
     S2 = P - (H - L)
     return {"P": P, "R1": R1, "S1": S1, "R2": R2, "S2": S2}
-
-def oohlc_is_empty(df):
-    return (df is None) or df.empty or not {'High','Low','Close'}.issubset(df.columns)
 
 def slope_line(series_like, lookback: int):
     s = _coerce_1d_series(series_like).dropna()
@@ -692,7 +689,6 @@ def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
         return float(ntd.iloc[-1]), ntd.index[-1]
     except Exception:
         return np.nan, None
-# ===============================================================
 
 # --- Session init ---
 if 'run_all' not in st.session_state:
@@ -775,7 +771,7 @@ with tab1:
             npo_d = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
             ntd_d = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
             # NEW: Ichimoku (normalized) — Daily
-            if not oohlc_is_empty(df_ohlc) and show_ichi:
+            if df_ohlc is not None and not df_ohlc.empty and show_ichi:
                 ichi_d = compute_normalized_ichimoku(
                     df_ohlc["High"], df_ohlc["Low"], df_ohlc["Close"],
                     conv=ichi_conv, base=ichi_base, span_b=ichi_spanb,
@@ -1100,7 +1096,7 @@ with tab2:
             npo_d2 = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
             ntd_d2 = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
             # NEW: Ichimoku (normalized) — Daily (Enhanced)
-            if not oohlc_is_empty(df_ohlc) and show_ichi:
+            if df_ohlc is not None and not df_ohlc.empty and show_ichi:
                 ichi_d2 = compute_normalized_ichimoku(
                     df_ohlc["High"], df_ohlc["Low"], df_ohlc["Close"],
                     conv=ichi_conv, base=ichi_base, span_b=ichi_spanb,
@@ -1446,7 +1442,7 @@ with tab4:
             "Days": [int(df0['Bull'].sum()), int((~df0['Bull']).sum())]
         }).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
-        
+
 # --- Tab 5: NTD -0.5 Scanner (Stocks & Forex) ---
 with tab5:
     st.header("NTD -0.5 Scanner")
