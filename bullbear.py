@@ -27,7 +27,7 @@
 # - NEW: Normalized Ichimoku overlay on EW panels (Daily & Hourly) with sidebar controls
 # - NEW: Ichimoku Kijun (Base) line added to Daily & Hourly price charts (solid black, continuous)
 
-import streamlit as st
+import streamlit as sts
 import pandas as pd
 import numpy as np
 import yfinance as yf
