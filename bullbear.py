@@ -27,7 +27,7 @@
 # - NEW: Normalized Ichimoku overlay on EW panels (Daily & Hourly) with sidebar controls
 
 import streamlit as st
-import pandas as pd
+import pandas as pde
 import numpy as np
 import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
