@@ -459,17 +459,24 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
 def compute_normalized_elliott_wave(close: pd.Series,
                                     pivot_lb: int = 7,
                                     norm_win: int = 240):
+    """
+    Returns:
+      wave_norm: pd.Series in [-1,1] (tanh(zscore) of close vs rolling mean/std)
+      pivots_df: DataFrame with 'time','price','type' ('H'/'L') and 'wave' labels (1..5 repeating)
+    """
     s = _coerce_1d_series(close).dropna()
     if s.empty:
         return pd.Series(index=_coerce_1d_series(close).index, dtype=float), pd.DataFrame(columns=["time","price","type","wave"])
 
+    # Normalization: rolling z-score, then squash to [-1,1]
     minp = max(10, norm_win//10)
     mean = s.rolling(norm_win, min_periods=minp).mean()
     std  = s.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
     z = (s - mean) / std
-    wave_norm = np.tanh(z / 2.0)
+    wave_norm = np.tanh(z / 2.0)  # smoother, bounded [-1,1]
     wave_norm = wave_norm.reindex(close.index)
 
+    # Pivot detection via centered rolling extrema
     if pivot_lb % 2 == 0:
         pivot_lb += 1
     roll_max = s.rolling(pivot_lb, center=True).max()
@@ -485,6 +492,7 @@ def compute_normalized_elliott_wave(close: pd.Series,
         elif s.iloc[i] == roll_min.iloc[i]:
             pivots.append((s.index[i], float(s.iloc[i]), 'L'))
 
+    # De-duplicate consecutive same-type pivots
     dedup = []
     for t, p, typ in pivots:
         if not dedup:
@@ -497,6 +505,7 @@ def compute_normalized_elliott_wave(close: pd.Series,
             else:
                 dedup.append((t,p,typ))
 
+    # Assign simple 1..5 wave counting
     waves = []
     wave_num = 1
     for t, p, typ in dedup:
@@ -511,6 +520,7 @@ def compute_normalized_elliott_wave(close: pd.Series,
 # ---- Ichimoku (classic + normalized) ----
 def ichimoku_lines(high: pd.Series, low: pd.Series, close: pd.Series,
                    conv: int = 9, base: int = 26, span_b: int = 52, shift_cloud: bool = False):
+    """Core Ichimoku components. By default no forward shift for Span A/B (overlay-friendly)."""
     H = _coerce_1d_series(high)
     L = _coerce_1d_series(low)
     C = _coerce_1d_series(close)
@@ -530,6 +540,10 @@ def ichimoku_lines(high: pd.Series, low: pd.Series, close: pd.Series,
 def compute_normalized_ichimoku(high: pd.Series, low: pd.Series, close: pd.Series,
                                 conv: int = 9, base: int = 26, span_b: int = 52,
                                 norm_win: int = 240, price_weight: float = 0.6) -> pd.Series:
+    """
+    Normalized Ichimoku oscillator ([-1,1]) blending:
+      z1 = (Price - CloudMid)/std, z2 = (Tenkan - Kijun)/std; tanh((w*z1 + (1-w)*z2)/2)
+    """
     C = _coerce_1d_series(close).astype(float)
     H = _coerce_1d_series(high).astype(float)
     L = _coerce_1d_series(low).astype(float)
@@ -553,6 +567,7 @@ def compute_normalized_ichimoku(high: pd.Series, low: pd.Series, close: pd.Serie
 EW_CONFIDENCE = 0.95
 
 def elliott_conf_signal(price_now: float, fc_vals: pd.Series, conf: float = EW_CONFIDENCE):
+    """Signal for EW panel using SARIMAX distribution vs current price."""
     fc = _coerce_1d_series(fc_vals).dropna().to_numpy(dtype=float)
     if fc.size == 0 or not np.isfinite(price_now):
         return None
@@ -566,6 +581,7 @@ def elliott_conf_signal(price_now: float, fc_vals: pd.Series, conf: float = EW_C
 
 def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
                         fc_vals: pd.Series, threshold: float, prox: float):
+    """Return signal info if last price is near hourly S/R and model confidence passes threshold."""
     try:
         last_close = float(hc.iloc[-1])
         res = float(res_h.iloc[-1])
@@ -603,6 +619,7 @@ def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
 
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
+    """Fetch recent Yahoo Finance news for a symbol and return PST-aware timestamps."""
     rows = []
     try:
         news_list = yf.Ticker(symbol).news or []
@@ -640,39 +657,6 @@ def draw_news_markers(ax, times, ymin, ymax, label="News"):
         except Exception:
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
-
-# ========= Robust Close extractor for yfinance =========
-def yf_close_series(ticker: str, period: str = None, start: str = None,
-                    end: str = None, interval: str = None) -> pd.Series:
-    """Return a 1D Close series from yf.download, regardless of MultiIndex columns."""
-    df = yf.download(ticker, period=period, start=start, end=end, interval=interval)
-    if df is None or df.empty:
-        return pd.Series(dtype=float)
-    # MultiIndex columns (e.g., ('Close','AAPL'))
-    if isinstance(df.columns, pd.MultiIndex):
-        # Prefer 'Close', fall back to 'Adj Close'
-        for lvl0 in ['Close', 'Adj Close', 'close', 'adjclose']:
-            try:
-                sub = df.xs(lvl0, axis=1, level=0, drop_level=False)
-                if isinstance(sub, pd.DataFrame) and sub.shape[1] >= 1:
-                    s = sub.iloc[:, 0]
-                    s.name = 'Close'
-                    return pd.to_numeric(s, errors='coerce')
-            except Exception:
-                continue
-        # Fallback: first numeric column
-        s = df.select_dtypes(include=[np.number]).iloc[:, 0]
-        s.name = 'Close'
-        return pd.to_numeric(s, errors='coerce')
-    # Single-level columns
-    if 'Close' in df.columns:
-        s = df['Close']
-    elif 'Adj Close' in df.columns:
-        s = df['Adj Close']
-    else:
-        s = df.select_dtypes(include=[np.number]).iloc[:, 0]
-    s.name = 'Close'
-    return pd.to_numeric(s, errors='coerce')
 
 # ========= Cached "last value" calculators for scanning =========
 @st.cache_data(ttl=120)
@@ -784,6 +768,7 @@ with tab1:
             ichi_d = pd.Series(index=df.index, dtype=float)
             kijun_d = pd.Series(index=df.index, dtype=float)
 
+            # Daily Ichimoku: Normalized (for EW) + Kijun on price chart
             if df_ohlc is not None and not df_ohlc.empty and show_ichi:
                 ichi_d = compute_normalized_ichimoku(
                     df_ohlc["High"], df_ohlc["Low"], df_ohlc["Close"],
@@ -794,8 +779,9 @@ with tab1:
                     df_ohlc["High"], df_ohlc["Low"], df_ohlc["Close"],
                     conv=ichi_conv, base=ichi_base, span_b=ichi_spanb, shift_cloud=False
                 )
-                kijun_d = kijun_d.ffill().bfill()
+                kijun_d = kijun_d.ffill().bfill()  # continuous
 
+            # Subset for selected daily view
             df_show     = subset_by_daily_view(df, daily_view)
             ema30_show  = ema30.reindex(df_show.index)
             res30_show  = res30.reindex(df_show.index)
@@ -809,6 +795,7 @@ with tab1:
             kijun_d_show = kijun_d.reindex(df_show.index).ffill().bfill()
             piv_df_d_show = piv_df_d[(piv_df_d["time"] >= df_show.index.min()) & (piv_df_d["time"] <= df_show.index.max())] if not piv_df_d.empty else piv_df_d
 
+            # ---- Daily PRICE chart
             fig, (ax, axdw) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
                 gridspec_kw={"height_ratios": [3.2, 1.3]}
@@ -821,6 +808,7 @@ with tab1:
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
 
+            # Ichimoku Kijun on Daily price (solid black, continuous)
             if show_ichi and not kijun_d_show.dropna().empty:
                 ax.plot(kijun_d_show.index, kijun_d_show.values, "-", linewidth=1.8, color="black",
                         label=f"Ichimoku Kijun ({ichi_base})")
@@ -849,6 +837,7 @@ with tab1:
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
 
+            # ---- Daily EW panel
             axdw.set_title("Daily Normalized Elliott Wave + NPO + NTD + Ichimoku (normalized)")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw, ntd_d_show)
@@ -860,6 +849,7 @@ with tab1:
                 axdw.plot(npo_d_show.index, npo_d_show, "--", linewidth=1.2, label=f"NPO ({npo_fast},{npo_slow})")
             if show_ntd and not ntd_d_show.dropna().empty:
                 axdw.plot(ntd_d_show.index, ntd_d_show, ":", linewidth=1.2, label=f"NTD (win={ntd_window})")
+            # Normalized Ichimoku as SOLID BLACK, CONTINUOUS
             if show_ichi and not ichi_d_show.dropna().empty:
                 axdw.plot(ichi_d_show.index, ichi_d_show.values, "-", linewidth=1.4, color="black",
                           label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
@@ -916,7 +906,7 @@ with tab1:
                 st_intraday = compute_supertrend(intraday, atr_period=atr_period, atr_mult=atr_mult)
                 st_line_intr = st_intraday["ST"].reindex(hc.index) if "ST" in st_intraday else pd.Series(index=hc.index, dtype=float)
 
-                # Ichimoku Kijun (hourly)
+                # Ichimoku Kijun on HOURLY price chart (solid black, continuous)
                 kijun_h = pd.Series(index=hc.index, dtype=float)
                 if {'High','Low','Close'}.issubset(intraday.columns) and show_ichi:
                     _, kijun_h, _, _, _ = ichimoku_lines(
@@ -933,6 +923,8 @@ with tab1:
                 ax2.plot(hc.index, hc, label="Intraday")
                 ax2.plot(hc.index, he, "--", label="20 EMA")
                 ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
+
+                # plot Kijun on price
                 if show_ichi and not kijun_h.dropna().empty:
                     ax2.plot(kijun_h.index, kijun_h.values, "-", linewidth=1.8, color="black",
                              label=f"Ichimoku Kijun ({ichi_base})")
@@ -1040,6 +1032,7 @@ with tab1:
                     ax2w.plot(npo_h.index, npo_h, "--", linewidth=1.2, label=f"NPO ({npo_fast},{npo_slow})")
                 if show_ntd and not ntd_h.dropna().empty:
                     ax2w.plot(ntd_h.index, ntd_h, ":", linewidth=1.2, label=f"NTD (win={ntd_window})")
+                # Normalized Ichimoku as SOLID BLACK, CONTINUOUS
                 if show_ichi and not ichi_h_norm.dropna().empty:
                     ax2w.plot(ichi_h_norm.index, ichi_h_norm.values, "-", linewidth=1.4, color="black",
                               label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
@@ -1257,7 +1250,7 @@ with tab2:
                 st_intraday = compute_supertrend(intr, atr_period=atr_period, atr_mult=atr_mult)
                 st_line_intr = st_intraday["ST"].reindex(ic.index) if "ST" in st_intraday else pd.Series(index=ic.index, dtype=float)
 
-                # Ichimoku Kijun (hourly)
+                # Ichimoku Kijun on HOURLY price (solid black, continuous)
                 kijun_i = pd.Series(index=ic.index, dtype=float)
                 if {'High','Low','Close'}.issubset(intr.columns) and show_ichi:
                     _, kijun_i, _, _, _ = ichimoku_lines(
@@ -1347,7 +1340,7 @@ with tab2:
                     ax3m.set_xlim(xlim_price2)
                     st.pyplot(fig3m)
 
-                # --- Hourly EW panel + normalized Ichimoku
+                # --- Hourly EW panel + normalized Ichimoku (solid black)
                 wave_norm2, piv_df2 = compute_normalized_elliott_wave(ic, pivot_lb=pivot_lookback, norm_win=norm_window)
                 npo_h2 = compute_npo(ic, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=ic.index, dtype=float)
                 ntd_h2 = compute_normalized_trend(ic, window=ntd_window) if show_ntd else pd.Series(index=ic.index, dtype=float)
@@ -1416,9 +1409,7 @@ with tab3:
     if not st.session_state.run_all:
         st.info("Run Tab 1 first.")
     else:
-        # Robust close extraction avoids MultiIndex column pitfalls
-        close3 = yf_close_series(st.session_state.ticker, period=bb_period)
-        df3 = pd.DataFrame({"Close": close3}).dropna()
+        df3 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
         df3['PctChange'] = df3['Close'].pct_change()
         df3['Bull'] = df3['PctChange'] > 0
         bull = int(df3['Bull'].sum())
@@ -1463,10 +1454,7 @@ with tab4:
         st.pyplot(fig)
 
         st.markdown("---")
-
-        # Robust close extraction here as well
-        close0 = yf_close_series(st.session_state.ticker, period=bb_period)
-        df0 = pd.DataFrame({"Close": close0}).dropna()
+        df0 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
         df0['PctChange'] = df0['Close'].pct_change()
         df0['Bull'] = df0['PctChange'] > 0
         df0['MA30'] = df0['Close'].rolling(30, min_periods=1).mean()
