@@ -24,6 +24,7 @@
 # - Red shading under NPO curve on EW panels
 # - NEW: Daily trend-direction line (green=uptrend, red=downtrend) with slope label
 # - NEW: NTD -0.5 Scanner tab for Stocks & Forex (Daily; plus Hourly for Forex)
+# - NEW: Ichimoku Kijun-sen (26) on Daily & Hourly price charts as a black continuous line
 
 import streamlit as st
 import pandas as pd
@@ -444,6 +445,19 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
         "upperband": upperband, "lowerband": lowerband
     })
 
+# ---- Ichimoku (Kijun-sen / Baseline) ----
+def ichimoku_kijun(ohlc: pd.DataFrame, base_period: int = 26) -> pd.Series:
+    """
+    Ichimoku Baseline (Kijun-sen) = (highest high + lowest low) / 2 over `base_period`.
+    Requires 'High' and 'Low' columns.
+    """
+    if ohlc is None or ohlc.empty or not {'High','Low'}.issubset(ohlc.columns):
+        return pd.Series(index=ohlc.index if ohlc is not None else pd.Index([]), dtype=float)
+    hh = ohlc['High'].rolling(base_period, min_periods=max(2, base_period//3)).max()
+    ll = ohlc['Low'].rolling(base_period, min_periods=max(2, base_period//3)).min()
+    kijun = (hh + ll) / 2.0
+    return kijun
+
 # ---- Forex News (Yahoo Finance) ----
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
@@ -705,6 +719,9 @@ with tab1:
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
+            # Ichimoku Kijun on DAILY (from daily OHLC)
+            kijun_d = ichimoku_kijun(df_ohlc, base_period=26)
+
             wave_norm_d, piv_df_d = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
             npo_d = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
             ntd_d = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
@@ -719,6 +736,7 @@ with tab1:
             npo_d_show  = npo_d.reindex(df_show.index)
             ntd_d_show  = ntd_d.reindex(df_show.index)
             piv_df_d_show = piv_df_d[(piv_df_d["time"] >= df_show.index.min()) & (piv_df_d["time"] <= df_show.index.max())] if not piv_df_d.empty else piv_df_d
+            kijun_d_show = kijun_d.reindex(df_show.index)
 
             fig, (ax, axdw) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
@@ -731,6 +749,9 @@ with tab1:
             ax.plot(ema30_show, "--", label="30 EMA")
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
+            # Ichimoku Kijun (black continuous)
+            if not kijun_d_show.dropna().empty:
+                ax.plot(kijun_d_show.index, kijun_d_show.values, "-", color="black", linewidth=1.6, label="Ichimoku Kijun (26)")
 
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
@@ -821,6 +842,9 @@ with tab1:
                 st_intraday = compute_supertrend(intraday, atr_period=atr_period, atr_mult=atr_mult)
                 st_line_intr = st_intraday["ST"].reindex(hc.index) if "ST" in st_intraday else pd.Series(index=hc.index, dtype=float)
 
+                # Ichimoku Kijun on HOURLY (from intraday OHLC)
+                kijun_h = ichimoku_kijun(intraday[['High','Low','Close']].copy(), base_period=26).reindex(hc.index)
+
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
@@ -829,6 +853,9 @@ with tab1:
                 ax2.plot(hc.index, hc, label="Intraday")
                 ax2.plot(hc.index, he, "--", label="20 EMA")
                 ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
+                # Ichimoku Kijun (black continuous)
+                if not kijun_h.dropna().empty:
+                    ax2.plot(kijun_h.index, kijun_h.values, "-", color="black", linewidth=1.6, label="Ichimoku Kijun (26)")
 
                 res_val = sup_val = px_val = np.nan
                 try:
@@ -1005,6 +1032,9 @@ with tab2:
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
+            # Ichimoku Kijun on DAILY
+            kijun_d2 = ichimoku_kijun(df_ohlc, base_period=26)
+
             wave_norm_d2, piv_df_d2 = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
             npo_d2 = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
             ntd_d2 = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
@@ -1019,6 +1049,7 @@ with tab2:
             npo_d_show  = npo_d2.reindex(df_show.index)
             ntd_d_show  = ntd_d2.reindex(df_show.index)
             piv_df_d_show = piv_df_d2[(piv_df_d2["time"] >= df_show.index.min()) & (piv_df_d2["time"] <= df_show.index.max())] if not piv_df_d2.empty else piv_df_d2
+            kijun_d2_show = kijun_d2.reindex(df_show.index)
 
             fig, (ax, axdw2) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
@@ -1031,6 +1062,9 @@ with tab2:
             ax.plot(ema30_show, "--", label="30 EMA")
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
+            # Ichimoku Kijun (black continuous)
+            if not kijun_d2_show.dropna().empty:
+                ax.plot(kijun_d2_show.index, kijun_d2_show.values, "-", color="black", linewidth=1.6, label="Ichimoku Kijun (26)")
 
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
@@ -1103,6 +1137,7 @@ with tab2:
             axdw2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
+        # ----- Intraday -----
         if view in ("Intraday","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -1119,12 +1154,18 @@ with tab2:
                 st_line_intr = st_intraday["ST"].reindex(ic.index) if "ST" in st_intraday else pd.Series(index=ic.index, dtype=float)
                 yhat_h, m_h = slope_line(ic, slope_lb_hourly)
 
+                # Ichimoku Kijun on HOURLY (intraday OHLC)
+                kijun_i = ichimoku_kijun(intr[['High','Low','Close']].copy(), base_period=26).reindex(ic.index)
+
                 fig3, ax3 = plt.subplots(figsize=(14,4))
                 plt.subplots_adjust(top=0.85, right=0.93)
 
                 ax3.plot(ic.index, ic, label="Intraday")
                 ax3.plot(ic.index, ie, "--", label="20 EMA")
                 ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
+                # Ichimoku Kijun (black continuous)
+                if not kijun_i.dropna().empty:
+                    ax3.plot(kijun_i.index, kijun_i.values, "-", color="black", linewidth=1.6, label="Ichimoku Kijun (26)")
 
                 res_val2 = sup_val2 = px_val2 = np.nan
                 try:
