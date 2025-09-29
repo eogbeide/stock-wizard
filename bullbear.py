@@ -26,7 +26,7 @@
 # - NEW: NTD -0.5 Scanner tab for Stocks & Forex (Daily; plus Hourly for Forex)
 # - NEW: Ichimoku Kijun-sen (26) on Daily & Hourly price charts as a black continuous line
 
-import streamlit as st
+import streamlit as stgg
 import pandas as pd
 import numpy as np
 import yfinance as yf
