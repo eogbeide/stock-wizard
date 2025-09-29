@@ -26,7 +26,7 @@
 # - NEW: NTD -0.5 Scanner tab for Stocks & Forex (Daily; plus Hourly for Forex)
 # - NEW: Normalized Ichimoku overlay on EW panels (Daily & Hourly) with sidebar controls
 
-import streamlit as st
+import streamlit as stgh
 import pandas as pd
 import numpy as np
 import yfinance as yf
