@@ -12,7 +12,7 @@
 # - Value labels on intraday Resistance/Support placed on the LEFT; price label outside chart (top-right)
 # - All displayed price values formatted to 3 decimal places
 # - Hourly Support/Resistance drawn as STRAIGHT LINES across the entire chart
-# - Current price shown OUTSIDE of chart area (top-right)
+# - Current price shown OUTSIDE of chart area (top-right above axes)
 # - Normalized Elliott Wave panel for Hourly (dates aligned to hourly chart)
 # - Normalized Elliott Wave panel for Daily (dates aligned to daily chart, shared x-axis with price)
 # - EW panels show BUY/SELL signals when forecast confidence > 95% and display current price on top
@@ -24,7 +24,6 @@
 # - Red shading under NPO curve on EW panels
 # - NEW: Daily trend-direction line (green=uptrend, red=downtrend) with slope label
 # - NEW: NTD -0.5 Scanner tab for Stocks & Forex (Daily; plus Hourly for Forex)
-# - NEW: Normalized Ichimoku overlay on EW panels (Daily & Hourly) with sidebar controls
 
 import streamlit as st
 import pandas as pd
@@ -200,15 +199,6 @@ show_ntd = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd"
 ntd_window = st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
 shade_ntd = st.sidebar.checkbox("Shade NTD (green=up, red=down)", value=True, key="sb_ntd_shade")
 
-# >>> NEW: Ichimoku overlay controls <<<
-st.sidebar.subheader("Normalized Ichimoku (EW panels)")
-show_ichi = st.sidebar.checkbox("Show Ichimoku (normalized)", value=True, key="sb_show_ichi")
-ichi_conv = st.sidebar.slider("Conversion (Tenkan)", 5, 20, 9, 1, key="sb_ichi_conv")
-ichi_base = st.sidebar.slider("Base (Kijun)", 20, 40, 26, 1, key="sb_ichi_base")
-ichi_spanb = st.sidebar.slider("Span B", 40, 80, 52, 1, key="sb_ichi_spanb")
-ichi_norm_win = st.sidebar.slider("Ichimoku normalization window", 30, 600, 240, 10, key="sb_ichi_norm")
-ichi_price_weight = st.sidebar.slider("Weight: Price vs Cloud (0–1)", 0.0, 1.0, 0.6, 0.05, key="sb_ichi_w")
-
 # Forex news controls (only shown in Forex mode)
 if mode == "Forex":
     show_fx_news = st.sidebar.checkbox("Show Forex news markers (intraday)", value=True, key="sb_show_fx_news")
@@ -302,7 +292,7 @@ def fibonacci_levels(series_like):
     }
 
 def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
-    if ohlc is None or ohlc.empty or not {'High','Low','Close'}.issubset(ohlc.columns):
+    if ohlc is None or ohlc.empty:
         return {}
     ohlc = ohlc.sort_index()
     row = ohlc.iloc[-2] if len(ohlc) >= 2 else ohlc.iloc[-1]
@@ -611,59 +601,6 @@ def compute_normalized_elliott_wave(close: pd.Series,
     pivots_df = pd.DataFrame(waves, columns=["time","price","type","wave"])
     return wave_norm, pivots_df
 
-# ========= NEW: Ichimoku (normalized) =========
-def ichimoku_lines(high: pd.Series, low: pd.Series, close: pd.Series,
-                   conv: int = 9, base: int = 26, span_b: int = 52, shift_cloud: bool = False):
-    """
-    Compute Ichimoku components without forward displacement by default.
-    If shift_cloud=True, Span A/B are shifted forward by 'base' periods (classical),
-    otherwise returned aligned to current index (better for overlays/normalization).
-    """
-    H = _coerce_1d_series(high)
-    L = _coerce_1d_series(low)
-    C = _coerce_1d_series(close)
-    if H.empty or L.empty or C.empty:
-        idx = C.index if not C.empty else (H.index if not H.empty else L.index)
-        return (pd.Series(index=idx, dtype=float),)*5
-
-    tenkan = (H.rolling(conv).max() + L.rolling(conv).min()) / 2.0
-    kijun  = (H.rolling(base).max() + L.rolling(base).min()) / 2.0
-    span_a_raw = (tenkan + kijun) / 2.0
-    span_b_raw = (H.rolling(span_b).max() + L.rolling(span_b).min()) / 2.0
-    span_a = span_a_raw.shift(base) if shift_cloud else span_a_raw
-    span_b = span_b_raw.shift(base) if shift_cloud else span_b_raw
-    chikou = C.shift(-base)  # classic lagging line; not used in normalization
-    return tenkan, kijun, span_a, span_b, chikou
-
-def compute_normalized_ichimoku(high: pd.Series, low: pd.Series, close: pd.Series,
-                                conv: int = 9, base: int = 26, span_b: int = 52,
-                                norm_win: int = 240, price_weight: float = 0.6) -> pd.Series:
-    """
-    Returns a single bounded oscillator in [-1, 1] blending:
-      - z1: (Price - CloudMid) / rolling_std(close)
-      - z2: (Tenkan - Kijun) / rolling_std(close)
-    Then: tanh( (price_weight*z1 + (1-price_weight)*z2) / 2 )
-    Span A/B are *not* forward-shifted so values align with price/EW at time t.
-    """
-    C = _coerce_1d_series(close).astype(float)
-    H = _coerce_1d_series(high).astype(float)
-    L = _coerce_1d_series(low).astype(float)
-    if C.empty or H.empty or L.empty:
-        return pd.Series(index=C.index, dtype=float)
-
-    tenkan, kijun, span_a, span_b, _ = ichimoku_lines(H, L, C, conv=conv, base=base, span_b=span_b, shift_cloud=False)
-    cloud_mid = ((span_a + span_b) / 2.0).reindex(C.index)
-
-    minp = max(10, norm_win // 10)
-    vol = C.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
-
-    z1 = (C - cloud_mid) / vol
-    z2 = (tenkan - kijun) / vol
-
-    blend = price_weight * z1 + (1.0 - price_weight) * z2
-    n_ichi = np.tanh(blend / 2.0)
-    return n_ichi.reindex(C.index)
-
 # ========= Cached "last value" calculators for scanning =========
 @st.cache_data(ttl=120)
 def last_daily_ntd_value(symbol: str, ntd_win: int):
@@ -689,6 +626,7 @@ def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
         return float(ntd.iloc[-1]), ntd.index[-1]
     except Exception:
         return np.nan, None
+# ===============================================================
 
 # --- Session init ---
 if 'run_all' not in st.session_state:
@@ -770,15 +708,6 @@ with tab1:
             wave_norm_d, piv_df_d = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
             npo_d = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
             ntd_d = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
-            # NEW: Ichimoku (normalized) — Daily
-            if df_ohlc is not None and not df_ohlc.empty and show_ichi:
-                ichi_d = compute_normalized_ichimoku(
-                    df_ohlc["High"], df_ohlc["Low"], df_ohlc["Close"],
-                    conv=ichi_conv, base=ichi_base, span_b=ichi_spanb,
-                    norm_win=ichi_norm_win, price_weight=ichi_price_weight
-                )
-            else:
-                ichi_d = pd.Series(index=df.index, dtype=float)
 
             df_show     = subset_by_daily_view(df, daily_view)
             ema30_show  = ema30.reindex(df_show.index)
@@ -789,7 +718,6 @@ with tab1:
             wave_d_show = wave_norm_d.reindex(df_show.index)
             npo_d_show  = npo_d.reindex(df_show.index)
             ntd_d_show  = ntd_d.reindex(df_show.index)
-            ichi_d_show = ichi_d.reindex(df_show.index)
             piv_df_d_show = piv_df_d[(piv_df_d["time"] >= df_show.index.min()) & (piv_df_d["time"] <= df_show.index.max())] if not piv_df_d.empty else piv_df_d
 
             fig, (ax, axdw) = plt.subplots(
@@ -828,7 +756,7 @@ with tab1:
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
 
-            axdw.set_title("Daily Normalized Elliott Wave + NPO + NTD + Ichimoku")
+            axdw.set_title("Daily Normalized Elliott Wave + NPO + NTD")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw, ntd_d_show)
             if show_npo and not npo_d_show.dropna().empty:
@@ -839,9 +767,6 @@ with tab1:
                 axdw.plot(npo_d_show.index, npo_d_show, "--", linewidth=1.2, label=f"NPO ({npo_fast},{npo_slow})")
             if show_ntd and not ntd_d_show.dropna().empty:
                 axdw.plot(ntd_d_show.index, ntd_d_show, ":", linewidth=1.2, label=f"NTD (win={ntd_window})")
-            if show_ichi and not ichi_d_show.dropna().empty:
-                axdw.plot(ichi_d_show.index, ichi_d_show, "-.", linewidth=1.2,
-                          label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
 
             for yline, style, col, lbl in [
                 (0.0, "--", None, "EW 0"),
@@ -986,20 +911,11 @@ with tab1:
                 wave_norm, piv_df = compute_normalized_elliott_wave(hc, pivot_lb=pivot_lookback, norm_win=norm_window)
                 npo_h = compute_npo(hc, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=hc.index, dtype=float)
                 ntd_h = compute_normalized_trend(hc, window=ntd_window) if show_ntd else pd.Series(index=hc.index, dtype=float)
-                # NEW: Ichimoku (normalized) — Hourly (requires High/Low)
-                if {'High','Low'}.issubset(intraday.columns) and show_ichi:
-                    ichi_h = compute_normalized_ichimoku(
-                        intraday["High"], intraday["Low"], intraday["Close"],
-                        conv=ichi_conv, base=ichi_base, span_b=ichi_spanb,
-                        norm_win=ichi_norm_win, price_weight=ichi_price_weight
-                    ).reindex(hc.index)
-                else:
-                    ichi_h = pd.Series(index=hc.index, dtype=float)
 
                 fig2w, ax2w = plt.subplots(figsize=(14,2.8))
                 plt.subplots_adjust(top=0.88, right=0.93)
 
-                ax2w.set_title("Normalized Elliott Wave + NPO + NTD + Ichimoku")
+                ax2w.set_title("Normalized Elliott Wave + NPO + NTD")
                 if show_ntd and shade_ntd and not ntd_h.dropna().empty:
                     shade_ntd_regions(ax2w, ntd_h)
                 if show_npo and not npo_h.dropna().empty:
@@ -1010,9 +926,6 @@ with tab1:
                     ax2w.plot(npo_h.index, npo_h, "--", linewidth=1.2, label=f"NPO ({npo_fast},{npo_slow})")
                 if show_ntd and not ntd_h.dropna().empty:
                     ax2w.plot(ntd_h.index, ntd_h, ":", linewidth=1.2, label=f"NTD (win={ntd_window})")
-                if show_ichi and not ichi_h.dropna().empty:
-                    ax2w.plot(ichi_h.index, ichi_h, "-.", linewidth=1.2,
-                              label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
 
                 ax2w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
                 ax2w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
@@ -1095,15 +1008,6 @@ with tab2:
             wave_norm_d2, piv_df_d2 = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
             npo_d2 = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
             ntd_d2 = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
-            # NEW: Ichimoku (normalized) — Daily (Enhanced)
-            if df_ohlc is not None and not df_ohlc.empty and show_ichi:
-                ichi_d2 = compute_normalized_ichimoku(
-                    df_ohlc["High"], df_ohlc["Low"], df_ohlc["Close"],
-                    conv=ichi_conv, base=ichi_base, span_b=ichi_spanb,
-                    norm_win=ichi_norm_win, price_weight=ichi_price_weight
-                )
-            else:
-                ichi_d2 = pd.Series(index=df.index, dtype=float)
 
             df_show     = subset_by_daily_view(df, daily_view)
             ema30_show  = ema30.reindex(df_show.index)
@@ -1114,7 +1018,6 @@ with tab2:
             wave_d_show = wave_norm_d2.reindex(df_show.index)
             npo_d_show  = npo_d2.reindex(df_show.index)
             ntd_d_show  = ntd_d2.reindex(df_show.index)
-            ichi_d2_show = ichi_d2.reindex(df_show.index)
             piv_df_d_show = piv_df_d2[(piv_df_d2["time"] >= df_show.index.min()) & (piv_df_d2["time"] <= df_show.index.max())] if not piv_df_d2.empty else piv_df_d2
 
             fig, (ax, axdw2) = plt.subplots(
@@ -1153,7 +1056,7 @@ with tab2:
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
 
-            axdw2.set_title("Daily Normalized Elliott Wave + NPO + NTD + Ichimoku")
+            axdw2.set_title("Daily Normalized Elliott Wave + NPO + NTD")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw2, ntd_d_show)
             if show_npo and not npo_d_show.dropna().empty:
@@ -1164,9 +1067,6 @@ with tab2:
                 axdw2.plot(npo_d_show.index, npo_d_show, "--", linewidth=1.2, label=f"NPO ({npo_fast},{npo_slow})")
             if show_ntd and not ntd_d_show.dropna().empty:
                 axdw2.plot(ntd_d_show.index, ntd_d_show, ":", linewidth=1.2, label=f"NTD (win={ntd_window})")
-            if show_ichi and not ichi_d2_show.dropna().empty:
-                axdw2.plot(ichi_d2_show.index, ichi_d2_show, "-.", linewidth=1.2,
-                           label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
 
             for yline, style, col, lbl in [
                 (0.0, "--", None, "EW 0"),
@@ -1295,23 +1195,15 @@ with tab2:
                     ax3m.set_xlim(xlim_price2)
                     st.pyplot(fig3m)
 
-                # --- Hourly EW panel + NPO + NTD + Ichimoku ---
+                # --- Hourly EW panel + NPO + NTD ---
                 wave_norm2, piv_df2 = compute_normalized_elliott_wave(ic, pivot_lb=pivot_lookback, norm_win=norm_window)
                 npo_h2 = compute_npo(ic, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=ic.index, dtype=float)
                 ntd_h2 = compute_normalized_trend(ic, window=ntd_window) if show_ntd else pd.Series(index=ic.index, dtype=float)
-                if {'High','Low'}.issubset(intr.columns) and show_ichi:
-                    ichi_h2 = compute_normalized_ichimoku(
-                        intr["High"], intr["Low"], intr["Close"],
-                        conv=ichi_conv, base=ichi_base, span_b=ichi_spanb,
-                        norm_win=ichi_norm_win, price_weight=ichi_price_weight
-                    ).reindex(ic.index)
-                else:
-                    ichi_h2 = pd.Series(index=ic.index, dtype=float)
 
                 fig3w, ax3w = plt.subplots(figsize=(14,2.8))
                 plt.subplots_adjust(top=0.88, right=0.93)
 
-                ax3w.set_title("Normalized Elliott Wave + NPO + NTD + Ichimoku")
+                ax3w.set_title("Normalized Elliott Wave + NPO + NTD")
                 if show_ntd and shade_ntd and not ntd_h2.dropna().empty:
                     shade_ntd_regions(ax3w, ntd_h2)
                 if show_npo and not npo_h2.dropna().empty:
@@ -1322,9 +1214,6 @@ with tab2:
                     ax3w.plot(npo_h2.index, npo_h2, "--", linewidth=1.2, label=f"NPO ({npo_fast},{npo_slow})")
                 if show_ntd and not ntd_h2.dropna().empty:
                     ax3w.plot(ntd_h2.index, ntd_h2, ":", linewidth=1.2, label=f"NTD (win={ntd_window})")
-                if show_ichi and not ichi_h2.dropna().empty:
-                    ax3w.plot(ichi_h2.index, ichi_h2, "-.", linewidth=1.2,
-                              label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
 
                 ax3w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
                 ax3w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
@@ -1402,7 +1291,7 @@ with tab4:
         fig, ax = plt.subplots(figsize=(14,5))
         ax.plot(df3m.index, df3m, label="Close")
         ax.plot(df3m.index, ma30_3m, label="30 MA")
-        ax.plot(res3m.index, res3m, ":", label="Resistance")
+        ax.plot(df3m.index, res3m, ":", label="Resistance")
         ax.plot(sup3m, ":", label="Support")
         ax.plot(df3m.index, trend3m, "--", label="Trend")
         ax.set_xlabel("Date (PST)")
