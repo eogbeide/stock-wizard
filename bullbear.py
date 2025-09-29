@@ -25,7 +25,7 @@
 # - NEW: Daily trend-direction line (green=uptrend, red=downtrend) with slope label
 # - NEW: NTD -0.5 Scanner tab for Stocks & Forex (Daily; plus Hourly for Forex)
 
-import streamlit as st
+import streamlit as stv
 import pandas as pd
 import numpy as np
 import yfinance as yf
