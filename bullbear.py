@@ -840,7 +840,8 @@ with tab1:
             if show_ntd and not ntd_d_show.dropna().empty:
                 axdw.plot(ntd_d_show.index, ntd_d_show, ":", linewidth=1.2, label=f"NTD (win={ntd_window})")
             if show_ichi and not ichi_d_show.dropna().empty:
-                axdw.plot(ichi_d_show.index, ichi_d_show, "-.", linewidth=1.2,
+                # UPDATED: solid black Ichimoku line
+                axdw.plot(ichi_d_show.index, ichi_d_show, "-", linewidth=1.6, color="black",
                           label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
 
             for yline, style, col, lbl in [
@@ -1011,7 +1012,8 @@ with tab1:
                 if show_ntd and not ntd_h.dropna().empty:
                     ax2w.plot(ntd_h.index, ntd_h, ":", linewidth=1.2, label=f"NTD (win={ntd_window})")
                 if show_ichi and not ichi_h.dropna().empty:
-                    ax2w.plot(ichi_h.index, ichi_h, "-.", linewidth=1.2,
+                    # UPDATED: solid black Ichimoku line
+                    ax2w.plot(ichi_h.index, ichi_h, "-", linewidth=1.6, color="black",
                               label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
 
                 ax2w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
@@ -1165,7 +1167,8 @@ with tab2:
             if show_ntd and not ntd_d_show.dropna().empty:
                 axdw2.plot(ntd_d_show.index, ntd_d_show, ":", linewidth=1.2, label=f"NTD (win={ntd_window})")
             if show_ichi and not ichi_d2_show.dropna().empty:
-                axdw2.plot(ichi_d2_show.index, ichi_d2_show, "-.", linewidth=1.2,
+                # UPDATED: solid black Ichimoku line
+                axdw2.plot(ichi_d2_show.index, ichi_d2_show, "-", linewidth=1.6, color="black",
                            label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
 
             for yline, style, col, lbl in [
@@ -1256,13 +1259,6 @@ with tab2:
                     ax3.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
                              label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
-                if show_fibs and not ic.empty:
-                    fibs_h = fibonacci_levels(ic)
-                    for lbl, y in fibs_h.items():
-                        ax3.hlines(y, xmin=ic.index[0], xmax=ic.index[-1], linestyles="dotted", linewidth=1)
-                    for lbl, y in fibs_h.items():
-                        ax3.text(ic.index[-1], y, f" {lbl}", va="center")
-
                 signal2 = sr_proximity_signal(ic, res_i, sup_i, st.session_state.fc_vals,
                                               threshold=signal_threshold, prox=sr_prox_pct)
                 if signal2 is not None and np.isfinite(px_val2):
@@ -1323,7 +1319,8 @@ with tab2:
                 if show_ntd and not ntd_h2.dropna().empty:
                     ax3w.plot(ntd_h2.index, ntd_h2, ":", linewidth=1.2, label=f"NTD (win={ntd_window})")
                 if show_ichi and not ichi_h2.dropna().empty:
-                    ax3w.plot(ichi_h2.index, ichi_h2, "-.", linewidth=1.2,
+                    # UPDATED: solid black Ichimoku line
+                    ax3w.plot(ichi_h2.index, ichi_h2, "-", linewidth=1.6, color="black",
                               label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
 
                 ax3w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
