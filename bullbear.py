@@ -1,4 +1,4 @@
-# bullbear.py — Stocks/Forex Dashboard + Forecasts (+ Normalized Price Oscillator on EW panels)
+# bullbear.py — Stocks/Forex Dashboard + Forecasts
 # - Forex news markers on intraday charts
 # - Hourly momentum indicator (ROC%) with robust handling
 # - Momentum trendline & momentum S/R
@@ -13,8 +13,7 @@
 # - All displayed price values formatted to 3 decimal places
 # - Hourly Support/Resistance drawn as STRAIGHT LINES across the entire chart
 # - Current price shown OUTSIDE of chart area (top-right)
-# - Normalized Elliott Wave panel for Hourly (dates aligned to hourly chart)
-# - Normalized Elliott Wave panel for Daily (dates aligned to daily chart, shared x-axis with price)
+# - Daily Normalized Elliott Wave panel (dates aligned to daily chart, shared x-axis with price)
 # - EW panels show BUY/SELL signals when forecast confidence > 95% and display current price on top
 # - EW panels draw a red line at +0.5 and a green line at -0.5
 # - EW panels draw black lines at +0.75 and -0.75
@@ -24,8 +23,9 @@
 # - Red shading under NPO curve on EW panels
 # - NEW: Daily trend-direction line (green=uptrend, red=downtrend) with slope label
 # - NEW: NTD -0.5 Scanner tab for Stocks & Forex (Daily; plus Hourly for Forex)
-# - NEW: Normalized Ichimoku overlay on EW panels (Daily & Hourly) with sidebar controls
+# - NEW: Normalized Ichimoku overlay on EW panels (Daily) with sidebar controls
 # - NEW: Ichimoku Kijun (Base) line added to Daily & Hourly price charts (solid black, continuous)
+# - UPDATED: Removed Hourly EW panel and added **Normalized RSI (NRSI)** panel below the hourly price chart
 
 import streamlit as st
 import pandas as pd
@@ -166,6 +166,11 @@ st.sidebar.subheader("Hourly Momentum")
 show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True, key="sb_show_mom_hourly")
 mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, key="sb_mom_lb_hourly")
 
+# NEW: Hourly NRSI controls
+st.sidebar.subheader("Hourly Normalized RSI")
+show_nrsi = st.sidebar.checkbox("Show NRSI (hourly)", value=True, key="sb_show_nrsi")
+nrsi_period = st.sidebar.slider("RSI period (bars)", 5, 60, 14, 1, key="sb_nrsi_period")
+
 # Hourly Supertrend controls
 st.sidebar.subheader("Hourly Supertrend")
 atr_period = st.sidebar.slider("ATR period", 5, 50, 10, 1, key="sb_atr_period")
@@ -176,32 +181,27 @@ st.sidebar.subheader("Signal Logic (Hourly)")
 signal_threshold = st.sidebar.slider("Signal confidence threshold", 0.50, 0.99, 0.90, 0.01, key="sb_sig_thr")
 sr_prox_pct = st.sidebar.slider("S/R proximity (%)", 0.05, 1.00, 0.25, 0.05, key="sb_sr_prox") / 100.0
 
-# Elliott Wave controls (Hourly)
-st.sidebar.subheader("Normalized Elliott Wave (Hourly)")
-pivot_lookback = st.sidebar.slider("Pivot lookback (bars)", 3, 21, 7, 2, key="sb_pivot_lb")
-norm_window    = st.sidebar.slider("Normalization window (bars)", 30, 600, 240, 10, key="sb_norm_win")
-waves_to_annotate = st.sidebar.slider("Annotate recent waves", 3, 12, 7, 1, key="sb_wave_ann")
-
-# Elliott Wave controls (Daily)
+# (REMOVED) Hourly Elliott Wave controls
+# (kept) Daily Elliott Wave controls
 st.sidebar.subheader("Normalized Elliott Wave (Daily)")
 pivot_lookback_d = st.sidebar.slider("Pivot lookback (days)", 3, 31, 9, 2, key="sb_pivot_lb_d")
 norm_window_d    = st.sidebar.slider("Normalization window (days)", 30, 1200, 360, 10, key="sb_norm_win_d")
 waves_to_annotate_d = st.sidebar.slider("Annotate recent waves (daily)", 3, 12, 7, 1, key="sb_wave_ann_d")
 
-# NPO overlay controls
+# NPO overlay controls (for EW panels)
 st.sidebar.subheader("Normalized Price Oscillator (overlay on EW panels)")
 show_npo = st.sidebar.checkbox("Show NPO overlay", value=True, key="sb_show_npo")
 npo_fast = st.sidebar.slider("NPO fast EMA", 5, 30, 12, 1, key="sb_npo_fast")
 npo_slow = st.sidebar.slider("NPO slow EMA", 10, 60, 26, 1, key="sb_npo_slow")
 npo_norm_win = st.sidebar.slider("NPO normalization window", 30, 600, 240, 10, key="sb_npo_norm")
 
-# NTD overlay controls
+# NTD overlay controls (for EW panels)
 st.sidebar.subheader("Normalized Trend (EW panels)")
 show_ntd = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd")
 ntd_window = st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
 shade_ntd = st.sidebar.checkbox("Shade NTD (green=up, red=down)", value=True, key="sb_ntd_shade")
 
-# >>> Ichimoku overlay controls <<<
+# Ichimoku controls (Normalized for EW + Kijun on price)
 st.sidebar.subheader("Normalized Ichimoku (EW panels) + Kijun on price")
 show_ichi = st.sidebar.checkbox("Show Ichimoku", value=True, key="sb_show_ichi")
 ichi_conv = st.sidebar.slider("Conversion (Tenkan)", 5, 20, 9, 1, key="sb_ichi_conv")
@@ -338,6 +338,27 @@ def compute_roc(series_like, n: int = 10) -> pd.Series:
     roc = base.pct_change(n) * 100.0
     return roc.reindex(s.index)
 
+# ---- RSI / Normalized RSI ----
+def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
+    s = _coerce_1d_series(close).astype(float)
+    if s.empty or period < 2:
+        return pd.Series(index=s.index, dtype=float)
+    delta = s.diff()
+    up = delta.clip(lower=0.0)
+    down = -delta.clip(upper=0.0)
+    # Wilder smoothing via EMA with alpha = 1/period
+    roll_up = up.ewm(alpha=1/period, adjust=False).mean()
+    roll_down = down.ewm(alpha=1/period, adjust=False).mean().replace(0, np.nan)
+    rs = roll_up / roll_down
+    rsi = 100 - (100 / (1 + rs))
+    return rsi.reindex(s.index)
+
+def compute_nrsi(close: pd.Series, period: int = 14) -> pd.Series:
+    """Normalized RSI in [-1, 1]. Linear map: (RSI-50)/50, clipped."""
+    rsi = compute_rsi(close, period=period)
+    nrsi = ((rsi - 50.0) / 50.0).clip(-1.0, 1.0)
+    return nrsi.reindex(rsi.index)
+
 # ---- Normalized Price Oscillator ----
 def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int = 240) -> pd.Series:
     s = _coerce_1d_series(close)
@@ -455,7 +476,7 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
         "upperband": upperband, "lowerband": lowerband
     })
 
-# ---- Normalized Elliott Wave (dependency-free) ----
+# ---- Normalized Elliott Wave (for DAILY panel) ----
 def compute_normalized_elliott_wave(close: pd.Series,
                                     pivot_lb: int = 7,
                                     norm_win: int = 240):
@@ -473,7 +494,7 @@ def compute_normalized_elliott_wave(close: pd.Series,
     mean = s.rolling(norm_win, min_periods=minp).mean()
     std  = s.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
     z = (s - mean) / std
-    wave_norm = np.tanh(z / 2.0)  # smoother, bounded [-1,1]
+    wave_norm = np.tanh(z / 2.0)
     wave_norm = wave_norm.reindex(close.index)
 
     # Pivot detection via centered rolling extrema
@@ -761,7 +782,7 @@ with tab1:
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
-            # EW overlays
+            # EW overlays (DAILY)
             wave_norm_d, piv_df_d = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
             npo_d = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
             ntd_d = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
@@ -889,7 +910,7 @@ with tab1:
             axdw.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly -----
+        # ----- Hourly (price + NRSI + momentum) -----
         if chart in ("Hourly","Both"):
             intraday = st.session_state.intraday
             if intraday is None or intraday.empty or "Close" not in intraday:
@@ -987,6 +1008,29 @@ with tab1:
                 xlim_price = ax2.get_xlim()
                 st.pyplot(fig2)
 
+                # NEW: Normalized RSI panel (Hourly)
+                if show_nrsi:
+                    nrsi_h = compute_nrsi(hc, period=nrsi_period)
+                    fig2r, ax2r = plt.subplots(figsize=(14,2.8))
+                    ax2r.set_title(f"Normalized RSI (NRSI, period={nrsi_period})")
+                    ax2r.plot(nrsi_h.index, nrsi_h, "-", linewidth=1.4, label="NRSI")
+
+                    # Shading above/below zero
+                    pos = nrsi_h.where(nrsi_h > 0)
+                    neg = nrsi_h.where(nrsi_h < 0)
+                    ax2r.fill_between(pos.index, 0, pos, alpha=0.18)
+                    ax2r.fill_between(neg.index, 0, neg, alpha=0.18)
+
+                    # Reference lines
+                    ax2r.axhline(0, linestyle="--", linewidth=1, color="black", label="0")
+                    ax2r.axhline(0.5, linestyle=":", linewidth=1)
+                    ax2r.axhline(-0.5, linestyle=":", linewidth=1)
+                    ax2r.set_ylim(-1.1, 1.1)
+                    ax2r.set_xlim(xlim_price)
+                    ax2r.legend(loc="lower left", framealpha=0.5)
+                    ax2r.set_xlabel("Time (PST)")
+                    st.pyplot(fig2r)
+
                 # Momentum panel (ROC%)
                 if show_mom_hourly:
                     roc = compute_roc(hc, n=mom_lb_hourly)
@@ -1005,70 +1049,6 @@ with tab1:
                     ax2m.legend(loc="lower left", framealpha=0.5)
                     ax2m.set_xlim(xlim_price)
                     st.pyplot(fig2m)
-
-                # --- Hourly EW panel ---
-                wave_norm, piv_df = compute_normalized_elliott_wave(hc, pivot_lb=pivot_lookback, norm_win=norm_window)
-                npo_h = compute_npo(hc, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=hc.index, dtype=float)
-                ntd_h = compute_normalized_trend(hc, window=ntd_window) if show_ntd else pd.Series(index=hc.index, dtype=float)
-                ichi_h_norm = pd.Series(index=hc.index, dtype=float)
-                if {'High','Low'}.issubset(intraday.columns) and show_ichi:
-                    ichi_h_norm = compute_normalized_ichimoku(
-                        intraday["High"], intraday["Low"], intraday["Close"],
-                        conv=ichi_conv, base=ichi_base, span_b=ichi_spanb,
-                        norm_win=ichi_norm_win, price_weight=ichi_price_weight
-                    ).reindex(hc.index).ffill().bfill()
-
-                fig2w, ax2w = plt.subplots(figsize=(14,2.8))
-                plt.subplots_adjust(top=0.88, right=0.93)
-
-                ax2w.set_title("Normalized Elliott Wave + NPO + NTD + Ichimoku (normalized)")
-                if show_ntd and shade_ntd and not ntd_h.dropna().empty:
-                    shade_ntd_regions(ax2w, ntd_h)
-                if show_npo and not npo_h.dropna().empty:
-                    shade_npo_regions(ax2w, npo_h)
-
-                ax2w.plot(wave_norm.index, wave_norm, label="Norm EW", linewidth=1.8)
-                if show_npo and not npo_h.dropna().empty:
-                    ax2w.plot(npo_h.index, npo_h, "--", linewidth=1.2, label=f"NPO ({npo_fast},{npo_slow})")
-                if show_ntd and not ntd_h.dropna().empty:
-                    ax2w.plot(ntd_h.index, ntd_h, ":", linewidth=1.2, label=f"NTD (win={ntd_window})")
-                # Normalized Ichimoku as SOLID BLACK, CONTINUOUS
-                if show_ichi and not ichi_h_norm.dropna().empty:
-                    ax2w.plot(ichi_h_norm.index, ichi_h_norm.values, "-", linewidth=1.4, color="black",
-                              label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
-
-                ax2w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
-                ax2w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
-                ax2w.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
-                ax2w.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
-                ax2w.axhline(-0.75, color="black", linestyle="-", linewidth=1, label="EW -0.75")
-
-                ax2w.set_ylim(-1.1, 1.1)
-                ax2w.set_xlabel("Time (PST)")
-                ax2w.set_xlim(xlim_price)
-
-                if not piv_df.empty:
-                    show_df = piv_df.tail(int(waves_to_annotate))
-                    for _, r in show_df.iterrows():
-                        t = r["time"]; w = r["wave"]; typ = r["type"]
-                        ylab = 0.9 if typ == 'H' else -0.9
-                        ax2w.annotate(str(int(w)), (t, ylab),
-                                      xytext=(0, 0), textcoords="offset points",
-                                      ha="center", va="center",
-                                      fontsize=9, fontweight="bold")
-
-                px_intr = _safe_last_float(hc)
-                ew_sig_h = elliott_conf_signal(px_intr, st.session_state.fc_vals, EW_CONFIDENCE)
-                pos2w = ax2w.get_position()
-                label_txt_h = f"Price: {fmt_price_val(px_intr)}"
-                if ew_sig_h is not None:
-                    side = ew_sig_h['side']; prob = fmt_pct(ew_sig_h['prob'], digits=0)
-                    label_txt_h += f"  |  {('▲ BUY' if side=='BUY' else '▼ SELL')} @ {fmt_price_val(px_intr)}  ({prob})"
-                fig2w.text(pos2w.x1, pos2w.y1 + 0.01, label_txt_h, ha="right", va="bottom",
-                           fontsize=10, fontweight="bold")
-
-                ax2w.legend(loc="lower left", framealpha=0.5)
-                st.pyplot(fig2w)
 
         if mode == "Forex" and show_fx_news:
             st.subheader("Recent Forex News (Yahoo Finance)")
@@ -1235,6 +1215,7 @@ with tab2:
             axdw2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
+        # ----- Intraday (Hourly) -----
         if view in ("Intraday","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -1321,6 +1302,27 @@ with tab2:
                 xlim_price2 = ax3.get_xlim()
                 st.pyplot(fig3)
 
+                # NEW: Normalized RSI panel (Hourly)
+                if show_nrsi:
+                    nrsi_i = compute_nrsi(ic, period=nrsi_period)
+                    fig3r, ax3r = plt.subplots(figsize=(14,2.8))
+                    ax3r.set_title(f"Normalized RSI (NRSI, period={nrsi_period})")
+                    ax3r.plot(nrsi_i.index, nrsi_i, "-", linewidth=1.4, label="NRSI")
+
+                    posn = nrsi_i.where(nrsi_i > 0)
+                    negn = nrsi_i.where(nrsi_i < 0)
+                    ax3r.fill_between(posn.index, 0, posn, alpha=0.18)
+                    ax3r.fill_between(negn.index, 0, negn, alpha=0.18)
+
+                    ax3r.axhline(0, linestyle="--", linewidth=1, color="black", label="0")
+                    ax3r.axhline(0.5, linestyle=":", linewidth=1)
+                    ax3r.axhline(-0.5, linestyle=":", linewidth=1)
+                    ax3r.set_ylim(-1.1, 1.1)
+                    ax3r.set_xlim(xlim_price2)
+                    ax3r.legend(loc="lower left", framealpha=0.5)
+                    ax3r.set_xlabel("Time (PST)")
+                    st.pyplot(fig3r)
+
                 # Momentum panel (ROC%)
                 if show_mom_hourly:
                     roc_i = compute_roc(ic, n=mom_lb_hourly)
@@ -1339,69 +1341,6 @@ with tab2:
                     ax3m.legend(loc="lower left", framealpha=0.5)
                     ax3m.set_xlim(xlim_price2)
                     st.pyplot(fig3m)
-
-                # --- Hourly EW panel + normalized Ichimoku (solid black)
-                wave_norm2, piv_df2 = compute_normalized_elliott_wave(ic, pivot_lb=pivot_lookback, norm_win=norm_window)
-                npo_h2 = compute_npo(ic, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=ic.index, dtype=float)
-                ntd_h2 = compute_normalized_trend(ic, window=ntd_window) if show_ntd else pd.Series(index=ic.index, dtype=float)
-                ichi_h2_norm = pd.Series(index=ic.index, dtype=float)
-                if {'High','Low'}.issubset(intr.columns) and show_ichi:
-                    ichi_h2_norm = compute_normalized_ichimoku(
-                        intr["High"], intr["Low"], intr["Close"],
-                        conv=ichi_conv, base=ichi_base, span_b=ichi_spanb,
-                        norm_win=ichi_norm_win, price_weight=ichi_price_weight
-                    ).reindex(ic.index).ffill().bfill()
-
-                fig3w, ax3w = plt.subplots(figsize=(14,2.8))
-                plt.subplots_adjust(top=0.88, right=0.93)
-
-                ax3w.set_title("Normalized Elliott Wave + NPO + NTD + Ichimoku (normalized)")
-                if show_ntd and shade_ntd and not ntd_h2.dropna().empty:
-                    shade_ntd_regions(ax3w, ntd_h2)
-                if show_npo and not npo_h2.dropna().empty:
-                    shade_npo_regions(ax3w, npo_h2)
-
-                ax3w.plot(wave_norm2.index, wave_norm2, label="Norm EW", linewidth=1.8)
-                if show_npo and not npo_h2.dropna().empty:
-                    ax3w.plot(npo_h2.index, npo_h2, "--", linewidth=1.2, label=f"NPO ({npo_fast},{npo_slow})")
-                if show_ntd and not ntd_h2.dropna().empty:
-                    ax3w.plot(ntd_h2.index, ntd_h2, ":", linewidth=1.2, label=f"NTD (win={ntd_window})")
-                if show_ichi and not ichi_h2_norm.dropna().empty:
-                    ax3w.plot(ichi_h2_norm.index, ichi_h2_norm.values, "-", linewidth=1.4, color="black",
-                              label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
-
-                ax3w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
-                ax3w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
-                ax3w.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
-                ax3w.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
-                ax3w.axhline(-0.75, color="black", linestyle="-", linewidth=1, label="EW -0.75")
-
-                ax3w.set_ylim(-1.1, 1.1)
-                ax3w.set_xlabel("Time (PST)")
-                ax3w.set_xlim(xlim_price2)
-
-                if not piv_df2.empty:
-                    show_df2 = piv_df2.tail(int(waves_to_annotate))
-                    for _, r in show_df2.iterrows():
-                        t = r["time"]; w = r["wave"]; typ = r["type"]
-                        ylab = 0.9 if typ == 'H' else -0.9
-                        ax3w.annotate(str(int(w)), (t, ylab),
-                                      xytext=(0, 0), textcoords="offset points",
-                                      ha="center", va="center",
-                                      fontsize=9, fontweight="bold")
-
-                px_intr2 = _safe_last_float(ic)
-                ew_sig_h2 = elliott_conf_signal(px_intr2, st.session_state.fc_vals, EW_CONFIDENCE)
-                pos3w = ax3w.get_position()
-                label_txt_h2 = f"Price: {fmt_price_val(px_intr2)}"
-                if ew_sig_h2 is not None:
-                    side = ew_sig_h2['side']; prob = fmt_pct(ew_sig_h2['prob'], digits=0)
-                    label_txt_h2 += f"  |  {('▲ BUY' if side=='BUY' else '▼ SELL')} @ {fmt_price_val(px_intr2)}  ({prob})"
-                fig3w.text(pos3w.x1, pos3w.y1 + 0.01, label_txt_h2, ha="right", va="bottom",
-                           fontsize=10, fontweight="bold")
-
-                ax3w.legend(loc="lower left", framealpha=0.5)
-                st.pyplot(fig3w)
 
 # --- Tab 3: Bull vs Bear ---
 with tab3:
