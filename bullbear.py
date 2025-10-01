@@ -26,7 +26,8 @@
 # - NEW: Normalized Ichimoku overlay on EW panels (Daily) with sidebar controls
 # - NEW: Ichimoku Kijun (Base) line added to Daily & Hourly price charts (solid black, continuous)
 # - UPDATED: Removed Hourly EW panel and added **Normalized RSI (NRSI)** panel below the hourly price chart
-# - UPDATED: NRSI panel now has solid black lines at +0.50 and -0.50 and overlays a Normalized Volume (NVol) indicator
+# - UPDATED: NRSI panel has solid black lines at +0.50 and -0.50 and overlays a Normalized Volume (NVol) indicator
+# - UPDATED: NRSI panel now also overlays **Normalized MACD (NMACD + signal)** with sidebar controls
 
 import streamlit as st
 import pandas as pd
@@ -167,11 +168,19 @@ st.sidebar.subheader("Hourly Momentum")
 show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True, key="sb_show_mom_hourly")
 mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, key="sb_mom_lb_hourly")
 
-# NEW: Hourly NRSI controls
+# Hourly NRSI controls
 st.sidebar.subheader("Hourly Normalized RSI")
 show_nrsi = st.sidebar.checkbox("Show NRSI (hourly)", value=True, key="sb_show_nrsi")
 nrsi_period = st.sidebar.slider("RSI period (bars)", 5, 60, 14, 1, key="sb_nrsi_period")
 nrsi_vol_norm = st.sidebar.slider("NVol normalization window (bars)", 30, 600, 240, 10, key="sb_nrsi_vol_norm")
+
+# NEW: Normalized MACD controls (for RSI panel)
+st.sidebar.subheader("Normalized MACD (RSI panel overlay)")
+show_nmacd = st.sidebar.checkbox("Show NMACD overlay", value=True, key="sb_show_nmacd")
+macd_fast = st.sidebar.slider("MACD fast EMA", 5, 30, 12, 1, key="sb_macd_fast")
+macd_slow = st.sidebar.slider("MACD slow EMA", 10, 60, 26, 1, key="sb_macd_slow")
+macd_signal = st.sidebar.slider("MACD signal EMA", 5, 30, 9, 1, key="sb_macd_signal")
+macd_norm_win = st.sidebar.slider("MACD normalization window", 30, 600, 240, 10, key="sb_macd_norm")
 
 # Hourly Supertrend controls
 st.sidebar.subheader("Hourly Supertrend")
@@ -373,6 +382,41 @@ def compute_normalized_volume(volume: pd.Series, norm_win: int = 240) -> pd.Seri
     z = (v - mean) / std
     nvol = np.tanh(z / 2.0)
     return nvol.reindex(v.index)
+
+# ---- Normalized MACD (for RSI panel) ----
+def compute_normalized_macd(close: pd.Series,
+                            fast: int = 12, slow: int = 26, signal: int = 9,
+                            norm_win: int = 240):
+    """
+    Returns (nmacd, nsignal) each in [-1,1].
+    We z-score MACD over a rolling window, then squash with tanh.
+    Signal is normalized using the SAME rolling mean/std as MACD so the scales match.
+    """
+    s = _coerce_1d_series(close).astype(float)
+    if s.empty or fast <= 0 or slow <= 0 or signal <= 0:
+        idx = s.index if not s.empty else pd.Index([])
+        return pd.Series(index=idx, dtype=float), pd.Series(index=idx, dtype=float)
+    if fast >= slow:
+        fast = max(1, slow - 1)
+        if fast >= slow:
+            idx = s.index
+            return pd.Series(index=idx, dtype=float), pd.Series(index=idx, dtype=float)
+
+    ema_fast = s.ewm(span=int(fast), adjust=False).mean()
+    ema_slow = s.ewm(span=int(slow), adjust=False).mean()
+    macd = ema_fast - ema_slow
+    sig = macd.ewm(span=int(signal), adjust=False).mean()
+
+    minp = max(10, int(norm_win)//10)
+    mean = macd.rolling(int(norm_win), min_periods=minp).mean()
+    std  = macd.rolling(int(norm_win), min_periods=minp).std().replace(0, np.nan)
+
+    z_macd = (macd - mean) / std
+    z_sig  = (sig  - mean) / std
+
+    nmacd = np.tanh(z_macd / 2.0)
+    nsignal = np.tanh(z_sig / 2.0)
+    return nmacd.reindex(s.index), nsignal.reindex(s.index)
 
 # ---- Normalized Price Oscillator ----
 def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int = 240) -> pd.Series:
@@ -925,7 +969,7 @@ with tab1:
             axdw.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (price + NRSI + momentum) -----
+        # ----- Hourly (price + NRSI + NVol + NMACD + momentum) -----
         if chart in ("Hourly","Both"):
             intraday = st.session_state.intraday
             if intraday is None or intraday.empty or "Close" not in intraday:
@@ -1023,20 +1067,37 @@ with tab1:
                 xlim_price = ax2.get_xlim()
                 st.pyplot(fig2)
 
-                # NEW: Normalized RSI panel (Hourly) + Normalized Volume overlay
+                # NRSI panel (Hourly) + NVol + NMACD overlay
                 if show_nrsi:
                     nrsi_h = compute_nrsi(hc, period=nrsi_period)
                     nvol_h = pd.Series(index=nrsi_h.index, dtype=float)
                     if "Volume" in intraday.columns:
                         nvol_h = compute_normalized_volume(intraday["Volume"], norm_win=nrsi_vol_norm).reindex(nrsi_h.index)
 
-                    fig2r, ax2r = plt.subplots(figsize=(14,2.8))
-                    ax2r.set_title(f"Normalized RSI (NRSI, period={nrsi_period}) + Normalized Volume (NVol)")
+                    nmacd_h, nmacdsig_h = (pd.Series(index=nrsi_h.index, dtype=float),
+                                           pd.Series(index=nrsi_h.index, dtype=float))
+                    if show_nmacd:
+                        nmacd_h, nmacdsig_h = compute_normalized_macd(
+                            hc, fast=macd_fast, slow=macd_slow, signal=macd_signal, norm_win=macd_norm_win
+                        )
+                        nmacd_h = nmacd_h.reindex(nrsi_h.index)
+                        nmacdsig_h = nmacdsig_h.reindex(nrsi_h.index)
+
+                    fig2r, ax2r = plt.subplots(figsize=(14,2.9))
+                    ax2r.set_title(
+                        f"NRSI (p={nrsi_period})"
+                        + (" + NVol" if "Volume" in intraday.columns else "")
+                        + (" + NMACD" if show_nmacd else "")
+                    )
                     ax2r.plot(nrsi_h.index, nrsi_h, "-", linewidth=1.4, label="NRSI")
 
-                    # Overlay normalized volume if available
+                    # Overlays
                     if not nvol_h.dropna().empty:
                         ax2r.plot(nvol_h.index, nvol_h, "-", linewidth=1.0, label="NVol")
+                    if show_nmacd and (not nmacd_h.dropna().empty):
+                        ax2r.plot(nmacd_h.index, nmacd_h, "-", linewidth=1.0, label="NMACD")
+                    if show_nmacd and (not nmacdsig_h.dropna().empty):
+                        ax2r.plot(nmacdsig_h.index, nmacdsig_h, "--", linewidth=1.0, label="NMACD signal")
 
                     # Shading above/below zero for NRSI
                     pos = nrsi_h.where(nrsi_h > 0)
@@ -1044,7 +1105,7 @@ with tab1:
                     ax2r.fill_between(pos.index, 0, pos, alpha=0.12)
                     ax2r.fill_between(neg.index, 0, neg, alpha=0.12)
 
-                    # Reference lines (now solid black at ±0.5)
+                    # Reference lines (solid black at ±0.5)
                     ax2r.axhline(0, linestyle="--", linewidth=1, color="black", label="0")
                     ax2r.axhline(0.5, linestyle="-", linewidth=1, color="black", label="+0.5")
                     ax2r.axhline(-0.5, linestyle="-", linewidth=1, color="black", label="-0.5")
@@ -1326,19 +1387,37 @@ with tab2:
                 xlim_price2 = ax3.get_xlim()
                 st.pyplot(fig3)
 
-                # NEW: Normalized RSI panel (Hourly) + Normalized Volume overlay
+                # NRSI panel (Hourly) + NVol + NMACD overlay
                 if show_nrsi:
                     nrsi_i = compute_nrsi(ic, period=nrsi_period)
+
                     nvol_i = pd.Series(index=nrsi_i.index, dtype=float)
                     if "Volume" in intr.columns:
                         nvol_i = compute_normalized_volume(intr["Volume"], norm_win=nrsi_vol_norm).reindex(nrsi_i.index)
 
-                    fig3r, ax3r = plt.subplots(figsize=(14,2.8))
-                    ax3r.set_title(f"Normalized RSI (NRSI, period={nrsi_period}) + Normalized Volume (NVol)")
+                    nmacd_i, nmacdsig_i = (pd.Series(index=nrsi_i.index, dtype=float),
+                                           pd.Series(index=nrsi_i.index, dtype=float))
+                    if show_nmacd:
+                        nmacd_i, nmacdsig_i = compute_normalized_macd(
+                            ic, fast=macd_fast, slow=macd_slow, signal=macd_signal, norm_win=macd_norm_win
+                        )
+                        nmacd_i = nmacd_i.reindex(nrsi_i.index)
+                        nmacdsig_i = nmacdsig_i.reindex(nrsi_i.index)
+
+                    fig3r, ax3r = plt.subplots(figsize=(14,2.9))
+                    ax3r.set_title(
+                        f"NRSI (p={nrsi_period})"
+                        + (" + NVol" if "Volume" in intr.columns else "")
+                        + (" + NMACD" if show_nmacd else "")
+                    )
                     ax3r.plot(nrsi_i.index, nrsi_i, "-", linewidth=1.4, label="NRSI")
 
                     if not nvol_i.dropna().empty:
                         ax3r.plot(nvol_i.index, nvol_i, "-", linewidth=1.0, label="NVol")
+                    if show_nmacd and (not nmacd_i.dropna().empty):
+                        ax3r.plot(nmacd_i.index, nmacd_i, "-", linewidth=1.0, label="NMACD")
+                    if show_nmacd and (not nmacdsig_i.dropna().empty):
+                        ax3r.plot(nmacdsig_i.index, nmacdsig_i, "--", linewidth=1.0, label="NMACD signal")
 
                     posn = nrsi_i.where(nrsi_i > 0)
                     negn = nrsi_i.where(nrsi_i < 0)
@@ -1508,7 +1587,7 @@ with tab5:
                 v, ts = last_hourly_ntd_value(sym, ntd_window, period=scan_period)
                 hourly_rows.append({"Symbol": sym, "NTD_Hourly": v, "Timestamp": ts})
             df_hour = pd.DataFrame(hourly_rows)
-            below_hour = df_hour[np.isfinite(df_hour["NTD_Hourly"]) & (df_hour["NTD_Hourly"] < thresh)].sort_values("NTD_Hourly")
+            below_hour = df_hour[np.isfinite(df_hour["NTD_Hourly"]) & (df_hour["NTD_Hourly"]) < thresh].sort_values("NTD_Hourly")
 
             c5, c6 = st.columns(2)
             c5.metric("FX Pairs Scanned", len(universe))
