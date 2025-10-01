@@ -21,11 +21,13 @@
 # - Adds Normalized Trend Direction (NTD) overlay + optional green/red shading to EW panels with sidebar controls
 # - Daily view selector (Historical / 6M / 12M / 24M)
 # - Red shading under NPO curve on EW panels
-# - NEW: Daily trend-direction line (green=uptrend, red=downtrend) with slope label
-# - NEW: NTD -0.5 Scanner tab for Stocks & Forex (Daily; plus Hourly for Forex)
-# - NEW: Normalized Ichimoku overlay on EW panels (Daily) with sidebar controls
-# - NEW: Ichimoku Kijun (Base) line added to Daily & Hourly price charts (solid black, continuous)
-# - UPDATED: Hourly panel shows **NRSI + NMACD + NVol + smoothed NTRI** (±0.75 thick red, ±0.5 black) — jagged “zigzag” removed
+# - Daily trend-direction line (green=uptrend, red=downtrend) with slope label
+# - NTD -0.5 Scanner tab for Stocks & Forex (Daily; plus Hourly for Forex)
+# - Normalized Ichimoku overlay on EW panels (Daily) with sidebar controls
+# - Ichimoku Kijun (Base) line added to Daily & Hourly price charts (solid black, continuous)
+# - UPDATED: Removed Hourly EW panel and added **Normalized RSI (NRSI)** panel below the hourly price chart
+# - UPDATED: RSI panel now shows **NRSI + NVol + NMACD(+signal)** with guides at 0 (dashed), ±0.5 (black), ±0.75 (thick red)
+# - UPDATED: Removed red cyclical NTRI line from RSI panel
 
 import streamlit as st
 import pandas as pd
@@ -38,7 +40,7 @@ import time
 import pytz
 from matplotlib.transforms import blended_transform_factory  # for left-side labels
 
-# --- Page config (must be the first Streamlit call) ---
+# --- Page config ---
 st.set_page_config(
     page_title="📊 Dashboard & Forecasts",
     page_icon="📈",
@@ -105,7 +107,6 @@ def fmt_pct(x, digits: int = 1) -> str:
     return f"{xv:.{digits}%}" if np.isfinite(xv) else "n/a"
 
 def fmt_price_val(y: float) -> str:
-    """Format price values to exactly 3 decimal places with thousands separators."""
     try:
         y = float(y)
     except Exception:
@@ -129,8 +130,8 @@ def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: i
     except Exception:
         pass
 
+# Range helper for daily views
 def subset_by_daily_view(obj, view_label: str):
-    """Return series/df subset for Historical / 6M / 12M / 24M based on its own max date."""
     if obj is None or len(obj.index) == 0:
         return obj
     idx = obj.index
@@ -155,39 +156,26 @@ daily_view = st.sidebar.selectbox(
 )
 
 show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=False, key="sb_show_fibs")
-slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10, key="sb_slope_lb_daily")
-slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120, 6, key="sb_slope_lb_hourly")
 
-# Hourly Momentum
+slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10, key="sb_slope_lb_daily")
+slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120,  6, key="sb_slope_lb_hourly")
+
+# Hourly Momentum controls
 st.sidebar.subheader("Hourly Momentum")
 show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True, key="sb_show_mom_hourly")
 mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, key="sb_mom_lb_hourly")
 
-# Hourly RSI/MACD/Trend panel
-st.sidebar.subheader("Hourly NRSI/NMACD/NVol/NTRI")
-show_nrsi = st.sidebar.checkbox("Show NRSI panel (hourly)", value=True, key="sb_show_nrsi")
+# Hourly NRSI controls
+st.sidebar.subheader("Hourly Normalized RSI")
+show_nrsi   = st.sidebar.checkbox("Show NRSI (hourly)", value=True, key="sb_show_nrsi")
 nrsi_period = st.sidebar.slider("RSI period (bars)", 5, 60, 14, 1, key="sb_nrsi_period")
 
-# NMACD params
-nmacd_fast = st.sidebar.slider("NMACD fast EMA", 3, 30, 12, 1, key="sb_nmacd_fast")
-nmacd_slow = st.sidebar.slider("NMACD slow EMA", 8, 60, 26, 1, key="sb_nmacd_slow")
-nmacd_signal = st.sidebar.slider("NMACD signal EMA", 3, 30, 9, 1, key="sb_nmacd_signal")
-
-# NVol params
-nvol_window = st.sidebar.slider("Normalized Volume window", 10, 240, 60, 5, key="sb_nvol_win")
-
-# NTRI smoothing (to remove zigzag)
-ntri_base_win = st.sidebar.slider("NTRI base window", 10, 120, 40, 2, key="sb_ntri_base_win")
-ntri_med_win  = st.sidebar.slider("NTRI median filter", 1, 15, 5, 1, key="sb_ntri_med_win")
-ntri_smooth   = st.sidebar.slider("NTRI EMA smooth", 3, 60, 12, 1, key="sb_ntri_smooth")
-ntri_deadband = st.sidebar.slider("NTRI dead-band", 0.00, 0.20, 0.06, 0.01, key="sb_ntri_deadband")
-
-# Supertrend
+# Hourly Supertrend controls
 st.sidebar.subheader("Hourly Supertrend")
 atr_period = st.sidebar.slider("ATR period", 5, 50, 10, 1, key="sb_atr_period")
 atr_mult   = st.sidebar.slider("ATR multiplier", 1.0, 5.0, 3.0, 0.5, key="sb_atr_mult")
 
-# Signal logic
+# Signal logic controls
 st.sidebar.subheader("Signal Logic (Hourly)")
 signal_threshold = st.sidebar.slider("Signal confidence threshold", 0.50, 0.99, 0.90, 0.01, key="sb_sig_thr")
 sr_prox_pct = st.sidebar.slider("S/R proximity (%)", 0.05, 1.00, 0.25, 0.05, key="sb_sr_prox") / 100.0
@@ -200,27 +188,27 @@ waves_to_annotate_d = st.sidebar.slider("Annotate recent waves (daily)", 3, 12, 
 
 # NPO overlay controls (for EW panels)
 st.sidebar.subheader("Normalized Price Oscillator (overlay on EW panels)")
-show_npo = st.sidebar.checkbox("Show NPO overlay", value=True, key="sb_show_npo")
-npo_fast = st.sidebar.slider("NPO fast EMA", 5, 30, 12, 1, key="sb_npo_fast")
-npo_slow = st.sidebar.slider("NPO slow EMA", 10, 60, 26, 1, key="sb_npo_slow")
-npo_norm_win = st.sidebar.slider("NPO normalization window", 30, 600, 240, 10, key="sb_npo_norm")
+show_npo    = st.sidebar.checkbox("Show NPO overlay", value=True, key="sb_show_npo")
+npo_fast    = st.sidebar.slider("NPO fast EMA", 5, 30, 12, 1, key="sb_npo_fast")
+npo_slow    = st.sidebar.slider("NPO slow EMA", 10, 60, 26, 1, key="sb_npo_slow")
+npo_norm_win= st.sidebar.slider("NPO normalization window", 30, 600, 240, 10, key="sb_npo_norm")
 
 # NTD overlay controls (for EW panels)
 st.sidebar.subheader("Normalized Trend (EW panels)")
-show_ntd = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd")
-ntd_window = st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
+show_ntd  = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd")
+ntd_window= st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
 shade_ntd = st.sidebar.checkbox("Shade NTD (green=up, red=down)", value=True, key="sb_ntd_shade")
 
-# Ichimoku (Normalized for EW + Kijun on price)
+# Ichimoku controls (Normalized for EW + Kijun on price)
 st.sidebar.subheader("Normalized Ichimoku (EW panels) + Kijun on price")
 show_ichi = st.sidebar.checkbox("Show Ichimoku", value=True, key="sb_show_ichi")
 ichi_conv = st.sidebar.slider("Conversion (Tenkan)", 5, 20, 9, 1, key="sb_ichi_conv")
 ichi_base = st.sidebar.slider("Base (Kijun)", 20, 40, 26, 1, key="sb_ichi_base")
-ichi_spanb = st.sidebar.slider("Span B", 40, 80, 52, 1, key="sb_ichi_spanb")
+ichi_spanb= st.sidebar.slider("Span B", 40, 80, 52, 1, key="sb_ichi_spanb")
 ichi_norm_win = st.sidebar.slider("Ichimoku normalization window (EW)", 30, 600, 240, 10, key="sb_ichi_norm")
 ichi_price_weight = st.sidebar.slider("Weight: Price vs Cloud (EW)", 0.0, 1.0, 0.6, 0.05, key="sb_ichi_w")
 
-# Forex news controls
+# Forex news controls (only shown in Forex mode)
 if mode == "Forex":
     show_fx_news = st.sidebar.checkbox("Show Forex news markers (intraday)", value=True, key="sb_show_fx_news")
     news_window_days = st.sidebar.slider("Forex news window (days)", 1, 14, 7, key="sb_news_window_days")
@@ -257,7 +245,7 @@ def fetch_hist(ticker: str) -> pd.Series:
 
 @st.cache_data(ttl=120)
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
-    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Open','High','Low','Close','Volume']].dropna()
+    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Open','High','Low','Close']].dropna()
     try:
         df = df.tz_localize(PACIFIC)
     except TypeError:
@@ -367,89 +355,42 @@ def compute_nrsi(close: pd.Series, period: int = 14) -> pd.Series:
     nrsi = ((rsi - 50.0) / 50.0).clip(-1.0, 1.0)
     return nrsi.reindex(rsi.index)
 
-# ---- Normalized MACD (NMACD) ----
-def compute_nmacd(close: pd.Series, fast=12, slow=26, signal=9):
+# ---- Normalized MACD (price-based) ----
+def compute_nmacd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9,
+                  norm_win: int = 240):
     s = _coerce_1d_series(close).astype(float)
     if s.empty:
-        idx = s.index
-        return pd.Series(index=idx, dtype=float), pd.Series(index=idx, dtype=float)
+        return (pd.Series(index=s.index, dtype=float),)*3
     ema_fast = s.ewm(span=int(fast), adjust=False).mean()
-    ema_slow = s.ewm(span=int(slow), adjust=False).mean().replace(0, np.nan)
+    ema_slow = s.ewm(span=int(slow), adjust=False).mean()
     macd = ema_fast - ema_slow
-    # Normalize by rolling std to bound to ~[-1,1]
-    win = max(30, slow * 4)
-    std = s.rolling(win, min_periods=max(10, win//5)).std().replace(0, np.nan)
-    nmacd = np.tanh((macd / (std + 1e-12)) / 2.0)
-    sig = nmacd.ewm(span=int(signal), adjust=False).mean()
-    return nmacd.reindex(s.index), sig.reindex(s.index)
+    sig  = macd.ewm(span=int(signal), adjust=False).mean()
+    hist = macd - sig
 
-# ---- Normalized Volume (NVol) ----
-def compute_nvol(volume: pd.Series, window: int = 60) -> pd.Series:
+    # Normalize MACD & signal to [-1,1] using rolling z then tanh
+    minp = max(10, norm_win//10)
+    def _norm(x):
+        m = x.rolling(norm_win, min_periods=minp).mean()
+        sd = x.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
+        z = (x - m) / sd
+        return np.tanh(z / 2.0)
+    nmacd = _norm(macd)
+    nsignal = _norm(sig)
+    nhist = nmacd - nsignal
+    return nmacd.reindex(s.index), nsignal.reindex(s.index), nhist.reindex(s.index)
+
+# ---- Normalized Volume (z-score → tanh in [-1,1]) ----
+def compute_nvol(volume: pd.Series, norm_win: int = 240) -> pd.Series:
     v = _coerce_1d_series(volume).astype(float)
     if v.empty:
         return pd.Series(index=v.index, dtype=float)
-    ma = v.rolling(window, min_periods=max(5, window//5)).mean()
-    std = v.rolling(window, min_periods=max(5, window//5)).std().replace(0, np.nan)
-    z = (v - ma) / (std + 1e-12)
-    nvol = np.tanh(z / 2.0)  # squash to [-1,1]
-    return nvol.reindex(v.index)
+    minp = max(10, norm_win//10)
+    m = v.rolling(norm_win, min_periods=minp).mean()
+    sd = v.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
+    z = (v - m) / sd
+    return np.tanh(z / 3.0)  # softer squash than price oscillators
 
-# ---- Smoothed Normalized Trend Reversal Indicator (NTRI) ----
-def compute_ntri(close: pd.Series,
-                 base_window: int = 40,
-                 median_window: int = 5,
-                 ema_smooth: int = 12,
-                 deadband: float = 0.06) -> pd.Series:
-    """
-    NTRI is a smoothed, normalized measure of *change in trend* designed to avoid
-    jagged 'zigzag' artifacts:
-      1) Build a normalized trend (ntd_base) using rolling slope/vol.
-      2) Detrend by subtracting a rolling mean of ntd_base to capture reversal pressure.
-      3) Robust smoothing: rolling median -> EMA.
-      4) Apply a small dead-band to zero-out tiny wiggles.
-    Output is in [-1, 1].
-    """
-    s = _coerce_1d_series(close).astype(float)
-    if s.empty:
-        return pd.Series(index=s.index, dtype=float)
-
-    # Step 1: normalized trend proxy
-    minp = max(5, base_window // 3)
-    def _slope(y):
-        y = pd.Series(y).dropna()
-        if len(y) < 3: return np.nan
-        x = np.arange(len(y), dtype=float)
-        try:
-            m, b = np.polyfit(x, y.to_numpy(dtype=float), 1)
-        except Exception:
-            return np.nan
-        return float(m)
-
-    slope_roll = s.rolling(base_window, min_periods=minp).apply(_slope, raw=False)
-    vol = s.rolling(base_window, min_periods=minp).std().replace(0, np.nan)
-    ntd_base = np.tanh(((slope_roll * base_window) / (vol + 1e-12)) / 2.0)
-
-    # Step 2: detrend the normalized trend to emphasize reversals
-    mean_ntd = ntd_base.rolling(base_window, min_periods=minp).mean()
-    ntri_raw = ntd_base - mean_ntd
-
-    # Step 3: robust smoothing to remove zigzag
-    if median_window > 1:
-        ntri_med = ntri_raw.rolling(median_window, center=True, min_periods=1).median()
-    else:
-        ntri_med = ntri_raw
-    ntri_sm = ntri_med.ewm(span=max(2, int(ema_smooth)), adjust=False).mean()
-
-    # Step 4: normalize & dead-band
-    # Standardize against rolling dispersion to keep in reasonable bounds, then tanh
-    disp = ntri_sm.rolling(base_window, min_periods=minp).std().replace(0, np.nan)
-    ntri_norm = np.tanh((ntri_sm / (disp + 1e-12)) / 2.0).clip(-1.0, 1.0)
-    if deadband > 0:
-        ntri_norm = ntri_norm.mask(ntri_norm.abs() < float(deadband), 0.0)
-
-    return ntri_norm.reindex(s.index)
-
-# ---- Normalized Price Oscillator (for EW panels) ----
+# ---- Normalized Price Oscillator (for EW panel) ----
 def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int = 240) -> pd.Series:
     s = _coerce_1d_series(close)
     if s.empty or not np.isfinite(fast) or not np.isfinite(slow) or fast <= 0 or slow <= 0:
@@ -460,19 +401,20 @@ def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int 
             return pd.Series(index=s.index, dtype=float)
     ema_fast = s.ewm(span=int(fast), adjust=False).mean()
     ema_slow = s.ewm(span=int(slow), adjust=False).mean().replace(0, np.nan)
-    ppo = (ema_fast - ema_slow) / (ema_slow + 1e-12) * 100.0
+    ppo = (ema_fast - ema_slow) / ema_slow * 100.0
     minp = max(10, int(norm_win)//10)
     mean = ppo.rolling(int(norm_win), min_periods=minp).mean()
     std  = ppo.rolling(int(norm_win), min_periods=minp).std().replace(0, np.nan)
-    z = (ppo - mean) / (std + 1e-12)
+    z = (ppo - mean) / std
     npo = np.tanh(z / 2.0)
     return npo.reindex(s.index)
 
-# ---- Normalized Trend Direction (for EW panels) ----
+# ---- Normalized Trend Direction (for EW panel) ----
 def compute_normalized_trend(close: pd.Series, window: int = 60) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
     if s.empty or window < 3:
         return pd.Series(index=s.index, dtype=float)
+
     minp = max(5, window // 3)
     def _slope(y: pd.Series) -> float:
         y = pd.Series(y).dropna()
@@ -480,13 +422,14 @@ def compute_normalized_trend(close: pd.Series, window: int = 60) -> pd.Series:
             return np.nan
         x = np.arange(len(y), dtype=float)
         try:
-            m, b = np.polyfit(x, y.to_numpy(dtype=float), 1)
+            m, _ = np.polyfit(x, y.to_numpy(dtype=float), 1)
         except Exception:
             return np.nan
         return float(m)
+
     slope_roll = s.rolling(window, min_periods=minp).apply(_slope, raw=False)
     vol = s.rolling(window, min_periods=minp).std().replace(0, np.nan)
-    ntd_raw = (slope_roll * window) / (vol + 1e-12)
+    ntd_raw = (slope_roll * window) / vol
     ntd = np.tanh(ntd_raw / 2.0)
     return ntd.reindex(s.index)
 
@@ -499,6 +442,7 @@ def shade_ntd_regions(ax, ntd: pd.Series):
     ax.fill_between(ntd.index, 0, pos, alpha=0.12, step=None)
     ax.fill_between(ntd.index, 0, neg, alpha=0.12, step=None)
 
+# Red shading under NPO curve
 def shade_npo_regions(ax, npo: pd.Series):
     if npo is None or npo.empty:
         return
@@ -507,6 +451,7 @@ def shade_npo_regions(ax, npo: pd.Series):
     ax.fill_between(pos.index, 0, pos, alpha=0.15, color="tab:red")
     ax.fill_between(neg.index, 0, neg, alpha=0.08, color="tab:red")
 
+# Daily trend-direction line helper
 def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "Trend"):
     s = _coerce_1d_series(series_like).dropna()
     if s.shape[0] < 2:
@@ -571,13 +516,15 @@ def compute_normalized_elliott_wave(close: pd.Series,
     minp = max(10, norm_win//10)
     mean = s.rolling(norm_win, min_periods=minp).mean()
     std  = s.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
-    z = (s - mean) / (std + 1e-12)
+    z = (s - mean) / std
     wave_norm = np.tanh(z / 2.0)
     wave_norm = wave_norm.reindex(close.index)
+
     if pivot_lb % 2 == 0:
         pivot_lb += 1
     roll_max = s.rolling(pivot_lb, center=True).max()
     roll_min = s.rolling(pivot_lb, center=True).min()
+
     pivots = []
     half = pivot_lb // 2
     for i in range(half, len(s)-half):
@@ -587,6 +534,7 @@ def compute_normalized_elliott_wave(close: pd.Series,
             pivots.append((s.index[i], float(s.iloc[i]), 'H'))
         elif s.iloc[i] == roll_min.iloc[i]:
             pivots.append((s.index[i], float(s.iloc[i]), 'L'))
+
     dedup = []
     for t, p, typ in pivots:
         if not dedup:
@@ -598,6 +546,7 @@ def compute_normalized_elliott_wave(close: pd.Series,
                     dedup[-1] = (t,p,typ)
             else:
                 dedup.append((t,p,typ))
+
     waves = []
     wave_num = 1
     for t, p, typ in dedup:
@@ -605,6 +554,7 @@ def compute_normalized_elliott_wave(close: pd.Series,
         wave_num += 1
         if wave_num > 5:
             wave_num = 1
+
     pivots_df = pd.DataFrame(waves, columns=["time","price","type","wave"])
     return wave_norm, pivots_df
 
@@ -617,6 +567,7 @@ def ichimoku_lines(high: pd.Series, low: pd.Series, close: pd.Series,
     if H.empty or L.empty or C.empty:
         idx = C.index if not C.empty else (H.index if not H.empty else L.index)
         return (pd.Series(index=idx, dtype=float),)*5
+
     tenkan = (H.rolling(conv).max() + L.rolling(conv).min()) / 2.0
     kijun  = (H.rolling(base).max() + L.rolling(base).min()) / 2.0
     span_a_raw = (tenkan + kijun) / 2.0
@@ -634,12 +585,16 @@ def compute_normalized_ichimoku(high: pd.Series, low: pd.Series, close: pd.Serie
     L = _coerce_1d_series(low).astype(float)
     if C.empty or H.empty or L.empty:
         return pd.Series(index=C.index, dtype=float)
+
     tenkan, kijun, span_a, span_b, _ = ichimoku_lines(H, L, C, conv=conv, base=base, span_b=span_b, shift_cloud=False)
     cloud_mid = ((span_a + span_b) / 2.0).reindex(C.index)
+
     minp = max(10, norm_win // 10)
     vol = C.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
-    z1 = (C - cloud_mid) / (vol + 1e-12)
-    z2 = (tenkan - kijun) / (vol + 1e-12)
+
+    z1 = (C - cloud_mid) / vol
+    z2 = (tenkan - kijun) / vol
+
     blend = price_weight * z1 + (1.0 - price_weight) * z2
     n_ichi = np.tanh(blend / 2.0)
     return n_ichi.reindex(C.index)
@@ -667,21 +622,33 @@ def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
         sup = float(sup_h.iloc[-1])
     except Exception:
         return None
+
     if not np.all(np.isfinite([last_close, res, sup])) or res <= sup:
         return None
+
     near_support = last_close <= sup * (1.0 + prox)
     near_resist  = last_close >= res * (1.0 - prox)
+
     fc = np.asarray(_coerce_1d_series(fc_vals).dropna(), dtype=float)
     if fc.size == 0:
         return None
     p_up_from_here = float(np.mean(fc > last_close))
     p_dn_from_here = float(np.mean(fc < last_close))
+
     if near_support and p_up_from_here >= threshold:
-        return {"side": "BUY","prob": p_up_from_here,"level": sup,
-                "reason": f"Near support {fmt_price_val(sup)} with {fmt_pct(p_up_from_here)} up-confidence ≥ {fmt_pct(threshold)}"}
+        return {
+            "side": "BUY",
+            "prob": p_up_from_here,
+            "level": sup,
+            "reason": f"Near support {fmt_price_val(sup)} with {fmt_pct(p_up_from_here)} up-confidence ≥ {fmt_pct(threshold)}"
+        }
     if near_resist and p_dn_from_here >= threshold:
-        return {"side": "SELL","prob": p_dn_from_here,"level": res,
-                "reason": f"Near resistance {fmt_price_val(res)} with {fmt_pct(p_dn_from_here)} down-confidence ≥ {fmt_pct(threshold)}"}
+        return {
+            "side": "SELL",
+            "prob": p_dn_from_here,
+            "level": res,
+            "reason": f"Near resistance {fmt_price_val(res)} with {fmt_pct(p_dn_from_here)} down-confidence ≥ {fmt_pct(threshold)}"
+        }
     return None
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -724,7 +691,7 @@ def draw_news_markers(ax, times, ymin, ymax, label="News"):
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
 
-# ========= Cached "last value" calculators for scanning =========
+# ========= Cached last values for scanning =========
 @st.cache_data(ttl=120)
 def last_daily_ntd_value(symbol: str, ntd_win: int):
     try:
@@ -827,7 +794,6 @@ with tab1:
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
-            # EW overlays (DAILY)
             wave_norm_d, piv_df_d = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
             npo_d = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
             ntd_d = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
@@ -915,7 +881,7 @@ with tab1:
                           label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
 
             for yline, style, col, lbl in [
-                (0.0, "--", "black", "EW 0"),
+                (0.0, "--", None, "EW 0"),
                 (0.5, "-", "tab:red", "EW +0.5"),
                 (-0.5, "-", "tab:green", "EW -0.5"),
                 (0.75, "-", "black", "EW +0.75"),
@@ -949,7 +915,7 @@ with tab1:
             axdw.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (price + NRSI/NMACD/NVol/NTRI) -----
+        # ----- Hourly (price + NRSI/MACD/Vol + momentum) -----
         if chart in ("Hourly","Both"):
             intraday = st.session_state.intraday
             if intraday is None or intraday.empty or "Close" not in intraday:
@@ -966,7 +932,7 @@ with tab1:
                 st_intraday = compute_supertrend(intraday, atr_period=atr_period, atr_mult=atr_mult)
                 st_line_intr = st_intraday["ST"].reindex(hc.index) if "ST" in st_intraday else pd.Series(index=hc.index, dtype=float)
 
-                # Ichimoku Kijun on HOURLY price
+                # Ichimoku Kijun on price chart (solid black)
                 kijun_h = pd.Series(index=hc.index, dtype=float)
                 if {'High','Low','Close'}.issubset(intraday.columns) and show_ichi:
                     _, kijun_h, _, _, _ = ichimoku_lines(
@@ -1046,43 +1012,36 @@ with tab1:
                 xlim_price = ax2.get_xlim()
                 st.pyplot(fig2)
 
-                # ---- NRSI + NMACD + NVol + smoothed NTRI panel ----
+                # === Normalized RSI Panel (Hourly): NRSI + NMACD(+signal) + NVol ===
                 if show_nrsi:
                     nrsi_h = compute_nrsi(hc, period=nrsi_period)
-                    nmacd_h, nmacd_sig_h = compute_nmacd(hc, fast=nmacd_fast, slow=nmacd_slow, signal=nmacd_signal)
-                    nvol_h = compute_nvol(intraday.get("Volume", pd.Series(index=hc.index)), window=nvol_window)
-                    ntri_h = compute_ntri(
-                        hc,
-                        base_window=ntri_base_win,
-                        median_window=ntri_med_win,
-                        ema_smooth=ntri_smooth,
-                        deadband=ntri_deadband
-                    )
+                    nmacd_h, nmacd_sig_h, _ = compute_nmacd(hc)
+                    nvol_h = compute_nvol(intraday.get("Volume", pd.Series(index=hc.index)).reindex(hc.index))
 
-                    fig2r, ax2r = plt.subplots(figsize=(14,2.9))
-                    ax2r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD + NTRI (smoothed)")
+                    fig2r, ax2r = plt.subplots(figsize=(14,2.8))
+                    ax2r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal)")
 
-                    # Lines
+                    # NVol as light fill (positive above zero, negative below)
+                    posv = nvol_h.where(nvol_h > 0)
+                    negv = nvol_h.where(nvol_h < 0)
+                    ax2r.fill_between(posv.index, 0, posv, alpha=0.10, step=None, label="NVol(+)")
+                    ax2r.fill_between(negv.index, 0, negv, alpha=0.10, step=None, label="NVol(-)")
+
+                    # NRSI and NMACD lines
                     ax2r.plot(nrsi_h.index, nrsi_h, "-", linewidth=1.4, label="NRSI")
-                    ax2r.plot(nmacd_h.index, nmacd_h, "-", linewidth=1.2, label="NMACD")
-                    ax2r.plot(nmacd_sig_h.index, nmacd_sig_h, "--", linewidth=1.0, label="NMACD signal")
-                    ax2r.plot(ntri_h.index, ntri_h, "-", linewidth=1.5, label="NTRI (smoothed)")
+                    ax2r.plot(nmacd_h.index, nmacd_h, "-", linewidth=1.4, label="NMACD")
+                    ax2r.plot(nmacd_sig_h.index, nmacd_sig_h, "--", linewidth=1.2, label="NMACD signal")
 
-                    # NVol area (subtle)
-                    base = pd.Series(0.0, index=hc.index)
-                    if not nvol_h.dropna().empty:
-                        ax2r.fill_between(nvol_h.index, base, nvol_h, alpha=0.15, step=None, label="NVol")
-
-                    # Reference lines
-                    ax2r.axhline(0.0, linestyle="--", linewidth=1, color="black", label="0")
-                    ax2r.axhline(0.5, linestyle="-", linewidth=1.0, color="black", label="+0.5")
-                    ax2r.axhline(-0.5, linestyle="-", linewidth=1.0, color="black", label="-0.5")
+                    # Reference lines: 0 (dashed), ±0.5 (black), ±0.75 (thick red)
+                    ax2r.axhline(0, linestyle="--", linewidth=1, color="black", label="0")
+                    ax2r.axhline(0.5, linestyle="-", linewidth=1.2, color="black", label="+0.5")
+                    ax2r.axhline(-0.5, linestyle="-", linewidth=1.2, color="black", label="-0.5")
                     ax2r.axhline(0.75, linestyle="-", linewidth=3.0, color="red", label="+0.75")
                     ax2r.axhline(-0.75, linestyle="-", linewidth=3.0, color="red", label="-0.75")
 
                     ax2r.set_ylim(-1.1, 1.1)
                     ax2r.set_xlim(xlim_price)
-                    ax2r.legend(loc="upper left", framealpha=0.6, ncol=2)
+                    ax2r.legend(loc="lower left", framealpha=0.5)
                     ax2r.set_xlabel("Time (PST)")
                     st.pyplot(fig2r)
 
@@ -1150,7 +1109,7 @@ with tab2:
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
-            wave_norm_d2, piv_df_d2 = compute_normalized_elliott_wave(df, pivot_lookback_d, norm_window_d)
+            wave_norm_d2, piv_df_d2 = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
             npo_d2 = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
             ntd_d2 = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
             ichi_d2 = pd.Series(index=df.index, dtype=float)
@@ -1236,7 +1195,7 @@ with tab2:
                            label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
 
             for yline, style, col, lbl in [
-                (0.0, "--", "black", "EW 0"),
+                (0.0, "--", None, "EW 0"),
                 (0.5, "-", "tab:red", "EW +0.5"),
                 (-0.5, "-", "tab:green", "EW -0.5"),
                 (0.75, "-", "black", "EW +0.75"),
@@ -1356,39 +1315,29 @@ with tab2:
                 xlim_price2 = ax3.get_xlim()
                 st.pyplot(fig3)
 
-                # ---- NRSI + NMACD + NVol + smoothed NTRI panel ----
+                # === NRSI + NMACD(+signal) + NVol panel (Intraday view) ===
                 if show_nrsi:
                     nrsi_i = compute_nrsi(ic, period=nrsi_period)
-                    nmacd_i, nmacd_sig_i = compute_nmacd(ic, fast=nmacd_fast, slow=nmacd_slow, signal=nmacd_signal)
-                    nvol_i = compute_nvol(intr.get("Volume", pd.Series(index=ic.index)), window=nvol_window)
-                    ntri_i = compute_ntri(
-                        ic,
-                        base_window=ntri_base_win,
-                        median_window=ntri_med_win,
-                        ema_smooth=ntri_smooth,
-                        deadband=ntri_deadband
-                    )
+                    nmacd_i, nmacd_sig_i, _ = compute_nmacd(ic)
+                    nvol_i = compute_nvol(intr.get("Volume", pd.Series(index=ic.index)).reindex(ic.index))
 
-                    fig3r, ax3r = plt.subplots(figsize=(14,2.9))
-                    ax3r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD + NTRI (smoothed)")
+                    fig3r, ax3r = plt.subplots(figsize=(14,2.8))
+                    ax3r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal)")
+                    posv = nvol_i.where(nvol_i > 0)
+                    negv = nvol_i.where(nvol_i < 0)
+                    ax3r.fill_between(posv.index, 0, posv, alpha=0.10, step=None, label="NVol(+)")
+                    ax3r.fill_between(negv.index, 0, negv, alpha=0.10, step=None, label="NVol(-)")
                     ax3r.plot(nrsi_i.index, nrsi_i, "-", linewidth=1.4, label="NRSI")
-                    ax3r.plot(nmacd_i.index, nmacd_i, "-", linewidth=1.2, label="NMACD")
-                    ax3r.plot(nmacd_sig_i.index, nmacd_sig_i, "--", linewidth=1.0, label="NMACD signal")
-                    ax3r.plot(ntri_i.index, ntri_i, "-", linewidth=1.5, label="NTRI (smoothed)")
-
-                    base2 = pd.Series(0.0, index=ic.index)
-                    if not nvol_i.dropna().empty:
-                        ax3r.fill_between(nvol_i.index, base2, nvol_i, alpha=0.15, step=None, label="NVol")
-
-                    ax3r.axhline(0.0, linestyle="--", linewidth=1, color="black", label="0")
-                    ax3r.axhline(0.5, linestyle="-", linewidth=1.0, color="black", label="+0.5")
-                    ax3r.axhline(-0.5, linestyle="-", linewidth=1.0, color="black", label="-0.5")
+                    ax3r.plot(nmacd_i.index, nmacd_i, "-", linewidth=1.4, label="NMACD")
+                    ax3r.plot(nmacd_sig_i.index, nmacd_sig_i, "--", linewidth=1.2, label="NMACD signal")
+                    ax3r.axhline(0, linestyle="--", linewidth=1, color="black", label="0")
+                    ax3r.axhline(0.5, linestyle="-", linewidth=1.2, color="black", label="+0.5")
+                    ax3r.axhline(-0.5, linestyle="-", linewidth=1.2, color="black", label="-0.5")
                     ax3r.axhline(0.75, linestyle="-", linewidth=3.0, color="red", label="+0.75")
                     ax3r.axhline(-0.75, linestyle="-", linewidth=3.0, color="red", label="-0.75")
-
                     ax3r.set_ylim(-1.1, 1.1)
                     ax3r.set_xlim(xlim_price2)
-                    ax3r.legend(loc="upper left", framealpha=0.6, ncol=2)
+                    ax3r.legend(loc="lower left", framealpha=0.5)
                     ax3r.set_xlabel("Time (PST)")
                     st.pyplot(fig3r)
 
@@ -1516,6 +1465,7 @@ with tab5:
         run = st.button("Scan Universe", key="btn_ntd_scan")
 
     if run:
+        # DAILY scan for both universes
         daily_rows = []
         for sym in universe:
             ntd_val, ts = last_daily_ntd_value(sym, ntd_window)
@@ -1535,6 +1485,7 @@ with tab5:
             show["NTD_Daily"] = show["NTD_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
             st.dataframe(show.reset_index(drop=True), use_container_width=True)
 
+        # HOURLY scan for Forex only
         if mode == "Forex":
             st.markdown("---")
             st.subheader(f"Forex Hourly — NTD < {thresh:+.2f}  ({scan_hour_range} lookback)")
