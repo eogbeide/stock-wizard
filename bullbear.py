@@ -28,7 +28,7 @@
 # - UPDATED: Removed Hourly EW panel and added **Normalized RSI (NRSI)** panel below the hourly price chart
 # - UPDATED: NRSI panel now has solid black lines at +0.50 and -0.50 and overlays a Normalized Volume (NVol) indicator
 
-import streamlit as stg
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
