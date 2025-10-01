@@ -26,6 +26,7 @@
 # - NEW: Normalized Ichimoku overlay on EW panels (Daily) with sidebar controls
 # - NEW: Ichimoku Kijun (Base) line added to Daily & Hourly price charts (solid black, continuous)
 # - UPDATED: Removed Hourly EW panel and added **Normalized RSI (NRSI)** panel below the hourly price chart
+# - UPDATED: NRSI panel now has solid black lines at +0.50 and -0.50 and overlays a Normalized Volume (NVol) indicator
 
 import streamlit as st
 import pandas as pd
@@ -170,6 +171,7 @@ mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, k
 st.sidebar.subheader("Hourly Normalized RSI")
 show_nrsi = st.sidebar.checkbox("Show NRSI (hourly)", value=True, key="sb_show_nrsi")
 nrsi_period = st.sidebar.slider("RSI period (bars)", 5, 60, 14, 1, key="sb_nrsi_period")
+nrsi_vol_norm = st.sidebar.slider("NVol normalization window (bars)", 30, 600, 240, 10, key="sb_nrsi_vol_norm")
 
 # Hourly Supertrend controls
 st.sidebar.subheader("Hourly Supertrend")
@@ -358,6 +360,19 @@ def compute_nrsi(close: pd.Series, period: int = 14) -> pd.Series:
     rsi = compute_rsi(close, period=period)
     nrsi = ((rsi - 50.0) / 50.0).clip(-1.0, 1.0)
     return nrsi.reindex(rsi.index)
+
+# ---- Normalized Volume for RSI panel ----
+def compute_normalized_volume(volume: pd.Series, norm_win: int = 240) -> pd.Series:
+    """Return tanh-zscore of volume in [-1,1] over a rolling window."""
+    v = _coerce_1d_series(volume).astype(float)
+    if v.empty:
+        return pd.Series(index=v.index, dtype=float)
+    minp = max(10, int(norm_win)//10)
+    mean = v.rolling(int(norm_win), min_periods=minp).mean()
+    std  = v.rolling(int(norm_win), min_periods=minp).std().replace(0, np.nan)
+    z = (v - mean) / std
+    nvol = np.tanh(z / 2.0)
+    return nvol.reindex(v.index)
 
 # ---- Normalized Price Oscillator ----
 def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int = 240) -> pd.Series:
@@ -1008,23 +1023,32 @@ with tab1:
                 xlim_price = ax2.get_xlim()
                 st.pyplot(fig2)
 
-                # NEW: Normalized RSI panel (Hourly)
+                # NEW: Normalized RSI panel (Hourly) + Normalized Volume overlay
                 if show_nrsi:
                     nrsi_h = compute_nrsi(hc, period=nrsi_period)
+                    nvol_h = pd.Series(index=nrsi_h.index, dtype=float)
+                    if "Volume" in intraday.columns:
+                        nvol_h = compute_normalized_volume(intraday["Volume"], norm_win=nrsi_vol_norm).reindex(nrsi_h.index)
+
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
-                    ax2r.set_title(f"Normalized RSI (NRSI, period={nrsi_period})")
+                    ax2r.set_title(f"Normalized RSI (NRSI, period={nrsi_period}) + Normalized Volume (NVol)")
                     ax2r.plot(nrsi_h.index, nrsi_h, "-", linewidth=1.4, label="NRSI")
 
-                    # Shading above/below zero
+                    # Overlay normalized volume if available
+                    if not nvol_h.dropna().empty:
+                        ax2r.plot(nvol_h.index, nvol_h, "-", linewidth=1.0, label="NVol")
+
+                    # Shading above/below zero for NRSI
                     pos = nrsi_h.where(nrsi_h > 0)
                     neg = nrsi_h.where(nrsi_h < 0)
-                    ax2r.fill_between(pos.index, 0, pos, alpha=0.18)
-                    ax2r.fill_between(neg.index, 0, neg, alpha=0.18)
+                    ax2r.fill_between(pos.index, 0, pos, alpha=0.12)
+                    ax2r.fill_between(neg.index, 0, neg, alpha=0.12)
 
-                    # Reference lines
+                    # Reference lines (now solid black at ±0.5)
                     ax2r.axhline(0, linestyle="--", linewidth=1, color="black", label="0")
-                    ax2r.axhline(0.5, linestyle=":", linewidth=1)
-                    ax2r.axhline(-0.5, linestyle=":", linewidth=1)
+                    ax2r.axhline(0.5, linestyle="-", linewidth=1, color="black", label="+0.5")
+                    ax2r.axhline(-0.5, linestyle="-", linewidth=1, color="black", label="-0.5")
+
                     ax2r.set_ylim(-1.1, 1.1)
                     ax2r.set_xlim(xlim_price)
                     ax2r.legend(loc="lower left", framealpha=0.5)
@@ -1302,21 +1326,28 @@ with tab2:
                 xlim_price2 = ax3.get_xlim()
                 st.pyplot(fig3)
 
-                # NEW: Normalized RSI panel (Hourly)
+                # NEW: Normalized RSI panel (Hourly) + Normalized Volume overlay
                 if show_nrsi:
                     nrsi_i = compute_nrsi(ic, period=nrsi_period)
+                    nvol_i = pd.Series(index=nrsi_i.index, dtype=float)
+                    if "Volume" in intr.columns:
+                        nvol_i = compute_normalized_volume(intr["Volume"], norm_win=nrsi_vol_norm).reindex(nrsi_i.index)
+
                     fig3r, ax3r = plt.subplots(figsize=(14,2.8))
-                    ax3r.set_title(f"Normalized RSI (NRSI, period={nrsi_period})")
+                    ax3r.set_title(f"Normalized RSI (NRSI, period={nrsi_period}) + Normalized Volume (NVol)")
                     ax3r.plot(nrsi_i.index, nrsi_i, "-", linewidth=1.4, label="NRSI")
+
+                    if not nvol_i.dropna().empty:
+                        ax3r.plot(nvol_i.index, nvol_i, "-", linewidth=1.0, label="NVol")
 
                     posn = nrsi_i.where(nrsi_i > 0)
                     negn = nrsi_i.where(nrsi_i < 0)
-                    ax3r.fill_between(posn.index, 0, posn, alpha=0.18)
-                    ax3r.fill_between(negn.index, 0, negn, alpha=0.18)
+                    ax3r.fill_between(posn.index, 0, posn, alpha=0.12)
+                    ax3r.fill_between(negn.index, 0, negn, alpha=0.12)
 
                     ax3r.axhline(0, linestyle="--", linewidth=1, color="black", label="0")
-                    ax3r.axhline(0.5, linestyle=":", linewidth=1)
-                    ax3r.axhline(-0.5, linestyle=":", linewidth=1)
+                    ax3r.axhline(0.5, linestyle="-", linewidth=1, color="black", label="+0.5")
+                    ax3r.axhline(-0.5, linestyle="-", linewidth=1, color="black", label="-0.5")
                     ax3r.set_ylim(-1.1, 1.1)
                     ax3r.set_xlim(xlim_price2)
                     ax3r.legend(loc="lower left", framealpha=0.5)
