@@ -26,8 +26,8 @@
 # - Normalized Ichimoku overlay on EW panels (Daily) with sidebar controls
 # - Ichimoku Kijun (Base) line added to Daily & Hourly price charts (solid black, continuous)
 # - UPDATED: Removed Hourly EW panel and added **Normalized RSI (NRSI)** panel below the hourly price chart
-# - UPDATED: RSI panel now shows **NRSI + NVol + NMACD(+signal)** with guides at 0 (dashed), ±0.5 (black), ±0.75 (thick red)
-# - UPDATED: Removed red cyclical NTRI line from RSI panel
+# - UPDATED: RSI panel shows **NRSI + NVol + NMACD(+signal)** with guides at 0 (dashed), ±0.5 (black), ±0.75 (thick red)
+# - UPDATED: Added **NTD overlay & Trend direction with % certainty** to RSI panel
 
 import streamlit as st
 import pandas as pd
@@ -193,11 +193,11 @@ npo_fast    = st.sidebar.slider("NPO fast EMA", 5, 30, 12, 1, key="sb_npo_fast")
 npo_slow    = st.sidebar.slider("NPO slow EMA", 10, 60, 26, 1, key="sb_npo_slow")
 npo_norm_win= st.sidebar.slider("NPO normalization window", 30, 600, 240, 10, key="sb_npo_norm")
 
-# NTD overlay controls (for EW panels)
-st.sidebar.subheader("Normalized Trend (EW panels)")
+# NTD overlay controls (for EW panels AND RSI panel)
+st.sidebar.subheader("Normalized Trend (EW/RSI panels)")
 show_ntd  = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd")
 ntd_window= st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
-shade_ntd = st.sidebar.checkbox("Shade NTD (green=up, red=down)", value=True, key="sb_ntd_shade")
+shade_ntd = st.sidebar.checkbox("Shade NTD (EW only: green=up, red=down)", value=True, key="sb_ntd_shade")
 
 # Ichimoku controls (Normalized for EW + Kijun on price)
 st.sidebar.subheader("Normalized Ichimoku (EW panels) + Kijun on price")
@@ -388,7 +388,7 @@ def compute_nvol(volume: pd.Series, norm_win: int = 240) -> pd.Series:
     m = v.rolling(norm_win, min_periods=minp).mean()
     sd = v.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
     z = (v - m) / sd
-    return np.tanh(z / 3.0)  # softer squash than price oscillators
+    return np.tanh(z / 3.0)
 
 # ---- Normalized Price Oscillator (for EW panel) ----
 def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int = 240) -> pd.Series:
@@ -409,7 +409,7 @@ def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int 
     npo = np.tanh(z / 2.0)
     return npo.reindex(s.index)
 
-# ---- Normalized Trend Direction (for EW panel) ----
+# ---- Normalized Trend Direction (for EW & RSI panels) ----
 def compute_normalized_trend(close: pd.Series, window: int = 60) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
     if s.empty or window < 3:
@@ -513,6 +513,7 @@ def compute_normalized_elliott_wave(close: pd.Series,
     s = _coerce_1d_series(close).dropna()
     if s.empty:
         return pd.Series(index=_coerce_1d_series(close).index, dtype=float), pd.DataFrame(columns=["time","price","type","wave"])
+
     minp = max(10, norm_win//10)
     mean = s.rolling(norm_win, min_periods=minp).mean()
     std  = s.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
@@ -1012,27 +1013,44 @@ with tab1:
                 xlim_price = ax2.get_xlim()
                 st.pyplot(fig2)
 
-                # === Normalized RSI Panel (Hourly): NRSI + NMACD(+signal) + NVol ===
+                # === Normalized RSI Panel (Hourly): NRSI + NMACD(+signal) + NVol + NTD & certainty ===
                 if show_nrsi:
                     nrsi_h = compute_nrsi(hc, period=nrsi_period)
                     nmacd_h, nmacd_sig_h, _ = compute_nmacd(hc)
                     nvol_h = compute_nvol(intraday.get("Volume", pd.Series(index=hc.index)).reindex(hc.index))
 
-                    fig2r, ax2r = plt.subplots(figsize=(14,2.8))
-                    ax2r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal)")
+                    # Price-based NTD overlay for trend direction/certainty
+                    ntd_h_rsipanel = compute_normalized_trend(hc, window=ntd_window)
 
-                    # NVol as light fill (positive above zero, negative below)
+                    fig2r, ax2r = plt.subplots(figsize=(14,2.8))
+                    ax2r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD")
+
+                    # NVol fill
                     posv = nvol_h.where(nvol_h > 0)
                     negv = nvol_h.where(nvol_h < 0)
                     ax2r.fill_between(posv.index, 0, posv, alpha=0.10, step=None, label="NVol(+)")
                     ax2r.fill_between(negv.index, 0, negv, alpha=0.10, step=None, label="NVol(-)")
 
-                    # NRSI and NMACD lines
+                    # Main lines
                     ax2r.plot(nrsi_h.index, nrsi_h, "-", linewidth=1.4, label="NRSI")
                     ax2r.plot(nmacd_h.index, nmacd_h, "-", linewidth=1.4, label="NMACD")
                     ax2r.plot(nmacd_sig_h.index, nmacd_sig_h, "--", linewidth=1.2, label="NMACD signal")
 
-                    # Reference lines: 0 (dashed), ±0.5 (black), ±0.75 (thick red)
+                    # NTD overlay
+                    if show_ntd and not ntd_h_rsipanel.dropna().empty:
+                        ax2r.plot(ntd_h_rsipanel.index, ntd_h_rsipanel, ":", linewidth=1.6,
+                                  label=f"NTD (win={ntd_window})")
+                        # Trend direction + certainty badge
+                        last_ntd = float(ntd_h_rsipanel.dropna().iloc[-1])
+                        t_dir = "UP" if last_ntd >= 0 else "DOWN"
+                        color = "tab:green" if last_ntd >= 0 else "tab:red"
+                        certainty = int(round(50 + 50*abs(last_ntd)))  # map [-1,1] → [50,100]
+                        ax2r.text(0.99, 0.92, f"Trend: {t_dir} ({certainty}%)",
+                                  transform=ax2r.transAxes, ha="right", va="top",
+                                  fontsize=10, fontweight="bold", color=color,
+                                  bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.85))
+
+                    # Reference lines
                     ax2r.axhline(0, linestyle="--", linewidth=1, color="black", label="0")
                     ax2r.axhline(0.5, linestyle="-", linewidth=1.2, color="black", label="+0.5")
                     ax2r.axhline(-0.5, linestyle="-", linewidth=1.2, color="black", label="-0.5")
@@ -1315,14 +1333,15 @@ with tab2:
                 xlim_price2 = ax3.get_xlim()
                 st.pyplot(fig3)
 
-                # === NRSI + NMACD(+signal) + NVol panel (Intraday view) ===
+                # === NRSI + NMACD(+signal) + NVol + NTD (+certainty) panel (Intraday view) ===
                 if show_nrsi:
                     nrsi_i = compute_nrsi(ic, period=nrsi_period)
                     nmacd_i, nmacd_sig_i, _ = compute_nmacd(ic)
                     nvol_i = compute_nvol(intr.get("Volume", pd.Series(index=ic.index)).reindex(ic.index))
+                    ntd_i_rsipanel = compute_normalized_trend(ic, window=ntd_window)
 
                     fig3r, ax3r = plt.subplots(figsize=(14,2.8))
-                    ax3r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal)")
+                    ax3r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD")
                     posv = nvol_i.where(nvol_i > 0)
                     negv = nvol_i.where(nvol_i < 0)
                     ax3r.fill_between(posv.index, 0, posv, alpha=0.10, step=None, label="NVol(+)")
@@ -1330,6 +1349,19 @@ with tab2:
                     ax3r.plot(nrsi_i.index, nrsi_i, "-", linewidth=1.4, label="NRSI")
                     ax3r.plot(nmacd_i.index, nmacd_i, "-", linewidth=1.4, label="NMACD")
                     ax3r.plot(nmacd_sig_i.index, nmacd_sig_i, "--", linewidth=1.2, label="NMACD signal")
+
+                    if show_ntd and not ntd_i_rsipanel.dropna().empty:
+                        ax3r.plot(ntd_i_rsipanel.index, ntd_i_rsipanel, ":", linewidth=1.6,
+                                  label=f"NTD (win={ntd_window})")
+                        last_ntd = float(ntd_i_rsipanel.dropna().iloc[-1])
+                        t_dir = "UP" if last_ntd >= 0 else "DOWN"
+                        color = "tab:green" if last_ntd >= 0 else "tab:red"
+                        certainty = int(round(50 + 50*abs(last_ntd)))
+                        ax3r.text(0.99, 0.92, f"Trend: {t_dir} ({certainty}%)",
+                                  transform=ax3r.transAxes, ha="right", va="top",
+                                  fontsize=10, fontweight="bold", color=color,
+                                  bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.85))
+
                     ax3r.axhline(0, linestyle="--", linewidth=1, color="black", label="0")
                     ax3r.axhline(0.5, linestyle="-", linewidth=1.2, color="black", label="+0.5")
                     ax3r.axhline(-0.5, linestyle="-", linewidth=1.2, color="black", label="-0.5")
