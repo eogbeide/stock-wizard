@@ -29,6 +29,7 @@
 # - UPDATED: RSI panel shows **NRSI + NVol + NMACD(+signal)** with guides at 0 (dashed), ±0.5 (black), ±0.75 (thick red)
 # - UPDATED: Added **NTD overlay & Trend direction with % certainty** to RSI panel
 # - NEW: Refresh buttons on the **right side** of both **Daily** and **Intraday** charts
+# - NEW: **20Y History** tab to visualize 20 years of historical close prices
 
 import streamlit as st
 import pandas as pd
@@ -252,6 +253,25 @@ def fetch_hist_ohlc(ticker: str, nonce: int = 0) -> pd.DataFrame:
     except TypeError:
         df = df.tz_convert(PACIFIC)
     return df
+
+# NEW: 20-year history (close) for Stocks & Forex
+@st.cache_data(ttl=3600)
+def fetch_hist_20y(ticker: str, nonce: int = 0) -> pd.Series:
+    # Use Yahoo period=20y to let YF choose best start date; fallback to 2004 if needed.
+    try:
+        df = yf.download(ticker, period="20y")['Close']
+    except Exception:
+        df = yf.download(ticker, start="2004-01-01", end=pd.to_datetime("today"))['Close']
+    s = df.dropna().asfreq("D").fillna(method="ffill")
+    try:
+        s = s.tz_localize("UTC").tz_convert(PACIFIC)
+    except Exception:
+        try:
+            s = s.tz_convert(PACIFIC)
+        except Exception:
+            # last resort: make it tz-aware in PACIFIC
+            s.index = s.index.tz_localize(PACIFIC)
+    return s
 
 # Add 'nonce' so pressing refresh busts the cache
 @st.cache_data(ttl=120)
@@ -729,14 +749,17 @@ if 'intraday_nonce' not in st.session_state:
     st.session_state.intraday_nonce = 0  # increments to bust intraday cache
 if 'daily_nonce' not in st.session_state:
     st.session_state.daily_nonce = 0  # increments to bust daily caches
+if 'long_nonce' not in st.session_state:
+    st.session_state.long_nonce = 0   # for 20Y history cache busting
 
-# Tabs
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+# Tabs (added 6th tab)
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
-    "NTD -0.5 Scanner"
+    "NTD -0.5 Scanner",
+    "20Y History"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -1586,3 +1609,46 @@ with tab5:
                 showh = below_hour.copy()
                 showh["NTD_Hourly"] = showh["NTD_Hourly"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
                 st.dataframe(showh.reset_index(drop=True), use_container_width=True)
+
+# --- Tab 6: 20Y History ---
+with tab6:
+    st.header("20-Year Historical Prices")
+    st.caption("View **20 years** of daily close prices for the selected ticker (Stock or Forex).")
+
+    # default to last selected ticker if available, else first in universe
+    default_symbol = st.session_state.get("ticker") or universe[0]
+    sym_20 = st.selectbox("Ticker:", universe, index=universe.index(default_symbol) if default_symbol in universe else 0, key="long_hist_ticker")
+
+    # Optional: simple controls
+    c1, c2, c3 = st.columns([0.5, 0.25, 0.25])
+    with c1:
+        logscale = st.checkbox("Log scale", value=False, key="long_log")
+    with c2:
+        smooth = st.checkbox("Add 200-day MA", value=True, key="long_ma")
+    with c3:
+        refresh = st.button("🔄 Refresh 20Y", key="btn_refresh_20y")
+
+    if refresh:
+        st.session_state.long_nonce += 1
+
+    s20 = fetch_hist_20y(sym_20, nonce=st.session_state.long_nonce)
+
+    if s20 is None or s20.empty:
+        st.warning("No long-term data available for this symbol.")
+    else:
+        ma200 = s20.rolling(200, min_periods=1).mean() if smooth else None
+
+        figl, axl = plt.subplots(figsize=(14,5))
+        title = f"{sym_20} — 20Y Daily Close"
+        axl.set_title(title)
+        axl.plot(s20.index, s20.values, label="Close", linewidth=1.2)
+        if ma200 is not None:
+            axl.plot(ma200.index, ma200.values, "--", label="200D MA", linewidth=1.2)
+        if logscale:
+            axl.set_yscale("log")
+        axl.set_xlabel("Date (PST)")
+        axl.set_ylabel("Price")
+        axl.legend(loc="lower left", framealpha=0.5)
+        st.pyplot(figl)
+
+        st.caption(f"Data points: {len(s20):,} | First: {s20.index.min().strftime('%Y-%m-%d')} | Last: {s20.index.max().strftime('%Y-%m-%d')}")
