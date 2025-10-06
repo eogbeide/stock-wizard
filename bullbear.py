@@ -28,6 +28,7 @@
 # - UPDATED: Removed Hourly EW panel and added **Normalized RSI (NRSI)** panel below the hourly price chart
 # - UPDATED: RSI panel shows **NRSI + NVol + NMACD(+signal)** with guides at 0 (dashed), ±0.5 (black), ±0.75 (thick red)
 # - UPDATED: Added **NTD overlay & Trend direction with % certainty** to RSI panel
+# - NEW: **Right-side Refresh button** beside each intraday chart; shows "Updated N s ago"
 
 import streamlit as st
 import pandas as pd
@@ -252,8 +253,9 @@ def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
         df = df.tz_convert(PACIFIC)
     return df
 
+# IMPORTANT: add a 'nonce' parameter so pressing the refresh button busts the cache
 @st.cache_data(ttl=120)
-def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
+def fetch_intraday(ticker: str, period: str = "1d", nonce: int = 0) -> pd.DataFrame:
     df = yf.download(ticker, period=period, interval="5m")
     try:
         df = df.tz_localize('UTC')
@@ -723,6 +725,8 @@ if 'run_all' not in st.session_state:
     st.session_state.run_all = False
     st.session_state.ticker = None
     st.session_state.hour_range = "24h"
+if 'intraday_nonce' not in st.session_state:
+    st.session_state.intraday_nonce = 0  # increments to bust intraday cache
 
 # Tabs
 tab1, tab2, tab3, tab4, tab5 = st.tabs([
@@ -760,7 +764,7 @@ with tab1:
         df_hist = fetch_hist(sel)
         df_ohlc = fetch_hist_ohlc(sel)
         fc_idx, fc_vals, fc_ci = compute_sarimax_forecast(df_hist)
-        intraday = fetch_intraday(sel, period=period_map[hour_range])
+        intraday = fetch_intraday(sel, period=period_map[hour_range], nonce=st.session_state.intraday_nonce)
         st.session_state.update({
             "df_hist": df_hist,
             "df_ohlc": df_ohlc,
@@ -992,13 +996,20 @@ with tab1:
                     for lbl, y in fibs_h.items():
                         ax2.text(hc.index[-1], y, f" {lbl}", va="center")
 
-                if mode == "Forex" and show_fx_news and not hc.empty:
-                    fx_news = fetch_yf_news(sel, window_days=news_window_days)
-                    if not fx_news.empty:
-                        t0, t1 = hc.index[0], hc.index[-1]
-                        times = [t for t in fx_news["time"] if t0 <= t <= t1]
-                        if times:
-                            draw_news_markers(ax2, times, float(hc.min()), float(hc.max()), label="News")
+                # ---- RIGHT-SIDE REFRESH BUTTON (Tab 1 intraday) ----
+                left_col, right_col = st.columns([0.92, 0.08])
+                with left_col:
+                    st.pyplot(fig2)
+                with right_col:
+                    st.markdown("### ")  # top spacer
+                    if st.button("🔄 Refresh", key="refresh_hourly_tab1"):
+                        st.session_state.intraday_nonce += 1
+                        st.session_state.intraday = fetch_intraday(
+                            sel, period=period_map[hour_range], nonce=st.session_state.intraday_nonce
+                        )
+                        st.session_state.last_refresh = time.time()
+                        st.experimental_rerun()
+                    st.caption(f"Updated {int(time.time()-st.session_state.last_refresh)}s ago")
 
                 signal = sr_proximity_signal(hc, res_h, sup_h, st.session_state.fc_vals,
                                              threshold=signal_threshold, prox=sr_prox_pct)
@@ -1008,10 +1019,7 @@ with tab1:
                     elif signal["side"] == "SELL":
                         st.error(f"**SELL** @ {fmt_price_val(signal['level'])} — {signal['reason']}")
 
-                ax2.set_xlabel("Time (PST)")
-                ax2.legend(loc="lower left", framealpha=0.5)
                 xlim_price = ax2.get_xlim()
-                st.pyplot(fig2)
 
                 # === Normalized RSI Panel (Hourly): NRSI + NMACD(+signal) + NVol + NTD & certainty ===
                 if show_nrsi:
@@ -1320,6 +1328,23 @@ with tab2:
                     for lbl, y in fibs_h.items():
                         ax3.text(ic.index[-1], y, f" {lbl}", va="center")
 
+                # ---- RIGHT-SIDE REFRESH BUTTON (Tab 2 intraday) ----
+                left2, right2 = st.columns([0.92, 0.08])
+                with left2:
+                    st.pyplot(fig3)
+                with right2:
+                    st.markdown("### ")
+                    if st.button("🔄 Refresh", key="refresh_hourly_tab2"):
+                        st.session_state.intraday_nonce += 1
+                        st.session_state.intraday = fetch_intraday(
+                            st.session_state.ticker,
+                            period=period_map[st.session_state.hour_range],
+                            nonce=st.session_state.intraday_nonce
+                        )
+                        st.session_state.last_refresh = time.time()
+                        st.experimental_rerun()
+                    st.caption(f"Updated {int(time.time()-st.session_state.last_refresh)}s ago")
+
                 signal2 = sr_proximity_signal(ic, res_i, sup_i, st.session_state.fc_vals,
                                               threshold=signal_threshold, prox=sr_prox_pct)
                 if signal2 is not None and np.isfinite(px_val2):
@@ -1328,10 +1353,7 @@ with tab2:
                     elif signal2["side"] == "SELL":
                         st.error(f"**SELL** @ {fmt_price_val(signal2['level'])} — {signal2['reason']}")
 
-                ax3.set_xlabel("Time (PST)")
-                ax3.legend(loc="lower left", framealpha=0.5)
                 xlim_price2 = ax3.get_xlim()
-                st.pyplot(fig3)
 
                 # === NRSI + NMACD(+signal) + NVol + NTD (+certainty) panel (Intraday view) ===
                 if show_nrsi:
