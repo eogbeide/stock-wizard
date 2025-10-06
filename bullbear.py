@@ -70,7 +70,7 @@ def auto_refresh():
     elif time.time() - st.session_state.last_refresh > REFRESH_INTERVAL:
         st.session_state.last_refresh = time.time()
         try:
-            st.experimental_rerun()
+            st.rerun()
         except Exception:
             pass
 
@@ -1008,7 +1008,7 @@ with tab1:
                             sel, period=period_map[hour_range], nonce=st.session_state.intraday_nonce
                         )
                         st.session_state.last_refresh = time.time()
-                        st.experimental_rerun()
+                        st.rerun()
                     st.caption(f"Updated {int(time.time()-st.session_state.last_refresh)}s ago")
 
                 signal = sr_proximity_signal(hc, res_h, sup_h, st.session_state.fc_vals,
@@ -1342,7 +1342,7 @@ with tab2:
                             nonce=st.session_state.intraday_nonce
                         )
                         st.session_state.last_refresh = time.time()
-                        st.experimental_rerun()
+                        st.rerun()
                     st.caption(f"Updated {int(time.time()-st.session_state.last_refresh)}s ago")
 
                 signal2 = sr_proximity_signal(ic, res_i, sup_i, st.session_state.fc_vals,
