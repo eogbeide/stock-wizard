@@ -31,7 +31,7 @@
 # - NEW: Refresh buttons on the **right side** of both **Daily** and **Intraday** charts
 # - NEW: **20Y History** tab to visualize 20 years of historical close prices
 
-import streamlit as st
+import streamlit as sts
 import pandas as pd
 import numpy as np
 import yfinance as yf
