@@ -28,9 +28,6 @@
 # - UPDATED: Removed Hourly EW panel and added **Normalized RSI (NRSI)** panel below the hourly price chart
 # - UPDATED: RSI panel shows **NRSI + NVol + NMACD(+signal)** with guides at 0 (dashed), ±0.5 (black), ±0.75 (thick red)
 # - UPDATED: Added **NTD overlay & Trend direction with % certainty** to RSI panel
-# - NEW: Refresh buttons on the **right side** of both **Daily** and **Intraday** charts
-# - NEW: **20Y History** tab to visualize 20 years of historical close prices
-# - FIX: NRSI chart dates now exactly match the price chart dates (synced x-axis & tick formatting)
 
 import streamlit as st
 import pandas as pd
@@ -72,7 +69,7 @@ def auto_refresh():
     elif time.time() - st.session_state.last_refresh > REFRESH_INTERVAL:
         st.session_state.last_refresh = time.time()
         try:
-            st.rerun()  # FIX: experimental_rerun -> rerun
+            st.experimental_rerun()
         except Exception:
             pass
 
@@ -145,16 +142,6 @@ def subset_by_daily_view(obj, view_label: str):
     else:
         start = end - pd.Timedelta(days=days_map.get(view_label, 365))
     return obj.loc[(idx >= start) & (idx <= end)]
-
-# NEW: Keep time axis identical between price and NRSI charts (limits + tick formatting)
-def sync_time_axis(ax_src, ax_dst):
-    try:
-        ax_dst.set_xlim(ax_src.get_xlim())
-        ax_dst.xaxis.set_major_locator(ax_src.xaxis.get_major_locator())
-        ax_dst.xaxis.set_major_formatter(ax_src.xaxis.get_major_formatter())
-        ax_dst.figure.autofmt_xdate()
-    except Exception:
-        pass
 
 # --- Sidebar config ---
 st.sidebar.title("Configuration")
@@ -245,7 +232,7 @@ else:
 
 # --- Cache helpers (TTL = 120 seconds) ---
 @st.cache_data(ttl=120)
-def fetch_hist(ticker: str, nonce: int = 0) -> pd.Series:
+def fetch_hist(ticker: str) -> pd.Series:
     s = (
         yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
         .asfreq("D").fillna(method="ffill")
@@ -257,7 +244,7 @@ def fetch_hist(ticker: str, nonce: int = 0) -> pd.Series:
     return s
 
 @st.cache_data(ttl=120)
-def fetch_hist_ohlc(ticker: str, nonce: int = 0) -> pd.DataFrame:
+def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
     df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Open','High','Low','Close']].dropna()
     try:
         df = df.tz_localize(PACIFIC)
@@ -265,28 +252,8 @@ def fetch_hist_ohlc(ticker: str, nonce: int = 0) -> pd.DataFrame:
         df = df.tz_convert(PACIFIC)
     return df
 
-# NEW: 20-year history (close) for Stocks & Forex
-@st.cache_data(ttl=3600)
-def fetch_hist_20y(ticker: str, nonce: int = 0) -> pd.Series:
-    # Use Yahoo period=20y to let YF choose best start date; fallback to 2004 if needed.
-    try:
-        df = yf.download(ticker, period="20y")['Close']
-    except Exception:
-        df = yf.download(ticker, start="2004-01-01", end=pd.to_datetime("today"))['Close']
-    s = df.dropna().asfreq("D").fillna(method="ffill")
-    try:
-        s = s.tz_localize("UTC").tz_convert(PACIFIC)
-    except Exception:
-        try:
-            s = s.tz_convert(PACIFIC)
-        except Exception:
-            # last resort: make it tz-aware in PACIFIC
-            s.index = s.index.tz_localize(PACIFIC)
-    return s
-
-# Add 'nonce' so pressing refresh busts the cache
 @st.cache_data(ttl=120)
-def fetch_intraday(ticker: str, period: str = "1d", nonce: int = 0) -> pd.DataFrame:
+def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
     df = yf.download(ticker, period=period, interval="5m")
     try:
         df = df.tz_localize('UTC')
@@ -756,21 +723,14 @@ if 'run_all' not in st.session_state:
     st.session_state.run_all = False
     st.session_state.ticker = None
     st.session_state.hour_range = "24h"
-if 'intraday_nonce' not in st.session_state:
-    st.session_state.intraday_nonce = 0  # increments to bust intraday cache
-if 'daily_nonce' not in st.session_state:
-    st.session_state.daily_nonce = 0  # increments to bust daily caches
-if 'long_nonce' not in st.session_state:
-    st.session_state.long_nonce = 0   # for 20Y history cache busting
 
-# Tabs (added 6th tab)
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+# Tabs
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
-    "NTD -0.5 Scanner",
-    "20Y History"
+    "NTD -0.5 Scanner"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -797,10 +757,10 @@ with tab1:
     )
 
     if st.button("Run Forecast", key="btn_run_forecast") or auto_run:
-        df_hist = fetch_hist(sel, nonce=st.session_state.daily_nonce)
-        df_ohlc = fetch_hist_ohlc(sel, nonce=st.session_state.daily_nonce)
+        df_hist = fetch_hist(sel)
+        df_ohlc = fetch_hist_ohlc(sel)
         fc_idx, fc_vals, fc_ci = compute_sarimax_forecast(df_hist)
-        intraday = fetch_intraday(sel, period=period_map[hour_range], nonce=st.session_state.intraday_nonce)
+        intraday = fetch_intraday(sel, period=period_map[hour_range])
         st.session_state.update({
             "df_hist": df_hist,
             "df_ohlc": df_ohlc,
@@ -954,23 +914,7 @@ with tab1:
                      fontsize=10, fontweight="bold")
 
             axdw.legend(loc="lower left", framealpha=0.5)
-
-            # ---- RIGHT-SIDE REFRESH BUTTON (Tab 1 DAILY) ----
-            dl, dr = st.columns([0.92, 0.08])
-            with dl:
-                st.pyplot(fig)
-            with dr:
-                st.markdown("### ")
-                if st.button("🔄 Refresh", key="refresh_daily_tab1"):
-                    st.session_state.daily_nonce += 1
-                    # Refetch daily data and forecast
-                    st.session_state.df_hist = fetch_hist(sel, nonce=st.session_state.daily_nonce)
-                    st.session_state.df_ohlc = fetch_hist_ohlc(sel, nonce=st.session_state.daily_nonce)
-                    fc_idx, fc_vals, fc_ci = compute_sarimax_forecast(st.session_state.df_hist)
-                    st.session_state.fc_idx, st.session_state.fc_vals, st.session_state.fc_ci = fc_idx, fc_vals, fc_ci
-                    st.session_state.last_refresh = time.time()
-                    st.rerun()
-                st.caption(f"Updated {int(time.time()-st.session_state.last_refresh)}s ago")
+            st.pyplot(fig)
 
         # ----- Hourly (price + NRSI/MACD/Vol + momentum) -----
         if chart in ("Hourly","Both"):
@@ -1048,20 +992,13 @@ with tab1:
                     for lbl, y in fibs_h.items():
                         ax2.text(hc.index[-1], y, f" {lbl}", va="center")
 
-                # ---- RIGHT-SIDE REFRESH BUTTON (Tab 1 INTRADAY) ----
-                left_col, right_col = st.columns([0.92, 0.08])
-                with left_col:
-                    st.pyplot(fig2)
-                with right_col:
-                    st.markdown("### ")  # top spacer
-                    if st.button("🔄 Refresh", key="refresh_hourly_tab1"):
-                        st.session_state.intraday_nonce += 1
-                        st.session_state.intraday = fetch_intraday(
-                            sel, period=period_map[hour_range], nonce=st.session_state.intraday_nonce
-                        )
-                        st.session_state.last_refresh = time.time()
-                        st.rerun()
-                    st.caption(f"Updated {int(time.time()-st.session_state.last_refresh)}s ago")
+                if mode == "Forex" and show_fx_news and not hc.empty:
+                    fx_news = fetch_yf_news(sel, window_days=news_window_days)
+                    if not fx_news.empty:
+                        t0, t1 = hc.index[0], hc.index[-1]
+                        times = [t for t in fx_news["time"] if t0 <= t <= t1]
+                        if times:
+                            draw_news_markers(ax2, times, float(hc.min()), float(hc.max()), label="News")
 
                 signal = sr_proximity_signal(hc, res_h, sup_h, st.session_state.fc_vals,
                                              threshold=signal_threshold, prox=sr_prox_pct)
@@ -1071,40 +1008,49 @@ with tab1:
                     elif signal["side"] == "SELL":
                         st.error(f"**SELL** @ {fmt_price_val(signal['level'])} — {signal['reason']}")
 
+                ax2.set_xlabel("Time (PST)")
+                ax2.legend(loc="lower left", framealpha=0.5)
                 xlim_price = ax2.get_xlim()
+                st.pyplot(fig2)
 
-                # === Normalized RSI Panel (Hourly) ===
+                # === Normalized RSI Panel (Hourly): NRSI + NMACD(+signal) + NVol + NTD & certainty ===
                 if show_nrsi:
-                    # Reindex NRSI to match price timestamps exactly, then sync axis
-                    nrsi_h = compute_nrsi(hc, period=nrsi_period).reindex(hc.index)
+                    nrsi_h = compute_nrsi(hc, period=nrsi_period)
                     nmacd_h, nmacd_sig_h, _ = compute_nmacd(hc)
                     nvol_h = compute_nvol(intraday.get("Volume", pd.Series(index=hc.index)).reindex(hc.index))
+
+                    # Price-based NTD overlay for trend direction/certainty
                     ntd_h_rsipanel = compute_normalized_trend(hc, window=ntd_window)
 
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
                     ax2r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD")
 
+                    # NVol fill
                     posv = nvol_h.where(nvol_h > 0)
                     negv = nvol_h.where(nvol_h < 0)
                     ax2r.fill_between(posv.index, 0, posv, alpha=0.10, step=None, label="NVol(+)")
                     ax2r.fill_between(negv.index, 0, negv, alpha=0.10, step=None, label="NVol(-)")
 
+                    # Main lines
                     ax2r.plot(nrsi_h.index, nrsi_h, "-", linewidth=1.4, label="NRSI")
                     ax2r.plot(nmacd_h.index, nmacd_h, "-", linewidth=1.4, label="NMACD")
                     ax2r.plot(nmacd_sig_h.index, nmacd_sig_h, "--", linewidth=1.2, label="NMACD signal")
 
+                    # NTD overlay
                     if show_ntd and not ntd_h_rsipanel.dropna().empty:
                         ax2r.plot(ntd_h_rsipanel.index, ntd_h_rsipanel, ":", linewidth=1.6,
                                   label=f"NTD (win={ntd_window})")
+                        # Trend direction + certainty badge
                         last_ntd = float(ntd_h_rsipanel.dropna().iloc[-1])
                         t_dir = "UP" if last_ntd >= 0 else "DOWN"
                         color = "tab:green" if last_ntd >= 0 else "tab:red"
-                        certainty = int(round(50 + 50*abs(last_ntd)))
+                        certainty = int(round(50 + 50*abs(last_ntd)))  # map [-1,1] → [50,100]
                         ax2r.text(0.99, 0.92, f"Trend: {t_dir} ({certainty}%)",
                                   transform=ax2r.transAxes, ha="right", va="top",
                                   fontsize=10, fontweight="bold", color=color,
                                   bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.85))
 
+                    # Reference lines
                     ax2r.axhline(0, linestyle="--", linewidth=1, color="black", label="0")
                     ax2r.axhline(0.5, linestyle="-", linewidth=1.2, color="black", label="+0.5")
                     ax2r.axhline(-0.5, linestyle="-", linewidth=1.2, color="black", label="-0.5")
@@ -1112,13 +1058,9 @@ with tab1:
                     ax2r.axhline(-0.75, linestyle="-", linewidth=3.0, color="red", label="-0.75")
 
                     ax2r.set_ylim(-1.1, 1.1)
-                    ax2r.set_xlabel("Time (PST)")
-
-                    # Keep the exact same x-range and tick formatting as the price chart
                     ax2r.set_xlim(xlim_price)
-                    sync_time_axis(ax2, ax2r)
-
                     ax2r.legend(loc="lower left", framealpha=0.5)
+                    ax2r.set_xlabel("Time (PST)")
                     st.pyplot(fig2r)
 
                 # Momentum panel (ROC%)
@@ -1303,22 +1245,7 @@ with tab2:
                      fontsize=10, fontweight="bold")
 
             axdw2.legend(loc="lower left", framealpha=0.5)
-
-            # ---- RIGHT-SIDE REFRESH BUTTON (Tab 2 DAILY) ----
-            dl2, dr2 = st.columns([0.92, 0.08])
-            with dl2:
-                st.pyplot(fig)
-            with dr2:
-                st.markdown("### ")
-                if st.button("🔄 Refresh", key="refresh_daily_tab2"):
-                    st.session_state.daily_nonce += 1
-                    st.session_state.df_hist = fetch_hist(st.session_state.ticker, nonce=st.session_state.daily_nonce)
-                    st.session_state.df_ohlc = fetch_hist_ohlc(st.session_state.ticker, nonce=st.session_state.daily_nonce)
-                    idx2, vals2, ci2 = compute_sarimax_forecast(st.session_state.df_hist)
-                    st.session_state.fc_idx, st.session_state.fc_vals, st.session_state.fc_ci = idx2, vals2, ci2
-                    st.session_state.last_refresh = time.time()
-                    st.rerun()
-                st.caption(f"Updated {int(time.time()-st.session_state.last_refresh)}s ago")
+            st.pyplot(fig)
 
         # ----- Intraday (Hourly) -----
         if view in ("Intraday","Both"):
@@ -1393,23 +1320,6 @@ with tab2:
                     for lbl, y in fibs_h.items():
                         ax3.text(ic.index[-1], y, f" {lbl}", va="center")
 
-                # ---- RIGHT-SIDE REFRESH BUTTON (Tab 2 INTRADAY) ----
-                left2, right2 = st.columns([0.92, 0.08])
-                with left2:
-                    st.pyplot(fig3)
-                with right2:
-                    st.markdown("### ")
-                    if st.button("🔄 Refresh", key="refresh_hourly_tab2"):
-                        st.session_state.intraday_nonce += 1
-                        st.session_state.intraday = fetch_intraday(
-                            st.session_state.ticker,
-                            period=period_map[st.session_state.hour_range],
-                            nonce=st.session_state.intraday_nonce
-                        )
-                        st.session_state.last_refresh = time.time()
-                        st.rerun()
-                    st.caption(f"Updated {int(time.time()-st.session_state.last_refresh)}s ago")
-
                 signal2 = sr_proximity_signal(ic, res_i, sup_i, st.session_state.fc_vals,
                                               threshold=signal_threshold, prox=sr_prox_pct)
                 if signal2 is not None and np.isfinite(px_val2):
@@ -1418,12 +1328,14 @@ with tab2:
                     elif signal2["side"] == "SELL":
                         st.error(f"**SELL** @ {fmt_price_val(signal2['level'])} — {signal2['reason']}")
 
+                ax3.set_xlabel("Time (PST)")
+                ax3.legend(loc="lower left", framealpha=0.5)
                 xlim_price2 = ax3.get_xlim()
+                st.pyplot(fig3)
 
-                # === NRSI + NMACD(+signal) + NVol + NTD (Intraday view) ===
+                # === NRSI + NMACD(+signal) + NVol + NTD (+certainty) panel (Intraday view) ===
                 if show_nrsi:
-                    # Reindex NRSI to match price timestamps exactly, then sync axis
-                    nrsi_i = compute_nrsi(ic, period=nrsi_period).reindex(ic.index)
+                    nrsi_i = compute_nrsi(ic, period=nrsi_period)
                     nmacd_i, nmacd_sig_i, _ = compute_nmacd(ic)
                     nvol_i = compute_nvol(intr.get("Volume", pd.Series(index=ic.index)).reindex(ic.index))
                     ntd_i_rsipanel = compute_normalized_trend(ic, window=ntd_window)
@@ -1433,7 +1345,7 @@ with tab2:
                     posv = nvol_i.where(nvol_i > 0)
                     negv = nvol_i.where(nvol_i < 0)
                     ax3r.fill_between(posv.index, 0, posv, alpha=0.10, step=None, label="NVol(+)")
-                    ax3r.fill_between(negv.index, 0, negv, alpha=0.10, label="NVol(-)")
+                    ax3r.fill_between(negv.index, 0, negv, alpha=0.10, step=None, label="NVol(-)")
                     ax3r.plot(nrsi_i.index, nrsi_i, "-", linewidth=1.4, label="NRSI")
                     ax3r.plot(nmacd_i.index, nmacd_i, "-", linewidth=1.4, label="NMACD")
                     ax3r.plot(nmacd_sig_i.index, nmacd_sig_i, "--", linewidth=1.2, label="NMACD signal")
@@ -1456,13 +1368,9 @@ with tab2:
                     ax3r.axhline(0.75, linestyle="-", linewidth=3.0, color="red", label="+0.75")
                     ax3r.axhline(-0.75, linestyle="-", linewidth=3.0, color="red", label="-0.75")
                     ax3r.set_ylim(-1.1, 1.1)
-                    ax3r.set_xlabel("Time (PST)")
-
-                    # Keep the exact same x-range and tick formatting as the price chart
                     ax3r.set_xlim(xlim_price2)
-                    sync_time_axis(ax3, ax3r)
-
                     ax3r.legend(loc="lower left", framealpha=0.5)
+                    ax3r.set_xlabel("Time (PST)")
                     st.pyplot(fig3r)
 
                 # Momentum panel (ROC%)
@@ -1630,46 +1538,3 @@ with tab5:
                 showh = below_hour.copy()
                 showh["NTD_Hourly"] = showh["NTD_Hourly"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
                 st.dataframe(showh.reset_index(drop=True), use_container_width=True)
-
-# --- Tab 6: 20Y History ---
-with tab6:
-    st.header("20-Year Historical Prices")
-    st.caption("View **20 years** of daily close prices for the selected ticker (Stock or Forex).")
-
-    # default to last selected ticker if available, else first in universe
-    default_symbol = st.session_state.get("ticker") or universe[0]
-    sym_20 = st.selectbox("Ticker:", universe, index=universe.index(default_symbol) if default_symbol in universe else 0, key="long_hist_ticker")
-
-    # Optional: simple controls
-    c1, c2, c3 = st.columns([0.5, 0.25, 0.25])
-    with c1:
-        logscale = st.checkbox("Log scale", value=False, key="long_log")
-    with c2:
-        smooth = st.checkbox("Add 200-day MA", value=True, key="long_ma")
-    with c3:
-        refresh = st.button("🔄 Refresh 20Y", key="btn_refresh_20y")
-
-    if refresh:
-        st.session_state.long_nonce += 1
-
-    s20 = fetch_hist_20y(sym_20, nonce=st.session_state.long_nonce)
-
-    if s20 is None or s20.empty:
-        st.warning("No long-term data available for this symbol.")
-    else:
-        ma200 = s20.rolling(200, min_periods=1).mean() if smooth else None
-
-        figl, axl = plt.subplots(figsize=(14,5))
-        title = f"{sym_20} — 20Y Daily Close"
-        axl.set_title(title)
-        axl.plot(s20.index, s20.values, label="Close", linewidth=1.2)
-        if ma200 is not None:
-            axl.plot(ma200.index, ma200.values, "--", label="200D MA", linewidth=1.2)
-        if logscale:
-            axl.set_yscale("log")
-        axl.set_xlabel("Date (PST)")
-        axl.set_ylabel("Price")
-        axl.legend(loc="lower left", framealpha=0.5)
-        st.pyplot(figl)
-
-        st.caption(f"Data points: {len(s20):,} | First: {s20.index.min().strftime('%Y-%m-%d')} | Last: {s20.index.max().strftime('%Y-%m-%d')}")
