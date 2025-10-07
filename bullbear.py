@@ -227,9 +227,9 @@ if mode == "Stock":
     ])
 else:
     universe = [
-        'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X','CHFJPY=X',
-        'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','AUDJPY=X','AUDCHF=X',
-        'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','GBPAUD=X','USDCHF=X'
+        'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X',
+        'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X',
+        'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X'
     ]
 
 # --- Cache helpers (TTL = 120 seconds) ---
