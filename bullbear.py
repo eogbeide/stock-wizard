@@ -30,6 +30,7 @@
 # - UPDATED: Added **NTD overlay & Trend direction with % certainty** to RSI panel
 # - NEW: Refresh buttons on the **right side** of both **Daily** and **Intraday** charts
 # - NEW: **20Y History** tab to visualize 20 years of historical close prices
+# - FIX: NRSI chart dates now exactly match the price chart dates (synced x-axis & tick formatting)
 
 import streamlit as st
 import pandas as pd
@@ -144,6 +145,16 @@ def subset_by_daily_view(obj, view_label: str):
     else:
         start = end - pd.Timedelta(days=days_map.get(view_label, 365))
     return obj.loc[(idx >= start) & (idx <= end)]
+
+# NEW: Keep time axis identical between price and NRSI charts (limits + tick formatting)
+def sync_time_axis(ax_src, ax_dst):
+    try:
+        ax_dst.set_xlim(ax_src.get_xlim())
+        ax_dst.xaxis.set_major_locator(ax_src.xaxis.get_major_locator())
+        ax_dst.xaxis.set_major_formatter(ax_src.xaxis.get_major_formatter())
+        ax_dst.figure.autofmt_xdate()
+    except Exception:
+        pass
 
 # --- Sidebar config ---
 st.sidebar.title("Configuration")
@@ -1064,7 +1075,8 @@ with tab1:
 
                 # === Normalized RSI Panel (Hourly) ===
                 if show_nrsi:
-                    nrsi_h = compute_nrsi(hc, period=nrsi_period)
+                    # Reindex NRSI to match price timestamps exactly, then sync axis
+                    nrsi_h = compute_nrsi(hc, period=nrsi_period).reindex(hc.index)
                     nmacd_h, nmacd_sig_h, _ = compute_nmacd(hc)
                     nvol_h = compute_nvol(intraday.get("Volume", pd.Series(index=hc.index)).reindex(hc.index))
                     ntd_h_rsipanel = compute_normalized_trend(hc, window=ntd_window)
@@ -1100,9 +1112,13 @@ with tab1:
                     ax2r.axhline(-0.75, linestyle="-", linewidth=3.0, color="red", label="-0.75")
 
                     ax2r.set_ylim(-1.1, 1.1)
-                    ax2r.set_xlim(xlim_price)
-                    ax2r.legend(loc="lower left", framealpha=0.5)
                     ax2r.set_xlabel("Time (PST)")
+
+                    # Keep the exact same x-range and tick formatting as the price chart
+                    ax2r.set_xlim(xlim_price)
+                    sync_time_axis(ax2, ax2r)
+
+                    ax2r.legend(loc="lower left", framealpha=0.5)
                     st.pyplot(fig2r)
 
                 # Momentum panel (ROC%)
@@ -1406,7 +1422,8 @@ with tab2:
 
                 # === NRSI + NMACD(+signal) + NVol + NTD (Intraday view) ===
                 if show_nrsi:
-                    nrsi_i = compute_nrsi(ic, period=nrsi_period)
+                    # Reindex NRSI to match price timestamps exactly, then sync axis
+                    nrsi_i = compute_nrsi(ic, period=nrsi_period).reindex(ic.index)
                     nmacd_i, nmacd_sig_i, _ = compute_nmacd(ic)
                     nvol_i = compute_nvol(intr.get("Volume", pd.Series(index=ic.index)).reindex(ic.index))
                     ntd_i_rsipanel = compute_normalized_trend(ic, window=ntd_window)
@@ -1439,9 +1456,13 @@ with tab2:
                     ax3r.axhline(0.75, linestyle="-", linewidth=3.0, color="red", label="+0.75")
                     ax3r.axhline(-0.75, linestyle="-", linewidth=3.0, color="red", label="-0.75")
                     ax3r.set_ylim(-1.1, 1.1)
-                    ax3r.set_xlim(xlim_price2)
-                    ax3r.legend(loc="lower left", framealpha=0.5)
                     ax3r.set_xlabel("Time (PST)")
+
+                    # Keep the exact same x-range and tick formatting as the price chart
+                    ax3r.set_xlim(xlim_price2)
+                    sync_time_axis(ax3, ax3r)
+
+                    ax3r.legend(loc="lower left", framealpha=0.5)
                     st.pyplot(fig3r)
 
                 # Momentum panel (ROC%)
