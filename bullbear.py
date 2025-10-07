@@ -43,6 +43,7 @@ from datetime import timedelta, datetime
 import matplotlib.pyplot as plt
 import time
 import pytz
+from typing import Optional
 from matplotlib.transforms import blended_transform_factory  # for left-side labels
 
 # --- Page config ---
@@ -240,12 +241,16 @@ st.sidebar.subheader("Manual Refresh (no layout shift)")
 if st.sidebar.button("🔄 Refresh Daily (Tabs 1 & 2)", key="sb_refresh_daily"):
     if st.session_state.get("ticker"):
         st.session_state.daily_nonce += 1
-        st.session_state.df_hist = yf.download(st.session_state.ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close'].asfreq("D").fillna(method="ffill")
+        st.session_state.df_hist = yf.download(
+            st.session_state.ticker, start="2018-01-01", end=pd.to_datetime("today")
+        )['Close'].asfreq("D").fillna(method="ffill")
         try:
             st.session_state.df_hist = st.session_state.df_hist.tz_localize(PACIFIC)
         except TypeError:
             st.session_state.df_hist = st.session_state.df_hist.tz_convert(PACIFIC)
-        st.session_state.df_ohlc = yf.download(st.session_state.ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Open','High','Low','Close']].dropna()
+        st.session_state.df_ohlc = yf.download(
+            st.session_state.ticker, start="2018-01-01", end=pd.to_datetime("today")
+        )[['Open','High','Low','Close']].dropna()
         try:
             st.session_state.df_ohlc = st.session_state.df_ohlc.tz_localize(PACIFIC)
         except TypeError:
@@ -259,7 +264,9 @@ if st.sidebar.button("🔄 Refresh Intraday (Tabs 1 & 2)", key="sb_refresh_intra
     if st.session_state.get("ticker"):
         st.session_state.intraday_nonce += 1
         hr = st.session_state.get("hour_range", "24h")
-        st.session_state.intraday = yf.download(st.session_state.ticker, period=PERIOD_MAP.get(hr, "1d"), interval="5m")
+        st.session_state.intraday = yf.download(
+            st.session_state.ticker, period=PERIOD_MAP.get(hr, "1d"), interval="5m"
+        )
         try:
             st.session_state.intraday = st.session_state.intraday.tz_localize('UTC').tz_convert(PACIFIC)
         except TypeError:
@@ -551,20 +558,63 @@ def shade_npo_regions(ax, npo: pd.Series):
 
 # --- NEW: Trend line with stats (for price chart)
 def draw_trend_line_with_stats(ax, series_like: pd.Series, lookback: int = 0,
-                               label_prefix: str = "Trend", ntd_val: float | None = None):
+                               label_prefix: str = "Trend", ntd_val: Optional[float] = None):
     yhat, m, r2 = fit_trendline_with_r2(series_like, lookback=lookback)
     if yhat.empty:
         return np.nan, np.nan
     color = "tab:green" if m >= 0 else "tab:red"
     direction = "UP" if m >= 0 else "DOWN"
     conf = int(round(_clamp01(r2) * 100))
-    certainty = int(round(50 + 50 * abs(ntd_val))) if ntd_val is not None and np.isfinite(ntd_val) else None
+    certainty = int(round(50 + 50 * abs(ntd_val))) if (ntd_val is not None and np.isfinite(ntd_val)) else None
     if certainty is not None:
         lbl = f"{label_prefix} ({fmt_slope(m)}/bar, R²={_clamp01(r2):.2f}, {direction} — certainty {certainty}%)"
     else:
         lbl = f"{label_prefix} ({fmt_slope(m)}/bar, R²={_clamp01(r2):.2f}, {direction})"
     ax.plot(yhat.index, yhat.values, "-", linewidth=2.4, color=color, label=lbl)
     return m, r2
+
+# ---- Supertrend helpers (hourly overlay) ----
+def _true_range(df: pd.DataFrame):
+    hl = (df["High"] - df["Low"]).abs()
+    hc = (df["High"] - df["Close"].shift()).abs()
+    lc = (df["Low"]  - df["Close"].shift()).abs()
+    return pd.concat([hl, hc, lc], axis=1).max(axis=1)
+
+def compute_atr(df: pd.DataFrame, period: int = 10) -> pd.Series:
+    tr = _true_range(df[['High','Low','Close']])
+    return tr.ewm(alpha=1/period, adjust=False).mean()
+
+def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float = 3.0):
+    if df is None or df.empty or not {'High','Low','Close'}.issubset(df.columns):
+        idx = df.index if df is not None else pd.Index([])
+        return pd.DataFrame(index=idx, columns=["ST","in_uptrend","upperband","lowerband"])
+    ohlc = df[['High','Low','Close']].copy()
+    hl2 = (ohlc['High'] + ohlc['Low']) / 2.0
+    atr = compute_atr(ohlc, atr_period)
+    upperband = hl2 + atr_mult * atr
+    lowerband = hl2 - atr_mult * atr
+    st_line = pd.Series(index=ohlc.index, dtype=float)
+    in_up   = pd.Series(index=ohlc.index, dtype=bool)
+    st_line.iloc[0] = upperband.iloc[0]
+    in_up.iloc[0]   = True
+    for i in range(1, len(ohlc)):
+        prev_st = st_line.iloc[i-1]
+        prev_up = in_up.iloc[i-1]
+        up_i = min(upperband.iloc[i], prev_st) if prev_up else upperband.iloc[i]
+        dn_i = max(lowerband.iloc[i], prev_st) if not prev_up else lowerband.iloc[i]
+        close_i = ohlc['Close'].iloc[i]
+        if close_i > up_i:
+            curr_up = True
+        elif close_i < dn_i:
+            curr_up = False
+        else:
+            curr_up = prev_up
+        in_up.iloc[i]   = curr_up
+        st_line.iloc[i] = dn_i if curr_up else up_i
+    return pd.DataFrame({
+        "ST": st_line, "in_uptrend": in_up,
+        "upperband": upperband, "lowerband": lowerband
+    })
 
 # ---- Ichimoku (classic + normalized) ----
 def ichimoku_lines(high: pd.Series, low: pd.Series, close: pd.Series,
@@ -807,7 +857,7 @@ with tab1:
 
             # Trendline over last N daily bars
             yhat_d, m_d, r2_d = fit_trendline_with_r2(df, lookback=slope_lb_daily)
-            yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)  # keep as-is for EMA slope (no r2)
+            yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)  # EMA slope (no r2)
             piv = current_daily_pivots(df_ohlc)
 
             wave_norm_d, piv_df_d = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
@@ -1003,7 +1053,7 @@ with tab1:
                 if not yhat_h.empty and np.isfinite(r2_h):
                     direction = "UP" if m_h >= 0 else "DOWN"
                     conf_pct = int(round(_clamp01(r2_h) * 100))
-                    # Use NTD (price) on hourly for certainty (from RSI panel calc later for reuse)
+                    # Use NTD (price) on hourly for certainty
                     ntd_h_for_cert = compute_normalized_trend(hc, window=ntd_window)
                     last_ntd_h = float(ntd_h_for_cert.dropna().iloc[-1]) if not ntd_h_for_cert.dropna().empty else np.nan
                     certainty_pct = int(round(50 + 50 * abs(last_ntd_h))) if np.isfinite(last_ntd_h) else None
