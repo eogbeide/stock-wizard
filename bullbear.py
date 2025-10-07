@@ -31,6 +31,7 @@
 # - UPDATED: Refresh buttons moved to the **sidebar** (no layout shift)
 # - NEW: **20Y History** tab to visualize 20 years of historical close prices
 # - FIX: NRSI & Momentum chart dates now exactly match the price chart dates (synced x-axis & tick formatting)
+# - NEW: **NRSI Trend Line (Hourly)** on both Tab 1 and Tab 2 intraday RSI panels
 
 import streamlit as st
 import pandas as pd
@@ -1107,15 +1108,18 @@ with tab1:
 
                 xlim_price = ax2.get_xlim()
 
-                # === Normalized RSI Panel (Hourly) ===
+                # === Normalized RSI Panel (Hourly) — NOW WITH NRSI TREND LINE ===
                 if show_nrsi:
                     nrsi_h = compute_nrsi(hc, period=nrsi_period).reindex(hc.index)
+                    # NEW: NRSI trend line using the same hourly lookback window
+                    yhat_nrsi_h, m_nrsi_h = slope_line(nrsi_h, slope_lb_hourly)
+
                     nmacd_h, nmacd_sig_h, _ = compute_nmacd(hc)
                     nvol_h = compute_nvol(intraday.get("Volume", pd.Series(index=hc.index)).reindex(hc.index))
                     ntd_h_rsipanel = compute_normalized_trend(hc, window=ntd_window)
 
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
-                    ax2r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD")
+                    ax2r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD + Trend")
 
                     posv = nvol_h.where(nvol_h > 0)
                     negv = nvol_h.where(nvol_h < 0)
@@ -1123,6 +1127,11 @@ with tab1:
                     ax2r.fill_between(negv.index, 0, negv, alpha=0.10, step=None, label="NVol(-)")
 
                     ax2r.plot(nrsi_h.index, nrsi_h, "-", linewidth=1.4, label="NRSI")
+                    # NEW: plot NRSI trend if available
+                    if not yhat_nrsi_h.empty:
+                        ax2r.plot(yhat_nrsi_h.index, yhat_nrsi_h.values, "--", linewidth=2,
+                                  label=f"NRSI Trend {slope_lb_hourly} ({fmt_slope(m_nrsi_h)}/bar)")
+
                     ax2r.plot(nmacd_h.index, nmacd_h, "-", linewidth=1.4, label="NMACD")
                     ax2r.plot(nmacd_sig_h.index, nmacd_sig_h, "--", linewidth=1.2, label="NMACD signal")
 
@@ -1423,20 +1432,29 @@ with tab2:
 
                 xlim_price2 = ax3.get_xlim()
 
-                # === NRSI + NMACD(+signal) + NVol + NTD (Intraday view) ===
+                # === NRSI + NMACD(+signal) + NVol + NTD (Intraday view) — NOW WITH NRSI TREND LINE ===
                 if show_nrsi:
                     nrsi_i = compute_nrsi(ic, period=nrsi_period).reindex(ic.index)
+                    # NEW: NRSI trend line for intraday panel
+                    yhat_nrsi_i, m_nrsi_i = slope_line(nrsi_i, slope_lb_hourly)
+
                     nmacd_i, nmacd_sig_i, _ = compute_nmacd(ic)
                     nvol_i = compute_nvol(intr.get("Volume", pd.Series(index=ic.index)).reindex(ic.index))
                     ntd_i_rsipanel = compute_normalized_trend(ic, window=ntd_window)
 
                     fig3r, ax3r = plt.subplots(figsize=(14,2.8))
-                    ax3r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD")
+                    ax3r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD + Trend")
                     posv = nvol_i.where(nvol_i > 0)
                     negv = nvol_i.where(nvol_i < 0)
                     ax3r.fill_between(posv.index, 0, posv, alpha=0.10, step=None, label="NVol(+)")
                     ax3r.fill_between(negv.index, 0, negv, alpha=0.10, label="NVol(-)")
                     ax3r.plot(nrsi_i.index, nrsi_i, "-", linewidth=1.4, label="NRSI")
+
+                    # NEW: plot NRSI trend if available
+                    if not yhat_nrsi_i.empty:
+                        ax3r.plot(yhat_nrsi_i.index, yhat_nrsi_i.values, "--", linewidth=2,
+                                  label=f"NRSI Trend {slope_lb_hourly} ({fmt_slope(m_nrsi_i)}/bar)")
+
                     ax3r.plot(nmacd_i.index, nmacd_i, "-", linewidth=1.4, label="NMACD")
                     ax3r.plot(nmacd_sig_i.index, nmacd_sig_i, "--", linewidth=1.2, label="NMACD signal")
 
@@ -1459,8 +1477,10 @@ with tab2:
                     ax3r.axhline(-0.75, linestyle="-", linewidth=3.0, color="red", label="-0.75")
                     ax3r.set_ylim(-1.1, 1.1)
                     ax3r.set_xlabel("Time (PST)")
+
                     ax3r.set_xlim(xlim_price2)
                     sync_time_axis(ax3, ax3r)
+
                     ax3r.legend(loc="lower left", framealpha=0.5)
                     st.pyplot(fig3r)
 
