@@ -32,7 +32,7 @@
 # - NEW: **20Y History** tab to visualize 20 years of historical close prices
 # - FIX: NRSI & Momentum chart dates now exactly match the price chart dates (synced x-axis & tick formatting)
 
-import streamlit as st
+import streamlit as stb
 import pandas as pd
 import numpy as np
 import yfinance as yf
