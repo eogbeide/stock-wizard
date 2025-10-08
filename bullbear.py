@@ -28,6 +28,7 @@
 # - UPDATED: Removed Hourly EW panel and added **Normalized RSI (NRSI)** panel below the hourly price chart
 # - UPDATED: RSI panel shows **NRSI + NVol + NMACD(+signal)** with guides at 0 (dashed), ±0.5 (black), ±0.75 (thick red)
 # - UPDATED: Added **NTD overlay & Trend direction with % certainty** to RSI panel
+# - UPDATED: Price chart shows trendline slope in legend + bottom-left; NRSI panel adds trendline + slope; NRSI Trend badge moved to bottom-right
 
 import streamlit as st
 import pandas as pd
@@ -113,13 +114,10 @@ def fmt_price_val(y: float) -> str:
         return "n/a"
     return f"{y:,.3f}"
 
-# FIX: robust slope formatter that tolerates arrays/Series/zero-d scalars
-def fmt_slope(m) -> str:
+def fmt_slope(m: float) -> str:
+    """Robust slope formatter (handles numpy scalars/arrays)."""
     try:
-        a = np.asarray(m, dtype=float)
-        if a.size == 0:
-            return "n/a"
-        mv = float(a.ravel()[0])
+        mv = float(np.squeeze(m))
     except Exception:
         return "n/a"
     return f"{mv:.4f}" if np.isfinite(mv) else "n/a"
@@ -993,6 +991,12 @@ with tab1:
                     ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
                              label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
+                # Bottom-left slope badge inside the price chart
+                ax2.text(0.01, 0.02, f"Slope: {fmt_slope(slope_h)}/bar",
+                         transform=ax2.transAxes, ha="left", va="bottom",
+                         fontsize=9, color="black",
+                         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+
                 if show_fibs and not hc.empty:
                     fibs_h = fibonacci_levels(hc)
                     for lbl, y in fibs_h.items():
@@ -1026,9 +1030,10 @@ with tab1:
                     nrsi_h = compute_nrsi(hc, period=nrsi_period)
                     nmacd_h, nmacd_sig_h, _ = compute_nmacd(hc)
                     nvol_h = compute_nvol(intraday.get("Volume", pd.Series(index=hc.index)).reindex(hc.index))
-
-                    # Price-based NTD overlay for trend direction/certainty
                     ntd_h_rsipanel = compute_normalized_trend(hc, window=ntd_window)
+
+                    # NRSI trendline & slope
+                    nrsi_trend, nrsi_m = slope_line(nrsi_h, slope_lb_hourly)
 
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
                     ax2r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD")
@@ -1044,23 +1049,23 @@ with tab1:
                     ax2r.plot(nmacd_h.index, nmacd_h, "-", linewidth=1.4, label="NMACD")
                     ax2r.plot(nmacd_sig_h.index, nmacd_sig_h, "--", linewidth=1.2, label="NMACD signal")
 
-                    # NRSI trendline + slope value
-                    yhat_nrsi_h, m_nrsi_h = slope_line(nrsi_h, slope_lb_hourly)
-                    if not yhat_nrsi_h.empty:
-                        ax2r.plot(yhat_nrsi_h.index, yhat_nrsi_h.values, "--", linewidth=2,
-                                  label=f"NRSI Trend {slope_lb_hourly} ({fmt_slope(m_nrsi_h)}/bar)")
+                    # NRSI trendline (dashed red) + slope in legend
+                    if not nrsi_trend.empty:
+                        ax2r.plot(nrsi_trend.index, nrsi_trend.values, "--", linewidth=2,
+                                  color="red",
+                                  label=f"NRSI Trend {slope_lb_hourly} ({fmt_slope(nrsi_m)}/bar)")
 
-                    # NTD overlay
+                    # NTD overlay + bottom-right trend badge
                     if show_ntd and not ntd_h_rsipanel.dropna().empty:
                         ax2r.plot(ntd_h_rsipanel.index, ntd_h_rsipanel, ":", linewidth=1.6,
                                   label=f"NTD (win={ntd_window})")
-                        # Trend direction + certainty badge
                         last_ntd = float(ntd_h_rsipanel.dropna().iloc[-1])
                         t_dir = "UP" if last_ntd >= 0 else "DOWN"
                         color = "tab:green" if last_ntd >= 0 else "tab:red"
                         certainty = int(round(50 + 50*abs(last_ntd)))  # map [-1,1] → [50,100]
-                        ax2r.text(0.99, 0.92, f"Trend: {t_dir} ({certainty}%)",
-                                  transform=ax2r.transAxes, ha="right", va="top",
+                        # moved to bottom-right
+                        ax2r.text(0.99, 0.06, f"Trend: {t_dir} ({certainty}%)",
+                                  transform=ax2r.transAxes, ha="right", va="bottom",
                                   fontsize=10, fontweight="bold", color=color,
                                   bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.85))
 
@@ -1327,6 +1332,12 @@ with tab2:
                     ax3.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
                              label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
+                # Bottom-left slope badge inside the price chart
+                ax3.text(0.01, 0.02, f"Slope: {fmt_slope(slope_i)}/bar",
+                         transform=ax3.transAxes, ha="left", va="bottom",
+                         fontsize=9, color="black",
+                         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+
                 if show_fibs and not ic.empty:
                     fibs_h = fibonacci_levels(ic)
                     for lbl, y in fibs_h.items():
@@ -1354,6 +1365,9 @@ with tab2:
                     nvol_i = compute_nvol(intr.get("Volume", pd.Series(index=ic.index)).reindex(ic.index))
                     ntd_i_rsipanel = compute_normalized_trend(ic, window=ntd_window)
 
+                    # NRSI trendline & slope
+                    nrsi_trend2, nrsi_m2 = slope_line(nrsi_i, slope_lb_hourly)
+
                     fig3r, ax3r = plt.subplots(figsize=(14,2.8))
                     ax3r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD")
                     posv = nvol_i.where(nvol_i > 0)
@@ -1364,11 +1378,10 @@ with tab2:
                     ax3r.plot(nmacd_i.index, nmacd_i, "-", linewidth=1.4, label="NMACD")
                     ax3r.plot(nmacd_sig_i.index, nmacd_sig_i, "--", linewidth=1.2, label="NMACD signal")
 
-                    # NRSI trendline + slope value
-                    yhat_nrsi_i, m_nrsi_i = slope_line(nrsi_i, slope_lb_hourly)
-                    if not yhat_nrsi_i.empty:
-                        ax3r.plot(yhat_nrsi_i.index, yhat_nrsi_i.values, "--", linewidth=2,
-                                  label=f"NRSI Trend {slope_lb_hourly} ({fmt_slope(m_nrsi_i)}/bar)")
+                    if not nrsi_trend2.empty:
+                        ax3r.plot(nrsi_trend2.index, nrsi_trend2.values, "--", linewidth=2,
+                                  color="red",
+                                  label=f"NRSI Trend {slope_lb_hourly} ({fmt_slope(nrsi_m2)}/bar)")
 
                     if show_ntd and not ntd_i_rsipanel.dropna().empty:
                         ax3r.plot(ntd_i_rsipanel.index, ntd_i_rsipanel, ":", linewidth=1.6,
@@ -1377,8 +1390,9 @@ with tab2:
                         t_dir = "UP" if last_ntd >= 0 else "DOWN"
                         color = "tab:green" if last_ntd >= 0 else "tab:red"
                         certainty = int(round(50 + 50*abs(last_ntd)))
-                        ax3r.text(0.99, 0.92, f"Trend: {t_dir} ({certainty}%)",
-                                  transform=ax3r.transAxes, ha="right", va="top",
+                        # moved to bottom-right
+                        ax3r.text(0.99, 0.06, f"Trend: {t_dir} ({certainty}%)",
+                                  transform=ax3r.transAxes, ha="right", va="bottom",
                                   fontsize=10, fontweight="bold", color=color,
                                   bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.85))
 
