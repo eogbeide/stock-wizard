@@ -29,7 +29,8 @@
 # - UPDATED: RSI panel shows **NRSI + NVol + NMACD(+signal)** with guides at 0 (dashed), ±0.5 (black), ±0.75 (thick red)
 # - UPDATED: Added **NTD overlay & Trend direction with % certainty** to RSI panel
 # - UPDATED: Price chart shows trendline slope in legend + bottom-left; NRSI panel adds trendline + slope; NRSI Trend badge moved to bottom-right
-# - NEW: Scanner also lists **Kijun(26) Up-Cross** symbols (Daily for Stocks & FX; Hourly for FX)
+# - NEW: Scanner lists **Price > Kijun(26)** symbols (Daily for Stocks & FX; Hourly for FX)
+# - NEW: Hourly chart shows **R²** for the trendline (computed over the slope lookback) at the **bottom-center** of the chart
 
 import streamlit as st
 import pandas as pd
@@ -122,6 +123,13 @@ def fmt_slope(m: float) -> str:
     except Exception:
         return "n/a"
     return f"{mv:.4f}" if np.isfinite(mv) else "n/a"
+
+def fmt_r2(r2: float, digits: int = 3) -> str:
+    try:
+        rv = float(r2)
+    except Exception:
+        return "n/a"
+    return f"{rv:.{digits}f}" if np.isfinite(rv) else "n/a"
 
 # Place text at the left edge (x in axes coords, y in data coords)
 def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
@@ -333,6 +341,23 @@ def slope_line(series_like, lookback: int):
     m, b = np.polyfit(x, s.to_numpy(dtype=float), 1)
     yhat = pd.Series(m * x + b, index=s.index)
     return yhat, float(m)
+
+def regression_r2(series_like, lookback: int):
+    """R² for a simple linear fit over the last `lookback` bars of `series_like`."""
+    s = _coerce_1d_series(series_like).dropna()
+    if lookback > 0:
+        s = s.iloc[-lookback:]
+    if s.shape[0] < 2:
+        return float("nan")
+    x = np.arange(len(s), dtype=float)
+    y = s.to_numpy(dtype=float)
+    m, b = np.polyfit(x, y, 1)
+    yhat = m*x + b
+    ss_res = np.sum((y - yhat)**2)
+    ss_tot = np.sum((y - y.mean())**2)
+    if ss_tot <= 0:
+        return float("nan")
+    return float(1.0 - ss_res/ss_tot)
 
 def compute_roc(series_like, n: int = 10) -> pd.Series:
     s = _coerce_1d_series(series_like)
@@ -724,41 +749,38 @@ def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
     except Exception:
         return np.nan, None
 
-# ---- Kijun Up-Cross detection (Daily & Hourly) ----
-def _kijun_up_cross_from_df(df: pd.DataFrame, base: int = 26):
+# ---- Price > Kijun detection (Daily & Hourly) ----
+def _price_above_kijun_from_df(df: pd.DataFrame, base: int = 26):
+    """Returns (above_now, timestamp, close_now, kijun_now) for the latest bar."""
     if df is None or df.empty or not {'High','Low','Close'}.issubset(df.columns):
         return False, None, np.nan, np.nan
-    df = df[['High','Low','Close']].copy()
-    # compute kijun
-    _, kijun, _, _, _ = ichimoku_lines(df['High'], df['Low'], df['Close'], base=base)
-    kijun = kijun.ffill().bfill().reindex(df.index)
-    close = df['Close'].astype(float).reindex(df.index)
-    # Need at least 2 points
+    ohlc = df[['High','Low','Close']].copy()
+    _, kijun, _, _, _ = ichimoku_lines(ohlc['High'], ohlc['Low'], ohlc['Close'], base=base)
+    kijun = kijun.ffill().bfill().reindex(ohlc.index)
+    close = ohlc['Close'].astype(float).reindex(ohlc.index)
+
     mask = close.notna() & kijun.notna()
-    if mask.sum() < 2:
+    if mask.sum() < 1:
         return False, None, np.nan, np.nan
-    c = close[mask]
-    k = kijun[mask]
-    # Check last bar cross-up: prev <= prev_k and now > now_k
-    prev, now = c.iloc[-2], c.iloc[-1]
-    prev_k, now_k = k.iloc[-2], k.iloc[-1]
-    crossed = np.isfinite(prev) and np.isfinite(now) and np.isfinite(prev_k) and np.isfinite(now_k) and (prev <= prev_k) and (now > now_k)
-    ts = c.index[-1] if crossed else None
-    return crossed, ts, float(now) if np.isfinite(now) else np.nan, float(now_k) if np.isfinite(now_k) else np.nan
+    c_now = float(close[mask].iloc[-1])
+    k_now = float(kijun[mask].iloc[-1])
+    ts = close[mask].index[-1]
+    above = np.isfinite(c_now) and np.isfinite(k_now) and (c_now > k_now)
+    return above, ts if above else None, c_now, k_now
 
 @st.cache_data(ttl=120)
-def kijun_up_cross_info_daily(symbol: str, base: int = 26):
+def price_above_kijun_info_daily(symbol: str, base: int = 26):
     try:
         df = fetch_hist_ohlc(symbol)
-        return _kijun_up_cross_from_df(df, base=base)
+        return _price_above_kijun_from_df(df, base=base)
     except Exception:
         return False, None, np.nan, np.nan
 
 @st.cache_data(ttl=120)
-def kijun_up_cross_info_hourly(symbol: str, period: str = "1d", base: int = 26):
+def price_above_kijun_info_hourly(symbol: str, period: str = "1d", base: int = 26):
     try:
         df = fetch_intraday(symbol, period=period)
-        return _kijun_up_cross_from_df(df, base=base)
+        return _price_above_kijun_from_df(df, base=base)
     except Exception:
         return False, None, np.nan, np.nan
 
@@ -986,7 +1008,9 @@ with tab1:
                     )
                     kijun_h = kijun_h.reindex(hc.index).ffill().bfill()
 
+                # Lookback slope & R²
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
+                r2_h = regression_r2(hc, slope_lb_hourly)
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
                 plt.subplots_adjust(top=0.85, right=0.93)
@@ -1032,6 +1056,12 @@ with tab1:
                 # Bottom-left slope badge inside the price chart
                 ax2.text(0.01, 0.02, f"Slope: {fmt_slope(slope_h)}/bar",
                          transform=ax2.transAxes, ha="left", va="bottom",
+                         fontsize=9, color="black",
+                         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+
+                # Bottom-center R² badge for trendline over lookback
+                ax2.text(0.50, 0.02, f"R² ({slope_lb_hourly} bars): {fmt_r2(r2_h)}",
+                         transform=ax2.transAxes, ha="center", va="bottom",
                          fontsize=9, color="black",
                          bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
@@ -1327,7 +1357,9 @@ with tab2:
                     )
                     kijun_i = kijun_i.reindex(ic.index).ffill().bfill()
 
+                # Lookback slope & R²
                 yhat_h, m_h = slope_line(ic, slope_lb_hourly)
+                r2_i = regression_r2(ic, slope_lb_hourly)
 
                 fig3, ax3 = plt.subplots(figsize=(14,4))
                 plt.subplots_adjust(top=0.85, right=0.93)
@@ -1369,9 +1401,15 @@ with tab2:
                     ax3.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
                              label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
-                # Bottom-left slope badge inside the price chart
+                # Bottom-left slope badge
                 ax3.text(0.01, 0.02, f"Slope: {fmt_slope(slope_i)}/bar",
                          transform=ax3.transAxes, ha="left", va="bottom",
+                         fontsize=9, color="black",
+                         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+
+                # Bottom-center R² badge for trendline over lookback
+                ax3.text(0.50, 0.02, f"R² ({slope_lb_hourly} bars): {fmt_r2(r2_i)}",
+                         transform=ax3.transAxes, ha="center", va="bottom",
                          fontsize=9, color="black",
                          bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
@@ -1411,7 +1449,7 @@ with tab2:
                     negv = nvol_i.where(nvol_i < 0)
                     ax3r.fill_between(posv.index, 0, posv, alpha=0.10, step=None, label="NVol(+)")
                     ax3r.fill_between(negv.index, 0, negv, alpha=0.10, step=None, label="NVol(-)")
-                    ax3r.plot(nrsi_i.index, nrsi_i, "-", linewidth=1.4, label="NRSI")
+                    ax3r.plot(nrsi_i.index, nrsi_i, "-", linewidth=1.4, label="NRSI")  # fixed typo
                     ax3r.plot(nmacd_i.index, nmacd_i, "-", linewidth=1.4, label="NMACD")
                     ax3r.plot(nmacd_sig_i.index, nmacd_sig_i, "--", linewidth=1.2, label="NMACD signal")
 
@@ -1549,7 +1587,7 @@ with tab4:
 # --- Tab 5: NTD -0.5 Scanner (Stocks & Forex) ---
 with tab5:
     st.header("NTD -0.5 Scanner")
-    st.caption("Shows **symbols with Normalized Trend Direction (NTD) < -0.5** (Daily for Stocks & FX; Hourly for FX). Also lists **Kijun(26) Up-Cross** symbols (latest bar).")
+    st.caption("Shows **symbols with Normalized Trend Direction (NTD) < -0.5** (Daily for Stocks & FX; Hourly for FX). Also lists **Price > Ichimoku Kijun(26)** symbols on the latest bar.")
 
     period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
     scan_hour_range = st.selectbox(
@@ -1587,35 +1625,35 @@ with tab5:
             show["NTD_Daily"] = show["NTD_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
             st.dataframe(show.reset_index(drop=True), use_container_width=True)
 
-        # DAILY scan for both universes — Kijun Up-Cross
+        # DAILY scan for both universes — Price > Kijun
         st.markdown("---")
-        st.subheader(f"Daily — Ichimoku **Kijun({ichi_base}) Up-Cross** (latest bar)")
-        cross_rows = []
+        st.subheader(f"Daily — **Price > Ichimoku Kijun({ichi_base})** (latest bar)")
+        above_rows = []
         for sym in universe:
-            crossed, ts, close_now, kij_now = kijun_up_cross_info_daily(sym, base=ichi_base)
-            cross_rows.append({
+            above, ts, close_now, kij_now = price_above_kijun_info_daily(sym, base=ichi_base)
+            above_rows.append({
                 "Symbol": sym,
-                "CrossedUp": crossed,
+                "AboveNow": above,
                 "Timestamp": ts,
                 "Close": close_now,
                 "Kijun": kij_now
             })
-        df_cross_daily = pd.DataFrame(cross_rows)
-        df_cross_daily = df_cross_daily[df_cross_daily["CrossedUp"] == True]
+        df_above_daily = pd.DataFrame(above_rows)
+        df_above_daily = df_above_daily[df_above_daily["AboveNow"] == True]
 
         c7, c8 = st.columns(2)
-        c7.metric("Daily Kijun Up-Cross", int(df_cross_daily.shape[0]))
-        c8.caption("Criteria: Close crossed above Kijun on the latest bar (prev ≤ Kijun & now > Kijun).")
+        c7.metric("Daily Price > Kijun", int(df_above_daily.shape[0]))
+        c8.caption("Criteria: Latest close strictly greater than current Kijun (Base) value.")
 
-        if df_cross_daily.empty:
-            st.info("No Daily Kijun Up-Cross found on the latest bar.")
+        if df_above_daily.empty:
+            st.info("No Daily symbols with Price > Kijun on the latest bar.")
         else:
-            view_cross = df_cross_daily.copy()
-            view_cross["Close"] = view_cross["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-            view_cross["Kijun"] = view_cross["Kijun"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-            st.dataframe(view_cross[["Symbol","Timestamp","Close","Kijun"]].reset_index(drop=True), use_container_width=True)
+            view_above = df_above_daily.copy()
+            view_above["Close"] = view_above["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            view_above["Kijun"] = view_above["Kijun"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            st.dataframe(view_above[["Symbol","Timestamp","Close","Kijun"]].reset_index(drop=True), use_container_width=True)
 
-        # HOURLY scan for Forex — NTD & Kijun Up-Cross
+        # HOURLY scan for Forex — NTD & Price > Kijun
         if mode == "Forex":
             st.markdown("---")
             st.subheader(f"Forex Hourly — NTD < {thresh:+.2f}  ({scan_hour_range} lookback)")
@@ -1637,28 +1675,28 @@ with tab5:
                 showh["NTD_Hourly"] = showh["NTD_Hourly"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
                 st.dataframe(showh.reset_index(drop=True), use_container_width=True)
 
-            st.subheader(f"Forex Hourly — Ichimoku **Kijun({ichi_base}) Up-Cross** (latest bar, {scan_hour_range})")
-            hcross_rows = []
+            st.subheader(f"Forex Hourly — **Price > Ichimoku Kijun({ichi_base})** (latest bar, {scan_hour_range})")
+            habove_rows = []
             for sym in universe:
-                crossed_h, ts_h, close_h, kij_h = kijun_up_cross_info_hourly(sym, period=scan_period, base=ichi_base)
-                hcross_rows.append({
+                above_h, ts_h, close_h, kij_h = price_above_kijun_info_hourly(sym, period=scan_period, base=ichi_base)
+                habove_rows.append({
                     "Symbol": sym,
-                    "CrossedUp": crossed_h,
+                    "AboveNow": above_h,
                     "Timestamp": ts_h,
                     "Close": close_h,
                     "Kijun": kij_h
                 })
-            df_cross_hour = pd.DataFrame(hcross_rows)
-            df_cross_hour = df_cross_hour[df_cross_hour["CrossedUp"] == True]
+            df_above_hour = pd.DataFrame(habove_rows)
+            df_above_hour = df_above_hour[df_above_hour["AboveNow"] == True]
 
             c9, c10 = st.columns(2)
-            c9.metric("Hourly Kijun Up-Cross", int(df_cross_hour.shape[0]))
-            c10.caption("Criteria: Close crossed above Kijun on the latest intraday bar.")
+            c9.metric("Hourly Price > Kijun", int(df_above_hour.shape[0]))
+            c10.caption("Criteria: Latest intraday close strictly greater than current Kijun value.")
 
-            if df_cross_hour.empty:
-                st.info("No Hourly Kijun Up-Cross found on the latest bar.")
+            if df_above_hour.empty:
+                st.info("No Forex pairs with Price > Kijun on the latest bar.")
             else:
-                vch = df_cross_hour.copy()
+                vch = df_above_hour.copy()
                 vch["Close"] = vch["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
                 vch["Kijun"] = vch["Kijun"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
                 st.dataframe(vch[["Symbol","Timestamp","Close","Kijun"]].reset_index(drop=True), use_container_width=True)
