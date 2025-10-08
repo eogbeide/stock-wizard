@@ -30,7 +30,7 @@
 # - UPDATED: Added **NTD overlay & Trend direction with % certainty** to RSI panel
 # - UPDATED: Price chart shows trendline slope in legend + bottom-left; NRSI panel adds trendline + slope; NRSI Trend badge moved to bottom-right
 # - NEW: Scanner lists **Price > Kijun(26)** symbols (Daily for Stocks & FX; Hourly for FX)
-# - NEW: Hourly chart shows **R²** for the trendline (computed over the slope lookback) at the **bottom-center** of the chart
+# - NEW: Hourly chart shows **R²** for the trendline (computed over the slope lookback) at the **bottom-center** of the chart (as a percentage)
 
 import streamlit as st
 import pandas as pd
@@ -124,12 +124,13 @@ def fmt_slope(m: float) -> str:
         return "n/a"
     return f"{mv:.4f}" if np.isfinite(mv) else "n/a"
 
-def fmt_r2(r2: float, digits: int = 3) -> str:
+def fmt_r2(r2: float, digits: int = 1) -> str:
+    """Format R² as a percentage string (coefficient of determination)."""
     try:
         rv = float(r2)
     except Exception:
         return "n/a"
-    return f"{rv:.{digits}f}" if np.isfinite(rv) else "n/a"
+    return fmt_pct(rv, digits=digits) if np.isfinite(rv) else "n/a"
 
 # Place text at the left edge (x in axes coords, y in data coords)
 def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
@@ -1059,7 +1060,7 @@ with tab1:
                          fontsize=9, color="black",
                          bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-                # Bottom-center R² badge for trendline over lookback
+                # Bottom-center R² badge for trendline over lookback (percentage)
                 ax2.text(0.50, 0.02, f"R² ({slope_lb_hourly} bars): {fmt_r2(r2_h)}",
                          transform=ax2.transAxes, ha="center", va="bottom",
                          fontsize=9, color="black",
@@ -1271,6 +1272,9 @@ with tab2:
 
             if piv and len(df_show) > 0:
                 x0, x1 = df_show.index[0], df_show.index[-1]
+                for lbl, y in pivots.items() if False else piv.items():  # keep structure; no change
+                    pass
+                x0, x1 = df_show.index[0], df_show.index[-1]
                 for lbl, y in piv.items():
                     ax.hlines(y, xmin=x0, xmax=x1, linestyles="dashed", linewidth=1.0)
                 for lbl, y in piv.items():
@@ -1407,7 +1411,7 @@ with tab2:
                          fontsize=9, color="black",
                          bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-                # Bottom-center R² badge for trendline over lookback
+                # Bottom-center R² badge for trendline over lookback (percentage)
                 ax3.text(0.50, 0.02, f"R² ({slope_lb_hourly} bars): {fmt_r2(r2_i)}",
                          transform=ax3.transAxes, ha="center", va="bottom",
                          fontsize=9, color="black",
