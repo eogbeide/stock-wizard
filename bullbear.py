@@ -28,6 +28,8 @@
 # - UPDATED: Removed Hourly EW panel and added **Normalized RSI (NRSI)** panel below the hourly price chart
 # - UPDATED: RSI panel shows **NRSI + NVol + NMACD(+signal)** with guides at 0 (dashed), ±0.5 (black), ±0.75 (thick red)
 # - UPDATED: Added **NTD overlay & Trend direction with % certainty** to RSI panel
+# - NEW: Added bottom-of-chart slope value to Daily EW panel
+# - NEW: Added NRSI slope line and bottom-of-chart slope value to the NRSI panel (Original & Enhanced views)
 
 import streamlit as st
 import pandas as pd
@@ -129,6 +131,17 @@ def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: i
         )
     except Exception:
         pass
+
+# Bottom-of-chart slope badge
+def bottom_slope_label(ax, label: str, m: float, xpos: float = 0.01):
+    color = "tab:green" if (np.isfinite(m) and m >= 0) else "tab:red"
+    ax.text(
+        xpos, 0.02, f"{label}: {fmt_slope(m)}/bar",
+        transform=ax.transAxes, ha="left", va="bottom",
+        fontsize=9, fontweight="bold", color=color,
+        bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.85),
+        zorder=7
+    )
 
 # Range helper for daily views
 def subset_by_daily_view(obj, view_label: str):
@@ -890,6 +903,10 @@ with tab1:
             ]:
                 axdw.axhline(yline, linestyle=style, linewidth=1, color=col, label=lbl)
 
+            # === Bottom-of-chart slope value for EW panel ===
+            _, m_wave_d = slope_line(wave_d_show, slope_lb_daily)
+            bottom_slope_label(axdw, f"EW slope ({slope_lb_daily})", m_wave_d, xpos=0.01)
+
             axdw.set_ylim(-1.1, 1.1)
             axdw.set_xlabel("Date (PST)")
 
@@ -1013,7 +1030,7 @@ with tab1:
                 xlim_price = ax2.get_xlim()
                 st.pyplot(fig2)
 
-                # === Normalized RSI Panel (Hourly): NRSI + NMACD(+signal) + NVol + NTD & certainty ===
+                # === Normalized RSI Panel (Hourly): NRSI + NMACD(+signal) + NVol + NTD & certainty + SLOPE ===
                 if show_nrsi:
                     nrsi_h = compute_nrsi(hc, period=nrsi_period)
                     nmacd_h, nmacd_sig_h, _ = compute_nmacd(hc)
@@ -1021,6 +1038,9 @@ with tab1:
 
                     # Price-based NTD overlay for trend direction/certainty
                     ntd_h_rsipanel = compute_normalized_trend(hc, window=ntd_window)
+
+                    # NRSI slope line + bottom label
+                    yhat_nrsi_h, m_nrsi_h = slope_line(nrsi_h, slope_lb_hourly)
 
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
                     ax2r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD")
@@ -1035,6 +1055,14 @@ with tab1:
                     ax2r.plot(nrsi_h.index, nrsi_h, "-", linewidth=1.4, label="NRSI")
                     ax2r.plot(nmacd_h.index, nmacd_h, "-", linewidth=1.4, label="NMACD")
                     ax2r.plot(nmacd_sig_h.index, nmacd_sig_h, "--", linewidth=1.2, label="NMACD signal")
+
+                    # NRSI slope line
+                    if not yhat_nrsi_h.empty:
+                        slope_color = "tab:green" if m_nrsi_h >= 0 else "tab:red"
+                        ax2r.plot(yhat_nrsi_h.index, yhat_nrsi_h.values, "-", linewidth=2.0,
+                                  color=slope_color,
+                                  label=f"NRSI slope {slope_lb_hourly} ({fmt_slope(m_nrsi_h)}/bar)")
+                        bottom_slope_label(ax2r, f"NRSI slope ({slope_lb_hourly})", m_nrsi_h, xpos=0.01)
 
                     # NTD overlay
                     if show_ntd and not ntd_h_rsipanel.dropna().empty:
@@ -1221,6 +1249,10 @@ with tab2:
             ]:
                 axdw2.axhline(yline, linestyle=style, linewidth=1, color=col, label=lbl)
 
+            # === Bottom-of-chart slope value for EW panel (Enhanced) ===
+            _, m_wave_d2 = slope_line(wave_d_show, slope_lb_daily)
+            bottom_slope_label(axdw2, f"EW slope ({slope_lb_daily})", m_wave_d2, xpos=0.01)
+
             axdw2.set_ylim(-1.1, 1.1)
             axdw2.set_xlabel("Date (PST)")
 
@@ -1333,12 +1365,15 @@ with tab2:
                 xlim_price2 = ax3.get_xlim()
                 st.pyplot(fig3)
 
-                # === NRSI + NMACD(+signal) + NVol + NTD (+certainty) panel (Intraday view) ===
+                # === NRSI + NMACD(+signal) + NVol + NTD (+certainty) + SLOPE panel (Intraday view) ===
                 if show_nrsi:
                     nrsi_i = compute_nrsi(ic, period=nrsi_period)
                     nmacd_i, nmacd_sig_i, _ = compute_nmacd(ic)
                     nvol_i = compute_nvol(intr.get("Volume", pd.Series(index=ic.index)).reindex(ic.index))
                     ntd_i_rsipanel = compute_normalized_trend(ic, window=ntd_window)
+
+                    # NRSI slope line + bottom label
+                    yhat_nrsi_i, m_nrsi_i = slope_line(nrsi_i, slope_lb_hourly)
 
                     fig3r, ax3r = plt.subplots(figsize=(14,2.8))
                     ax3r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD")
@@ -1349,6 +1384,13 @@ with tab2:
                     ax3r.plot(nrsi_i.index, nrsi_i, "-", linewidth=1.4, label="NRSI")
                     ax3r.plot(nmacd_i.index, nmacd_i, "-", linewidth=1.4, label="NMACD")
                     ax3r.plot(nmacd_sig_i.index, nmacd_sig_i, "--", linewidth=1.2, label="NMACD signal")
+
+                    if not yhat_nrsi_i.empty:
+                        slope_color = "tab:green" if m_nrsi_i >= 0 else "tab:red"
+                        ax3r.plot(yhat_nrsi_i.index, yhat_nrsi_i.values, "-", linewidth=2.0,
+                                  color=slope_color,
+                                  label=f"NRSI slope {slope_lb_hourly} ({fmt_slope(m_nrsi_i)}/bar)")
+                        bottom_slope_label(ax3r, f"NRSI slope ({slope_lb_hourly})", m_nrsi_i, xpos=0.01)
 
                     if show_ntd and not ntd_i_rsipanel.dropna().empty:
                         ax3r.plot(ntd_i_rsipanel.index, ntd_i_rsipanel, ":", linewidth=1.6,
