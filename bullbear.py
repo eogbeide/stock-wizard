@@ -113,8 +113,16 @@ def fmt_price_val(y: float) -> str:
         return "n/a"
     return f"{y:,.3f}"
 
-def fmt_slope(m: float) -> str:
-    return f"{m:.4f}" if np.isfinite(m) else "n/a"
+# FIX: robust slope formatter that tolerates arrays/Series/zero-d scalars
+def fmt_slope(m) -> str:
+    try:
+        a = np.asarray(m, dtype=float)
+        if a.size == 0:
+            return "n/a"
+        mv = float(a.ravel()[0])
+    except Exception:
+        return "n/a"
+    return f"{mv:.4f}" if np.isfinite(mv) else "n/a"
 
 # Place text at the left edge (x in axes coords, y in data coords)
 def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
@@ -949,7 +957,6 @@ with tab1:
 
                 ax2.plot(hc.index, hc, label="Intraday")
                 ax2.plot(hc.index, he, "--", label="20 EMA")
-                # ADD: slope value to the trendline label
                 ax2.plot(hc.index, trend_h, "--", label=f"Trend (m={fmt_slope(slope_h)}/bar)", linewidth=2)
 
                 if show_ichi and not kijun_h.dropna().empty:
@@ -1037,7 +1044,7 @@ with tab1:
                     ax2r.plot(nmacd_h.index, nmacd_h, "-", linewidth=1.4, label="NMACD")
                     ax2r.plot(nmacd_sig_h.index, nmacd_sig_h, "--", linewidth=1.2, label="NMACD signal")
 
-                    # ADD: NRSI trendline + slope value
+                    # NRSI trendline + slope value
                     yhat_nrsi_h, m_nrsi_h = slope_line(nrsi_h, slope_lb_hourly)
                     if not yhat_nrsi_h.empty:
                         ax2r.plot(yhat_nrsi_h.index, yhat_nrsi_h.values, "--", linewidth=2,
@@ -1285,7 +1292,6 @@ with tab2:
 
                 ax3.plot(ic.index, ic, label="Intraday")
                 ax3.plot(ic.index, ie, "--", label="20 EMA")
-                # ADD: slope value to the trendline label
                 ax3.plot(ic.index, trend_i, "--", label=f"Trend (m={fmt_slope(slope_i)}/bar)", linewidth=2)
                 if show_ichi and not kijun_i.dropna().empty:
                     ax3.plot(kijun_i.index, kijun_i.values, "-", linewidth=1.8, color="black",
@@ -1358,7 +1364,7 @@ with tab2:
                     ax3r.plot(nmacd_i.index, nmacd_i, "-", linewidth=1.4, label="NMACD")
                     ax3r.plot(nmacd_sig_i.index, nmacd_sig_i, "--", linewidth=1.2, label="NMACD signal")
 
-                    # ADD: NRSI trendline + slope value
+                    # NRSI trendline + slope value
                     yhat_nrsi_i, m_nrsi_i = slope_line(nrsi_i, slope_lb_hourly)
                     if not yhat_nrsi_i.empty:
                         ax3r.plot(yhat_nrsi_i.index, yhat_nrsi_i.values, "--", linewidth=2,
