@@ -29,7 +29,6 @@
 # - UPDATED: RSI panel shows **NRSI + NVol + NMACD(+signal)** with guides at 0 (dashed), ±0.5 (black), ±0.75 (thick red)
 # - UPDATED: Added **NTD overlay & Trend direction with % certainty** to RSI panel
 # - UPDATED: Price chart shows trendline slope in legend + bottom-left; NRSI panel adds trendline + slope; NRSI Trend badge moved to bottom-right
-# - NEW: **%B (Bollinger Bands, normalized)** added to NRSI panel(s)
 # - NEW: Scanner also lists **Kijun(26) Up-Cross** symbols (Daily for Stocks & FX; Hourly for FX)
 
 import streamlit as st
@@ -177,7 +176,6 @@ mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, k
 st.sidebar.subheader("Hourly Normalized RSI")
 show_nrsi   = st.sidebar.checkbox("Show NRSI (hourly)", value=True, key="sb_show_nrsi")
 nrsi_period = st.sidebar.slider("RSI period (bars)", 5, 60, 14, 1, key="sb_nrsi_period")
-bb_window   = st.sidebar.slider("Bollinger %B window", 10, 100, 20, 1, key="sb_bb_window")  # NEW
 
 # Hourly Supertrend controls
 st.sidebar.subheader("Hourly Supertrend")
@@ -343,21 +341,6 @@ def compute_roc(series_like, n: int = 10) -> pd.Series:
         return pd.Series(index=s.index, dtype=float)
     roc = base.pct_change(n) * 100.0
     return roc.reindex(s.index)
-
-# ---- Bollinger %B (and normalized %B) ----
-def compute_bb_percent_b(close: pd.Series, window: int = 20, nstd: float = 2.0):
-    s = _coerce_1d_series(close).astype(float)
-    if s.empty or window < 2:
-        idx = s.index if isinstance(s.index, pd.DatetimeIndex) else None
-        return pd.Series(index=s.index, dtype=float), pd.Series(index=s.index, dtype=float), pd.Series(index=s.index, dtype=float), pd.Series(index=s.index, dtype=float)
-    minp = max(3, window // 3)
-    ma = s.rolling(window, min_periods=minp).mean()
-    sd = s.rolling(window, min_periods=minp).std()
-    upper = ma + nstd * sd
-    lower = ma - nstd * sd
-    denom = (upper - lower).replace(0, np.nan)
-    pb = ((s - lower) / denom).clip(0, 1)
-    return pb.reindex(s.index), ma.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index)
 
 # ---- RSI / Normalized RSI ----
 def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
@@ -1080,21 +1063,18 @@ with tab1:
                 xlim_price = ax2.get_xlim()
                 st.pyplot(fig2)
 
-                # === Normalized RSI Panel (Hourly): NRSI + NMACD(+signal) + NVol + NTD & certainty + %B ===
+                # === Normalized RSI Panel (Hourly): NRSI + NMACD(+signal) + NVol + NTD & certainty ===
                 if show_nrsi:
                     nrsi_h = compute_nrsi(hc, period=nrsi_period)
                     nmacd_h, nmacd_sig_h, _ = compute_nmacd(hc)
                     nvol_h = compute_nvol(intraday.get("Volume", pd.Series(index=hc.index)).reindex(hc.index))
                     ntd_h_rsipanel = compute_normalized_trend(hc, window=ntd_window)
-                    # %B (normalized to [-1,1] so it fits panel guides)
-                    pb_h, _, _, _ = compute_bb_percent_b(hc, window=bb_window, nstd=2.0)
-                    pb_h_norm = (2.0 * pb_h - 1.0).clip(-1.0, 1.0)
 
                     # NRSI trendline & slope
                     nrsi_trend, nrsi_m = slope_line(nrsi_h, slope_lb_hourly)
 
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
-                    ax2r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD + %B(norm, w={bb_window})")
+                    ax2r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD")
 
                     # NVol fill
                     posv = nvol_h.where(nvol_h > 0)
@@ -1106,7 +1086,6 @@ with tab1:
                     ax2r.plot(nrsi_h.index, nrsi_h, "-", linewidth=1.4, label="NRSI")
                     ax2r.plot(nmacd_h.index, nmacd_h, "-", linewidth=1.4, label="NMACD")
                     ax2r.plot(nmacd_sig_h.index, nmacd_sig_h, "--", linewidth=1.2, label="NMACD signal")
-                    ax2r.plot(pb_h_norm.index, pb_h_norm, ":", linewidth=1.6, label="%B (BB, norm)")
 
                     # NRSI trendline (dashed red) + slope in legend
                     if not nrsi_trend.empty:
@@ -1416,21 +1395,18 @@ with tab2:
                 xlim_price2 = ax3.get_xlim()
                 st.pyplot(fig3)
 
-                # === NRSI + NMACD(+signal) + NVol + NTD (+certainty) + %B (norm) panel (Intraday view) ===
+                # === NRSI + NMACD(+signal) + NVol + NTD (+certainty) panel (Intraday view) ===
                 if show_nrsi:
                     nrsi_i = compute_nrsi(ic, period=nrsi_period)
                     nmacd_i, nmacd_sig_i, _ = compute_nmacd(ic)
                     nvol_i = compute_nvol(intr.get("Volume", pd.Series(index=ic.index)).reindex(ic.index))
                     ntd_i_rsipanel = compute_normalized_trend(ic, window=ntd_window)
-                    # %B normalized
-                    pb_i, _, _, _ = compute_bb_percent_b(ic, window=bb_window, nstd=2.0)
-                    pb_i_norm = (2.0 * pb_i - 1.0).clip(-1.0, 1.0)
 
                     # NRSI trendline & slope
                     nrsi_trend2, nrsi_m2 = slope_line(nrsi_i, slope_lb_hourly)
 
                     fig3r, ax3r = plt.subplots(figsize=(14,2.8))
-                    ax3r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD + %B(norm, w={bb_window})")
+                    ax3r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD")
                     posv = nvol_i.where(nvol_i > 0)
                     negv = nvol_i.where(nvol_i < 0)
                     ax3r.fill_between(posv.index, 0, posv, alpha=0.10, step=None, label="NVol(+)")
@@ -1438,7 +1414,6 @@ with tab2:
                     ax3r.plot(nrsi_i.index, nrsi_i, "-", linewidth=1.4, label="NRSI")
                     ax3r.plot(nmacd_i.index, nmacd_i, "-", linewidth=1.4, label="NMACD")
                     ax3r.plot(nmacd_sig_i.index, nmacd_sig_i, "--", linewidth=1.2, label="NMACD signal")
-                    ax3r.plot(pb_i_norm.index, pb_i_norm, ":", linewidth=1.6, label="%B (BB, norm)")
 
                     if not nrsi_trend2.empty:
                         ax3r.plot(nrsi_trend2.index, nrsi_trend2.values, "--", linewidth=2,
