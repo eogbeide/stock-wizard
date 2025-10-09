@@ -31,6 +31,7 @@
 # - UPDATED: Price chart shows trendline slope in legend + bottom-left; NRSI panel adds trendline + slope; NRSI Trend badge moved to bottom-right
 # - NEW: Scanner lists **Price > Kijun(26)** symbols (Daily for Stocks & FX; Hourly for FX)
 # - NEW: Hourly chart shows **R²** for the trendline (computed over the slope lookback) at the **bottom-center** of the chart (as a percentage)
+# - NEW: **Long-Term History** tab with 5/10/15/20-year buttons showing price with 252d Support/Resistance and an overall trendline
 
 import streamlit as st
 import pandas as pd
@@ -253,6 +254,17 @@ def fetch_hist(ticker: str) -> pd.Series:
         yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
         .asfreq("D").fillna(method="ffill")
     )
+    try:
+        s = s.tz_localize(PACIFIC)
+    except TypeError:
+        s = s.tz_convert(PACIFIC)
+    return s
+
+@st.cache_data(ttl=120)
+def fetch_hist_max(ticker: str) -> pd.Series:
+    """Full history (Yahoo 'max'), daily freq with ffill, tz-aware."""
+    df = yf.download(ticker, period="max")[['Close']].dropna()
+    s = df['Close'].asfreq("D").fillna(method="ffill")
     try:
         s = s.tz_localize(PACIFIC)
     except TypeError:
@@ -790,14 +802,17 @@ if 'run_all' not in st.session_state:
     st.session_state.run_all = False
     st.session_state.ticker = None
     st.session_state.hour_range = "24h"
+if 'hist_years' not in st.session_state:
+    st.session_state.hist_years = 10  # default for Long-Term History tab
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
-    "NTD -0.5 Scanner"
+    "NTD -0.5 Scanner",
+    "Long-Term History"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -1704,3 +1719,76 @@ with tab5:
                 vch["Close"] = vch["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
                 vch["Kijun"] = vch["Kijun"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
                 st.dataframe(vch[["Symbol","Timestamp","Close","Kijun"]].reset_index(drop=True), use_container_width=True)
+
+# --- Tab 6: Long-Term History (5/10/15/20y) ---
+with tab6:
+    st.header("Long-Term History — Price with S/R & Trend")
+    # Ticker selector (defaults to the one used in Tab 1, if set)
+    default_idx = 0
+    if st.session_state.get("ticker") in universe:
+        default_idx = universe.index(st.session_state["ticker"])
+    sym = st.selectbox("Ticker:", universe, index=default_idx, key="hist_long_ticker")
+
+    # Year buttons
+    c1, c2, c3, c4 = st.columns(4)
+    if c1.button("5Y", key="btn_5y"):  st.session_state.hist_years = 5
+    if c2.button("10Y", key="btn_10y"): st.session_state.hist_years = 10
+    if c3.button("15Y", key="btn_15y"): st.session_state.hist_years = 15
+    if c4.button("20Y", key="btn_20y"): st.session_state.hist_years = 20
+    years = int(st.session_state.hist_years)
+    st.caption(f"Showing last **{years} years**. Support/Resistance = rolling **252-day** extremes; trendline fits the shown window.")
+
+    # Fetch full history once; slice to desired years
+    s_full = fetch_hist_max(sym)
+    if s_full is None or s_full.empty:
+        st.warning("No historical data available.")
+    else:
+        end_ts = s_full.index.max()
+        start_ts = end_ts - pd.DateOffset(years=years)
+        s = s_full[s_full.index >= start_ts]
+        if s.empty:
+            st.warning(f"No data in the last {years} years for {sym}.")
+        else:
+            # 252-trading-day rolling extremes (approx 1y)
+            res_roll = s.rolling(252, min_periods=1).max()
+            sup_roll = s.rolling(252, min_periods=1).min()
+            res_last = float(res_roll.iloc[-1]) if len(res_roll) else np.nan
+            sup_last = float(sup_roll.iloc[-1]) if len(sup_roll) else np.nan
+
+            # Overall trendline across the shown window
+            yhat_all, m_all = slope_line(s, lookback=len(s))
+
+            fig, ax = plt.subplots(figsize=(14,5))
+            ax.set_title(f"{sym} — Last {years} Years — Price + 252d S/R + Trend")
+            ax.plot(s.index, s.values, label="Close")
+
+            # Draw S/R as straight lines across the whole window (use last 252d extremes)
+            if np.isfinite(res_last) and np.isfinite(sup_last):
+                ax.hlines(res_last, xmin=s.index[0], xmax=s.index[-1],
+                          colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance (252d)")
+                ax.hlines(sup_last, xmin=s.index[0], xmax=s.index[-1],
+                          colors="tab:green", linestyles="-", linewidth=1.6, label="Support (252d)")
+                label_on_left(ax, res_last, f"R {fmt_price_val(res_last)}", color="tab:red")
+                label_on_left(ax, sup_last, f"S {fmt_price_val(sup_last)}", color="tab:green")
+
+            # Trendline and slope badge
+            if not yhat_all.empty:
+                ax.plot(yhat_all.index, yhat_all.values, "--", linewidth=2,
+                        label=f"Trend (m={fmt_slope(m_all)}/bar)")
+
+                ax.text(0.01, 0.02, f"Slope: {fmt_slope(m_all)}/bar",
+                        transform=ax.transAxes, ha="left", va="bottom",
+                        fontsize=9, color="black",
+                        bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+
+            # Current price badge (top-right, outside)
+            px_now = _safe_last_float(s)
+            if np.isfinite(px_now):
+                pos = ax.get_position()
+                fig.text(pos.x1, pos.y1 + 0.02, f"Current price: {fmt_price_val(px_now)}",
+                         ha="right", va="bottom", fontsize=11, fontweight="bold")
+
+            ax.set_xlabel("Date (PST)")
+            ax.set_ylabel("Price")
+            ax.legend(loc="lower left", framealpha=0.5)
+            st.pyplot(fig)
