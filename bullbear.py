@@ -32,6 +32,7 @@
 # - NEW: Scanner lists **Price > Kijun(26)** symbols (Daily for Stocks & FX; Hourly for FX)
 # - NEW: Hourly chart shows **R²** for the trendline (computed over the slope lookback) at the **bottom-center** of the chart (as a percentage)
 # - NEW: **Long-Term History** tab with 5/10/15/20-year buttons showing price with 252d Support/Resistance and an overall trendline
+# - NEW: **Hourly Volume** panel (bars) with a **mid-line (avg)** and **trendline** as a separate chart
 
 import streamlit as st
 import pandas as pd
@@ -998,7 +999,7 @@ with tab1:
             axdw.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (price + NRSI/MACD/Vol + momentum) -----
+        # ----- Hourly (price + Volume + NRSI/MACD/Vol + momentum) -----
         if chart in ("Hourly","Both"):
             intraday = st.session_state.intraday
             if intraday is None or intraday.empty or "Close" not in intraday:
@@ -1108,6 +1109,39 @@ with tab1:
                 ax2.legend(loc="lower left", framealpha=0.5)
                 xlim_price = ax2.get_xlim()
                 st.pyplot(fig2)
+
+                # === NEW: Hourly Volume panel (bars) with mid-line & trendline ===
+                if "Volume" in intraday.columns:
+                    v = intraday["Volume"].ffill()
+                    # Consider availability (some symbols/FX may lack intraday volume)
+                    has_data = v.dropna().abs().sum() > 0
+                    if has_data:
+                        # Determine a reasonable bar width in 'days' units for matplotlib date axis
+                        if len(v.index) > 1:
+                            delta_days = (v.index[1] - v.index[0]).total_seconds() / 86400.0
+                        else:
+                            delta_days = (5 * 60) / 86400.0  # ~5m default
+                        barw = delta_days * 0.8
+
+                        vol_mid = float(np.nanmean(v))
+                        yhat_v, m_v = slope_line(v, slope_lb_hourly)
+
+                        figv, axv = plt.subplots(figsize=(14, 2.6))
+                        axv.set_title("Volume (5m) — Mid-line & Trend")
+                        axv.bar(v.index, v.values, width=barw, alpha=0.6, label="Volume")
+                        axv.axhline(vol_mid, linestyle="--", linewidth=1.2,
+                                    label=f"Mid (avg={vol_mid:,.0f})")
+                        if not yhat_v.empty:
+                            axv.plot(yhat_v.index, yhat_v.values, "--", linewidth=2,
+                                     label=f"Trend {slope_lb_hourly} (m={fmt_slope(m_v)}/bar)")
+                        axv.set_xlim(xlim_price)
+                        axv.set_xlabel("Time (PST)")
+                        axv.legend(loc="lower left", framealpha=0.5)
+                        st.pyplot(figv)
+                    else:
+                        st.info("No intraday volume data available for this symbol.")
+                else:
+                    st.info("Volume column not available for this symbol.")
 
                 # === Normalized RSI Panel (Hourly): NRSI + NMACD(+signal) + NVol + NTD & certainty ===
                 if show_nrsi:
@@ -1451,6 +1485,37 @@ with tab2:
                 ax3.legend(loc="lower left", framealpha=0.5)
                 xlim_price2 = ax3.get_xlim()
                 st.pyplot(fig3)
+
+                # === NEW: Hourly Volume panel for Enhanced tab ===
+                if "Volume" in intr.columns:
+                    v2 = intr["Volume"].ffill()
+                    has_data2 = v2.dropna().abs().sum() > 0
+                    if has_data2:
+                        if len(v2.index) > 1:
+                            delta_days2 = (v2.index[1] - v2.index[0]).total_seconds() / 86400.0
+                        else:
+                            delta_days2 = (5 * 60) / 86400.0
+                        barw2 = delta_days2 * 0.8
+
+                        vol_mid2 = float(np.nanmean(v2))
+                        yhat_v2, m_v2 = slope_line(v2, slope_lb_hourly)
+
+                        figv2, axv2 = plt.subplots(figsize=(14, 2.6))
+                        axv2.set_title("Volume (5m) — Mid-line & Trend")
+                        axv2.bar(v2.index, v2.values, width=barw2, alpha=0.6, label="Volume")
+                        axv2.axhline(vol_mid2, linestyle="--", linewidth=1.2,
+                                     label=f"Mid (avg={vol_mid2:,.0f})")
+                        if not yhat_v2.empty:
+                            axv2.plot(yhat_v2.index, yhat_v2.values, "--", linewidth=2,
+                                      label=f"Trend {slope_lb_hourly} (m={fmt_slope(m_v2)}/bar)")
+                        axv2.set_xlim(xlim_price2)
+                        axv2.set_xlabel("Time (PST)")
+                        axv2.legend(loc="lower left", framealpha=0.5)
+                        st.pyplot(figv2)
+                    else:
+                        st.info("No intraday volume data available for this symbol.")
+                else:
+                    st.info("Volume column not available for this symbol.")
 
                 # === NRSI + NMACD(+signal) + NVol + NTD (+certainty) panel (Intraday view) ===
                 if show_nrsi:
