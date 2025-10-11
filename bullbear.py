@@ -32,6 +32,7 @@
 # - NEW: Scanner lists **Price > Kijun(26)** symbols (Daily for Stocks & FX; Hourly for FX)
 # - NEW: Hourly chart shows **R²** for the trendline (computed over the slope lookback) at the **bottom-center** of the chart (as a percentage)
 # - NEW: **Long-Term History** tab with 5/10/15/20-year buttons showing price with 252d Support/Resistance and an overall trendline
+# - NEW: **Hourly Volume panel** (separate chart) with rolling mid-line and trendline (+ R² badge)
 
 import streamlit as st
 import pandas as pd
@@ -797,6 +798,16 @@ def price_above_kijun_info_hourly(symbol: str, period: str = "1d", base: int = 2
     except Exception:
         return False, None, np.nan, np.nan
 
+# --- Volume helpers (new) ---
+def rolling_midline(series_like: pd.Series, window: int) -> pd.Series:
+    """Mid-line as (rolling max + rolling min)/2 over `window`."""
+    s = _coerce_1d_series(series_like).astype(float)
+    if s.empty:
+        return pd.Series(index=s.index, dtype=float)
+    roll = s.rolling(window, min_periods=1)
+    mid = (roll.max() + roll.min()) / 2.0
+    return mid.reindex(s.index)
+
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -998,7 +1009,7 @@ with tab1:
             axdw.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (price + NRSI/MACD/Vol + momentum) -----
+        # ----- Hourly (price + NRSI/MACD/Vol + momentum + NEW Volume panel) -----
         if chart in ("Hourly","Both"):
             intraday = st.session_state.intraday
             if intraday is None or intraday.empty or "Close" not in intraday:
@@ -1108,6 +1119,50 @@ with tab1:
                 ax2.legend(loc="lower left", framealpha=0.5)
                 xlim_price = ax2.get_xlim()
                 st.pyplot(fig2)
+
+                # === NEW: Hourly Volume panel (separate chart) ===
+                vol = intraday["Volume"] if "Volume" in intraday.columns else pd.Series(index=hc.index, dtype=float)
+                vol = vol.reindex(hc.index).astype(float)  # align & ensure float
+                # Only show if we have at least two finite data points and non-zero variation
+                vol_valid = vol.dropna()
+                if vol_valid.shape[0] >= 2 and (vol_valid.max() > 0 or vol_valid.min() < 0):
+                    v_mid = rolling_midline(vol, window=max(3, int(slope_lb_hourly)))
+                    v_trend, v_m = slope_line(vol, slope_lb_hourly)
+                    v_r2 = regression_r2(vol, slope_lb_hourly)
+
+                    fig2v, ax2v = plt.subplots(figsize=(14, 2.8))
+                    ax2v.set_title(f"Volume (Hourly) — Mid-line & Trend  |  Slope={fmt_slope(v_m)}/bar")
+                    # Use area to mimic bars without date width hassles
+                    ax2v.fill_between(vol.index, 0, vol, alpha=0.18, label="Volume")
+                    ax2v.plot(vol.index, vol, linewidth=1.0)
+
+                    # Rolling mid-line (as a curve) + horizontal marker at last mid
+                    ax2v.plot(v_mid.index, v_mid, ":", linewidth=1.6, label=f"Mid-line ({slope_lb_hourly}-roll)")
+                    if v_mid.notna().any():
+                        last_mid = float(v_mid.dropna().iloc[-1])
+                        ax2v.hlines(last_mid, xmin=vol.index[0], xmax=vol.index[-1],
+                                    linestyles="dotted", linewidth=1.0)
+                        label_on_left(ax2v, last_mid, f"Mid {last_mid:,.0f}", color="black")
+
+                    # Trendline
+                    if not v_trend.empty:
+                        ax2v.plot(v_trend.index, v_trend.values, "--", linewidth=2,
+                                  label=f"Trend {slope_lb_hourly} ({fmt_slope(v_m)}/bar)")
+
+                    # Badges
+                    ax2v.text(0.01, 0.02, f"Slope: {fmt_slope(v_m)}/bar",
+                              transform=ax2v.transAxes, ha="left", va="bottom",
+                              fontsize=9, color="black",
+                              bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+                    ax2v.text(0.50, 0.02, f"R² ({slope_lb_hourly} bars): {fmt_r2(v_r2)}",
+                              transform=ax2v.transAxes, ha="center", va="bottom",
+                              fontsize=9, color="black",
+                              bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+
+                    ax2v.set_xlim(xlim_price)
+                    ax2v.set_xlabel("Time (PST)")
+                    ax2v.legend(loc="lower left", framealpha=0.5)
+                    st.pyplot(fig2v)
 
                 # === Normalized RSI Panel (Hourly): NRSI + NMACD(+signal) + NVol + NTD & certainty ===
                 if show_nrsi:
@@ -1287,9 +1342,6 @@ with tab2:
 
             if piv and len(df_show) > 0:
                 x0, x1 = df_show.index[0], df_show.index[-1]
-                for lbl, y in pivots.items() if False else piv.items():  # keep structure; no change
-                    pass
-                x0, x1 = df_show.index[0], df_show.index[-1]
                 for lbl, y in piv.items():
                     ax.hlines(y, xmin=x0, xmax=x1, linestyles="dashed", linewidth=1.0)
                 for lbl, y in piv.items():
@@ -1452,6 +1504,40 @@ with tab2:
                 xlim_price2 = ax3.get_xlim()
                 st.pyplot(fig3)
 
+                # === NEW: Intraday Volume panel (separate chart in Enhanced tab) ===
+                vol_i = intr.get("Volume", pd.Series(index=ic.index, dtype=float)).reindex(ic.index).astype(float)
+                vol_i_valid = vol_i.dropna()
+                if vol_i_valid.shape[0] >= 2 and (vol_i_valid.max() > 0 or vol_i_valid.min() < 0):
+                    v_mid2 = rolling_midline(vol_i, window=max(3, int(slope_lb_hourly)))
+                    v_trend2, v_m2 = slope_line(vol_i, slope_lb_hourly)
+                    v_r2_2 = regression_r2(vol_i, slope_lb_hourly)
+
+                    fig3v, ax3v = plt.subplots(figsize=(14, 2.8))
+                    ax3v.set_title(f"Volume (Hourly) — Mid-line & Trend  |  Slope={fmt_slope(v_m2)}/bar")
+                    ax3v.fill_between(vol_i.index, 0, vol_i, alpha=0.18, label="Volume")
+                    ax3v.plot(vol_i.index, vol_i, linewidth=1.0)
+                    ax3v.plot(v_mid2.index, v_mid2, ":", linewidth=1.6, label=f"Mid-line ({slope_lb_hourly}-roll)")
+                    if v_mid2.notna().any():
+                        last_mid2 = float(v_mid2.dropna().iloc[-1])
+                        ax3v.hlines(last_mid2, xmin=vol_i.index[0], xmax=vol_i.index[-1],
+                                    linestyles="dotted", linewidth=1.0)
+                        label_on_left(ax3v, last_mid2, f"Mid {last_mid2:,.0f}", color="black")
+                    if not v_trend2.empty:
+                        ax3v.plot(v_trend2.index, v_trend2.values, "--", linewidth=2,
+                                  label=f"Trend {slope_lb_hourly} ({fmt_slope(v_m2)}/bar)")
+                    ax3v.text(0.01, 0.02, f"Slope: {fmt_slope(v_m2)}/bar",
+                              transform=ax3v.transAxes, ha="left", va="bottom",
+                              fontsize=9, color="black",
+                              bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+                    ax3v.text(0.50, 0.02, f"R² ({slope_lb_hourly} bars): {fmt_r2(v_r2_2)}",
+                              transform=ax3v.transAxes, ha="center", va="bottom",
+                              fontsize=9, color="black",
+                              bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+                    ax3v.set_xlim(xlim_price2)
+                    ax3v.set_xlabel("Time (PST)")
+                    ax3v.legend(loc="lower left", framealpha=0.5)
+                    st.pyplot(fig3v)
+
                 # === NRSI + NMACD(+signal) + NVol + NTD (+certainty) panel (Intraday view) ===
                 if show_nrsi:
                     nrsi_i = compute_nrsi(ic, period=nrsi_period)
@@ -1468,7 +1554,7 @@ with tab2:
                     negv = nvol_i.where(nvol_i < 0)
                     ax3r.fill_between(posv.index, 0, posv, alpha=0.10, step=None, label="NVol(+)")
                     ax3r.fill_between(negv.index, 0, negv, alpha=0.10, step=None, label="NVol(-)")
-                    ax3r.plot(nrsi_i.index, nrsi_i, "-", linewidth=1.4, label="NRSI")  # fixed typo
+                    ax3r.plot(nrsi_i.index, nrsi_i, "-", linewidth=1.4, label="NRSI")
                     ax3r.plot(nmacd_i.index, nmacd_i, "-", linewidth=1.4, label="NMACD")
                     ax3r.plot(nmacd_sig_i.index, nmacd_sig_i, "--", linewidth=1.2, label="NMACD signal")
 
