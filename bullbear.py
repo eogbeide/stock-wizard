@@ -33,6 +33,7 @@
 # - NEW: Hourly chart shows **R²** for the trendline (computed over the slope lookback) at the **bottom-center** of the chart (as a percentage)
 # - NEW: **Long-Term History** tab with 5/10/15/20-year buttons showing price with 252d Support/Resistance and an overall trendline
 # - NEW: **Hourly Volume panel** (separate chart) with rolling mid-line and trendline (+ R² badge)
+# - UPDATED: Volume visuals (panels + NVol fills) use blue
 
 import streamlit as st
 import pandas as pd
@@ -183,7 +184,7 @@ st.sidebar.subheader("Hourly Momentum")
 show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True, key="sb_show_mom_hourly")
 mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, key="sb_mom_lb_hourly")
 
-# Hourly NRSI controls
+# Hourly Normalized RSI controls
 st.sidebar.subheader("Hourly Normalized RSI")
 show_nrsi   = st.sidebar.checkbox("Show NRSI (hourly)", value=True, key="sb_show_nrsi")
 nrsi_period = st.sidebar.slider("RSI period (bars)", 5, 60, 14, 1, key="sb_nrsi_period")
@@ -217,7 +218,7 @@ show_ntd  = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd
 ntd_window= st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
 shade_ntd = st.sidebar.checkbox("Shade NTD (EW only: green=up, red=down)", value=True, key="sb_ntd_shade")
 
-# Ichimoku controls (Normalized for EW + Kijun on price)
+# Ichimoku controls (Normalized for EW panels + Kijun on price)
 st.sidebar.subheader("Normalized Ichimoku (EW panels) + Kijun on price")
 show_ichi = st.sidebar.checkbox("Show Ichimoku", value=True, key="sb_show_ichi")
 ichi_conv = st.sidebar.slider("Conversion (Tenkan)", 5, 20, 9, 1, key="sb_ichi_conv")
@@ -1139,9 +1140,9 @@ with tab1:
 
                     fig2v, ax2v = plt.subplots(figsize=(14, 2.8))
                     ax2v.set_title(f"Volume (Hourly) — Mid-line & Trend  |  Slope={fmt_slope(v_m)}/bar")
-                    # Use area to mimic bars without date width hassles
-                    ax2v.fill_between(vol.index, 0, vol, alpha=0.18, label="Volume")
-                    ax2v.plot(vol.index, vol, linewidth=1.0)
+                    # BLUE volume area + line
+                    ax2v.fill_between(vol.index, 0, vol, alpha=0.18, label="Volume", color="tab:blue")
+                    ax2v.plot(vol.index, vol, linewidth=1.0, color="tab:blue")
 
                     # Rolling mid-line (as a curve) + horizontal marker at last mid
                     ax2v.plot(v_mid.index, v_mid, ":", linewidth=1.6, label=f"Mid-line ({slope_lb_hourly}-roll)")
@@ -1184,11 +1185,11 @@ with tab1:
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
                     ax2r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD")
 
-                    # NVol fill
+                    # BLUE NVol fill (both + and -)
                     posv = nvol_h.where(nvol_h > 0)
                     negv = nvol_h.where(nvol_h < 0)
-                    ax2r.fill_between(posv.index, 0, posv, alpha=0.10, step=None, label="NVol(+)")
-                    ax2r.fill_between(negv.index, 0, negv, alpha=0.10, step=None, label="NVol(-)")
+                    ax2r.fill_between(posv.index, 0, posv, alpha=0.10, step=None, label="NVol(+)", color="tab:blue")
+                    ax2r.fill_between(negv.index, 0, negv, alpha=0.10, step=None, label="NVol(-)", color="tab:blue")
 
                     # Main lines
                     ax2r.plot(nrsi_h.index, nrsi_h, "-", linewidth=1.4, label="NRSI")
@@ -1520,8 +1521,9 @@ with tab2:
 
                     fig3v, ax3v = plt.subplots(figsize=(14, 2.8))
                     ax3v.set_title(f"Volume (Hourly) — Mid-line & Trend  |  Slope={fmt_slope(v_m2)}/bar")
-                    ax3v.fill_between(vol_i.index, 0, vol_i, alpha=0.18, label="Volume")
-                    ax3v.plot(vol_i.index, vol_i, linewidth=1.0)
+                    # BLUE volume area + line
+                    ax3v.fill_between(vol_i.index, 0, vol_i, alpha=0.18, label="Volume", color="tab:blue")
+                    ax3v.plot(vol_i.index, vol_i, linewidth=1.0, color="tab:blue")
                     ax3v.plot(v_mid2.index, v_mid2, ":", linewidth=1.6, label=f"Mid-line ({slope_lb_hourly}-roll)")
                     if v_mid2.notna().any():
                         last_mid2 = float(v_mid2.dropna().iloc[-1])
@@ -1556,10 +1558,11 @@ with tab2:
 
                     fig3r, ax3r = plt.subplots(figsize=(14,2.8))
                     ax3r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD")
+                    # BLUE NVol fill
                     posv = nvol_i.where(nvol_i > 0)
                     negv = nvol_i.where(nvol_i < 0)
-                    ax3r.fill_between(posv.index, 0, posv, alpha=0.10, step=None, label="NVol(+)")
-                    ax3r.fill_between(negv.index, 0, negv, alpha=0.10, step=None, label="NVol(-)")
+                    ax3r.fill_between(posv.index, 0, posv, alpha=0.10, step=None, label="NVol(+)", color="tab:blue")
+                    ax3r.fill_between(negv.index, 0, negv, alpha=0.10, step=None, label="NVol(-)", color="tab:blue")
                     ax3r.plot(nrsi_i.index, nrsi_i, "-", linewidth=1.4, label="NRSI")
                     ax3r.plot(nmacd_i.index, nmacd_i, "-", linewidth=1.4, label="NMACD")
                     ax3r.plot(nmacd_sig_i.index, nmacd_sig_i, "--", linewidth=1.2, label="NMACD signal")
