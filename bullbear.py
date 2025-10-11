@@ -808,6 +808,16 @@ def rolling_midline(series_like: pd.Series, window: int) -> pd.Series:
     mid = (roll.max() + roll.min()) / 2.0
     return mid.reindex(s.index)
 
+def _has_volume_to_plot(vol: pd.Series) -> bool:
+    """Robust scalar check to decide if volume panel should render."""
+    s = _coerce_1d_series(vol).astype(float).replace([np.inf, -np.inf], np.nan).dropna()
+    if s.shape[0] < 2:
+        return False
+    arr = s.to_numpy(dtype=float)
+    vmax = float(np.nanmax(arr))
+    vmin = float(np.nanmin(arr))
+    return (np.isfinite(vmax) and vmax > 0.0) or (np.isfinite(vmin) and vmin < 0.0)
+
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -1121,11 +1131,8 @@ with tab1:
                 st.pyplot(fig2)
 
                 # === NEW: Hourly Volume panel (separate chart) ===
-                vol = intraday["Volume"] if "Volume" in intraday.columns else pd.Series(index=hc.index, dtype=float)
-                vol = vol.reindex(hc.index).astype(float)  # align & ensure float
-                # Only show if we have at least two finite data points and non-zero variation
-                vol_valid = vol.dropna()
-                if vol_valid.shape[0] >= 2 and (vol_valid.max() > 0 or vol_valid.min() < 0):
+                vol = _coerce_1d_series(intraday.get("Volume", pd.Series(index=hc.index))).reindex(hc.index).astype(float)
+                if _has_volume_to_plot(vol):
                     v_mid = rolling_midline(vol, window=max(3, int(slope_lb_hourly)))
                     v_trend, v_m = slope_line(vol, slope_lb_hourly)
                     v_r2 = regression_r2(vol, slope_lb_hourly)
@@ -1505,9 +1512,8 @@ with tab2:
                 st.pyplot(fig3)
 
                 # === NEW: Intraday Volume panel (separate chart in Enhanced tab) ===
-                vol_i = intr.get("Volume", pd.Series(index=ic.index, dtype=float)).reindex(ic.index).astype(float)
-                vol_i_valid = vol_i.dropna()
-                if vol_i_valid.shape[0] >= 2 and (vol_i_valid.max() > 0 or vol_i_valid.min() < 0):
+                vol_i = _coerce_1d_series(intr.get("Volume", pd.Series(index=ic.index))).reindex(ic.index).astype(float)
+                if _has_volume_to_plot(vol_i):
                     v_mid2 = rolling_midline(vol_i, window=max(3, int(slope_lb_hourly)))
                     v_trend2, v_m2 = slope_line(vol_i, slope_lb_hourly)
                     v_r2_2 = regression_r2(vol_i, slope_lb_hourly)
