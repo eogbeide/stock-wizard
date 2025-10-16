@@ -34,6 +34,7 @@
 # - NEW: **Long-Term History** tab with 5/10/15/20-year buttons showing price with 252d Support/Resistance and an overall trendline
 # - NEW: **Hourly Volume panel** (separate chart) with rolling mid-line and trendline (+ R² badge)
 # - UPDATED: Volume visuals (panels + NVol fills) use blue
+# - NEW: **Normalized Bollinger Bands (BB)** overlay on **Daily & Hourly price charts** (configurable period & σ)
 
 import streamlit as st
 import pandas as pd
@@ -193,6 +194,12 @@ nrsi_period = st.sidebar.slider("RSI period (bars)", 5, 60, 14, 1, key="sb_nrsi_
 st.sidebar.subheader("Hourly Supertrend")
 atr_period = st.sidebar.slider("ATR period", 5, 50, 10, 1, key="sb_atr_period")
 atr_mult   = st.sidebar.slider("ATR multiplier", 1.0, 5.0, 3.0, 0.5, key="sb_atr_mult")
+
+# NEW: Bollinger Bands controls (for price chart overlays)
+st.sidebar.subheader("Bollinger Bands (Price charts)")
+show_bb   = st.sidebar.checkbox("Show Bollinger Bands", value=True, key="sb_show_bb")
+bb_len    = st.sidebar.slider("BB period", 5, 100, 20, 1, key="sb_bb_len")
+bb_sigma  = st.sidebar.slider("BB multiplier (σ)", 0.5, 4.0, 2.0, 0.1, key="sb_bb_sigma")
 
 # Signal logic controls
 st.sidebar.subheader("Signal Logic (Hourly)")
@@ -646,6 +653,24 @@ def compute_normalized_ichimoku(high: pd.Series, low: pd.Series, close: pd.Serie
     n_ichi = np.tanh(blend / 2.0)
     return n_ichi.reindex(C.index)
 
+# ========= NEW: Bollinger Bands (normalized around rolling mean/std) =========
+def compute_bbands(close: pd.Series, period: int = 20, sigma: float = 2.0, use_ema: bool = False):
+    """
+    Returns (mid, upper, lower, std) where:
+      mid = SMA/EMA(period)
+      upper/lower = mid ± sigma * rolling_std(period)
+    """
+    s = _coerce_1d_series(close).astype(float)
+    if s.empty or period < 2:
+        idx = s.index
+        return (pd.Series(index=idx, dtype=float),)*4
+    minp = max(3, period // 3)
+    mid = s.ewm(span=int(period), adjust=False).mean() if use_ema else s.rolling(int(period), min_periods=minp).mean()
+    sd  = s.rolling(int(period), min_periods=minp).std().replace(0, np.nan)
+    upper = mid + float(sigma) * sd
+    lower = mid - float(sigma) * sd
+    return mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), sd.reindex(s.index)
+
 # ========= Signals & News helpers =========
 EW_CONFIDENCE = 0.95
 
@@ -899,6 +924,9 @@ with tab1:
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
+            # NEW: BB on Daily price
+            bb_mid_d, bb_up_d, bb_lo_d, _ = compute_bbands(df, period=bb_len, sigma=bb_sigma, use_ema=False)
+
             wave_norm_d, piv_df_d = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
             npo_d = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
             ntd_d = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
@@ -923,6 +951,11 @@ with tab1:
             sup30_show  = sup30.reindex(df_show.index)
             yhat_d_show = yhat_d.reindex(df_show.index) if not yhat_d.empty else yhat_d
             yhat_ema_show = yhat_ema30.reindex(df_show.index) if not yhat_ema30.empty else yhat_ema30
+
+            bb_mid_d_show = bb_mid_d.reindex(df_show.index)
+            bb_up_d_show  = bb_up_d.reindex(df_show.index)
+            bb_lo_d_show  = bb_lo_d.reindex(df_show.index)
+
             wave_d_show = wave_norm_d.reindex(df_show.index)
             npo_d_show  = npo_d.reindex(df_show.index)
             ntd_d_show  = ntd_d.reindex(df_show.index)
@@ -941,6 +974,11 @@ with tab1:
             ax.plot(ema30_show, "--", label="30 EMA")
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
+
+            # Draw BB (blue)
+            if show_bb and not bb_mid_d_show.dropna().empty:
+                ax.fill_between(bb_mid_d_show.index, bb_lo_d_show, bb_up_d_show, color="tab:blue", alpha=0.08, label=f"BB {bb_len}±{bb_sigma}σ", zorder=0)
+                ax.plot(bb_mid_d_show.index, bb_mid_d_show, "-", linewidth=1.2, color="tab:blue", alpha=0.9, label="BB mid")
 
             if show_ichi and not kijun_d_show.dropna().empty:
                 ax.plot(kijun_d_show.index, kijun_d_show.values, "-", linewidth=1.8, color="black",
@@ -1046,6 +1084,9 @@ with tab1:
                     )
                     kijun_h = kijun_h.reindex(hc.index).ffill().bfill()
 
+                # NEW: BB on Hourly price
+                bb_mid_h, bb_up_h, bb_lo_h, _ = compute_bbands(hc, period=bb_len, sigma=bb_sigma, use_ema=False)
+
                 # Lookback slope & R²
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
                 r2_h = regression_r2(hc, slope_lb_hourly)
@@ -1056,6 +1097,11 @@ with tab1:
                 ax2.plot(hc.index, hc, label="Intraday")
                 ax2.plot(hc.index, he, "--", label="20 EMA")
                 ax2.plot(hc.index, trend_h, "--", label=f"Trend (m={fmt_slope(slope_h)}/bar)", linewidth=2)
+
+                # Draw BB (blue)
+                if show_bb and not bb_mid_h.dropna().empty:
+                    ax2.fill_between(bb_mid_h.index, bb_lo_h, bb_up_h, color="tab:blue", alpha=0.08, label=f"BB {bb_len}±{bb_sigma}σ", zorder=0)
+                    ax2.plot(bb_mid_h.index, bb_mid_h, "-", linewidth=1.2, color="tab:blue", alpha=0.9, label="BB mid")
 
                 if show_ichi and not kijun_h.dropna().empty:
                     ax2.plot(kijun_h.index, kijun_h.values, "-", linewidth=1.8, color="black",
@@ -1292,6 +1338,9 @@ with tab2:
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
+            # NEW: BB Daily
+            bb_mid_d2, bb_up_d2, bb_lo_d2, _ = compute_bbands(df, period=bb_len, sigma=bb_sigma, use_ema=False)
+
             wave_norm_d2, piv_df_d2 = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
             npo_d2 = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
             ntd_d2 = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
@@ -1316,6 +1365,11 @@ with tab2:
             sup30_show  = sup30.reindex(df_show.index)
             yhat_d_show = yhat_d.reindex(df_show.index) if not yhat_d.empty else yhat_d
             yhat_ema_show = yhat_ema30.reindex(df_show.index) if not yhat_ema30.empty else yhat_ema30
+
+            bb_mid_d2_show = bb_mid_d2.reindex(df_show.index)
+            bb_up_d2_show  = bb_up_d2.reindex(df_show.index)
+            bb_lo_d2_show  = bb_lo_d2.reindex(df_show.index)
+
             wave_d_show = wave_norm_d2.reindex(df_show.index)
             npo_d_show  = npo_d2.reindex(df_show.index)
             ntd_d_show  = ntd_d2.reindex(df_show.index)
@@ -1334,6 +1388,12 @@ with tab2:
             ax.plot(ema30_show, "--", label="30 EMA")
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
+
+            # Draw BB (blue)
+            if show_bb and not bb_mid_d2_show.dropna().empty:
+                ax.fill_between(bb_mid_d2_show.index, bb_lo_d2_show, bb_up_d2_show, color="tab:blue", alpha=0.08, label=f"BB {bb_len}±{bb_sigma}σ", zorder=0)
+                ax.plot(bb_mid_d2_show.index, bb_mid_d2_show, "-", linewidth=1.2, color="tab:blue", alpha=0.9, label="BB mid")
+
             if show_ichi and not kijun_d2_show.dropna().empty:
                 ax.plot(kijun_d2_show.index, kijun_d2_show.values, "-", linewidth=1.8, color="black",
                         label=f"Ichimoku Kijun ({ichi_base})")
@@ -1436,6 +1496,9 @@ with tab2:
                     )
                     kijun_i = kijun_i.reindex(ic.index).ffill().bfill()
 
+                # NEW: BB intraday
+                bb_mid_i, bb_up_i, bb_lo_i, _ = compute_bbands(ic, period=bb_len, sigma=bb_sigma, use_ema=False)
+
                 # Lookback slope & R²
                 yhat_h, m_h = slope_line(ic, slope_lb_hourly)
                 r2_i = regression_r2(ic, slope_lb_hourly)
@@ -1446,6 +1509,12 @@ with tab2:
                 ax3.plot(ic.index, ic, label="Intraday")
                 ax3.plot(ic.index, ie, "--", label="20 EMA")
                 ax3.plot(ic.index, trend_i, "--", label=f"Trend (m={fmt_slope(slope_i)}/bar)", linewidth=2)
+
+                # Draw BB (blue)
+                if show_bb and not bb_mid_i.dropna().empty:
+                    ax3.fill_between(bb_mid_i.index, bb_lo_i, bb_up_i, color="tab:blue", alpha=0.08, label=f"BB {bb_len}±{bb_sigma}σ", zorder=0)
+                    ax3.plot(bb_mid_i.index, bb_mid_i, "-", linewidth=1.2, color="tab:blue", alpha=0.9, label="BB mid")
+
                 if show_ichi and not kijun_i.dropna().empty:
                     ax3.plot(kijun_i.index, kijun_i.values, "-", linewidth=1.8, color="black",
                              label=f"Ichimoku Kijun ({ichi_base})")
