@@ -34,7 +34,7 @@
 # - NEW: **Long-Term History** tab with 5/10/15/20-year buttons showing price with 252d Support/Resistance and an overall trendline
 # - NEW: **Hourly Volume panel** (separate chart) with rolling mid-line and trendline (+ R² badge)
 # - UPDATED: Volume visuals (panels + NVol fills) use blue
-# - NEW: **Normalized Bollinger Bands (BB)** overlay on **Daily & Hourly price charts** (configurable period & σ)
+# - NEW: **Bollinger Bands overlay** on Daily & Hourly price charts (SMA/EMA toggle for midline), with **Normalized %B (NBB)** badge
 
 import streamlit as st
 import pandas as pd
@@ -195,12 +195,6 @@ st.sidebar.subheader("Hourly Supertrend")
 atr_period = st.sidebar.slider("ATR period", 5, 50, 10, 1, key="sb_atr_period")
 atr_mult   = st.sidebar.slider("ATR multiplier", 1.0, 5.0, 3.0, 0.5, key="sb_atr_mult")
 
-# NEW: Bollinger Bands controls (for price chart overlays)
-st.sidebar.subheader("Bollinger Bands (Price charts)")
-show_bb   = st.sidebar.checkbox("Show Bollinger Bands", value=True, key="sb_show_bb")
-bb_len    = st.sidebar.slider("BB period", 5, 100, 20, 1, key="sb_bb_len")
-bb_sigma  = st.sidebar.slider("BB multiplier (σ)", 0.5, 4.0, 2.0, 0.1, key="sb_bb_sigma")
-
 # Signal logic controls
 st.sidebar.subheader("Signal Logic (Hourly)")
 signal_threshold = st.sidebar.slider("Signal confidence threshold", 0.50, 0.99, 0.90, 0.01, key="sb_sig_thr")
@@ -233,6 +227,13 @@ ichi_base = st.sidebar.slider("Base (Kijun)", 20, 40, 26, 1, key="sb_ichi_base")
 ichi_spanb= st.sidebar.slider("Span B", 40, 80, 52, 1, key="sb_ichi_spanb")
 ichi_norm_win = st.sidebar.slider("Ichimoku normalization window (EW)", 30, 600, 240, 10, key="sb_ichi_norm")
 ichi_price_weight = st.sidebar.slider("Weight: Price vs Cloud (EW)", 0.0, 1.0, 0.6, 0.05, key="sb_ichi_w")
+
+# NEW: Bollinger Bands controls
+st.sidebar.subheader("Bollinger Bands (Price Charts)")
+show_bbands   = st.sidebar.checkbox("Show Bollinger Bands", value=True, key="sb_show_bbands")
+bb_win        = st.sidebar.slider("BB window", 5, 120, 20, 1, key="sb_bb_win")
+bb_mult       = st.sidebar.slider("BB multiplier (σ)", 1.0, 4.0, 2.0, 0.1, key="sb_bb_mult")
+bb_use_ema    = st.sidebar.checkbox("Use EMA midline (vs SMA)", value=False, key="sb_bb_ema")
 
 # Forex news controls (only shown in Forex mode)
 if mode == "Forex":
@@ -653,23 +654,29 @@ def compute_normalized_ichimoku(high: pd.Series, low: pd.Series, close: pd.Serie
     n_ichi = np.tanh(blend / 2.0)
     return n_ichi.reindex(C.index)
 
-# ========= NEW: Bollinger Bands (normalized around rolling mean/std) =========
-def compute_bbands(close: pd.Series, period: int = 20, sigma: float = 2.0, use_ema: bool = False):
+# ---- Bollinger Bands (SMA/EMA midline) + normalized %B (NBB) ----
+def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_ema: bool = False):
     """
-    Returns (mid, upper, lower, std) where:
-      mid = SMA/EMA(period)
-      upper/lower = mid ± sigma * rolling_std(period)
+    Returns:
+      mid, upper, lower, pctB (0..1), nbb (-1..1)
     """
     s = _coerce_1d_series(close).astype(float)
-    if s.empty or period < 2:
+    if s.empty or window < 2 or not np.isfinite(mult):
         idx = s.index
-        return (pd.Series(index=idx, dtype=float),)*4
-    minp = max(3, period // 3)
-    mid = s.ewm(span=int(period), adjust=False).mean() if use_ema else s.rolling(int(period), min_periods=minp).mean()
-    sd  = s.rolling(int(period), min_periods=minp).std().replace(0, np.nan)
-    upper = mid + float(sigma) * sd
-    lower = mid - float(sigma) * sd
-    return mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), sd.reindex(s.index)
+        empty = pd.Series(index=idx, dtype=float)
+        return empty, empty, empty, empty, empty
+
+    minp = max(2, window // 2)
+    mid = s.ewm(span=window, adjust=False).mean() if use_ema else s.rolling(window, min_periods=minp).mean()
+    # Use standard rolling std for envelope width
+    std = s.rolling(window, min_periods=minp).std().replace(0, np.nan)
+    upper = mid + mult * std
+    lower = mid - mult * std
+
+    width = (upper - lower).replace(0, np.nan)
+    pctb = ((s - lower) / width).clip(0.0, 1.0)
+    nbb = pctb * 2.0 - 1.0
+    return mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index)
 
 # ========= Signals & News helpers =========
 EW_CONFIDENCE = 0.95
@@ -924,14 +931,14 @@ with tab1:
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
-            # NEW: BB on Daily price
-            bb_mid_d, bb_up_d, bb_lo_d, _ = compute_bbands(df, period=bb_len, sigma=bb_sigma, use_ema=False)
-
             wave_norm_d, piv_df_d = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
             npo_d = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
             ntd_d = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
             ichi_d = pd.Series(index=df.index, dtype=float)
             kijun_d = pd.Series(index=df.index, dtype=float)
+
+            # NEW: Bollinger Bands (Daily)
+            bb_mid_d, bb_up_d, bb_lo_d, bb_pctb_d, bb_nbb_d = compute_bbands(df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
             if df_ohlc is not None and not df_ohlc.empty and show_ichi:
                 ichi_d = compute_normalized_ichimoku(
@@ -951,17 +958,19 @@ with tab1:
             sup30_show  = sup30.reindex(df_show.index)
             yhat_d_show = yhat_d.reindex(df_show.index) if not yhat_d.empty else yhat_d
             yhat_ema_show = yhat_ema30.reindex(df_show.index) if not yhat_ema30.empty else yhat_ema30
-
-            bb_mid_d_show = bb_mid_d.reindex(df_show.index)
-            bb_up_d_show  = bb_up_d.reindex(df_show.index)
-            bb_lo_d_show  = bb_lo_d.reindex(df_show.index)
-
             wave_d_show = wave_norm_d.reindex(df_show.index)
             npo_d_show  = npo_d.reindex(df_show.index)
             ntd_d_show  = ntd_d.reindex(df_show.index)
             ichi_d_show = ichi_d.reindex(df_show.index).ffill().bfill()
             kijun_d_show = kijun_d.reindex(df_show.index).ffill().bfill()
             piv_df_d_show = piv_df_d[(piv_df_d["time"] >= df_show.index.min()) & (piv_df_d["time"] <= df_show.index.max())] if not piv_df_d.empty else piv_df_d
+
+            # BB subset for the shown window
+            bb_mid_d_show = bb_mid_d.reindex(df_show.index)
+            bb_up_d_show  = bb_up_d.reindex(df_show.index)
+            bb_lo_d_show  = bb_lo_d.reindex(df_show.index)
+            bb_pctb_d_show= bb_pctb_d.reindex(df_show.index)
+            bb_nbb_d_show = bb_nbb_d.reindex(df_show.index)
 
             fig, (ax, axdw) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
@@ -975,14 +984,28 @@ with tab1:
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
 
-            # Draw BB (blue)
-            if show_bb and not bb_mid_d_show.dropna().empty:
-                ax.fill_between(bb_mid_d_show.index, bb_lo_d_show, bb_up_d_show, color="tab:blue", alpha=0.08, label=f"BB {bb_len}±{bb_sigma}σ", zorder=0)
-                ax.plot(bb_mid_d_show.index, bb_mid_d_show, "-", linewidth=1.2, color="tab:blue", alpha=0.9, label="BB mid")
-
+            # Plot Kijun (Daily)
             if show_ichi and not kijun_d_show.dropna().empty:
                 ax.plot(kijun_d_show.index, kijun_d_show.values, "-", linewidth=1.8, color="black",
                         label=f"Ichimoku Kijun ({ichi_base})")
+
+            # Plot BBands (Daily)
+            if show_bbands and not bb_up_d_show.dropna().empty and not bb_lo_d_show.dropna().empty:
+                ax.fill_between(df_show.index, bb_lo_d_show, bb_up_d_show, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
+                ax.plot(bb_mid_d_show.index, bb_mid_d_show.values, "-", linewidth=1.1,
+                        label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
+                ax.plot(bb_up_d_show.index, bb_up_d_show.values, ":", linewidth=1.0)
+                ax.plot(bb_lo_d_show.index, bb_lo_d_show.values, ":", linewidth=1.0)
+                # NBB badge (bottom-right)
+                try:
+                    last_pct = float(bb_pctb_d_show.dropna().iloc[-1])
+                    last_nbb = float(bb_nbb_d_show.dropna().iloc[-1])
+                    ax.text(0.99, 0.02, f"NBB {last_nbb:+.2f}  |  %B {fmt_pct(last_pct, digits=0)}",
+                            transform=ax.transAxes, ha="right", va="bottom",
+                            fontsize=9, color="black",
+                            bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+                except Exception:
+                    pass
 
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
@@ -1084,8 +1107,8 @@ with tab1:
                     )
                     kijun_h = kijun_h.reindex(hc.index).ffill().bfill()
 
-                # NEW: BB on Hourly price
-                bb_mid_h, bb_up_h, bb_lo_h, _ = compute_bbands(hc, period=bb_len, sigma=bb_sigma, use_ema=False)
+                # NEW: Bollinger Bands (Hourly)
+                bb_mid_h, bb_up_h, bb_lo_h, bb_pctb_h, bb_nbb_h = compute_bbands(hc, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
                 # Lookback slope & R²
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
@@ -1098,14 +1121,17 @@ with tab1:
                 ax2.plot(hc.index, he, "--", label="20 EMA")
                 ax2.plot(hc.index, trend_h, "--", label=f"Trend (m={fmt_slope(slope_h)}/bar)", linewidth=2)
 
-                # Draw BB (blue)
-                if show_bb and not bb_mid_h.dropna().empty:
-                    ax2.fill_between(bb_mid_h.index, bb_lo_h, bb_up_h, color="tab:blue", alpha=0.08, label=f"BB {bb_len}±{bb_sigma}σ", zorder=0)
-                    ax2.plot(bb_mid_h.index, bb_mid_h, "-", linewidth=1.2, color="tab:blue", alpha=0.9, label="BB mid")
-
                 if show_ichi and not kijun_h.dropna().empty:
                     ax2.plot(kijun_h.index, kijun_h.values, "-", linewidth=1.8, color="black",
                              label=f"Ichimoku Kijun ({ichi_base})")
+
+                # Plot BBands (Hourly)
+                if show_bbands and not bb_up_h.dropna().empty and not bb_lo_h.dropna().empty:
+                    ax2.fill_between(hc.index, bb_lo_h, bb_up_h, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
+                    ax2.plot(bb_mid_h.index, bb_mid_h.values, "-", linewidth=1.1,
+                             label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
+                    ax2.plot(bb_up_h.index, bb_up_h.values, ":", linewidth=1.0)
+                    ax2.plot(bb_lo_h.index, bb_lo_h.values, ":", linewidth=1.0)
 
                 res_val = sup_val = px_val = np.nan
                 try:
@@ -1128,7 +1154,16 @@ with tab1:
 
                 if np.isfinite(px_val):
                     pos = ax2.get_position()
-                    fig2.text(pos.x1, pos.y1 + 0.02, f"Current price: {fmt_price_val(px_val)}",
+                    # Add NBB to the current price badge if available
+                    nbb_txt = ""
+                    try:
+                        last_pct = float(bb_pctb_h.dropna().iloc[-1]) if show_bbands else np.nan
+                        last_nbb = float(bb_nbb_h.dropna().iloc[-1]) if show_bbands else np.nan
+                        if np.isfinite(last_nbb) and np.isfinite(last_pct):
+                            nbb_txt = f"  |  NBB {last_nbb:+.2f}  •  %B {fmt_pct(last_pct, digits=0)}"
+                    except Exception:
+                        pass
+                    fig2.text(pos.x1, pos.y1 + 0.02, f"Current price: {fmt_price_val(px_val)}{nbb_txt}",
                               ha="right", va="bottom", fontsize=11, fontweight="bold")
 
                 if not st_line_intr.dropna().empty:
@@ -1338,14 +1373,14 @@ with tab2:
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
-            # NEW: BB Daily
-            bb_mid_d2, bb_up_d2, bb_lo_d2, _ = compute_bbands(df, period=bb_len, sigma=bb_sigma, use_ema=False)
-
             wave_norm_d2, piv_df_d2 = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
             npo_d2 = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
             ntd_d2 = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
             ichi_d2 = pd.Series(index=df.index, dtype=float)
             kijun_d2 = pd.Series(index=df.index, dtype=float)
+
+            # NEW: Bollinger Bands (Daily, Enhanced)
+            bb_mid_d2, bb_up_d2, bb_lo_d2, bb_pctb_d2, bb_nbb_d2 = compute_bbands(df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
             if df_ohlc is not None and not df_ohlc.empty and show_ichi:
                 ichi_d2 = compute_normalized_ichimoku(
@@ -1365,17 +1400,19 @@ with tab2:
             sup30_show  = sup30.reindex(df_show.index)
             yhat_d_show = yhat_d.reindex(df_show.index) if not yhat_d.empty else yhat_d
             yhat_ema_show = yhat_ema30.reindex(df_show.index) if not yhat_ema30.empty else yhat_ema30
-
-            bb_mid_d2_show = bb_mid_d2.reindex(df_show.index)
-            bb_up_d2_show  = bb_up_d2.reindex(df_show.index)
-            bb_lo_d2_show  = bb_lo_d2.reindex(df_show.index)
-
             wave_d_show = wave_norm_d2.reindex(df_show.index)
             npo_d_show  = npo_d2.reindex(df_show.index)
             ntd_d_show  = ntd_d2.reindex(df_show.index)
             ichi_d2_show = ichi_d2.reindex(df_show.index).ffill().bfill()
             kijun_d2_show = kijun_d2.reindex(df_show.index).ffill().bfill()
             piv_df_d_show = piv_df_d2[(piv_df_d2["time"] >= df_show.index.min()) & (piv_df_d2["time"] <= df_show.index.max())] if not piv_df_d2.empty else piv_df_d2
+
+            # BB subset (Enhanced)
+            bb_mid_d2_show = bb_mid_d2.reindex(df_show.index)
+            bb_up_d2_show  = bb_up_d2.reindex(df_show.index)
+            bb_lo_d2_show  = bb_lo_d2.reindex(df_show.index)
+            bb_pctb_d2_show= bb_pctb_d2.reindex(df_show.index)
+            bb_nbb_d2_show = bb_nbb_d2.reindex(df_show.index)
 
             fig, (ax, axdw2) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
@@ -1388,15 +1425,27 @@ with tab2:
             ax.plot(ema30_show, "--", label="30 EMA")
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
-
-            # Draw BB (blue)
-            if show_bb and not bb_mid_d2_show.dropna().empty:
-                ax.fill_between(bb_mid_d2_show.index, bb_lo_d2_show, bb_up_d2_show, color="tab:blue", alpha=0.08, label=f"BB {bb_len}±{bb_sigma}σ", zorder=0)
-                ax.plot(bb_mid_d2_show.index, bb_mid_d2_show, "-", linewidth=1.2, color="tab:blue", alpha=0.9, label="BB mid")
-
             if show_ichi and not kijun_d2_show.dropna().empty:
                 ax.plot(kijun_d2_show.index, kijun_d2_show.values, "-", linewidth=1.8, color="black",
                         label=f"Ichimoku Kijun ({ichi_base})")
+
+            # Plot BBands (Daily, Enhanced)
+            if show_bbands and not bb_up_d2_show.dropna().empty and not bb_lo_d2_show.dropna().empty:
+                ax.fill_between(df_show.index, bb_lo_d2_show, bb_up_d2_show, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
+                ax.plot(bb_mid_d2_show.index, bb_mid_d2_show.values, "-", linewidth=1.1,
+                        label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
+                ax.plot(bb_up_d2_show.index, bb_up_d2_show.values, ":", linewidth=1.0)
+                ax.plot(bb_lo_d2_show.index, bb_lo_d2_show.values, ":", linewidth=1.0)
+                # NBB badge (bottom-right)
+                try:
+                    last_pct = float(bb_pctb_d2_show.dropna().iloc[-1])
+                    last_nbb = float(bb_nbb_d2_show.dropna().iloc[-1])
+                    ax.text(0.99, 0.02, f"NBB {last_nbb:+.2f}  |  %B {fmt_pct(last_pct, digits=0)}",
+                            transform=ax.transAxes, ha="right", va="bottom",
+                            fontsize=9, color="black",
+                            bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+                except Exception:
+                    pass
 
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
@@ -1496,8 +1545,8 @@ with tab2:
                     )
                     kijun_i = kijun_i.reindex(ic.index).ffill().bfill()
 
-                # NEW: BB intraday
-                bb_mid_i, bb_up_i, bb_lo_i, _ = compute_bbands(ic, period=bb_len, sigma=bb_sigma, use_ema=False)
+                # NEW: Bollinger Bands (Hourly, Enhanced)
+                bb_mid_i, bb_up_i, bb_lo_i, bb_pctb_i, bb_nbb_i = compute_bbands(ic, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
                 # Lookback slope & R²
                 yhat_h, m_h = slope_line(ic, slope_lb_hourly)
@@ -1509,15 +1558,17 @@ with tab2:
                 ax3.plot(ic.index, ic, label="Intraday")
                 ax3.plot(ic.index, ie, "--", label="20 EMA")
                 ax3.plot(ic.index, trend_i, "--", label=f"Trend (m={fmt_slope(slope_i)}/bar)", linewidth=2)
-
-                # Draw BB (blue)
-                if show_bb and not bb_mid_i.dropna().empty:
-                    ax3.fill_between(bb_mid_i.index, bb_lo_i, bb_up_i, color="tab:blue", alpha=0.08, label=f"BB {bb_len}±{bb_sigma}σ", zorder=0)
-                    ax3.plot(bb_mid_i.index, bb_mid_i, "-", linewidth=1.2, color="tab:blue", alpha=0.9, label="BB mid")
-
                 if show_ichi and not kijun_i.dropna().empty:
                     ax3.plot(kijun_i.index, kijun_i.values, "-", linewidth=1.8, color="black",
                              label=f"Ichimoku Kijun ({ichi_base})")
+
+                # Plot BBands (Hourly, Enhanced)
+                if show_bbands and not bb_up_i.dropna().empty and not bb_lo_i.dropna().empty:
+                    ax3.fill_between(ic.index, bb_lo_i, bb_up_i, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
+                    ax3.plot(bb_mid_i.index, bb_mid_i.values, "-", linewidth=1.1,
+                             label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
+                    ax3.plot(bb_up_i.index, bb_up_i.values, ":", linewidth=1.0)
+                    ax3.plot(bb_lo_i.index, bb_lo_i.values, ":", linewidth=1.0)
 
                 res_val2 = sup_val2 = px_val2 = np.nan
                 try:
@@ -1540,7 +1591,15 @@ with tab2:
 
                 if np.isfinite(px_val2):
                     pos2 = ax3.get_position()
-                    fig3.text(pos2.x1, pos2.y1 + 0.02, f"Current price: {fmt_price_val(px_val2)}",
+                    nbb_txt2 = ""
+                    try:
+                        last_pct2 = float(bb_pctb_i.dropna().iloc[-1]) if show_bbands else np.nan
+                        last_nbb2 = float(bb_nbb_i.dropna().iloc[-1]) if show_bbands else np.nan
+                        if np.isfinite(last_nbb2) and np.isfinite(last_pct2):
+                            nbb_txt2 = f"  |  NBB {last_nbb2:+.2f}  •  %B {fmt_pct(last_pct2, digits=0)}"
+                    except Exception:
+                        pass
+                    fig3.text(pos2.x1, pos2.y1 + 0.02, f"Current price: {fmt_price_val(px_val2)}{nbb_txt2}",
                               ha="right", va="bottom", fontsize=11, fontweight="bold")
 
                 if not st_line_intr.dropna().empty:
