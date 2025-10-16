@@ -35,7 +35,6 @@
 # - NEW: **Hourly Volume panel** (separate chart) with rolling mid-line and trendline (+ R² badge)
 # - UPDATED: Volume visuals (panels + NVol fills) use blue
 # - NEW: **Bollinger Bands overlay** on Daily & Hourly price charts (SMA/EMA toggle for midline), with **Normalized %B (NBB)** badge
-# - NEW: **NRSI overlay on price charts** (scaled to price axis) + **cross markers** when price crosses the NRSI line
 
 import streamlit as st
 import pandas as pd
@@ -190,11 +189,6 @@ mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, k
 st.sidebar.subheader("Hourly Normalized RSI")
 show_nrsi   = st.sidebar.checkbox("Show NRSI (hourly)", value=True, key="sb_show_nrsi")
 nrsi_period = st.sidebar.slider("RSI period (bars)", 5, 60, 14, 1, key="sb_nrsi_period")
-
-# NEW: NRSI overlay controls (on price charts)
-st.sidebar.subheader("NRSI Overlay (Price Charts)")
-show_nrsi_overlay = st.sidebar.checkbox("Overlay NRSI on price charts", value=True, key="sb_show_nrsi_overlay")
-mark_nrsi_cross   = st.sidebar.checkbox("Mark price↔NRSI crosses", value=True, key="sb_mark_nrsi_cross")
 
 # Hourly Supertrend controls
 st.sidebar.subheader("Hourly Supertrend")
@@ -414,45 +408,6 @@ def compute_nrsi(close: pd.Series, period: int = 14) -> pd.Series:
     rsi = compute_rsi(close, period=period)
     nrsi = ((rsi - 50.0) / 50.0).clip(-1.0, 1.0)
     return nrsi.reindex(rsi.index)
-
-# ---- NRSI overlay helpers (scale to price axis + crossings) ----
-def scale_nrsi_to_price_axis(close_series: pd.Series, nrsi_period: int) -> pd.Series:
-    """
-    Map NRSI [-1,1] onto the price axis of `close_series` by stretching to the
-    current min/max range and centering at the mid-price.
-    """
-    s = _coerce_1d_series(close_series).astype(float)
-    if s.empty:
-        return pd.Series(index=s.index, dtype=float)
-    n = compute_nrsi(s, period=nrsi_period).reindex(s.index)
-    pmin = float(np.nanmin(s.values))
-    pmax = float(np.nanmax(s.values))
-    if not np.isfinite(pmin) or not np.isfinite(pmax) or pmax <= pmin:
-        return pd.Series(index=s.index, dtype=float)
-    mid = (pmin + pmax) / 2.0
-    half = (pmax - pmin) / 2.0
-    return (mid + half * n).reindex(s.index)
-
-def find_crossings(price: pd.Series, line: pd.Series):
-    """
-    Return indices for upward and downward crossings where (price - line) changes sign.
-    """
-    p = _coerce_1d_series(price).astype(float)
-    l = _coerce_1d_series(line).astype(float).reindex(p.index)
-    m = p.notna() & l.notna()
-    if m.sum() < 2:
-        return [], []
-    diff = (p - l)[m]
-    sign = np.sign(diff)
-    prev = sign.shift(1)
-    crosses = (sign * prev < 0)
-    up_idx, dn_idx = [], []
-    for ts in sign.index[crosses]:
-        if diff.loc[ts] > 0:
-            up_idx.append(ts)
-        else:
-            dn_idx.append(ts)
-    return up_idx, dn_idx
 
 # ---- Normalized MACD (price-based) ----
 def compute_nmacd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9,
@@ -1017,7 +972,6 @@ with tab1:
             bb_pctb_d_show= bb_pctb_d.reindex(df_show.index)
             bb_nbb_d_show = bb_nbb_d.reindex(df_show.index)
 
-            # --- Figure ---
             fig, (ax, axdw) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
                 gridspec_kw={"height_ratios": [3.2, 1.3]}
@@ -1052,21 +1006,6 @@ with tab1:
                             bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
                 except Exception:
                     pass
-
-            # --- NRSI overlay on price (Daily) ---
-            if show_nrsi_overlay and not df_show.dropna().empty:
-                nrsi_scaled_d = scale_nrsi_to_price_axis(df_show, nrsi_period)
-                if not nrsi_scaled_d.dropna().empty:
-                    ax.plot(nrsi_scaled_d.index, nrsi_scaled_d.values, "-", linewidth=1.2,
-                            label=f"NRSI↕ (p={nrsi_period}, price-scaled)", color="purple")
-                    if mark_nrsi_cross:
-                        up_idx, dn_idx = find_crossings(df_show, nrsi_scaled_d)
-                        if len(up_idx):
-                            ax.scatter(up_idx, df_show.reindex(up_idx), marker="^", s=60,
-                                       color="tab:green", zorder=6, label="Cross ↑")
-                        if len(dn_idx):
-                            ax.scatter(dn_idx, df_show.reindex(dn_idx), marker="v", s=60,
-                                       color="tab:red", zorder=6, label="Cross ↓")
 
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
@@ -1194,21 +1133,6 @@ with tab1:
                     ax2.plot(bb_up_h.index, bb_up_h.values, ":", linewidth=1.0)
                     ax2.plot(bb_lo_h.index, bb_lo_h.values, ":", linewidth=1.0)
 
-                # --- NRSI overlay on price (Hourly) ---
-                if show_nrsi_overlay and not hc.dropna().empty:
-                    nrsi_scaled_h = scale_nrsi_to_price_axis(hc, nrsi_period)
-                    if not nrsi_scaled_h.dropna().empty:
-                        ax2.plot(nrsi_scaled_h.index, nrsi_scaled_h.values, "-", linewidth=1.2,
-                                 label=f"NRSI↕ (p={nrsi_period}, price-scaled)", color="purple")
-                        if mark_nrsi_cross:
-                            up_idx, dn_idx = find_crossings(hc, nrsi_scaled_h)
-                            if len(up_idx):
-                                ax2.scatter(up_idx, hc.reindex(up_idx), marker="^", s=60,
-                                            color="tab:green", zorder=6, label="Cross ↑")
-                            if len(dn_idx):
-                                ax2.scatter(dn_idx, hc.reindex(dn_idx), marker="v", s=60,
-                                            color="tab:red", zorder=6, label="Cross ↓")
-
                 res_val = sup_val = px_val = np.nan
                 try:
                     res_val = float(res_h.iloc[-1]); sup_val = float(sup_h.iloc[-1]); px_val  = float(hc.iloc[-1])
@@ -1228,7 +1152,7 @@ with tab1:
                 if np.isfinite(res_val): buy_sell_text += f"  ▼ SELL @{fmt_price_val(res_val)}"
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text}")
 
-                # === Current price badge at bottom-right INSIDE the axes ===
+                # === Current price badge moved to bottom-right INSIDE the axes ===
                 if np.isfinite(px_val):
                     nbb_txt = ""
                     try:
@@ -1524,21 +1448,6 @@ with tab2:
                 except Exception:
                     pass
 
-            # --- NRSI overlay on price (Daily, Enhanced tab) ---
-            if show_nrsi_overlay and not df_show.dropna().empty:
-                nrsi_scaled_d2 = scale_nrsi_to_price_axis(df_show, nrsi_period)
-                if not nrsi_scaled_d2.dropna().empty:
-                    ax.plot(nrsi_scaled_d2.index, nrsi_scaled_d2.values, "-", linewidth=1.2,
-                            label=f"NRSI↕ (p={nrsi_period}, price-scaled)", color="purple")
-                    if mark_nrsi_cross:
-                        up_idx2, dn_idx2 = find_crossings(df_show, nrsi_scaled_d2)
-                        if len(up_idx2):
-                            ax.scatter(up_idx2, df_show.reindex(up_idx2), marker="^", s=60,
-                                       color="tab:green", zorder=6, label="Cross ↑")
-                        if len(dn_idx2):
-                            ax.scatter(dn_idx2, df_show.reindex(dn_idx2), marker="v", s=60,
-                                       color="tab:red", zorder=6, label="Cross ↓")
-
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
                         label=f"Daily Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
@@ -1662,21 +1571,6 @@ with tab2:
                     ax3.plot(bb_up_i.index, bb_up_i.values, ":", linewidth=1.0)
                     ax3.plot(bb_lo_i.index, bb_lo_i.values, ":", linewidth=1.0)
 
-                # --- NRSI overlay on price (Hourly, Enhanced tab) ---
-                if show_nrsi_overlay and not ic.dropna().empty:
-                    nrsi_scaled_i = scale_nrsi_to_price_axis(ic, nrsi_period)
-                    if not nrsi_scaled_i.dropna().empty:
-                        ax3.plot(nrsi_scaled_i.index, nrsi_scaled_i.values, "-", linewidth=1.2,
-                                 label=f"NRSI↕ (p={nrsi_period}, price-scaled)", color="purple")
-                        if mark_nrsi_cross:
-                            up_idx3, dn_idx3 = find_crossings(ic, nrsi_scaled_i)
-                            if len(up_idx3):
-                                ax3.scatter(up_idx3, ic.reindex(up_idx3), marker="^", s=60,
-                                            color="tab:green", zorder=6, label="Cross ↑")
-                            if len(dn_idx3):
-                                ax3.scatter(dn_idx3, ic.reindex(dn_idx3), marker="v", s=60,
-                                            color="tab:red", zorder=6, label="Cross ↓")
-
                 res_val2 = sup_val2 = px_val2 = np.nan
                 try:
                     res_val2 = float(res_i.iloc[-1]); sup_val2 = float(sup_i.iloc[-1]); px_val2 = float(ic.iloc[-1])
@@ -1696,7 +1590,7 @@ with tab2:
                 if np.isfinite(res_val2): buy_sell_text2 += f"  ▼ SELL @{fmt_price_val(res_val2)}"
                 ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text2}")
 
-                # === Current price badge at bottom-right INSIDE the axes ===
+                # === Current price badge moved to bottom-right INSIDE the axes ===
                 if np.isfinite(px_val2):
                     nbb_txt2 = ""
                     try:
@@ -2113,7 +2007,7 @@ with tab6:
                         fontsize=9, color="black",
                         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-            # Current price badge at bottom-right INSIDE the axes
+            # Current price badge moved to bottom-right INSIDE the axes
             px_now = _safe_last_float(s)
             if np.isfinite(px_now):
                 ax.text(0.99, 0.02, f"Current price: {fmt_price_val(px_now)}",
