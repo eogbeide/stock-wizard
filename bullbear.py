@@ -12,7 +12,7 @@
 # - Value labels on intraday Resistance/Support placed on the LEFT; price label outside chart (top-right)
 # - All displayed price values formatted to 3 decimal places
 # - Hourly Support/Resistance drawn as STRAIGHT LINES across the entire chart
-# - Current price shown OUTSIDE of chart area (top-right)
+# - Current price shown at the BOTTOM-RIGHT of the price chart (inside the axes)
 # - Daily Normalized Elliott Wave panel (dates aligned to daily chart, shared x-axis with price)
 # - EW panels show BUY/SELL signals when forecast confidence > 95% and display current price on top
 # - EW panels draw a red line at +0.5 and a green line at -0.5
@@ -1152,9 +1152,8 @@ with tab1:
                 if np.isfinite(res_val): buy_sell_text += f"  ▼ SELL @{fmt_price_val(res_val)}"
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text}")
 
+                # === Current price badge moved to bottom-right INSIDE the axes ===
                 if np.isfinite(px_val):
-                    pos = ax2.get_position()
-                    # Add NBB to the current price badge if available
                     nbb_txt = ""
                     try:
                         last_pct = float(bb_pctb_h.dropna().iloc[-1]) if show_bbands else np.nan
@@ -1163,8 +1162,10 @@ with tab1:
                             nbb_txt = f"  |  NBB {last_nbb:+.2f}  •  %B {fmt_pct(last_pct, digits=0)}"
                     except Exception:
                         pass
-                    fig2.text(pos.x1, pos.y1 + 0.02, f"Current price: {fmt_price_val(px_val)}{nbb_txt}",
-                              ha="right", va="bottom", fontsize=11, fontweight="bold")
+                    ax2.text(0.99, 0.02, f"Current price: {fmt_price_val(px_val)}{nbb_txt}",
+                             transform=ax2.transAxes, ha="right", va="bottom",
+                             fontsize=11, fontweight="bold",
+                             bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
                 if not st_line_intr.dropna().empty:
                     ax2.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -1589,8 +1590,8 @@ with tab2:
                 if np.isfinite(res_val2): buy_sell_text2 += f"  ▼ SELL @{fmt_price_val(res_val2)}"
                 ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text2}")
 
+                # === Current price badge moved to bottom-right INSIDE the axes ===
                 if np.isfinite(px_val2):
-                    pos2 = ax3.get_position()
                     nbb_txt2 = ""
                     try:
                         last_pct2 = float(bb_pctb_i.dropna().iloc[-1]) if show_bbands else np.nan
@@ -1599,8 +1600,10 @@ with tab2:
                             nbb_txt2 = f"  |  NBB {last_nbb2:+.2f}  •  %B {fmt_pct(last_pct2, digits=0)}"
                     except Exception:
                         pass
-                    fig3.text(pos2.x1, pos2.y1 + 0.02, f"Current price: {fmt_price_val(px_val2)}{nbb_txt2}",
-                              ha="right", va="bottom", fontsize=11, fontweight="bold")
+                    ax3.text(0.99, 0.02, f"Current price: {fmt_price_val(px_val2)}{nbb_txt2}",
+                             transform=ax3.transAxes, ha="right", va="bottom",
+                             fontsize=11, fontweight="bold",
+                             bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
                 if not st_line_intr.dropna().empty:
                     ax3.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -2004,12 +2007,13 @@ with tab6:
                         fontsize=9, color="black",
                         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-            # Current price badge (top-right, outside)
+            # Current price badge moved to bottom-right INSIDE the axes
             px_now = _safe_last_float(s)
             if np.isfinite(px_now):
-                pos = ax.get_position()
-                fig.text(pos.x1, pos.y1 + 0.02, f"Current price: {fmt_price_val(px_now)}",
-                         ha="right", va="bottom", fontsize=11, fontweight="bold")
+                ax.text(0.99, 0.02, f"Current price: {fmt_price_val(px_now)}",
+                        transform=ax.transAxes, ha="right", va="bottom",
+                        fontsize=11, fontweight="bold",
+                        bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
             ax.set_xlabel("Date (PST)")
             ax.set_ylabel("Price")
