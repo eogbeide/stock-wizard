@@ -26,9 +26,8 @@
 # - Normalized Ichimoku overlay on EW panels (Daily) with sidebar controls
 # - Ichimoku Kijun (Base) line added to Daily & Hourly price charts (solid black, continuous)
 # - UPDATED: Removed Hourly EW panel and added **Normalized RSI (NRSI)** panel below the hourly price chart
-# - UPDATED: RSI panel shows **NRSI + NVol + NMACD(+signal)** with guides at 0 (dashed), ±0.5 (black), ±0.75 (thick red)
-# - UPDATED: Added **NTD overlay & Trend direction with % certainty** to RSI panel
-# - UPDATED: Price chart shows trendline slope in legend + bottom-left; NRSI panel adds trendline + slope; NRSI Trend badge moved to **bottom-center**
+# - UPDATED: RSI panel now **only shows NTD + Trend** with guides at 0.00 (dashed), ±0.50 (black), ±0.75 (black)
+# - UPDATED: Trend badge stays **bottom-center**
 # - NEW: Scanner lists **Price > Kijun(26)** symbols (Daily for Stocks & FX; Hourly for FX)
 # - NEW: Hourly chart shows **R²** for the trendline (computed over the slope lookback) at the **bottom-center** of the chart (as a percentage)
 # - NEW: **Long-Term History** tab with 5/10/15/20-year buttons showing price with 252d Support/Resistance and an overall trendline
@@ -186,10 +185,10 @@ st.sidebar.subheader("Hourly Momentum")
 show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True, key="sb_show_mom_hourly")
 mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, key="sb_mom_lb_hourly")
 
-# Hourly Normalized RSI controls
-st.sidebar.subheader("Hourly Normalized RSI")
-show_nrsi   = st.sidebar.checkbox("Show NRSI (hourly)", value=True, key="sb_show_nrsi")
-nrsi_period = st.sidebar.slider("RSI period (bars)", 5, 60, 14, 1, key="sb_nrsi_period")
+# Hourly NTD/Trend panel controls (re-using the NRSI toggle for visibility)
+st.sidebar.subheader("Hourly Trend Panel (NTD)")
+show_nrsi   = st.sidebar.checkbox("Show Trend (NTD) panel", value=True, key="sb_show_nrsi")
+nrsi_period = st.sidebar.slider("RSI period (bars)", 5, 60, 14, 1, key="sb_nrsi_period")  # kept for compatibility, unused
 
 # Hourly Supertrend controls
 st.sidebar.subheader("Hourly Supertrend")
@@ -214,8 +213,8 @@ npo_fast    = st.sidebar.slider("NPO fast EMA", 5, 30, 12, 1, key="sb_npo_fast")
 npo_slow    = st.sidebar.slider("NPO slow EMA", 10, 60, 26, 1, key="sb_npo_slow")
 npo_norm_win= st.sidebar.slider("NPO normalization window", 30, 600, 240, 10, key="sb_npo_norm")
 
-# NTD overlay controls (for EW panels AND RSI panel)
-st.sidebar.subheader("Normalized Trend (EW/RSI panels)")
+# NTD overlay controls (for EW panels AND Trend panel)
+st.sidebar.subheader("Normalized Trend (EW/Trend panels)")
 show_ntd  = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd")
 ntd_window= st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
 shade_ntd = st.sidebar.checkbox("Shade NTD (EW only: green=up, red=down)", value=True, key="sb_ntd_shade")
@@ -238,7 +237,7 @@ bb_use_ema    = st.sidebar.checkbox("Use EMA midline (vs SMA)", value=False, key
 
 # NEW: Probabilistic HMA Crossover controls
 st.sidebar.subheader("Probabilistic HMA Crossover (Price Charts)")
-show_hma    = st.sidebar.checkbox("Show HMA crossover signal", value=True, key="sb_show_hma")
+show_hma    = st.sidebar.checkbox("Show HMA crossover signal", value=True, key="sb_hma")
 hma_period  = st.sidebar.slider("HMA period", 5, 120, 55, 1, key="sb_hma_period")
 hma_conf    = st.sidebar.slider("Crossover confidence", 0.50, 0.99, 0.95, 0.01, key="sb_hma_conf")
 
@@ -470,7 +469,7 @@ def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int 
     npo = np.tanh(z / 2.0)
     return npo.reindex(s.index)
 
-# ---- Normalized Trend Direction (for EW & RSI panels) ----
+# ---- Normalized Trend Direction (for EW & Trend panels) ----
 def compute_normalized_trend(close: pd.Series, window: int = 60) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
     if s.empty or window < 3:
@@ -1126,13 +1125,13 @@ with tab1:
                           label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
 
             for yline, style, col, lbl in [
-                (0.0, "--", None, "EW 0"),
-                (0.5, "-", "tab:red", "EW +0.5"),
-                (-0.5, "-", "tab:green", "EW -0.5"),
-                (0.75, "-", "black", "EW +0.75"),
-                (-0.75, "-", "black", "EW -0.75"),
+                (0.0, "--", "black", "0.00"),
+                (0.5, "-", "black", "+0.50"),
+                (-0.5, "-", "black", "-0.50"),
+                (0.75, "-", "black", "+0.75"),
+                (-0.75, "-", "black", "-0.75"),
             ]:
-                axdw.axhline(yline, linestyle=style, linewidth=1, color=col, label=lbl)
+                axdw.axhline(yline, linestyle=style, linewidth=1.2 if abs(yline)!=0.75 else 1.2, color=col, label=lbl)
 
             axdw.set_ylim(-1.1, 1.1)
             axdw.set_xlabel("Date (PST)")
@@ -1160,7 +1159,7 @@ with tab1:
             axdw.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (price + NRSI/MACD/Vol + momentum + NEW Volume panel) -----
+        # ----- Hourly (price + TREND panel + momentum + NEW Volume panel) -----
         if chart in ("Hourly","Both"):
             intraday = st.session_state.intraday
             if intraday is None or intraday.empty or "Close" not in intraday:
@@ -1350,40 +1349,23 @@ with tab1:
                     ax2v.legend(loc="lower left", framealpha=0.5)
                     st.pyplot(fig2v)
 
-                # === Normalized RSI Panel (Hourly): NRSI + NMACD(+signal) + NVol + NTD & certainty ===
+                # === Trend Panel (Hourly): ONLY NTD + Trend + reference lines ===
                 if show_nrsi:
-                    nrsi_h = compute_nrsi(hc, period=nrsi_period)
-                    nmacd_h, nmacd_sig_h, _ = compute_nmacd(hc)
-                    nvol_h = compute_nvol(intraday.get("Volume", pd.Series(index=hc.index)).reindex(hc.index))
                     ntd_h_rsipanel = compute_normalized_trend(hc, window=ntd_window)
-
-                    # NRSI trendline & slope
-                    nrsi_trend, nrsi_m = slope_line(nrsi_h, slope_lb_hourly)
+                    ntd_trend, ntd_m = slope_line(ntd_h_rsipanel, slope_lb_hourly)
 
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
-                    ax2r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD")
+                    ax2r.set_title(f"Trend Panel — NTD + Trend (win={ntd_window})")
 
-                    # BLUE NVol fill (both + and -)
-                    posv = nvol_h.where(nvol_h > 0)
-                    negv = nvol_h.where(nvol_h < 0)
-                    ax2r.fill_between(posv.index, 0, posv, alpha=0.10, step=None, label="NVol(+)", color="tab:blue")
-                    ax2r.fill_between(negv.index, 0, negv, alpha=0.10, step=None, label="NVol(-)", color="tab:blue")
+                    # Draw ONLY NTD and its trend
+                    if not ntd_h_rsipanel.dropna().empty:
+                        ax2r.plot(ntd_h_rsipanel.index, ntd_h_rsipanel, ":", linewidth=1.8, label="NTD")
+                    if not ntd_trend.empty:
+                        ax2r.plot(ntd_trend.index, ntd_trend.values, "-", linewidth=2.2,
+                                  label=f"Trend of NTD {slope_lb_hourly} ({fmt_slope(ntd_m)}/bar)")
 
-                    # Main lines
-                    ax2r.plot(nrsi_h.index, nrsi_h, "-", linewidth=1.4, label="NRSI")
-                    ax2r.plot(nmacd_h.index, nmacd_h, "-", linewidth=1.4, label="NMACD")
-                    ax2r.plot(nmacd_sig_h.index, nmacd_sig_h, "--", linewidth=1.2, label="NMACD signal")
-
-                    # NRSI trendline (dashed red) + slope in legend
-                    if not nrsi_trend.empty:
-                        ax2r.plot(nrsi_trend.index, nrsi_trend.values, "--", linewidth=2,
-                                  color="red",
-                                  label=f"NRSI Trend {slope_lb_hourly} ({fmt_slope(nrsi_m)}/bar)")
-
-                    # NTD overlay + bottom-center trend badge (MOVED FROM RIGHT)
-                    if show_ntd and not ntd_h_rsipanel.dropna().empty:
-                        ax2r.plot(ntd_h_rsipanel.index, ntd_h_rsipanel, ":", linewidth=1.6,
-                                  label=f"NTD (win={ntd_window})")
+                    # Bottom-center Trend badge from NTD last value
+                    if not ntd_h_rsipanel.dropna().empty:
                         last_ntd = float(ntd_h_rsipanel.dropna().iloc[-1])
                         t_dir = "UP" if last_ntd >= 0 else "DOWN"
                         color = "tab:green" if last_ntd >= 0 else "tab:red"
@@ -1393,12 +1375,12 @@ with tab1:
                                   fontsize=10, fontweight="bold", color=color,
                                   bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.85))
 
-                    # Reference lines
-                    ax2r.axhline(0, linestyle="--", linewidth=1, color="black", label="0")
-                    ax2r.axhline(0.5, linestyle="-", linewidth=1.2, color="black", label="+0.5")
-                    ax2r.axhline(-0.5, linestyle="-", linewidth=1.2, color="black", label="-0.5")
-                    ax2r.axhline(0.75, linestyle="-", linewidth=3.0, color="red", label="+0.75")
-                    ax2r.axhline(-0.75, linestyle="-", linewidth=3.0, color="red", label="-0.75")
+                    # Reference lines: 0.00 (dashed), ±0.50 (black), ±0.75 (black)
+                    ax2r.axhline(0.0, linestyle="--", linewidth=1.0, color="black", label="0.00")
+                    ax2r.axhline(0.5, linestyle="-",  linewidth=1.2, color="black", label="+0.50")
+                    ax2r.axhline(-0.5, linestyle="-", linewidth=1.2, color="black", label="-0.50")
+                    ax2r.axhline(0.75, linestyle="-", linewidth=1.2, color="black", label="+0.75")
+                    ax2r.axhline(-0.75, linestyle="-", linewidth=1.2, color="black", label="-0.75")
 
                     ax2r.set_ylim(-1.1, 1.1)
                     ax2r.set_xlim(xlim_price)
@@ -1539,16 +1521,6 @@ with tab2:
                         label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
                 ax.plot(bb_up_d2_show.index, bb_up_d2_show.values, ":", linewidth=1.0)
                 ax.plot(bb_lo_d2_show.index, bb_lo_d2_show.values, ":", linewidth=1.0)
-                # NBB badge (bottom-right)
-                try:
-                    last_pct = float(bb_pctb_d2_show.dropna().iloc[-1])
-                    last_nbb = float(bb_nbb_d2_show.dropna().iloc[-1])
-                    ax.text(0.99, 0.02, f"NBB {last_nbb:+.2f}  |  %B {fmt_pct(last_pct, digits=0)}",
-                            transform=ax.transAxes, ha="right", va="bottom",
-                            fontsize=9, color="black",
-                            bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-                except Exception:
-                    pass
 
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
@@ -1602,13 +1574,13 @@ with tab2:
                            label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
 
             for yline, style, col, lbl in [
-                (0.0, "--", None, "EW 0"),
-                (0.5, "-", "tab:red", "EW +0.5"),
-                (-0.5, "-", "tab:green", "EW -0.5"),
-                (0.75, "-", "black", "EW +0.75"),
-                (-0.75, "-", "black", "EW -0.75"),
+                (0.0, "--", "black", "0.00"),
+                (0.5, "-", "black", "+0.50"),
+                (-0.5, "-", "black", "-0.50"),
+                (0.75, "-", "black", "+0.75"),
+                (-0.75, "-", "black", "-0.75"),
             ]:
-                axdw2.axhline(yline, linestyle=style, linewidth=1, color=col, label=lbl)
+                axdw2.axhline(yline, linestyle=style, linewidth=1.2 if abs(yline)!=0.75 else 1.2, color=col, label=lbl)
 
             axdw2.set_ylim(-1.1, 1.1)
             axdw2.set_xlabel("Date (PST)")
@@ -1808,50 +1780,38 @@ with tab2:
                     ax3v.legend(loc="lower left", framealpha=0.5)
                     st.pyplot(fig3v)
 
-                # === NRSI + NMACD(+signal) + NVol + NTD (+certainty) panel (Intraday view) ===
+                # === Trend Panel (Intraday view): ONLY NTD + Trend + reference lines ===
                 if show_nrsi:
-                    nrsi_i = compute_nrsi(ic, period=nrsi_period)
-                    nmacd_i, nmacd_sig_i, _ = compute_nmacd(ic)
-                    nvol_i = compute_nvol(intr.get("Volume", pd.Series(index=ic.index)).reindex(ic.index))
                     ntd_i_rsipanel = compute_normalized_trend(ic, window=ntd_window)
-
-                    # NRSI trendline & slope
-                    nrsi_trend2, nrsi_m2 = slope_line(nrsi_i, slope_lb_hourly)
+                    ntd_trend2, ntd_m2 = slope_line(ntd_i_rsipanel, slope_lb_hourly)
 
                     fig3r, ax3r = plt.subplots(figsize=(14,2.8))
-                    ax3r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD")
-                    # BLUE NVol fill
-                    posv = nvol_i.where(nvol_i > 0)
-                    negv = nvol_i.where(nvol_i < 0)
-                    ax3r.fill_between(posv.index, 0, posv, alpha=0.10, step=None, label="NVol(+)", color="tab:blue")
-                    ax3r.fill_between(negv.index, 0, negv, alpha=0.10, step=None, label="NVol(-)", color="tab:blue")
-                    ax3r.plot(nrsi_i.index, nrsi_i, "-", linewidth=1.4, label="NRSI")
-                    ax3r.plot(nmacd_i.index, nmacd_i, "-", linewidth=1.4, label="NMACD")
-                    ax3r.plot(nmacd_sig_i.index, nmacd_sig_i, "--", linewidth=1.2, label="NMACD signal")
+                    ax3r.set_title(f"Trend Panel — NTD + Trend (win={ntd_window})")
 
-                    if not nrsi_trend2.empty:
-                        ax3r.plot(nrsi_trend2.index, nrsi_trend2.values, "--", linewidth=2,
-                                  color="red",
-                                  label=f"NRSI Trend {slope_lb_hourly} ({fmt_slope(nrsi_m2)}/bar)")
+                    if not ntd_i_rsipanel.dropna().empty:
+                        ax3r.plot(ntd_i_rsipanel.index, ntd_i_rsipanel, ":", linewidth=1.8, label="NTD")
+                    if not ntd_trend2.empty:
+                        ax3r.plot(ntd_trend2.index, ntd_trend2.values, "-", linewidth=2.2,
+                                  label=f"Trend of NTD {slope_lb_hourly} ({fmt_slope(ntd_m2)}/bar)")
 
-                    if show_ntd and not ntd_i_rsipanel.dropna().empty:
-                        ax3r.plot(ntd_i_rsipanel.index, ntd_i_rsipanel, ":", linewidth=1.6,
-                                  label=f"NTD (win={ntd_window})")
+                    if not ntd_i_rsipanel.dropna().empty:
                         last_ntd = float(ntd_i_rsipanel.dropna().iloc[-1])
                         t_dir = "UP" if last_ntd >= 0 else "DOWN"
                         color = "tab:green" if last_ntd >= 0 else "tab:red"
                         certainty = int(round(50 + 50*abs(last_ntd)))
-                        # MOVED badge from bottom-right to bottom-center:
+                        # Bottom-center badge:
                         ax3r.text(0.50, 0.06, f"Trend: {t_dir} ({certainty}%)",
                                   transform=ax3r.transAxes, ha="center", va="bottom",
                                   fontsize=10, fontweight="bold", color=color,
                                   bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.85))
 
-                    ax3r.axhline(0, linestyle="--", linewidth=1, color="black", label="0")
-                    ax3r.axhline(0.5, linestyle="-", linewidth=1.2, color="black", label="+0.5")
-                    ax3r.axhline(-0.5, linestyle="-", linewidth=1.2, color="black", label="-0.5")
-                    ax3r.axhline(0.75, linestyle="-", linewidth=3.0, color="red", label="+0.75")
-                    ax3r.axhline(-0.75, linestyle="-", linewidth=3.0, color="red", label="-0.75")
+                    # Reference lines: 0.00 (dashed), ±0.50, ±0.75 (black)
+                    ax3r.axhline(0.0, linestyle="--", linewidth=1.0, color="black", label="0.00")
+                    ax3r.axhline(0.5, linestyle="-",  linewidth=1.2, color="black", label="+0.50")
+                    ax3r.axhline(-0.5, linestyle="-", linewidth=1.2, color="black", label="-0.50")
+                    ax3r.axhline(0.75, linestyle="-", linewidth=1.2, color="black", label="+0.75")
+                    ax3r.axhline(-0.75, linestyle="-", linewidth=1.2, color="black", label="-0.75")
+
                     ax3r.set_ylim(-1.1, 1.1)
                     ax3r.set_xlim(xlim_price2)
                     ax3r.legend(loc="lower left", framealpha=0.5)
