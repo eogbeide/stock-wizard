@@ -28,7 +28,7 @@
 # - UPDATED: Removed Hourly EW panel and added **Normalized RSI (NRSI)** panel below the hourly price chart
 # - UPDATED: RSI panel shows **NRSI + NVol + NMACD(+signal)** with guides at 0 (dashed), ±0.5 (black), ±0.75 (thick red)
 # - UPDATED: Added **NTD overlay & Trend direction with % certainty** to RSI panel
-# - UPDATED: Price chart shows trendline slope in legend + bottom-left; NRSI panel adds trendline + slope; NRSI Trend badge moved to bottom-right
+# - UPDATED: Price chart shows trendline slope in legend + bottom-left; NRSI panel adds trendline + slope; NRSI Trend badge moved to **bottom-center**
 # - NEW: Scanner lists **Price > Kijun(26)** symbols (Daily for Stocks & FX; Hourly for FX)
 # - NEW: Hourly chart shows **R²** for the trendline (computed over the slope lookback) at the **bottom-center** of the chart (as a percentage)
 # - NEW: **Long-Term History** tab with 5/10/15/20-year buttons showing price with 252d Support/Resistance and an overall trendline
@@ -1380,7 +1380,7 @@ with tab1:
                                   color="red",
                                   label=f"NRSI Trend {slope_lb_hourly} ({fmt_slope(nrsi_m)}/bar)")
 
-                    # NTD overlay + bottom-right trend badge
+                    # NTD overlay + bottom-center trend badge (MOVED FROM RIGHT)
                     if show_ntd and not ntd_h_rsipanel.dropna().empty:
                         ax2r.plot(ntd_h_rsipanel.index, ntd_h_rsipanel, ":", linewidth=1.6,
                                   label=f"NTD (win={ntd_window})")
@@ -1388,8 +1388,8 @@ with tab1:
                         t_dir = "UP" if last_ntd >= 0 else "DOWN"
                         color = "tab:green" if last_ntd >= 0 else "tab:red"
                         certainty = int(round(50 + 50*abs(last_ntd)))  # map [-1,1] → [50,100]
-                        ax2r.text(0.99, 0.06, f"Trend: {t_dir} ({certainty}%)",
-                                  transform=ax2r.transAxes, ha="right", va="bottom",
+                        ax2r.text(0.50, 0.06, f"Trend: {t_dir} ({certainty}%)",
+                                  transform=ax2r.transAxes, ha="center", va="bottom",
                                   fontsize=10, fontweight="bold", color=color,
                                   bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.85))
 
@@ -1841,8 +1841,9 @@ with tab2:
                         t_dir = "UP" if last_ntd >= 0 else "DOWN"
                         color = "tab:green" if last_ntd >= 0 else "tab:red"
                         certainty = int(round(50 + 50*abs(last_ntd)))
-                        ax3r.text(0.99, 0.06, f"Trend: {t_dir} ({certainty}%)",
-                                  transform=ax3r.transAxes, ha="right", va="bottom",
+                        # MOVED badge from bottom-right to bottom-center:
+                        ax3r.text(0.50, 0.06, f"Trend: {t_dir} ({certainty}%)",
+                                  transform=ax3r.transAxes, ha="center", va="bottom",
                                   fontsize=10, fontweight="bold", color=color,
                                   bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.85))
 
