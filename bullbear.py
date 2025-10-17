@@ -1,3 +1,14 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import yfinance as yf
+from statsmodels.tsa.statespace.sarimax import SARIMAX
+from datetime import timedelta, datetime
+import matplotlib.pyplot as plt
+import time
+import pytz
+from matplotlib.transforms import blended_transform_factory  # for left-side labels
+
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # - Forex news markers on intraday charts
 # - Hourly momentum indicator (ROC%) with robust handling
@@ -15,6 +26,7 @@
 # - Current price shown at the BOTTOM-RIGHT of the price chart (inside the axes)
 # - UPDATED: Daily indicator panel now shows **NTD + Trend only** (no EW/NPO/IchimokuN), with guides at 0.00 (dashed), ±0.50 (black), **+0.75 (THICK GREEN)**, **-0.75 (THICK RED)**
 # - UPDATED: Hourly indicator panel now shows **NTD + Trend only** (no NRSI/NMACD/NVol), with the same guide lines
+# - UPDATED: Hourly NTD panel is now SHADED (green above 0, red below 0), matching Daily
 # - Daily view selector (Historical / 6M / 12M / 24M)
 # - Daily trend-direction line (green=uptrend, red=downtrend) with slope label on PRICE chart
 # - NTD -0.5 Scanner tab for Stocks & Forex (Daily; plus Hourly for Forex)
@@ -27,17 +39,6 @@
 # - UPDATED: Volume visuals (panels + NVol fills) use blue
 # - NEW: **Bollinger Bands overlay** on Daily & Hourly price charts (SMA/EMA toggle for midline), with **Normalized %B (NBB)** badge
 # - NEW: **Probabilistic HMA Crossover** on Daily & Hourly price charts — marks ▲ BUY / ▼ SELL only when the most-recent price↔HMA crossover aligns with SARIMAX probability ≥ confidence (default 95%)
-
-import streamlit as st
-import pandas as pd
-import numpy as np
-import yfinance as yf
-from statsmodels.tsa.statespace.sarimax import SARIMAX
-from datetime import timedelta, datetime
-import matplotlib.pyplot as plt
-import time
-import pytz
-from matplotlib.transforms import blended_transform_factory  # for left-side labels
 
 # --- Page config ---
 st.set_page_config(
@@ -205,11 +206,11 @@ npo_fast    = st.sidebar.slider("NPO fast EMA", 5, 30, 12, 1, key="sb_npo_fast")
 npo_slow    = st.sidebar.slider("NPO slow EMA", 10, 60, 26, 1, key="sb_npo_slow")
 npo_norm_win= st.sidebar.slider("NPO normalization window", 30, 600, 240, 10, key="sb_npo_norm")
 
-# NTD overlay controls (for EW/RSI panels)
-st.sidebar.subheader("Normalized Trend (EW/RSI panels)")
+# NTD overlay controls (for NTD panels)
+st.sidebar.subheader("Normalized Trend (NTD panels — Daily & Hourly)")
 show_ntd  = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd")
 ntd_window= st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
-shade_ntd = st.sidebar.checkbox("Shade NTD (EW only: green=up, red=down)", value=True, key="sb_ntd_shade")
+shade_ntd = st.sidebar.checkbox("Shade NTD (Daily & Hourly: green=up, red=down)", value=True, key="sb_ntd_shade")
 
 # Ichimoku controls (Normalized for EW panels + Kijun on price) — only Kijun used on price charts
 st.sidebar.subheader("Normalized Ichimoku (EW panels) + Kijun on price")
@@ -461,7 +462,7 @@ def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int 
     npo = np.tanh(z / 2.0)
     return npo.reindex(s.index)
 
-# ---- Normalized Trend Direction (for EW & RSI panels) ----
+# ---- Normalized Trend Direction (for NTD panels) ----
 def compute_normalized_trend(close: pd.Series, window: int = 60) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
     if s.empty or window < 3:
@@ -1248,13 +1249,17 @@ with tab1:
                     ax2v.legend(loc="lower left", framealpha=0.5)
                     st.pyplot(fig2v)
 
-                # === Hourly Indicator Panel: NTD + Trend ONLY ===
+                # === Hourly Indicator Panel: NTD + Trend ONLY (SHADED) ===
                 if show_nrsi:
                     ntd_h = compute_normalized_trend(hc, window=ntd_window)
                     ntd_trend_h, ntd_m_h = slope_line(ntd_h, slope_lb_hourly)
 
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
                     ax2r.set_title(f"Hourly Indicator Panel — NTD + Trend (win={ntd_window})")
+
+                    # NEW: shading (green above 0, red below 0)
+                    if shade_ntd and not ntd_h.dropna().empty:
+                        shade_ntd_regions(ax2r, ntd_h)
 
                     # NTD line
                     ax2r.plot(ntd_h.index, ntd_h, "-", linewidth=1.6, label="NTD")
@@ -1652,13 +1657,18 @@ with tab2:
                     ax3v.legend(loc="lower left", framealpha=0.5)
                     st.pyplot(fig3v)
 
-                # === Hourly Indicator Panel (Enhanced): NTD + Trend ONLY ===
+                # === Hourly Indicator Panel (Enhanced): NTD + Trend ONLY (SHADED) ===
                 if show_nrsi:
                     ntd_i = compute_normalized_trend(ic, window=ntd_window)
                     ntd_trend_i, ntd_m_i = slope_line(ntd_i, slope_lb_hourly)
 
                     fig3r, ax3r = plt.subplots(figsize=(14,2.8))
                     ax3r.set_title(f"Hourly Indicator Panel — NTD + Trend (win={ntd_window})")
+
+                    # NEW: shading (green above 0, red below 0)
+                    if shade_ntd and not ntd_i.dropna().empty:
+                        shade_ntd_regions(ax3r, ntd_i)
+
                     ax3r.plot(ntd_i.index, ntd_i, "-", linewidth=1.6, label="NTD")
                     if not ntd_trend_i.empty:
                         ax3r.plot(ntd_trend_i.index, ntd_trend_i.values, "--", linewidth=2,
