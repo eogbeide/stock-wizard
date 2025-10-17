@@ -35,6 +35,7 @@
 # - NEW: **Hourly Volume panel** (separate chart) with rolling mid-line and trendline (+ R² badge)
 # - UPDATED: Volume visuals (panels + NVol fills) use blue
 # - NEW: **Bollinger Bands overlay** on Daily & Hourly price charts (SMA/EMA toggle for midline), with **Normalized %B (NBB)** badge
+# - NEW: **Probabilistic HMA Crossover** on Daily & Hourly price charts — marks ▲ BUY / ▼ SELL only when the most-recent price↔HMA crossover aligns with SARIMAX probability ≥ confidence (default 95%)
 
 import streamlit as st
 import pandas as pd
@@ -234,6 +235,12 @@ show_bbands   = st.sidebar.checkbox("Show Bollinger Bands", value=True, key="sb_
 bb_win        = st.sidebar.slider("BB window", 5, 120, 20, 1, key="sb_bb_win")
 bb_mult       = st.sidebar.slider("BB multiplier (σ)", 1.0, 4.0, 2.0, 0.1, key="sb_bb_mult")
 bb_use_ema    = st.sidebar.checkbox("Use EMA midline (vs SMA)", value=False, key="sb_bb_ema")
+
+# NEW: Probabilistic HMA Crossover controls
+st.sidebar.subheader("Probabilistic HMA Crossover (Price Charts)")
+show_hma    = st.sidebar.checkbox("Show HMA crossover signal", value=True, key="sb_show_hma")
+hma_period  = st.sidebar.slider("HMA period", 5, 120, 55, 1, key="sb_hma_period")
+hma_conf    = st.sidebar.slider("Crossover confidence", 0.50, 0.99, 0.95, 0.01, key="sb_hma_conf")
 
 # Forex news controls (only shown in Forex mode)
 if mode == "Forex":
@@ -678,6 +685,58 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     nbb = pctb * 2.0 - 1.0
     return mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index)
 
+# ---- HMA (Hull Moving Average) + crossover helpers (NEW) ----
+def _wma(s: pd.Series, window: int) -> pd.Series:
+    s = _coerce_1d_series(s).astype(float)
+    if s.empty or window < 1:
+        return pd.Series(index=s.index, dtype=float)
+    w = np.arange(1, window + 1, dtype=float)
+    return s.rolling(window, min_periods=window).apply(lambda x: float(np.dot(x, w) / w.sum()), raw=True)
+
+def compute_hma(close: pd.Series, period: int = 55) -> pd.Series:
+    s = _coerce_1d_series(close).astype(float)
+    if s.empty or period < 2:
+        return pd.Series(index=s.index, dtype=float)
+    half = max(1, int(period / 2))
+    sqrtp = max(1, int(np.sqrt(period)))
+    wma_half = _wma(s, half)
+    wma_full = _wma(s, period)
+    diff = 2 * wma_half - wma_full
+    hma = _wma(diff, sqrtp)
+    return hma.reindex(s.index)
+
+def detect_last_crossover(price: pd.Series, line: pd.Series):
+    """Return {'time': ts, 'side': 'BUY'|'SELL'} for the most-recent price↔line crossover (if any)."""
+    p = _coerce_1d_series(price)
+    l = _coerce_1d_series(line)
+    mask = p.notna() & l.notna()
+    if mask.sum() < 2:
+        return None
+    p = p[mask]; l = l[mask]
+    above = p > l
+    cross_up  = above & (~above.shift(1).fillna(False))
+    cross_dn  = (~above) & (above.shift(1).fillna(False))
+    t_up = cross_up[cross_up].index[-1] if cross_up.any() else None
+    t_dn = cross_dn[cross_dn].index[-1] if cross_dn.any() else None
+    if t_up is None and t_dn is None:
+        return None
+    if t_dn is None or (t_up is not None and t_up > t_dn):
+        return {"time": t_up, "side": "BUY"}
+    else:
+        return {"time": t_dn, "side": "SELL"}
+
+def annotate_crossover(ax, ts, px, side: str, conf: float):
+    """Put a ▲/▼ marker and a small label at the crossover point."""
+    try:
+        if side == "BUY":
+            ax.scatter([ts], [px], marker="^", s=90, color="tab:green", zorder=7)
+            ax.text(ts, px, f"  BUY {int(conf*100)}%", va="bottom", fontsize=9, color="tab:green", fontweight="bold")
+        else:
+            ax.scatter([ts], [px], marker="v", s=90, color="tab:red", zorder=7)
+            ax.text(ts, px, f"  SELL {int(conf*100)}%", va="top", fontsize=9, color="tab:red", fontweight="bold")
+    except Exception:
+        pass
+
 # ========= Signals & News helpers =========
 EW_CONFIDENCE = 0.95
 
@@ -972,6 +1031,10 @@ with tab1:
             bb_pctb_d_show= bb_pctb_d.reindex(df_show.index)
             bb_nbb_d_show = bb_nbb_d.reindex(df_show.index)
 
+            # NEW: HMA (Daily) overlay + probabilistic crossover signal
+            hma_d_full = compute_hma(df, period=hma_period) if show_hma else pd.Series(index=df.index, dtype=float)
+            hma_d_show = hma_d_full.reindex(df_show.index)
+
             fig, (ax, axdw) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
                 gridspec_kw={"height_ratios": [3.2, 1.3]}
@@ -983,6 +1046,10 @@ with tab1:
             ax.plot(ema30_show, "--", label="30 EMA")
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
+
+            # HMA line
+            if show_hma and not hma_d_show.dropna().empty:
+                ax.plot(hma_d_show.index, hma_d_show.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
 
             # Plot Kijun (Daily)
             if show_ichi and not kijun_d_show.dropna().empty:
@@ -1030,6 +1097,18 @@ with tab1:
                 ax.text(df_show.index[-1], s30_last, f"  30S = {fmt_price_val(s30_last)}", va="top")
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
+
+            # Probabilistic HMA crossover signal (Daily)
+            if show_hma and not hma_d_show.dropna().empty:
+                cross_d = detect_last_crossover(df_show, hma_d_show)
+                if cross_d is not None and cross_d["time"] is not None:
+                    ts = cross_d["time"]; px_here = float(df_show.loc[ts])
+                    if cross_d["side"] == "BUY" and np.isfinite(p_up) and p_up >= hma_conf:
+                        annotate_crossover(ax, ts, px_here, "BUY", hma_conf)
+                        st.success(f"**HMA BUY** @ {fmt_price_val(px_here)} — last price crossed **up** HMA({hma_period}) with P(up)={fmt_pct(p_up)} ≥ {fmt_pct(hma_conf)}")
+                    elif cross_d["side"] == "SELL" and np.isfinite(p_dn) and p_dn >= hma_conf:
+                        annotate_crossover(ax, ts, px_here, "SELL", hma_conf)
+                        st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — last price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
 
             axdw.set_title("Daily Normalized Elliott Wave + NPO + NTD + Ichimoku (normalized)")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
@@ -1110,6 +1189,9 @@ with tab1:
                 # NEW: Bollinger Bands (Hourly)
                 bb_mid_h, bb_up_h, bb_lo_h, bb_pctb_h, bb_nbb_h = compute_bbands(hc, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
+                # NEW: HMA (Hourly) overlay + probabilistic crossover signal
+                hma_h = compute_hma(hc, period=hma_period) if show_hma else pd.Series(index=hc.index, dtype=float)
+
                 # Lookback slope & R²
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
                 r2_h = regression_r2(hc, slope_lb_hourly)
@@ -1120,6 +1202,10 @@ with tab1:
                 ax2.plot(hc.index, hc, label="Intraday")
                 ax2.plot(hc.index, he, "--", label="20 EMA")
                 ax2.plot(hc.index, trend_h, "--", label=f"Trend (m={fmt_slope(slope_h)}/bar)", linewidth=2)
+
+                # HMA line
+                if show_hma and not hma_h.dropna().empty:
+                    ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
 
                 if show_ichi and not kijun_h.dropna().empty:
                     ax2.plot(kijun_h.index, kijun_h.values, "-", linewidth=1.8, color="black",
@@ -1152,7 +1238,7 @@ with tab1:
                 if np.isfinite(res_val): buy_sell_text += f"  ▼ SELL @{fmt_price_val(res_val)}"
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text}")
 
-                # === Current price badge moved to bottom-right INSIDE the axes ===
+                # === Current price badge (bottom-right) ===
                 if np.isfinite(px_val):
                     nbb_txt = ""
                     try:
@@ -1173,13 +1259,13 @@ with tab1:
                     ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
                              label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
-                # Bottom-left slope badge inside the price chart
+                # Bottom-left slope badge
                 ax2.text(0.01, 0.02, f"Slope: {fmt_slope(slope_h)}/bar",
                          transform=ax2.transAxes, ha="left", va="bottom",
                          fontsize=9, color="black",
                          bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-                # Bottom-center R² badge for trendline over lookback (percentage)
+                # Bottom-center R² badge
                 ax2.text(0.50, 0.02, f"R² ({slope_lb_hourly} bars): {fmt_r2(r2_h)}",
                          transform=ax2.transAxes, ha="center", va="bottom",
                          fontsize=9, color="black",
@@ -1208,6 +1294,18 @@ with tab1:
                     elif signal["side"] == "SELL":
                         st.error(f"**SELL** @ {fmt_price_val(signal['level'])} — {signal['reason']}")
 
+                # Probabilistic HMA crossover signal (Hourly)
+                if show_hma and not hma_h.dropna().empty:
+                    cross_h = detect_last_crossover(hc, hma_h)
+                    if cross_h is not None and cross_h["time"] is not None:
+                        ts = cross_h["time"]; px_here = float(hc.loc[ts])
+                        if cross_h["side"] == "BUY" and np.isfinite(p_up) and p_up >= hma_conf:
+                            annotate_crossover(ax2, ts, px_here, "BUY", hma_conf)
+                            st.success(f"**HMA BUY** @ {fmt_price_val(px_here)} — price crossed **up** HMA({hma_period}) with P(up)={fmt_pct(p_up)} ≥ {fmt_pct(hma_conf)}")
+                        elif cross_h["side"] == "SELL" and np.isfinite(p_dn) and p_dn >= hma_conf:
+                            annotate_crossover(ax2, ts, px_here, "SELL", hma_conf)
+                            st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
+
                 ax2.set_xlabel("Time (PST)")
                 ax2.legend(loc="lower left", framealpha=0.5)
                 xlim_price = ax2.get_xlim()
@@ -1226,7 +1324,7 @@ with tab1:
                     ax2v.fill_between(vol.index, 0, vol, alpha=0.18, label="Volume", color="tab:blue")
                     ax2v.plot(vol.index, vol, linewidth=1.0, color="tab:blue")
 
-                    # Rolling mid-line (as a curve) + horizontal marker at last mid
+                    # Rolling mid-line + label
                     ax2v.plot(v_mid.index, v_mid, ":", linewidth=1.6, label=f"Mid-line ({slope_lb_hourly}-roll)")
                     if v_mid.notna().any():
                         last_mid = float(v_mid.dropna().iloc[-1])
@@ -1234,12 +1332,10 @@ with tab1:
                                     linestyles="dotted", linewidth=1.0)
                         label_on_left(ax2v, last_mid, f"Mid {last_mid:,.0f}", color="black")
 
-                    # Trendline
                     if not v_trend.empty:
                         ax2v.plot(v_trend.index, v_trend.values, "--", linewidth=2,
                                   label=f"Trend {slope_lb_hourly} ({fmt_slope(v_m)}/bar)")
 
-                    # Badges
                     ax2v.text(0.01, 0.02, f"Slope: {fmt_slope(v_m)}/bar",
                               transform=ax2v.transAxes, ha="left", va="bottom",
                               fontsize=9, color="black",
@@ -1415,6 +1511,10 @@ with tab2:
             bb_pctb_d2_show= bb_pctb_d2.reindex(df_show.index)
             bb_nbb_d2_show = bb_nbb_d2.reindex(df_show.index)
 
+            # NEW: HMA (Daily, Enhanced)
+            hma_d2_full = compute_hma(df, period=hma_period) if show_hma else pd.Series(index=df.index, dtype=float)
+            hma_d2_show = hma_d2_full.reindex(df_show.index)
+
             fig, (ax, axdw2) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
                 gridspec_kw={"height_ratios": [3.2, 1.3]}
@@ -1426,6 +1526,8 @@ with tab2:
             ax.plot(ema30_show, "--", label="30 EMA")
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
+            if show_hma and not hma_d2_show.dropna().empty:
+                ax.plot(hma_d2_show.index, hma_d2_show.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
             if show_ichi and not kijun_d2_show.dropna().empty:
                 ax.plot(kijun_d2_show.index, kijun_d2_show.values, "-", linewidth=1.8, color="black",
                         label=f"Ichimoku Kijun ({ichi_base})")
@@ -1471,6 +1573,18 @@ with tab2:
                 ax.text(df_show.index[-1], s30_last, f"  30S = {fmt_price_val(s30_last)}", va="top")
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
+
+            # Probabilistic HMA crossover (Daily, Enhanced)
+            if show_hma and not hma_d2_show.dropna().empty:
+                cross_d2 = detect_last_crossover(df_show, hma_d2_show)
+                if cross_d2 is not None and cross_d2["time"] is not None:
+                    ts = cross_d2["time"]; px_here = float(df_show.loc[ts])
+                    if cross_d2["side"] == "BUY" and np.isfinite(p_up) and p_up >= hma_conf:
+                        annotate_crossover(ax, ts, px_here, "BUY", hma_conf)
+                        st.success(f"**HMA BUY** @ {fmt_price_val(px_here)} — last price crossed **up** HMA({hma_period}) with P(up)={fmt_pct(p_up)} ≥ {fmt_pct(hma_conf)}")
+                    elif cross_d2["side"] == "SELL" and np.isfinite(p_dn) and p_dn >= hma_conf:
+                        annotate_crossover(ax, ts, px_here, "SELL", hma_conf)
+                        st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — last price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
 
             axdw2.set_title("Daily Normalized Elliott Wave + NPO + NTD + Ichimoku (normalized)")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
@@ -1522,7 +1636,7 @@ with tab2:
             axdw2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Intraday (Hourly) -----
+        # ----- Intraday (Enhanced) -----
         if view in ("Intraday","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -1549,6 +1663,9 @@ with tab2:
                 # NEW: Bollinger Bands (Hourly, Enhanced)
                 bb_mid_i, bb_up_i, bb_lo_i, bb_pctb_i, bb_nbb_i = compute_bbands(ic, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
+                # NEW: HMA (Hourly, Enhanced)
+                hma_i = compute_hma(ic, period=hma_period) if show_hma else pd.Series(index=ic.index, dtype=float)
+
                 # Lookback slope & R²
                 yhat_h, m_h = slope_line(ic, slope_lb_hourly)
                 r2_i = regression_r2(ic, slope_lb_hourly)
@@ -1559,6 +1676,8 @@ with tab2:
                 ax3.plot(ic.index, ic, label="Intraday")
                 ax3.plot(ic.index, ie, "--", label="20 EMA")
                 ax3.plot(ic.index, trend_i, "--", label=f"Trend (m={fmt_slope(slope_i)}/bar)", linewidth=2)
+                if show_hma and not hma_i.dropna().empty:
+                    ax3.plot(hma_i.index, hma_i.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
                 if show_ichi and not kijun_i.dropna().empty:
                     ax3.plot(kijun_i.index, kijun_i.values, "-", linewidth=1.8, color="black",
                              label=f"Ichimoku Kijun ({ichi_base})")
@@ -1590,7 +1709,7 @@ with tab2:
                 if np.isfinite(res_val2): buy_sell_text2 += f"  ▼ SELL @{fmt_price_val(res_val2)}"
                 ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text2}")
 
-                # === Current price badge moved to bottom-right INSIDE the axes ===
+                # === Current price badge (bottom-right) ===
                 if np.isfinite(px_val2):
                     nbb_txt2 = ""
                     try:
@@ -1617,7 +1736,7 @@ with tab2:
                          fontsize=9, color="black",
                          bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-                # Bottom-center R² badge for trendline over lookback (percentage)
+                # Bottom-center R² badge
                 ax3.text(0.50, 0.02, f"R² ({slope_lb_hourly} bars): {fmt_r2(r2_i)}",
                          transform=ax3.transAxes, ha="center", va="bottom",
                          fontsize=9, color="black",
@@ -1637,6 +1756,18 @@ with tab2:
                         st.success(f"**BUY** @ {fmt_price_val(signal2['level'])} — {signal2['reason']}")
                     elif signal2["side"] == "SELL":
                         st.error(f"**SELL** @ {fmt_price_val(signal2['level'])} — {signal2['reason']}")
+
+                # Probabilistic HMA crossover (Hourly, Enhanced)
+                if show_hma and not hma_i.dropna().empty:
+                    cross_i = detect_last_crossover(ic, hma_i)
+                    if cross_i is not None and cross_i["time"] is not None:
+                        ts = cross_i["time"]; px_here = float(ic.loc[ts])
+                        if cross_i["side"] == "BUY" and np.isfinite(p_up) and p_up >= hma_conf:
+                            annotate_crossover(ax3, ts, px_here, "BUY", hma_conf)
+                            st.success(f"**HMA BUY** @ {fmt_price_val(px_here)} — price crossed **up** HMA({hma_period}) with P(up)={fmt_pct(p_up)} ≥ {fmt_pct(hma_conf)}")
+                        elif cross_i["side"] == "SELL" and np.isfinite(p_dn) and p_dn >= hma_conf:
+                            annotate_crossover(ax3, ts, px_here, "SELL", hma_conf)
+                            st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
 
                 ax3.set_xlabel("Time (PST)")
                 ax3.legend(loc="lower left", framealpha=0.5)
@@ -2007,7 +2138,7 @@ with tab6:
                         fontsize=9, color="black",
                         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-            # Current price badge moved to bottom-right INSIDE the axes
+            # Current price badge (bottom-right)
             px_now = _safe_last_float(s)
             if np.isfinite(px_now):
                 ax.text(0.99, 0.02, f"Current price: {fmt_price_val(px_now)}",
