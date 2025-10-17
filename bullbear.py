@@ -35,6 +35,7 @@
 # - NEW: **Hourly Volume panel** (separate chart) with rolling mid-line and trendline (+ R² badge)
 # - UPDATED: Volume visuals (panels + NVol fills) use blue
 # - NEW: **Bollinger Bands overlay** on Daily & Hourly price charts (SMA/EMA toggle for midline), with **Normalized %B (NBB)** badge
+# - NEW: **NMACD (+signal) overlay on Daily & Hourly price charts** (right axis) with top-right badge and sidebar controls
 
 import streamlit as st
 import pandas as pd
@@ -234,6 +235,14 @@ show_bbands   = st.sidebar.checkbox("Show Bollinger Bands", value=True, key="sb_
 bb_win        = st.sidebar.slider("BB window", 5, 120, 20, 1, key="sb_bb_win")
 bb_mult       = st.sidebar.slider("BB multiplier (σ)", 1.0, 4.0, 2.0, 0.1, key="sb_bb_mult")
 bb_use_ema    = st.sidebar.checkbox("Use EMA midline (vs SMA)", value=False, key="sb_bb_ema")
+
+# NEW: NMACD overlay controls (Price charts)
+st.sidebar.subheader("NMACD on Price Charts")
+show_nmacd_price = st.sidebar.checkbox("Show NMACD overlay", value=True, key="sb_show_nmacd_price")
+nmacd_fast   = st.sidebar.slider("NMACD fast EMA",   5, 30, 12, 1, key="sb_nmacd_fast")
+nmacd_slow   = st.sidebar.slider("NMACD slow EMA",  10, 60, 26, 1, key="sb_nmacd_slow")
+nmacd_signal = st.sidebar.slider("NMACD signal EMA", 3, 30,  9, 1, key="sb_nmacd_signal")
+nmacd_norm   = st.sidebar.slider("NMACD normalization window", 30, 600, 240, 10, key="sb_nmacd_norm")
 
 # Forex news controls (only shown in Forex mode)
 if mode == "Forex":
@@ -937,6 +946,9 @@ with tab1:
             ichi_d = pd.Series(index=df.index, dtype=float)
             kijun_d = pd.Series(index=df.index, dtype=float)
 
+            # Daily NMACD (for price chart overlay)
+            nmacd_d_raw, nmacd_sig_d_raw, _ = compute_nmacd(df, fast=nmacd_fast, slow=nmacd_slow, signal=nmacd_signal, norm_win=nmacd_norm)
+
             # NEW: Bollinger Bands (Daily)
             bb_mid_d, bb_up_d, bb_lo_d, bb_pctb_d, bb_nbb_d = compute_bbands(df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
@@ -971,6 +983,10 @@ with tab1:
             bb_lo_d_show  = bb_lo_d.reindex(df_show.index)
             bb_pctb_d_show= bb_pctb_d.reindex(df_show.index)
             bb_nbb_d_show = bb_nbb_d.reindex(df_show.index)
+
+            # NMACD subset for shown window
+            nmacd_d_show     = nmacd_d_raw.reindex(df_show.index)
+            nmacd_sig_d_show = nmacd_sig_d_raw.reindex(df_show.index)
 
             fig, (ax, axdw) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
@@ -1029,7 +1045,33 @@ with tab1:
                 ax.text(df_show.index[-1], r30_last, f"  30R = {fmt_price_val(r30_last)}", va="bottom")
                 ax.text(df_show.index[-1], s30_last, f"  30S = {fmt_price_val(s30_last)}", va="top")
             ax.set_ylabel("Price")
-            ax.legend(loc="lower left", framealpha=0.5)
+
+            # >>> NMACD overlay on right axis (Daily price chart)
+            if show_nmacd_price and not nmacd_d_show.dropna().empty:
+                axr = ax.twinx()
+                axr.set_ylim(-1.1, 1.1)
+                l1, = axr.plot(nmacd_d_show.index, nmacd_d_show.values, "-", linewidth=1.4, color="tab:purple",
+                               label=f"NMACD ({nmacd_fast},{nmacd_slow})")
+                l2, = axr.plot(nmacd_sig_d_show.index, nmacd_sig_d_show.values, "--", linewidth=1.0, color="tab:gray",
+                               label="NMACD signal")
+                axr.axhline(0, linestyle="--", linewidth=1, color="tab:gray")
+                axr.set_ylabel("NMACD (norm)")
+                # Badge (top-right)
+                try:
+                    last_nm = float(nmacd_d_show.dropna().iloc[-1])
+                    last_ns = float(nmacd_sig_d_show.dropna().iloc[-1])
+                    ax.text(0.99, 0.98, f"NMACD {last_nm:+.2f}  |  Sig {last_ns:+.2f}",
+                            transform=ax.transAxes, ha="right", va="top",
+                            fontsize=9, color="black",
+                            bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+                except Exception:
+                    pass
+                # Merge legends
+                h1, l1s = ax.get_legend_handles_labels()
+                h2, l2s = axr.get_legend_handles_labels()
+                ax.legend(h1 + h2, l1s + l2s, loc="lower left", framealpha=0.5)
+            else:
+                ax.legend(loc="lower left", framealpha=0.5)
 
             axdw.set_title("Daily Normalized Elliott Wave + NPO + NTD + Ichimoku (normalized)")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
@@ -1110,6 +1152,9 @@ with tab1:
                 # NEW: Bollinger Bands (Hourly)
                 bb_mid_h, bb_up_h, bb_lo_h, bb_pctb_h, bb_nbb_h = compute_bbands(hc, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
+                # Hourly NMACD (for price chart overlay)
+                nmacd_h_raw, nmacd_sig_h_raw, _ = compute_nmacd(hc, fast=nmacd_fast, slow=nmacd_slow, signal=nmacd_signal, norm_win=nmacd_norm)
+
                 # Lookback slope & R²
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
                 r2_h = regression_r2(hc, slope_lb_hourly)
@@ -1173,6 +1218,33 @@ with tab1:
                     ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
                              label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
+                # >>> NMACD overlay on right axis (Hourly price chart)
+                if show_nmacd_price and not nmacd_h_raw.dropna().empty:
+                    ax2r = ax2.twinx()
+                    ax2r.set_ylim(-1.1, 1.1)
+                    l1, = ax2r.plot(nmacd_h_raw.index, nmacd_h_raw.values, "-", linewidth=1.4, color="tab:purple",
+                                    label=f"NMACD ({nmacd_fast},{nmacd_slow})")
+                    l2, = ax2r.plot(nmacd_sig_h_raw.index, nmacd_sig_h_raw.values, "--", linewidth=1.0, color="tab:gray",
+                                    label="NMACD signal")
+                    ax2r.axhline(0, linestyle="--", linewidth=1, color="tab:gray")
+                    ax2r.set_ylabel("NMACD (norm)")
+                    # Badge (top-right)
+                    try:
+                        last_nm = float(nmacd_h_raw.dropna().iloc[-1])
+                        last_ns = float(nmacd_sig_h_raw.dropna().iloc[-1])
+                        ax2.text(0.99, 0.98, f"NMACD {last_nm:+.2f}  |  Sig {last_ns:+.2f}",
+                                 transform=ax2.transAxes, ha="right", va="top",
+                                 fontsize=9, color="black",
+                                 bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+                    except Exception:
+                        pass
+                    # Merge legends
+                    h1, l1s = ax2.get_legend_handles_labels()
+                    h2, l2s = ax2r.get_legend_handles_labels()
+                    ax2.legend(h1 + h2, l1s + l2s, loc="lower left", framealpha=0.5)
+                else:
+                    ax2.legend(loc="lower left", framealpha=0.5)
+
                 # Bottom-left slope badge inside the price chart
                 ax2.text(0.01, 0.02, f"Slope: {fmt_slope(slope_h)}/bar",
                          transform=ax2.transAxes, ha="left", va="bottom",
@@ -1209,7 +1281,6 @@ with tab1:
                         st.error(f"**SELL** @ {fmt_price_val(signal['level'])} — {signal['reason']}")
 
                 ax2.set_xlabel("Time (PST)")
-                ax2.legend(loc="lower left", framealpha=0.5)
                 xlim_price = ax2.get_xlim()
                 st.pyplot(fig2)
 
@@ -1383,6 +1454,9 @@ with tab2:
             # NEW: Bollinger Bands (Daily, Enhanced)
             bb_mid_d2, bb_up_d2, bb_lo_d2, bb_pctb_d2, bb_nbb_d2 = compute_bbands(df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
+            # Daily NMACD (Enhanced price chart overlay)
+            nmacd_d2_raw, nmacd_sig_d2_raw, _ = compute_nmacd(df, fast=nmacd_fast, slow=nmacd_slow, signal=nmacd_signal, norm_win=nmacd_norm)
+
             if df_ohlc is not None and not df_ohlc.empty and show_ichi:
                 ichi_d2 = compute_normalized_ichimoku(
                     df_ohlc["High"], df_ohlc["Low"], df_ohlc["Close"],
@@ -1414,6 +1488,10 @@ with tab2:
             bb_lo_d2_show  = bb_lo_d2.reindex(df_show.index)
             bb_pctb_d2_show= bb_pctb_d2.reindex(df_show.index)
             bb_nbb_d2_show = bb_nbb_d2.reindex(df_show.index)
+
+            # NMACD subset (Enhanced)
+            nmacd_d2_show     = nmacd_d2_raw.reindex(df_show.index)
+            nmacd_sig_d2_show = nmacd_sig_d2_raw.reindex(df_show.index)
 
             fig, (ax, axdw2) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
@@ -1470,7 +1548,31 @@ with tab2:
                 ax.text(df_show.index[-1], r30_last, f"  30R = {fmt_price_val(r30_last)}", va="bottom")
                 ax.text(df_show.index[-1], s30_last, f"  30S = {fmt_price_val(s30_last)}", va="top")
             ax.set_ylabel("Price")
-            ax.legend(loc="lower left", framealpha=0.5)
+
+            # >>> NMACD overlay (Daily, Enhanced)
+            if show_nmacd_price and not nmacd_d2_show.dropna().empty:
+                axr = ax.twinx()
+                axr.set_ylim(-1.1, 1.1)
+                axr.plot(nmacd_d2_show.index, nmacd_d2_show.values, "-", linewidth=1.4, color="tab:purple",
+                         label=f"NMACD ({nmacd_fast},{nmacd_slow})")
+                axr.plot(nmacd_sig_d2_show.index, nmacd_sig_d2_show.values, "--", linewidth=1.0, color="tab:gray",
+                         label="NMACD signal")
+                axr.axhline(0, linestyle="--", linewidth=1, color="tab:gray")
+                axr.set_ylabel("NMACD (norm)")
+                try:
+                    last_nm = float(nmacd_d2_show.dropna().iloc[-1])
+                    last_ns = float(nmacd_sig_d2_show.dropna().iloc[-1])
+                    ax.text(0.99, 0.98, f"NMACD {last_nm:+.2f}  |  Sig {last_ns:+.2f}",
+                            transform=ax.transAxes, ha="right", va="top",
+                            fontsize=9, color="black",
+                            bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+                except Exception:
+                    pass
+                h1, l1s = ax.get_legend_handles_labels()
+                h2, l2s = axr.get_legend_handles_labels()
+                ax.legend(h1 + h2, l1s + l2s, loc="lower left", framealpha=0.5)
+            else:
+                ax.legend(loc="lower left", framealpha=0.5)
 
             axdw2.set_title("Daily Normalized Elliott Wave + NPO + NTD + Ichimoku (normalized)")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
@@ -1549,6 +1651,9 @@ with tab2:
                 # NEW: Bollinger Bands (Hourly, Enhanced)
                 bb_mid_i, bb_up_i, bb_lo_i, bb_pctb_i, bb_nbb_i = compute_bbands(ic, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
+                # NMACD for intraday price chart (Enhanced)
+                nmacd_i_raw, nmacd_sig_i_raw, _ = compute_nmacd(ic, fast=nmacd_fast, slow=nmacd_slow, signal=nmacd_signal, norm_win=nmacd_norm)
+
                 # Lookback slope & R²
                 yhat_h, m_h = slope_line(ic, slope_lb_hourly)
                 r2_i = regression_r2(ic, slope_lb_hourly)
@@ -1611,6 +1716,31 @@ with tab2:
                     ax3.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
                              label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
+                # >>> NMACD overlay (Intraday, Enhanced)
+                if show_nmacd_price and not nmacd_i_raw.dropna().empty:
+                    ax3r = ax3.twinx()
+                    ax3r.set_ylim(-1.1, 1.1)
+                    ax3r.plot(nmacd_i_raw.index, nmacd_i_raw.values, "-", linewidth=1.4, color="tab:purple",
+                              label=f"NMACD ({nmacd_fast},{nmacd_slow})")
+                    ax3r.plot(nmacd_sig_i_raw.index, nmacd_sig_i_raw.values, "--", linewidth=1.0, color="tab:gray",
+                              label="NMACD signal")
+                    ax3r.axhline(0, linestyle="--", linewidth=1, color="tab:gray")
+                    ax3r.set_ylabel("NMACD (norm)")
+                    try:
+                        last_nm = float(nmacd_i_raw.dropna().iloc[-1])
+                        last_ns = float(nmacd_sig_i_raw.dropna().iloc[-1])
+                        ax3.text(0.99, 0.98, f"NMACD {last_nm:+.2f}  |  Sig {last_ns:+.2f}",
+                                 transform=ax3.transAxes, ha="right", va="top",
+                                 fontsize=9, color="black",
+                                 bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+                    except Exception:
+                        pass
+                    h1, l1s = ax3.get_legend_handles_labels()
+                    h2, l2s = ax3r.get_legend_handles_labels()
+                    ax3.legend(h1 + h2, l1s + l2s, loc="lower left", framealpha=0.5)
+                else:
+                    ax3.legend(loc="lower left", framealpha=0.5)
+
                 # Bottom-left slope badge
                 ax3.text(0.01, 0.02, f"Slope: {fmt_slope(slope_i)}/bar",
                          transform=ax3.transAxes, ha="left", va="bottom",
@@ -1639,7 +1769,6 @@ with tab2:
                         st.error(f"**SELL** @ {fmt_price_val(signal2['level'])} — {signal2['reason']}")
 
                 ax3.set_xlabel("Time (PST)")
-                ax3.legend(loc="lower left", framealpha=0.5)
                 xlim_price2 = ax3.get_xlim()
                 st.pyplot(fig3)
 
