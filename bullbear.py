@@ -13,21 +13,13 @@
 # - All displayed price values formatted to 3 decimal places
 # - Hourly Support/Resistance drawn as STRAIGHT LINES across the entire chart
 # - Current price shown at the BOTTOM-RIGHT of the price chart (inside the axes)
-# - Daily Normalized Elliott Wave panel (dates aligned to daily chart, shared x-axis with price)
-# - EW panels show BUY/SELL signals when forecast confidence > 95% and display current price on top
-# - EW panels draw a red line at +0.5 and a green line at -0.5
-# - EW panels draw black lines at +0.75 and -0.75
-# - Adds Normalized Price Oscillator (NPO) overlay to EW panels with sidebar controls
-# - Adds Normalized Trend Direction (NTD) overlay + optional green/red shading to EW panels with sidebar controls
+# - UPDATED: Daily indicator panel now shows **NTD + Trend only** (no EW/NPO/IchimokuN), with guides at 0.00 (dashed), ±0.50 (black), **+0.75 (THICK GREEN)**, **-0.75 (THICK RED)**
+# - UPDATED: Hourly indicator panel now shows **NTD + Trend only** (no NRSI/NMACD/NVol), with the same guide lines
 # - Daily view selector (Historical / 6M / 12M / 24M)
-# - Red shading under NPO curve on EW panels
-# - Daily trend-direction line (green=uptrend, red=downtrend) with slope label
+# - Daily trend-direction line (green=uptrend, red=downtrend) with slope label on PRICE chart
 # - NTD -0.5 Scanner tab for Stocks & Forex (Daily; plus Hourly for Forex)
-# - Normalized Ichimoku overlay on EW panels (Daily) with sidebar controls
 # - Ichimoku Kijun (Base) line added to Daily & Hourly price charts (solid black, continuous)
-# - UPDATED: Removed Hourly EW panel and added **Normalized RSI (NRSI)** panel below the hourly price chart
-# - UPDATED: RSI panel now **only shows NTD + Trend** with guides at 0.00 (dashed), ±0.50 (black), ±0.75 (black)
-# - UPDATED: Trend badge stays **bottom-center**
+# - UPDATED: Price chart shows trendline slope in legend + bottom-left
 # - NEW: Scanner lists **Price > Kijun(26)** symbols (Daily for Stocks & FX; Hourly for FX)
 # - NEW: Hourly chart shows **R²** for the trendline (computed over the slope lookback) at the **bottom-center** of the chart (as a percentage)
 # - NEW: **Long-Term History** tab with 5/10/15/20-year buttons showing price with 252d Support/Resistance and an overall trendline
@@ -185,10 +177,10 @@ st.sidebar.subheader("Hourly Momentum")
 show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True, key="sb_show_mom_hourly")
 mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, key="sb_mom_lb_hourly")
 
-# Hourly NTD/Trend panel controls (re-using the NRSI toggle for visibility)
-st.sidebar.subheader("Hourly Trend Panel (NTD)")
-show_nrsi   = st.sidebar.checkbox("Show Trend (NTD) panel", value=True, key="sb_show_nrsi")
-nrsi_period = st.sidebar.slider("RSI period (bars)", 5, 60, 14, 1, key="sb_nrsi_period")  # kept for compatibility, unused
+# Hourly Normalized RSI controls (kept for layout; panel now shows only NTD + Trend)
+st.sidebar.subheader("Hourly Normalized RSI (panel now shows NTD + Trend only)")
+show_nrsi   = st.sidebar.checkbox("Show Hourly NTD panel", value=True, key="sb_show_nrsi")
+nrsi_period = st.sidebar.slider("RSI period (unused)", 5, 60, 14, 1, key="sb_nrsi_period")
 
 # Hourly Supertrend controls
 st.sidebar.subheader("Hourly Supertrend")
@@ -200,33 +192,33 @@ st.sidebar.subheader("Signal Logic (Hourly)")
 signal_threshold = st.sidebar.slider("Signal confidence threshold", 0.50, 0.99, 0.90, 0.01, key="sb_sig_thr")
 sr_prox_pct = st.sidebar.slider("S/R proximity (%)", 0.05, 1.00, 0.25, 0.05, key="sb_sr_prox") / 100.0
 
-# Daily EW controls
-st.sidebar.subheader("Normalized Elliott Wave (Daily)")
-pivot_lookback_d = st.sidebar.slider("Pivot lookback (days)", 3, 31, 9, 2, key="sb_pivot_lb_d")
-norm_window_d    = st.sidebar.slider("Normalization window (days)", 30, 1200, 360, 10, key="sb_norm_win_d")
-waves_to_annotate_d = st.sidebar.slider("Annotate recent waves (daily)", 3, 12, 7, 1, key="sb_wave_ann_d")
+# Daily indicator panel controls
+st.sidebar.subheader("NTD (Daily Indicator Panel)")
+pivot_lookback_d = st.sidebar.slider("Pivot lookback (unused)", 3, 31, 9, 2, key="sb_pivot_lb_d")
+norm_window_d    = st.sidebar.slider("Normalization window (unused)", 30, 1200, 360, 10, key="sb_norm_win_d")
+waves_to_annotate_d = st.sidebar.slider("Annotate recent waves (unused)", 3, 12, 7, 1, key="sb_wave_ann_d")
 
-# NPO overlay controls (for EW panels)
-st.sidebar.subheader("Normalized Price Oscillator (overlay on EW panels)")
-show_npo    = st.sidebar.checkbox("Show NPO overlay", value=True, key="sb_show_npo")
+# NPO overlay controls (unused now; kept for compatibility)
+st.sidebar.subheader("Normalized Price Oscillator (unused on indicator panels)")
+show_npo    = st.sidebar.checkbox("Show NPO overlay (unused)", value=False, key="sb_show_npo")
 npo_fast    = st.sidebar.slider("NPO fast EMA", 5, 30, 12, 1, key="sb_npo_fast")
 npo_slow    = st.sidebar.slider("NPO slow EMA", 10, 60, 26, 1, key="sb_npo_slow")
 npo_norm_win= st.sidebar.slider("NPO normalization window", 30, 600, 240, 10, key="sb_npo_norm")
 
-# NTD overlay controls (for EW panels AND Trend panel)
-st.sidebar.subheader("Normalized Trend (EW/Trend panels)")
+# NTD overlay controls (for EW/RSI panels)
+st.sidebar.subheader("Normalized Trend (EW/RSI panels)")
 show_ntd  = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd")
 ntd_window= st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
 shade_ntd = st.sidebar.checkbox("Shade NTD (EW only: green=up, red=down)", value=True, key="sb_ntd_shade")
 
-# Ichimoku controls (Normalized for EW panels + Kijun on price)
+# Ichimoku controls (Normalized for EW panels + Kijun on price) — only Kijun used on price charts
 st.sidebar.subheader("Normalized Ichimoku (EW panels) + Kijun on price")
-show_ichi = st.sidebar.checkbox("Show Ichimoku", value=True, key="sb_show_ichi")
+show_ichi = st.sidebar.checkbox("Show Ichimoku Kijun on price", value=True, key="sb_show_ichi")
 ichi_conv = st.sidebar.slider("Conversion (Tenkan)", 5, 20, 9, 1, key="sb_ichi_conv")
 ichi_base = st.sidebar.slider("Base (Kijun)", 20, 40, 26, 1, key="sb_ichi_base")
 ichi_spanb= st.sidebar.slider("Span B", 40, 80, 52, 1, key="sb_ichi_spanb")
-ichi_norm_win = st.sidebar.slider("Ichimoku normalization window (EW)", 30, 600, 240, 10, key="sb_ichi_norm")
-ichi_price_weight = st.sidebar.slider("Weight: Price vs Cloud (EW)", 0.0, 1.0, 0.6, 0.05, key="sb_ichi_w")
+ichi_norm_win = st.sidebar.slider("Ichimoku normalization window (unused)", 30, 600, 240, 10, key="sb_ichi_norm")
+ichi_price_weight = st.sidebar.slider("Weight: Price vs Cloud (unused)", 0.0, 1.0, 0.6, 0.05, key="sb_ichi_w")
 
 # NEW: Bollinger Bands controls
 st.sidebar.subheader("Bollinger Bands (Price Charts)")
@@ -237,7 +229,7 @@ bb_use_ema    = st.sidebar.checkbox("Use EMA midline (vs SMA)", value=False, key
 
 # NEW: Probabilistic HMA Crossover controls
 st.sidebar.subheader("Probabilistic HMA Crossover (Price Charts)")
-show_hma    = st.sidebar.checkbox("Show HMA crossover signal", value=True, key="sb_hma")
+show_hma    = st.sidebar.checkbox("Show HMA crossover signal", value=True, key="sb_hma_show")
 hma_period  = st.sidebar.slider("HMA period", 5, 120, 55, 1, key="sb_hma_period")
 hma_conf    = st.sidebar.slider("Crossover confidence", 0.50, 0.99, 0.95, 0.01, key="sb_hma_conf")
 
@@ -469,7 +461,7 @@ def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int 
     npo = np.tanh(z / 2.0)
     return npo.reindex(s.index)
 
-# ---- Normalized Trend Direction (for EW & Trend panels) ----
+# ---- Normalized Trend Direction (for EW & RSI panels) ----
 def compute_normalized_trend(close: pd.Series, window: int = 60) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
     if s.empty or window < 3:
@@ -499,19 +491,14 @@ def shade_ntd_regions(ax, ntd: pd.Series):
     ntd = ntd.copy()
     pos = ntd.where(ntd > 0)
     neg = ntd.where(ntd < 0)
-    ax.fill_between(ntd.index, 0, pos, alpha=0.12, step=None)
-    ax.fill_between(ntd.index, 0, neg, alpha=0.12, step=None)
+    ax.fill_between(ntd.index, 0, pos, alpha=0.12, color="tab:green")
+    ax.fill_between(ntd.index, 0, neg, alpha=0.12, color="tab:red")
 
-# Red shading under NPO curve
+# Red shading under NPO curve (unused now)
 def shade_npo_regions(ax, npo: pd.Series):
-    if npo is None or npo.empty:
-        return
-    pos = npo.where(npo > 0)
-    neg = npo.where(npo < 0)
-    ax.fill_between(pos.index, 0, pos, alpha=0.15, color="tab:red")
-    ax.fill_between(neg.index, 0, neg, alpha=0.08, color="tab:red")
+    return
 
-# Daily trend-direction line helper
+# Daily trend-direction line helper (PRICE chart)
 def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "Trend"):
     s = _coerce_1d_series(series_like).dropna()
     if s.shape[0] < 2:
@@ -566,60 +553,22 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
         "upperband": upperband, "lowerband": lowerband
     })
 
-# ---- Normalized Elliott Wave (for DAILY panel) ----
+# ---- Normalized Elliott Wave (kept but unused) ----
 def compute_normalized_elliott_wave(close: pd.Series,
                                     pivot_lb: int = 7,
                                     norm_win: int = 240):
     s = _coerce_1d_series(close).dropna()
     if s.empty:
         return pd.Series(index=_coerce_1d_series(close).index, dtype=float), pd.DataFrame(columns=["time","price","type","wave"])
-
     minp = max(10, norm_win//10)
     mean = s.rolling(norm_win, min_periods=minp).mean()
     std  = s.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
     z = (s - mean) / std
     wave_norm = np.tanh(z / 2.0)
     wave_norm = wave_norm.reindex(close.index)
+    return wave_norm, pd.DataFrame(columns=["time","price","type","wave"])
 
-    if pivot_lb % 2 == 0:
-        pivot_lb += 1
-    roll_max = s.rolling(pivot_lb, center=True).max()
-    roll_min = s.rolling(pivot_lb, center=True).min()
-
-    pivots = []
-    half = pivot_lb // 2
-    for i in range(half, len(s)-half):
-        if not np.isfinite(s.iloc[i]):
-            continue
-        if s.iloc[i] == roll_max.iloc[i]:
-            pivots.append((s.index[i], float(s.iloc[i]), 'H'))
-        elif s.iloc[i] == roll_min.iloc[i]:
-            pivots.append((s.index[i], float(s.iloc[i]), 'L'))
-
-    dedup = []
-    for t, p, typ in pivots:
-        if not dedup:
-            dedup.append((t,p,typ))
-        else:
-            pt, pp, ptyp = dedup[-1]
-            if typ == ptyp:
-                if (typ == 'H' and p > pp) or (typ == 'L' and p < pp):
-                    dedup[-1] = (t,p,typ)
-            else:
-                dedup.append((t,p,typ))
-
-    waves = []
-    wave_num = 1
-    for t, p, typ in dedup:
-        waves.append((t,p,typ,wave_num))
-        wave_num += 1
-        if wave_num > 5:
-            wave_num = 1
-
-    pivots_df = pd.DataFrame(waves, columns=["time","price","type","wave"])
-    return wave_norm, pivots_df
-
-# ---- Ichimoku (classic + normalized) ----
+# ---- Ichimoku (classic) ----
 def ichimoku_lines(high: pd.Series, low: pd.Series, close: pd.Series,
                    conv: int = 9, base: int = 26, span_b: int = 52, shift_cloud: bool = False):
     H = _coerce_1d_series(high)
@@ -641,24 +590,9 @@ def ichimoku_lines(high: pd.Series, low: pd.Series, close: pd.Series,
 def compute_normalized_ichimoku(high: pd.Series, low: pd.Series, close: pd.Series,
                                 conv: int = 9, base: int = 26, span_b: int = 52,
                                 norm_win: int = 240, price_weight: float = 0.6) -> pd.Series:
+    # Kept for compatibility; not used on indicator panels
     C = _coerce_1d_series(close).astype(float)
-    H = _coerce_1d_series(high).astype(float)
-    L = _coerce_1d_series(low).astype(float)
-    if C.empty or H.empty or L.empty:
-        return pd.Series(index=C.index, dtype=float)
-
-    tenkan, kijun, span_a, span_b, _ = ichimoku_lines(H, L, C, conv=conv, base=base, span_b=span_b, shift_cloud=False)
-    cloud_mid = ((span_a + span_b) / 2.0).reindex(C.index)
-
-    minp = max(10, norm_win // 10)
-    vol = C.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
-
-    z1 = (C - cloud_mid) / vol
-    z2 = (tenkan - kijun) / vol
-
-    blend = price_weight * z1 + (1.0 - price_weight) * z2
-    n_ichi = np.tanh(blend / 2.0)
-    return n_ichi.reindex(C.index)
+    return pd.Series(index=C.index, dtype=float)
 
 # ---- Bollinger Bands (SMA/EMA midline) + normalized %B (NBB) ----
 def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_ema: bool = False):
@@ -674,7 +608,6 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
 
     minp = max(2, window // 2)
     mid = s.ewm(span=window, adjust=False).mean() if use_ema else s.rolling(window, min_periods=minp).mean()
-    # Use standard rolling std for envelope width
     std = s.rolling(window, min_periods=minp).std().replace(0, np.nan)
     upper = mid + mult * std
     lower = mid - mult * std
@@ -980,7 +913,7 @@ with tab1:
         if mode == "Forex" and show_fx_news:
             fx_news = fetch_yf_news(sel, window_days=news_window_days)
 
-        # ----- Daily (Price + EW) -----
+        # ----- Daily (Price + Indicator panel with NTD+Trend) -----
         if chart in ("Daily","Both"):
             ema30 = df.ewm(span=30).mean()
             res30 = df.rolling(30, min_periods=1).max()
@@ -989,26 +922,19 @@ with tab1:
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
-            wave_norm_d, piv_df_d = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
-            npo_d = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
+            # NTD for daily panel
             ntd_d = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
-            ichi_d = pd.Series(index=df.index, dtype=float)
+            # Kijun for price chart (optional)
             kijun_d = pd.Series(index=df.index, dtype=float)
-
-            # NEW: Bollinger Bands (Daily)
-            bb_mid_d, bb_up_d, bb_lo_d, bb_pctb_d, bb_nbb_d = compute_bbands(df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
-
             if df_ohlc is not None and not df_ohlc.empty and show_ichi:
-                ichi_d = compute_normalized_ichimoku(
-                    df_ohlc["High"], df_ohlc["Low"], df_ohlc["Close"],
-                    conv=ichi_conv, base=ichi_base, span_b=ichi_spanb,
-                    norm_win=ichi_norm_win, price_weight=ichi_price_weight
-                )
                 _, kijun_d, _, _, _ = ichimoku_lines(
                     df_ohlc["High"], df_ohlc["Low"], df_ohlc["Close"],
                     conv=ichi_conv, base=ichi_base, span_b=ichi_spanb, shift_cloud=False
                 )
                 kijun_d = kijun_d.ffill().bfill()
+
+            # BBands (Daily)
+            bb_mid_d, bb_up_d, bb_lo_d, bb_pctb_d, bb_nbb_d = compute_bbands(df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
             df_show     = subset_by_daily_view(df, daily_view)
             ema30_show  = ema30.reindex(df_show.index)
@@ -1016,12 +942,8 @@ with tab1:
             sup30_show  = sup30.reindex(df_show.index)
             yhat_d_show = yhat_d.reindex(df_show.index) if not yhat_d.empty else yhat_d
             yhat_ema_show = yhat_ema30.reindex(df_show.index) if not yhat_ema30.empty else yhat_ema30
-            wave_d_show = wave_norm_d.reindex(df_show.index)
-            npo_d_show  = npo_d.reindex(df_show.index)
             ntd_d_show  = ntd_d.reindex(df_show.index)
-            ichi_d_show = ichi_d.reindex(df_show.index).ffill().bfill()
             kijun_d_show = kijun_d.reindex(df_show.index).ffill().bfill()
-            piv_df_d_show = piv_df_d[(piv_df_d["time"] >= df_show.index.min()) & (piv_df_d["time"] <= df_show.index.max())] if not piv_df_d.empty else piv_df_d
 
             # BB subset for the shown window
             bb_mid_d_show = bb_mid_d.reindex(df_show.index)
@@ -1030,7 +952,7 @@ with tab1:
             bb_pctb_d_show= bb_pctb_d.reindex(df_show.index)
             bb_nbb_d_show = bb_nbb_d.reindex(df_show.index)
 
-            # NEW: HMA (Daily) overlay + probabilistic crossover signal
+            # HMA (Daily) for price chart + probabilistic crossover
             hma_d_full = compute_hma(df, period=hma_period) if show_hma else pd.Series(index=df.index, dtype=float)
             hma_d_show = hma_d_full.reindex(df_show.index)
 
@@ -1040,6 +962,7 @@ with tab1:
             )
             plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93)
 
+            # --- PRICE CHART (unchanged) ---
             ax.set_title(f"{sel} Daily — {daily_view} — History, 30 EMA, 30 S/R, Slope, Pivots")
             ax.plot(df_show, label="History")
             ax.plot(ema30_show, "--", label="30 EMA")
@@ -1109,57 +1032,33 @@ with tab1:
                         annotate_crossover(ax, ts, px_here, "SELL", hma_conf)
                         st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — last price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
 
-            axdw.set_title("Daily Normalized Elliott Wave + NPO + NTD + Ichimoku (normalized)")
+            # --- DAILY INDICATOR PANEL: NTD + Trend ONLY ---
+            axdw.set_title("Daily Indicator Panel — NTD + Trend")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw, ntd_d_show)
-            if show_npo and not npo_d_show.dropna().empty:
-                shade_npo_regions(axdw, npo_d_show)
 
-            axdw.plot(wave_d_show.index, wave_d_show, label="Norm EW (Daily)", linewidth=1.8)
-            if show_npo and not npo_d_show.dropna().empty:
-                axdw.plot(npo_d_show.index, npo_d_show, "--", linewidth=1.2, label=f"NPO ({npo_fast},{npo_slow})")
+            # NTD line
             if show_ntd and not ntd_d_show.dropna().empty:
-                axdw.plot(ntd_d_show.index, ntd_d_show, ":", linewidth=1.2, label=f"NTD (win={ntd_window})")
-            if show_ichi and not ichi_d_show.dropna().empty:
-                axdw.plot(ichi_d_show.index, ichi_d_show.values, "-", linewidth=1.4, color="black",
-                          label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
+                axdw.plot(ntd_d_show.index, ntd_d_show, "-", linewidth=1.6, label=f"NTD (win={ntd_window})")
+                # NTD trendline
+                ntd_trend_d, ntd_m_d = slope_line(ntd_d_show, slope_lb_daily)
+                if not ntd_trend_d.empty:
+                    axdw.plot(ntd_trend_d.index, ntd_trend_d.values, "--", linewidth=2,
+                              label=f"NTD Trend {slope_lb_daily} ({fmt_slope(ntd_m_d)}/bar)")
 
-            for yline, style, col, lbl in [
-                (0.0, "--", "black", "0.00"),
-                (0.5, "-", "black", "+0.50"),
-                (-0.5, "-", "black", "-0.50"),
-                (0.75, "-", "black", "+0.75"),
-                (-0.75, "-", "black", "-0.75"),
-            ]:
-                axdw.axhline(yline, linestyle=style, linewidth=1.2 if abs(yline)!=0.75 else 1.2, color=col, label=lbl)
+            # Reference lines
+            axdw.axhline(0.0,  linestyle="--", linewidth=1.0, color="black",    label="0.00")
+            axdw.axhline(0.5,  linestyle="-",  linewidth=1.2, color="black",    label="+0.50")
+            axdw.axhline(-0.5, linestyle="-",  linewidth=1.2, color="black",    label="-0.50")
+            axdw.axhline(0.75, linestyle="-",  linewidth=3.0, color="tab:green", label="+0.75")
+            axdw.axhline(-0.75, linestyle="-", linewidth=3.0, color="tab:red",   label="-0.75")
 
             axdw.set_ylim(-1.1, 1.1)
             axdw.set_xlabel("Date (PST)")
-
-            if not piv_df_d_show.empty:
-                show_df_d = piv_df_d_show.tail(int(waves_to_annotate_d))
-                for _, r in show_df_d.iterrows():
-                    t = r["time"]; w = r["wave"]; typ = r["type"]
-                    ylab = 0.9 if typ == 'H' else -0.9
-                    axdw.annotate(str(int(w)), (t, ylab),
-                                  xytext=(0, 0), textcoords="offset points",
-                                  ha="center", va="center",
-                                  fontsize=9, fontweight="bold")
-
-            px_daily = _safe_last_float(df)
-            ew_sig_d = elliott_conf_signal(px_daily, st.session_state.fc_vals, EW_CONFIDENCE)
-            posdw = axdw.get_position()
-            label_txt = f"Price: {fmt_price_val(px_daily)}"
-            if ew_sig_d is not None:
-                side = ew_sig_d['side']; prob = fmt_pct(ew_sig_d['prob'], digits=0)
-                label_txt += f"  |  {('▲ BUY' if side=='BUY' else '▼ SELL')} @ {fmt_price_val(px_daily)}  ({prob})"
-            fig.text(posdw.x1, posdw.y1 + 0.01, label_txt, ha="right", va="bottom",
-                     fontsize=10, fontweight="bold")
-
             axdw.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (price + TREND panel + momentum + NEW Volume panel) -----
+        # ----- Hourly (price + NEW NTD panel + momentum + NEW Volume panel) -----
         if chart in ("Hourly","Both"):
             intraday = st.session_state.intraday
             if intraday is None or intraday.empty or "Close" not in intraday:
@@ -1185,10 +1084,10 @@ with tab1:
                     )
                     kijun_h = kijun_h.reindex(hc.index).ffill().bfill()
 
-                # NEW: Bollinger Bands (Hourly)
+                # Bollinger Bands (Hourly)
                 bb_mid_h, bb_up_h, bb_lo_h, bb_pctb_h, bb_nbb_h = compute_bbands(hc, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
-                # NEW: HMA (Hourly) overlay + probabilistic crossover signal
+                # HMA (Hourly) overlay + probabilistic crossover signal
                 hma_h = compute_hma(hc, period=hma_period) if show_hma else pd.Series(index=hc.index, dtype=float)
 
                 # Lookback slope & R²
@@ -1349,24 +1248,25 @@ with tab1:
                     ax2v.legend(loc="lower left", framealpha=0.5)
                     st.pyplot(fig2v)
 
-                # === Trend Panel (Hourly): ONLY NTD + Trend + reference lines ===
+                # === Hourly Indicator Panel: NTD + Trend ONLY ===
                 if show_nrsi:
-                    ntd_h_rsipanel = compute_normalized_trend(hc, window=ntd_window)
-                    ntd_trend, ntd_m = slope_line(ntd_h_rsipanel, slope_lb_hourly)
+                    ntd_h = compute_normalized_trend(hc, window=ntd_window)
+                    ntd_trend_h, ntd_m_h = slope_line(ntd_h, slope_lb_hourly)
 
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
-                    ax2r.set_title(f"Trend Panel — NTD + Trend (win={ntd_window})")
+                    ax2r.set_title(f"Hourly Indicator Panel — NTD + Trend (win={ntd_window})")
 
-                    # Draw ONLY NTD and its trend
-                    if not ntd_h_rsipanel.dropna().empty:
-                        ax2r.plot(ntd_h_rsipanel.index, ntd_h_rsipanel, ":", linewidth=1.8, label="NTD")
-                    if not ntd_trend.empty:
-                        ax2r.plot(ntd_trend.index, ntd_trend.values, "-", linewidth=2.2,
-                                  label=f"Trend of NTD {slope_lb_hourly} ({fmt_slope(ntd_m)}/bar)")
+                    # NTD line
+                    ax2r.plot(ntd_h.index, ntd_h, "-", linewidth=1.6, label="NTD")
 
-                    # Bottom-center Trend badge from NTD last value
-                    if not ntd_h_rsipanel.dropna().empty:
-                        last_ntd = float(ntd_h_rsipanel.dropna().iloc[-1])
+                    # NTD trendline (dashed) + slope in legend
+                    if not ntd_trend_h.empty:
+                        ax2r.plot(ntd_trend_h.index, ntd_trend_h.values, "--", linewidth=2,
+                                  label=f"NTD Trend {slope_lb_hourly} ({fmt_slope(ntd_m_h)}/bar)")
+
+                    # Trend badge (bottom-center)
+                    if not ntd_h.dropna().empty:
+                        last_ntd = float(ntd_h.dropna().iloc[-1])
                         t_dir = "UP" if last_ntd >= 0 else "DOWN"
                         color = "tab:green" if last_ntd >= 0 else "tab:red"
                         certainty = int(round(50 + 50*abs(last_ntd)))  # map [-1,1] → [50,100]
@@ -1375,12 +1275,12 @@ with tab1:
                                   fontsize=10, fontweight="bold", color=color,
                                   bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.85))
 
-                    # Reference lines: 0.00 (dashed), ±0.50 (black), ±0.75 (black)
-                    ax2r.axhline(0.0, linestyle="--", linewidth=1.0, color="black", label="0.00")
-                    ax2r.axhline(0.5, linestyle="-",  linewidth=1.2, color="black", label="+0.50")
-                    ax2r.axhline(-0.5, linestyle="-", linewidth=1.2, color="black", label="-0.50")
-                    ax2r.axhline(0.75, linestyle="-", linewidth=1.2, color="black", label="+0.75")
-                    ax2r.axhline(-0.75, linestyle="-", linewidth=1.2, color="black", label="-0.75")
+                    # Reference lines
+                    ax2r.axhline(0.0,  linestyle="--", linewidth=1.0, color="black",    label="0.00")
+                    ax2r.axhline(0.5,  linestyle="-",  linewidth=1.2, color="black",    label="+0.50")
+                    ax2r.axhline(-0.5, linestyle="-",  linewidth=1.2, color="black",    label="-0.50")
+                    ax2r.axhline(0.75, linestyle="-",  linewidth=3.0, color="tab:green", label="+0.75")
+                    ax2r.axhline(-0.75, linestyle="-", linewidth=3.0, color="tab:red",   label="-0.75")
 
                     ax2r.set_ylim(-1.1, 1.1)
                     ax2r.set_xlim(xlim_price)
@@ -1452,26 +1352,18 @@ with tab2:
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
-            wave_norm_d2, piv_df_d2 = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
-            npo_d2 = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
+            # NTD for daily panel
             ntd_d2 = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
-            ichi_d2 = pd.Series(index=df.index, dtype=float)
             kijun_d2 = pd.Series(index=df.index, dtype=float)
-
-            # NEW: Bollinger Bands (Daily, Enhanced)
-            bb_mid_d2, bb_up_d2, bb_lo_d2, bb_pctb_d2, bb_nbb_d2 = compute_bbands(df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
-
             if df_ohlc is not None and not df_ohlc.empty and show_ichi:
-                ichi_d2 = compute_normalized_ichimoku(
-                    df_ohlc["High"], df_ohlc["Low"], df_ohlc["Close"],
-                    conv=ichi_conv, base=ichi_base, span_b=ichi_spanb,
-                    norm_win=ichi_norm_win, price_weight=ichi_price_weight
-                )
                 _, kijun_d2, _, _, _ = ichimoku_lines(
                     df_ohlc["High"], df_ohlc["Low"], df_ohlc["Close"],
                     conv=ichi_conv, base=ichi_base, span_b=ichi_spanb, shift_cloud=False
                 )
                 kijun_d2 = kijun_d2.ffill().bfill()
+
+            # BBands (Daily, Enhanced)
+            bb_mid_d2, bb_up_d2, bb_lo_d2, bb_pctb_d2, bb_nbb_d2 = compute_bbands(df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
             df_show     = subset_by_daily_view(df, daily_view)
             ema30_show  = ema30.reindex(df_show.index)
@@ -1479,12 +1371,8 @@ with tab2:
             sup30_show  = sup30.reindex(df_show.index)
             yhat_d_show = yhat_d.reindex(df_show.index) if not yhat_d.empty else yhat_d
             yhat_ema_show = yhat_ema30.reindex(df_show.index) if not yhat_ema30.empty else yhat_ema30
-            wave_d_show = wave_norm_d2.reindex(df_show.index)
-            npo_d_show  = npo_d2.reindex(df_show.index)
             ntd_d_show  = ntd_d2.reindex(df_show.index)
-            ichi_d2_show = ichi_d2.reindex(df_show.index).ffill().bfill()
             kijun_d2_show = kijun_d2.reindex(df_show.index).ffill().bfill()
-            piv_df_d_show = piv_df_d2[(piv_df_d2["time"] >= df_show.index.min()) & (piv_df_d2["time"] <= df_show.index.max())] if not piv_df_d2.empty else piv_df_d2
 
             # BB subset (Enhanced)
             bb_mid_d2_show = bb_mid_d2.reindex(df_show.index)
@@ -1493,7 +1381,7 @@ with tab2:
             bb_pctb_d2_show= bb_pctb_d2.reindex(df_show.index)
             bb_nbb_d2_show = bb_nbb_d2.reindex(df_show.index)
 
-            # NEW: HMA (Daily, Enhanced)
+            # HMA (Daily, Enhanced)
             hma_d2_full = compute_hma(df, period=hma_period) if show_hma else pd.Series(index=df.index, dtype=float)
             hma_d2_show = hma_d2_full.reindex(df_show.index)
 
@@ -1521,6 +1409,16 @@ with tab2:
                         label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
                 ax.plot(bb_up_d2_show.index, bb_up_d2_show.values, ":", linewidth=1.0)
                 ax.plot(bb_lo_d2_show.index, bb_lo_d2_show.values, ":", linewidth=1.0)
+                # NBB badge (bottom-right)
+                try:
+                    last_pct = float(bb_pctb_d2_show.dropna().iloc[-1])
+                    last_nbb = float(bb_nbb_d2_show.dropna().iloc[-1])
+                    ax.text(0.99, 0.02, f"NBB {last_nbb:+.2f}  |  %B {fmt_pct(last_pct, digits=0)}",
+                            transform=ax.transAxes, ha="right", va="bottom",
+                            fontsize=9, color="black",
+                            bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+                except Exception:
+                    pass
 
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
@@ -1558,53 +1456,27 @@ with tab2:
                         annotate_crossover(ax, ts, px_here, "SELL", hma_conf)
                         st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — last price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
 
-            axdw2.set_title("Daily Normalized Elliott Wave + NPO + NTD + Ichimoku (normalized)")
+            # --- DAILY INDICATOR PANEL (Enhanced): NTD + Trend ONLY ---
+            axdw2.set_title("Daily Indicator Panel — NTD + Trend")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw2, ntd_d_show)
-            if show_npo and not npo_d_show.dropna().empty:
-                shade_npo_regions(axdw2, npo_d_show)
 
-            axdw2.plot(wave_d_show.index, wave_d_show, label="Norm EW (Daily)", linewidth=1.8)
-            if show_npo and not npo_d_show.dropna().empty:
-                axdw2.plot(npo_d_show.index, npo_d_show, "--", linewidth=1.2, label=f"NPO ({npo_fast},{npo_slow})")
             if show_ntd and not ntd_d_show.dropna().empty:
-                axdw2.plot(ntd_d_show.index, ntd_d_show, ":", linewidth=1.2, label=f"NTD (win={ntd_window})")
-            if show_ichi and not ichi_d2_show.dropna().empty:
-                axdw2.plot(ichi_d2_show.index, ichi_d2_show.values, "-", linewidth=1.4, color="black",
-                           label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
+                axdw2.plot(ntd_d_show.index, ntd_d_show, "-", linewidth=1.6, label=f"NTD (win={ntd_window})")
+                ntd_trend_d2, ntd_m_d2 = slope_line(ntd_d_show, slope_lb_daily)
+                if not ntd_trend_d2.empty:
+                    axdw2.plot(ntd_trend_d2.index, ntd_trend_d2.values, "--", linewidth=2,
+                               label=f"NTD Trend {slope_lb_daily} ({fmt_slope(ntd_m_d2)}/bar)")
 
-            for yline, style, col, lbl in [
-                (0.0, "--", "black", "0.00"),
-                (0.5, "-", "black", "+0.50"),
-                (-0.5, "-", "black", "-0.50"),
-                (0.75, "-", "black", "+0.75"),
-                (-0.75, "-", "black", "-0.75"),
-            ]:
-                axdw2.axhline(yline, linestyle=style, linewidth=1.2 if abs(yline)!=0.75 else 1.2, color=col, label=lbl)
+            # Reference lines
+            axdw2.axhline(0.0,  linestyle="--", linewidth=1.0, color="black",    label="0.00")
+            axdw2.axhline(0.5,  linestyle="-",  linewidth=1.2, color="black",    label="+0.50")
+            axdw2.axhline(-0.5, linestyle="-",  linewidth=1.2, color="black",    label="-0.50")
+            axdw2.axhline(0.75, linestyle="-",  linewidth=3.0, color="tab:green", label="+0.75")
+            axdw2.axhline(-0.75, linestyle="-", linewidth=3.0, color="tab:red",   label="-0.75")
 
             axdw2.set_ylim(-1.1, 1.1)
             axdw2.set_xlabel("Date (PST)")
-
-            if not piv_df_d_show.empty:
-                show_df_d2 = piv_df_d_show.tail(int(waves_to_annotate_d))
-                for _, r in show_df_d2.iterrows():
-                    t = r["time"]; w = r["wave"]; typ = r["type"]
-                    ylab = 0.9 if typ == 'H' else -0.9
-                    axdw2.annotate(str(int(w)), (t, ylab),
-                                   xytext=(0, 0), textcoords="offset points",
-                                   ha="center", va="center",
-                                   fontsize=9, fontweight="bold")
-
-            px_daily2 = _safe_last_float(df)
-            ew_sig_d2 = elliott_conf_signal(px_daily2, st.session_state.fc_vals, EW_CONFIDENCE)
-            posdw2 = axdw2.get_position()
-            label_txt_d2 = f"Price: {fmt_price_val(px_daily2)}"
-            if ew_sig_d2 is not None:
-                side = ew_sig_d2['side']; prob = fmt_pct(ew_sig_d2['prob'], digits=0)
-                label_txt_d2 += f"  |  {('▲ BUY' if side=='BUY' else '▼ SELL')} @ {fmt_price_val(px_daily2)}  ({prob})"
-            fig.text(posdw2.x1, posdw2.y1 + 0.01, label_txt_d2, ha="right", va="bottom",
-                     fontsize=10, fontweight="bold")
-
             axdw2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
@@ -1632,10 +1504,10 @@ with tab2:
                     )
                     kijun_i = kijun_i.reindex(ic.index).ffill().bfill()
 
-                # NEW: Bollinger Bands (Hourly, Enhanced)
+                # Bollinger Bands (Hourly, Enhanced)
                 bb_mid_i, bb_up_i, bb_lo_i, bb_pctb_i, bb_nbb_i = compute_bbands(ic, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
-                # NEW: HMA (Hourly, Enhanced)
+                # HMA (Hourly, Enhanced)
                 hma_i = compute_hma(ic, period=hma_period) if show_hma else pd.Series(index=ic.index, dtype=float)
 
                 # Lookback slope & R²
@@ -1780,38 +1652,33 @@ with tab2:
                     ax3v.legend(loc="lower left", framealpha=0.5)
                     st.pyplot(fig3v)
 
-                # === Trend Panel (Intraday view): ONLY NTD + Trend + reference lines ===
+                # === Hourly Indicator Panel (Enhanced): NTD + Trend ONLY ===
                 if show_nrsi:
-                    ntd_i_rsipanel = compute_normalized_trend(ic, window=ntd_window)
-                    ntd_trend2, ntd_m2 = slope_line(ntd_i_rsipanel, slope_lb_hourly)
+                    ntd_i = compute_normalized_trend(ic, window=ntd_window)
+                    ntd_trend_i, ntd_m_i = slope_line(ntd_i, slope_lb_hourly)
 
                     fig3r, ax3r = plt.subplots(figsize=(14,2.8))
-                    ax3r.set_title(f"Trend Panel — NTD + Trend (win={ntd_window})")
+                    ax3r.set_title(f"Hourly Indicator Panel — NTD + Trend (win={ntd_window})")
+                    ax3r.plot(ntd_i.index, ntd_i, "-", linewidth=1.6, label="NTD")
+                    if not ntd_trend_i.empty:
+                        ax3r.plot(ntd_trend_i.index, ntd_trend_i.values, "--", linewidth=2,
+                                  label=f"NTD Trend {slope_lb_hourly} ({fmt_slope(ntd_m_i)}/bar)")
 
-                    if not ntd_i_rsipanel.dropna().empty:
-                        ax3r.plot(ntd_i_rsipanel.index, ntd_i_rsipanel, ":", linewidth=1.8, label="NTD")
-                    if not ntd_trend2.empty:
-                        ax3r.plot(ntd_trend2.index, ntd_trend2.values, "-", linewidth=2.2,
-                                  label=f"Trend of NTD {slope_lb_hourly} ({fmt_slope(ntd_m2)}/bar)")
-
-                    if not ntd_i_rsipanel.dropna().empty:
-                        last_ntd = float(ntd_i_rsipanel.dropna().iloc[-1])
+                    if not ntd_i.dropna().empty:
+                        last_ntd = float(ntd_i.dropna().iloc[-1])
                         t_dir = "UP" if last_ntd >= 0 else "DOWN"
                         color = "tab:green" if last_ntd >= 0 else "tab:red"
                         certainty = int(round(50 + 50*abs(last_ntd)))
-                        # Bottom-center badge:
                         ax3r.text(0.50, 0.06, f"Trend: {t_dir} ({certainty}%)",
                                   transform=ax3r.transAxes, ha="center", va="bottom",
                                   fontsize=10, fontweight="bold", color=color,
                                   bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.85))
 
-                    # Reference lines: 0.00 (dashed), ±0.50, ±0.75 (black)
-                    ax3r.axhline(0.0, linestyle="--", linewidth=1.0, color="black", label="0.00")
-                    ax3r.axhline(0.5, linestyle="-",  linewidth=1.2, color="black", label="+0.50")
-                    ax3r.axhline(-0.5, linestyle="-", linewidth=1.2, color="black", label="-0.50")
-                    ax3r.axhline(0.75, linestyle="-", linewidth=1.2, color="black", label="+0.75")
-                    ax3r.axhline(-0.75, linestyle="-", linewidth=1.2, color="black", label="-0.75")
-
+                    ax3r.axhline(0.0,  linestyle="--", linewidth=1.0, color="black",    label="0.00")
+                    ax3r.axhline(0.5,  linestyle="-",  linewidth=1.2, color="black",    label="+0.50")
+                    ax3r.axhline(-0.5, linestyle="-",  linewidth=1.2, color="black",    label="-0.50")
+                    ax3r.axhline(0.75, linestyle="-",  linewidth=3.0, color="tab:green", label="+0.75")
+                    ax3r.axhline(-0.75, linestyle="-", linewidth=3.0, color="tab:red",   label="-0.75")
                     ax3r.set_ylim(-1.1, 1.1)
                     ax3r.set_xlim(xlim_price2)
                     ax3r.legend(loc="lower left", framealpha=0.5)
