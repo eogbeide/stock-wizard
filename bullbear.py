@@ -39,6 +39,7 @@ from matplotlib.transforms import blended_transform_factory  # for left-side lab
 # - UPDATED: Volume visuals (panels + NVol fills) use blue
 # - NEW: **Bollinger Bands overlay** on Daily & Hourly price charts (SMA/EMA toggle for midline), with **Normalized %B (NBB)** badge
 # - NEW: **Probabilistic HMA Crossover** on Daily & Hourly price charts — marks ▲ BUY / ▼ SELL only when the most-recent price↔HMA crossover aligns with SARIMAX probability ≥ confidence (default 95%)
+# - NEW: **Parabolic SAR overlay** on Daily & Hourly price charts — dots below in uptrends, above in downtrends, with user-tunable AF step/max.
 
 # --- Page config ---
 st.set_page_config(
@@ -187,6 +188,12 @@ nrsi_period = st.sidebar.slider("RSI period (unused)", 5, 60, 14, 1, key="sb_nrs
 st.sidebar.subheader("Hourly Supertrend")
 atr_period = st.sidebar.slider("ATR period", 5, 50, 10, 1, key="sb_atr_period")
 atr_mult   = st.sidebar.slider("ATR multiplier", 1.0, 5.0, 3.0, 0.5, key="sb_atr_mult")
+
+# NEW: Parabolic SAR controls
+st.sidebar.subheader("Parabolic SAR")
+show_psar = st.sidebar.checkbox("Show Parabolic SAR", value=True, key="sb_psar_show")
+psar_step = st.sidebar.slider("PSAR acceleration step", 0.01, 0.20, 0.02, 0.01, key="sb_psar_step")
+psar_max  = st.sidebar.slider("PSAR max acceleration", 0.10, 1.00, 0.20, 0.10, key="sb_psar_max")
 
 # Signal logic controls
 st.sidebar.subheader("Signal Logic (Hourly)")
@@ -553,6 +560,72 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
         "ST": st_line, "in_uptrend": in_up,
         "upperband": upperband, "lowerband": lowerband
     })
+
+# --- Parabolic SAR (NEW) ---
+def compute_parabolic_sar(high: pd.Series, low: pd.Series, step: float = 0.02, max_step: float = 0.2):
+    """Return PSAR series and a boolean series in_uptrend (True when dots below price)."""
+    H = _coerce_1d_series(high).astype(float)
+    L = _coerce_1d_series(low).astype(float)
+    df = pd.concat([H.rename("H"), L.rename("L")], axis=1).dropna()
+    if df.empty:
+        idx = H.index if len(H) else L.index
+        return pd.Series(index=idx, dtype=float), pd.Series(index=idx, dtype=bool)
+
+    n = len(df)
+    psar = np.zeros(n) * np.nan
+    up = np.zeros(n, dtype=bool)
+
+    # initialize
+    uptrend = True
+    af = float(step)
+    ep = df["H"].iloc[0]     # extreme point
+    psar[0] = df["L"].iloc[0]
+    up[0] = True
+
+    for i in range(1, n):
+        prev_psar = psar[i-1]
+        if uptrend:
+            psar[i] = prev_psar + af * (ep - prev_psar)
+            # limit
+            lo1 = df["L"].iloc[i-1]
+            lo2 = df["L"].iloc[i-2] if i >= 2 else lo1
+            psar[i] = min(psar[i], lo1, lo2)
+            # update EP/AF
+            if df["H"].iloc[i] > ep:
+                ep = df["H"].iloc[i]
+                af = min(af + step, max_step)
+            # flip?
+            if df["L"].iloc[i] < psar[i]:
+                uptrend = False
+                psar[i] = ep  # on flip, PSAR equals EP
+                ep = df["L"].iloc[i]
+                af = step
+        else:
+            psar[i] = prev_psar + af * (ep - prev_psar)
+            hi1 = df["H"].iloc[i-1]
+            hi2 = df["H"].iloc[i-2] if i >= 2 else hi1
+            psar[i] = max(psar[i], hi1, hi2)
+            if df["L"].iloc[i] < ep:
+                ep = df["L"].iloc[i]
+                af = min(af + step, max_step)
+            if df["H"].iloc[i] > psar[i]:
+                uptrend = True
+                psar[i] = ep
+                ep = df["H"].iloc[i]
+                af = step
+
+        up[i] = uptrend
+
+    psar_s = pd.Series(psar, index=df.index, name="PSAR")
+    up_s = pd.Series(up, index=df.index, name="in_uptrend")
+    return psar_s, up_s
+
+def compute_psar_from_ohlc(df: pd.DataFrame, step: float = 0.02, max_step: float = 0.2) -> pd.DataFrame:
+    if df is None or df.empty or not {"High","Low"}.issubset(df.columns):
+        idx = df.index if df is not None else pd.Index([])
+        return pd.DataFrame(index=idx, columns=["PSAR","in_uptrend"])
+    ps, up = compute_parabolic_sar(df["High"], df["Low"], step=step, max_step=max_step)
+    return pd.DataFrame({"PSAR": ps, "in_uptrend": up})
 
 # ---- Normalized Elliott Wave (kept but unused) ----
 def compute_normalized_elliott_wave(close: pd.Series,
@@ -957,13 +1030,19 @@ with tab1:
             hma_d_full = compute_hma(df, period=hma_period) if show_hma else pd.Series(index=df.index, dtype=float)
             hma_d_show = hma_d_full.reindex(df_show.index)
 
+            # PSAR (Daily)
+            psar_d_df = compute_psar_from_ohlc(df_ohlc, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
+            if not psar_d_df.empty and len(df_show.index) > 0:
+                x0, x1 = df_show.index[0], df_show.index[-1]
+                psar_d_df = psar_d_df.loc[(psar_d_df.index >= x0) & (psar_d_df.index <= x1)]
+
             fig, (ax, axdw) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
                 gridspec_kw={"height_ratios": [3.2, 1.3]}
             )
             plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93)
 
-            # --- PRICE CHART (unchanged) ---
+            # --- PRICE CHART ---
             ax.set_title(f"{sel} Daily — {daily_view} — History, 30 EMA, 30 S/R, Slope, Pivots")
             ax.plot(df_show, label="History")
             ax.plot(ema30_show, "--", label="30 EMA")
@@ -974,12 +1053,12 @@ with tab1:
             if show_hma and not hma_d_show.dropna().empty:
                 ax.plot(hma_d_show.index, hma_d_show.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
 
-            # Plot Kijun (Daily)
+            # Kijun (Daily)
             if show_ichi and not kijun_d_show.dropna().empty:
                 ax.plot(kijun_d_show.index, kijun_d_show.values, "-", linewidth=1.8, color="black",
                         label=f"Ichimoku Kijun ({ichi_base})")
 
-            # Plot BBands (Daily)
+            # Bollinger Bands (Daily)
             if show_bbands and not bb_up_d_show.dropna().empty and not bb_lo_d_show.dropna().empty:
                 ax.fill_between(df_show.index, bb_lo_d_show, bb_up_d_show, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
                 ax.plot(bb_mid_d_show.index, bb_mid_d_show.values, "-", linewidth=1.1,
@@ -996,6 +1075,17 @@ with tab1:
                             bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
                 except Exception:
                     pass
+
+            # PSAR overlay (Daily)
+            if show_psar and not psar_d_df.empty:
+                up_mask = psar_d_df["in_uptrend"] == True
+                dn_mask = ~up_mask
+                if up_mask.any():
+                    ax.scatter(psar_d_df.index[up_mask], psar_d_df["PSAR"][up_mask],
+                               s=15, color="tab:green", zorder=6, label=f"PSAR (step={psar_step:.02f}, max={psar_max:.02f})")
+                if dn_mask.any():
+                    ax.scatter(psar_d_df.index[dn_mask], psar_d_df["PSAR"][dn_mask],
+                               s=15, color="tab:red", zorder=6)
 
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
@@ -1021,7 +1111,7 @@ with tab1:
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
 
-            # Probabilistic HMA crossover signal (Daily)
+            # Probabilistic HMA crossover (Daily)
             if show_hma and not hma_d_show.dropna().empty:
                 cross_d = detect_last_crossover(df_show, hma_d_show)
                 if cross_d is not None and cross_d["time"] is not None:
@@ -1091,6 +1181,10 @@ with tab1:
                 # HMA (Hourly) overlay + probabilistic crossover signal
                 hma_h = compute_hma(hc, period=hma_period) if show_hma else pd.Series(index=hc.index, dtype=float)
 
+                # PSAR (Hourly)
+                psar_h_df = compute_psar_from_ohlc(intraday, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
+                psar_h_df = psar_h_df.reindex(hc.index)
+
                 # Lookback slope & R²
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
                 r2_h = regression_r2(hc, slope_lb_hourly)
@@ -1117,6 +1211,17 @@ with tab1:
                              label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
                     ax2.plot(bb_up_h.index, bb_up_h.values, ":", linewidth=1.0)
                     ax2.plot(bb_lo_h.index, bb_lo_h.values, ":", linewidth=1.0)
+
+                # PSAR overlay (Hourly)
+                if show_psar and not psar_h_df.dropna().empty:
+                    up_mask = psar_h_df["in_uptrend"] == True
+                    dn_mask = ~up_mask
+                    if up_mask.any():
+                        ax2.scatter(psar_h_df.index[up_mask], psar_h_df["PSAR"][up_mask],
+                                    s=15, color="tab:green", zorder=6, label=f"PSAR (step={psar_step:.02f}, max={psar_max:.02f})")
+                    if dn_mask.any():
+                        ax2.scatter(psar_h_df.index[dn_mask], psar_h_df["PSAR"][dn_mask],
+                                    s=15, color="tab:red", zorder=6)
 
                 res_val = sup_val = px_val = np.nan
                 try:
@@ -1193,7 +1298,7 @@ with tab1:
                     elif signal["side"] == "SELL":
                         st.error(f"**SELL** @ {fmt_price_val(signal['level'])} — {signal['reason']}")
 
-                # Probabilistic HMA crossover signal (Hourly)
+                # Probabilistic HMA crossover (Hourly)
                 if show_hma and not hma_h.dropna().empty:
                     cross_h = detect_last_crossover(hc, hma_h)
                     if cross_h is not None and cross_h["time"] is not None:
@@ -1390,6 +1495,12 @@ with tab2:
             hma_d2_full = compute_hma(df, period=hma_period) if show_hma else pd.Series(index=df.index, dtype=float)
             hma_d2_show = hma_d2_full.reindex(df_show.index)
 
+            # PSAR (Daily, Enhanced)
+            psar_d2_df = compute_psar_from_ohlc(df_ohlc, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
+            if not psar_d2_df.empty and len(df_show.index) > 0:
+                x0, x1 = df_show.index[0], df_show.index[-1]
+                psar_d2_df = psar_d2_df.loc[(psar_d2_df.index >= x0) & (psar_d2_df.index <= x1)]
+
             fig, (ax, axdw2) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
                 gridspec_kw={"height_ratios": [3.2, 1.3]}
@@ -1414,16 +1525,17 @@ with tab2:
                         label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
                 ax.plot(bb_up_d2_show.index, bb_up_d2_show.values, ":", linewidth=1.0)
                 ax.plot(bb_lo_d2_show.index, bb_lo_d2_show.values, ":", linewidth=1.0)
-                # NBB badge (bottom-right)
-                try:
-                    last_pct = float(bb_pctb_d2_show.dropna().iloc[-1])
-                    last_nbb = float(bb_nbb_d2_show.dropna().iloc[-1])
-                    ax.text(0.99, 0.02, f"NBB {last_nbb:+.2f}  |  %B {fmt_pct(last_pct, digits=0)}",
-                            transform=ax.transAxes, ha="right", va="bottom",
-                            fontsize=9, color="black",
-                            bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-                except Exception:
-                    pass
+
+            # PSAR overlay (Daily, Enhanced)
+            if show_psar and not psar_d2_df.empty:
+                up_mask = psar_d2_df["in_uptrend"] == True
+                dn_mask = ~up_mask
+                if up_mask.any():
+                    ax.scatter(psar_d2_df.index[up_mask], psar_d2_df["PSAR"][up_mask],
+                               s=15, color="tab:green", zorder=6, label=f"PSAR (step={psar_step:.02f}, max={psar_max:.02f})")
+                if dn_mask.any():
+                    ax.scatter(psar_d2_df.index[dn_mask], psar_d2_df["PSAR"][dn_mask],
+                               s=15, color="tab:red", zorder=6)
 
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
@@ -1515,6 +1627,10 @@ with tab2:
                 # HMA (Hourly, Enhanced)
                 hma_i = compute_hma(ic, period=hma_period) if show_hma else pd.Series(index=ic.index, dtype=float)
 
+                # PSAR (Hourly, Enhanced)
+                psar_i_df = compute_psar_from_ohlc(intr, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
+                psar_i_df = psar_i_df.reindex(ic.index)
+
                 # Lookback slope & R²
                 yhat_h, m_h = slope_line(ic, slope_lb_hourly)
                 r2_i = regression_r2(ic, slope_lb_hourly)
@@ -1538,6 +1654,17 @@ with tab2:
                              label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
                     ax3.plot(bb_up_i.index, bb_up_i.values, ":", linewidth=1.0)
                     ax3.plot(bb_lo_i.index, bb_lo_i.values, ":", linewidth=1.0)
+
+                # PSAR overlay (Hourly, Enhanced)
+                if show_psar and not psar_i_df.dropna().empty:
+                    up_mask = psar_i_df["in_uptrend"] == True
+                    dn_mask = ~up_mask
+                    if up_mask.any():
+                        ax3.scatter(psar_i_df.index[up_mask], psar_i_df["PSAR"][up_mask],
+                                    s=15, color="tab:green", zorder=6, label=f"PSAR (step={psar_step:.02f}, max={psar_max:.02f})")
+                    if dn_mask.any():
+                        ax3.scatter(psar_i_df.index[dn_mask], psar_i_df["PSAR"][dn_mask],
+                                    s=15, color="tab:red", zorder=6)
 
                 res_val2 = sup_val2 = px_val2 = np.nan
                 try:
