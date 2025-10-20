@@ -1,3 +1,6 @@
+# bullbear.py — Stocks/Forex Dashboard + Forecasts
+# (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
+
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -8,38 +11,6 @@ import matplotlib.pyplot as plt
 import time
 import pytz
 from matplotlib.transforms import blended_transform_factory  # for left-side labels
-
-# bullbear.py — Stocks/Forex Dashboard + Forecasts
-# - Forex news markers on intraday charts
-# - Hourly momentum indicator (ROC%) with robust handling
-# - Momentum trendline & momentum S/R
-# - Daily shows: History, 30 EMA, 30 S/R, Daily slope, Pivots (P, R1/S1, R2/S2) + value labels
-# - EMA30 slope overlay on Daily
-# - Hourly includes Supertrend overlay (configurable ATR period & multiplier)
-# - Fixes tz_localize error by using tz-aware UTC timestamps
-# - Auto-refresh, SARIMAX (for probabilities)
-# - Cache TTLs = 2 minutes (120s)
-# - Hourly BUY/SELL logic (near S/R + confidence threshold)
-# - Value labels on intraday Resistance/Support placed on the LEFT; price label outside chart (top-right)
-# - All displayed price values formatted to 3 decimal places
-# - Hourly Support/Resistance drawn as STRAIGHT LINES across the entire chart
-# - Current price shown at the BOTTOM-RIGHT of the price chart (inside the axes)
-# - UPDATED: Daily indicator panel now shows **NTD + Trend only** (no EW/NPO/IchimokuN), with guides at 0.00 (dashed), ±0.50 (black), **+0.75 (THICK GREEN)**, **-0.75 (THICK RED)**
-# - UPDATED: Hourly indicator panel now shows **NTD + Trend only** (no NRSI/NMACD/NVol), with the same guide lines
-# - UPDATED: Hourly NTD panel is now SHADED (green above 0, red below 0), matching Daily
-# - Daily view selector (Historical / 6M / 12M / 24M)
-# - Daily trend-direction line (green=uptrend, red=downtrend) with slope label on PRICE chart
-# - NTD -0.5 Scanner tab for Stocks & Forex (Daily; plus Hourly for Forex)
-# - Ichimoku Kijun (Base) line added to Daily & Hourly price charts (solid black, continuous)
-# - UPDATED: Price chart shows trendline slope in legend + bottom-left
-# - NEW: Scanner lists **Price > Kijun(26)** symbols (Daily for Stocks & FX; Hourly for FX)
-# - NEW: Hourly chart shows **R²** for the trendline (computed over the slope lookback) at the **bottom-center** of the chart (as a percentage)
-# - NEW: **Long-Term History** tab with 5/10/15/20-year buttons showing price with 252d Support/Resistance and an overall trendline
-# - NEW: **Hourly Volume panel** (separate chart) with rolling mid-line and trendline (+ R² badge)
-# - UPDATED: Volume visuals (panels + NVol fills) use blue
-# - NEW: **Bollinger Bands overlay** on Daily & Hourly price charts (SMA/EMA toggle for midline), with **Normalized %B (NBB)** badge
-# - NEW: **Probabilistic HMA Crossover** on Daily & Hourly price charts — marks ▲ BUY / ▼ SELL only when the most-recent price↔HMA crossover aligns with SARIMAX probability ≥ confidence (default 95%)
-# - NEW: **Parabolic SAR overlay** on Daily & Hourly price charts — dots below in uptrends, above in downtrends, with user-tunable AF step/max.
 
 # --- Page config ---
 st.set_page_config(
@@ -241,13 +212,17 @@ show_hma    = st.sidebar.checkbox("Show HMA crossover signal", value=True, key="
 hma_period  = st.sidebar.slider("HMA period", 5, 120, 55, 1, key="sb_hma_period")
 hma_conf    = st.sidebar.slider("Crossover confidence", 0.50, 0.99, 0.95, 0.01, key="sb_hma_conf")
 
-# Forex news controls (only shown in Forex mode)
+# Forex-only controls
 if mode == "Forex":
     show_fx_news = st.sidebar.checkbox("Show Forex news markers (intraday)", value=True, key="sb_show_fx_news")
     news_window_days = st.sidebar.slider("Forex news window (days)", 1, 14, 7, key="sb_news_window_days")
+    # NEW: Session markers toggle
+    st.sidebar.subheader("Sessions (PST)")
+    show_sessions_pst = st.sidebar.checkbox("Show London/NY session times (PST)", value=True, key="sb_show_sessions_pst")
 else:
     show_fx_news = False
     news_window_days = 7
+    show_sessions_pst = False
 
 # Universe
 if mode == "Stock":
@@ -742,6 +717,68 @@ def annotate_crossover(ax, ts, px, side: str, conf: float):
             ax.text(ts, px, f"  SELL {int(conf*100)}%", va="top", fontsize=9, color="tab:red", fontweight="bold")
     except Exception:
         pass
+
+# ========= Sessions (NEW) =========
+NY_TZ   = pytz.timezone("America/New_York")
+LDN_TZ  = pytz.timezone("Europe/London")
+
+def session_markers_for_index(idx: pd.DatetimeIndex, session_tz, open_hr: int, close_hr: int):
+    """Return two lists (open_times_pst, close_times_pst) within idx range, converted to PST.
+    Uses local session dates & pytz to handle DST correctly."""
+    opens, closes = [], []
+    if not isinstance(idx, pd.DatetimeIndex) or idx.tz is None or idx.empty:
+        return opens, closes
+    # session-local date range covering the visible data
+    start_d = idx[0].astimezone(session_tz).date()
+    end_d   = idx[-1].astimezone(session_tz).date()
+    # iterate inclusive
+    rng = pd.date_range(start=start_d, end=end_d, freq="D")
+    lo, hi = idx.min(), idx.max()
+    for d in rng:
+        # localize session open/close at that session-local date
+        try:
+            dt_open_local  = session_tz.localize(datetime(d.year, d.month, d.day, open_hr, 0, 0), is_dst=None)
+            dt_close_local = session_tz.localize(datetime(d.year, d.month, d.day, close_hr, 0, 0), is_dst=None)
+        except Exception:
+            # if ambiguous/nonexistent times, let pytz resolve
+            dt_open_local  = session_tz.localize(datetime(d.year, d.month, d.day, open_hr, 0, 0))
+            dt_close_local = session_tz.localize(datetime(d.year, d.month, d.day, close_hr, 0, 0))
+        dt_open_pst  = dt_open_local.astimezone(PACIFIC)
+        dt_close_pst = dt_close_local.astimezone(PACIFIC)
+        if lo <= dt_open_pst  <= hi: opens.append(dt_open_pst)
+        if lo <= dt_close_pst <= hi: closes.append(dt_close_pst)
+    return opens, closes
+
+def compute_session_lines(idx: pd.DatetimeIndex):
+    """Collect London & New York session open/close times in PST for the given intraday index."""
+    ldn_open, ldn_close = session_markers_for_index(idx, LDN_TZ, 8, 17)  # 8:00–17:00 London local
+    ny_open, ny_close   = session_markers_for_index(idx, NY_TZ,  8, 17)  # 8:00–17:00 New York local
+    return {
+        "ldn_open": ldn_open, "ldn_close": ldn_close,
+        "ny_open": ny_open,   "ny_close": ny_close
+    }
+
+def draw_session_lines(ax, lines: dict):
+    """Draw vertical lines for session opens/closes with legend entries. Solid=open, dashed=close."""
+    # Legend handles (one each)
+    ax.plot([], [], linestyle="-",  color="tab:blue",   label="London Open (PST)")
+    ax.plot([], [], linestyle="--", color="tab:blue",   label="London Close (PST)")
+    ax.plot([], [], linestyle="-",  color="tab:orange", label="New York Open (PST)")
+    ax.plot([], [], linestyle="--", color="tab:orange", label="New York Close (PST)")
+    # Lines (light alpha)
+    for t in lines.get("ldn_open", []):
+        ax.axvline(t, linestyle="-",  linewidth=1.0, color="tab:blue",   alpha=0.35)
+    for t in lines.get("ldn_close", []):
+        ax.axvline(t, linestyle="--", linewidth=1.0, color="tab:blue",   alpha=0.35)
+    for t in lines.get("ny_open", []):
+        ax.axvline(t, linestyle="-",  linewidth=1.0, color="tab:orange", alpha=0.35)
+    for t in lines.get("ny_close", []):
+        ax.axvline(t, linestyle="--", linewidth=1.0, color="tab:orange", alpha=0.35)
+    # Why: keeps the viewer aware that all session markers are PST
+    ax.text(0.99, 0.98, "Session times in PST",
+            transform=ax.transAxes, ha="right", va="top",
+            fontsize=8, color="black",
+            bbox=dict(boxstyle="round,pad=0.22", fc="white", ec="grey", alpha=0.7))
 
 # ========= Signals & News helpers =========
 EW_CONFIDENCE = 0.95
@@ -1275,6 +1312,11 @@ with tab1:
                          fontsize=9, color="black",
                          bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
+                # --- NEW: Session lines (PST) for Forex intraday ---
+                if mode == "Forex" and show_sessions_pst and not hc.empty:
+                    sess = compute_session_lines(hc.index)
+                    draw_session_lines(ax2, sess)
+
                 if show_fibs and not hc.empty:
                     fibs_h = fibonacci_levels(hc)
                     for lbl, y in fibs_h.items():
@@ -1717,6 +1759,11 @@ with tab2:
                          transform=ax3.transAxes, ha="center", va="bottom",
                          fontsize=9, color="black",
                          bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+
+                # --- NEW: Session lines (PST) for Forex intraday (Enhanced tab) ---
+                if mode == "Forex" and show_sessions_pst and not ic.empty:
+                    sess2 = compute_session_lines(ic.index)
+                    draw_session_lines(ax3, sess2)
 
                 if show_fibs and not ic.empty:
                     fibs_h = fibonacci_levels(ic)
