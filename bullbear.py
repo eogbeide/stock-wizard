@@ -145,6 +145,10 @@ show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=False, key
 slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10, key="sb_slope_lb_daily")
 slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120,  6, key="sb_slope_lb_hourly")
 
+# NEW: Hourly S/R window (used for channel indicator and price chart S/R)
+st.sidebar.subheader("Hourly Support/Resistance Window")
+sr_lb_hourly = st.sidebar.slider("Hourly S/R lookback (bars)", 20, 240, 60, 5, key="sb_sr_lb_hourly")
+
 # Hourly Momentum controls
 st.sidebar.subheader("Hourly Momentum")
 show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True, key="sb_show_mom_hourly")
@@ -154,6 +158,10 @@ mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, k
 st.sidebar.subheader("Hourly Normalized RSI (panel now shows NTD + Trend only)")
 show_nrsi   = st.sidebar.checkbox("Show Hourly NTD panel", value=True, key="sb_show_nrsi")
 nrsi_period = st.sidebar.slider("RSI period (unused)", 5, 60, 14, 1, key="sb_nrsi_period")
+
+# NEW: NTD Channel Indicator toggle
+st.sidebar.subheader("NTD Channel (Hourly)")
+show_ntd_channel = st.sidebar.checkbox("Highlight when price is between S/R (S↔R) on NTD", value=True, key="sb_ntd_channel")
 
 # Hourly Supertrend controls
 st.sidebar.subheader("Hourly Supertrend")
@@ -872,6 +880,91 @@ def draw_news_markers(ax, times, ymin, ymax, label="News"):
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
 
+# ========= NEW: Channel-in-range helpers for NTD panel =========
+def channel_state_series(price: pd.Series, sup: pd.Series, res: pd.Series, eps: float = 0.0) -> pd.Series:
+    """
+    Returns a series with values:
+      -1 → price below Support
+       0 → price between Support & Resistance (IN RANGE)
+      +1 → price above Resistance
+    """
+    p = _coerce_1d_series(price)
+    s_sup = _coerce_1d_series(sup).reindex(p.index)
+    s_res = _coerce_1d_series(res).reindex(p.index)
+    state = pd.Series(index=p.index, dtype=float)
+    ok = p.notna() & s_sup.notna() & s_res.notna()
+    if ok.any():
+        below = p < (s_sup - eps)
+        above = p > (s_res + eps)
+        between = ~(below | above)
+        state[ok & below] = -1
+        state[ok & between] = 0
+        state[ok & above] = 1
+    return state
+
+def _true_spans(mask: pd.Series):
+    """Return list of (start_ts, end_ts) for contiguous True regions in boolean series."""
+    spans = []
+    if mask is None or mask.empty:
+        return spans
+    s = mask.fillna(False).astype(bool)
+    start = None
+    prev_t = None
+    for t, val in s.items():
+        if val and start is None:
+            start = t
+        if not val and start is not None:
+            if prev_t is not None:
+                spans.append((start, prev_t))
+            start = None
+        prev_t = t
+    if start is not None and prev_t is not None:
+        spans.append((start, prev_t))
+    return spans
+
+def overlay_inrange_on_ntd(ax, price: pd.Series, sup: pd.Series, res: pd.Series):
+    """
+    Shades time ranges on the NTD panel where price is between S/R (gold ribbon),
+    and marks entries into the channel from below (▲ green) and from above (▼ orange).
+    Returns the latest channel state (-1/0/+1).
+    """
+    state = channel_state_series(price, sup, res)
+    in_mask = (state == 0)
+
+    # Gold ribbons for IN-RANGE spans
+    for a, b in _true_spans(in_mask):
+        try:
+            ax.axvspan(a, b, color="gold", alpha=0.15, zorder=1)
+        except Exception:
+            pass
+    # Legend handle for ribbon
+    ax.plot([], [], linewidth=8, color="gold", alpha=0.20, label="In Range (S↔R)")
+
+    # Entry markers
+    enter_from_below = (state.shift(1) == -1) & (state == 0)
+    enter_from_above = (state.shift(1) ==  1) & (state == 0)
+    if enter_from_below.any():
+        ax.scatter(price.index[enter_from_below], [0.92]*int(enter_from_below.sum()),
+                   marker="^", s=60, color="tab:green", zorder=7, label="Enter from S")
+    if enter_from_above.any():
+        ax.scatter(price.index[enter_from_above], [0.92]*int(enter_from_above.sum()),
+                   marker="v", s=60, color="tab:orange", zorder=7, label="Enter from R")
+
+    # Status badge (top-right)
+    lbl = None; col = "black"
+    last = state.dropna().iloc[-1] if state.dropna().shape[0] else np.nan
+    if np.isfinite(last):
+        if last == 0:
+            lbl, col = "IN RANGE (S↔R)", "black"
+        elif last > 0:
+            lbl, col = "Above R", "tab:orange"
+        else:
+            lbl, col = "Below S", "tab:red"
+        ax.text(0.99, 0.94, lbl, transform=ax.transAxes, ha="right", va="top",
+                fontsize=9, color=col,
+                bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=col, alpha=0.85))
+    return last
+
 # ========= Cached last values for scanning =========
 @st.cache_data(ttl=120)
 def last_daily_ntd_value(symbol: str, ntd_win: int):
@@ -1197,8 +1290,9 @@ with tab1:
                 xh = np.arange(len(hc))
                 slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
                 trend_h = slope_h * xh + intercept_h
-                res_h = hc.rolling(60, min_periods=1).max()
-                sup_h = hc.rolling(60, min_periods=1).min()
+                # Use configurable S/R window
+                res_h = hc.rolling(sr_lb_hourly, min_periods=1).max()
+                sup_h = hc.rolling(sr_lb_hourly, min_periods=1).min()
 
                 st_intraday = compute_supertrend(intraday, atr_period=atr_period, atr_mult=atr_mult)
                 st_line_intr = st_intraday["ST"].reindex(hc.index) if "ST" in st_intraday else pd.Series(index=hc.index, dtype=float)
@@ -1396,7 +1490,7 @@ with tab1:
                     ax2v.legend(loc="lower left", framealpha=0.5)
                     st.pyplot(fig2v)
 
-                # === Hourly Indicator Panel: NTD + Trend ONLY (SHADED) ===
+                # === Hourly Indicator Panel: NTD + Trend ONLY (SHADED) + NEW S↔R channel ===
                 if show_nrsi:
                     ntd_h = compute_normalized_trend(hc, window=ntd_window)
                     ntd_trend_h, ntd_m_h = slope_line(ntd_h, slope_lb_hourly)
@@ -1408,6 +1502,10 @@ with tab1:
                     if shade_ntd and not ntd_h.dropna().empty:
                         shade_ntd_regions(ax2r, ntd_h)
 
+                    # NEW: S↔R Channel overlay on NTD panel
+                    if show_ntd_channel and np.isfinite(res_val) and np.isfinite(sup_val):
+                        overlay_inrange_on_ntd(ax2r, hc, sup_h, res_h)
+
                     # NTD line
                     ax2r.plot(ntd_h.index, ntd_h, "-", linewidth=1.6, label="NTD")
 
@@ -1415,17 +1513,6 @@ with tab1:
                     if not ntd_trend_h.empty:
                         ax2r.plot(ntd_trend_h.index, ntd_trend_h.values, "--", linewidth=2,
                                   label=f"NTD Trend {slope_lb_hourly} ({fmt_slope(ntd_m_h)}/bar)")
-
-                    # Trend badge (bottom-center)
-                    if not ntd_h.dropna().empty:
-                        last_ntd = float(ntd_h.dropna().iloc[-1])
-                        t_dir = "UP" if last_ntd >= 0 else "DOWN"
-                        color = "tab:green" if last_ntd >= 0 else "tab:red"
-                        certainty = int(round(50 + 50*abs(last_ntd)))  # map [-1,1] → [50,100]
-                        ax2r.text(0.50, 0.06, f"Trend: {t_dir} ({certainty}%)",
-                                  transform=ax2r.transAxes, ha="center", va="bottom",
-                                  fontsize=10, fontweight="bold", color=color,
-                                  bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.85))
 
                     # Reference lines
                     ax2r.axhline(0.0,  linestyle="--", linewidth=1.0, color="black",    label="0.00")
@@ -1650,8 +1737,8 @@ with tab2:
                 xi = np.arange(len(ic))
                 slope_i, intercept_i = np.polyfit(xi, ic.values, 1)
                 trend_i = slope_i * xi + intercept_i
-                res_i = ic.rolling(60, min_periods=1).max()
-                sup_i = ic.rolling(60, min_periods=1).min()
+                res_i = ic.rolling(sr_lb_hourly, min_periods=1).max()
+                sup_i = ic.rolling(sr_lb_hourly, min_periods=1).min()
                 st_intraday = compute_supertrend(intr, atr_period=atr_period, atr_mult=atr_mult)
                 st_line_intr = st_intraday["ST"].reindex(ic.index) if "ST" in st_intraday else pd.Series(index=ic.index, dtype=float)
 
@@ -1831,7 +1918,7 @@ with tab2:
                     ax3v.legend(loc="lower left", framealpha=0.5)
                     st.pyplot(fig3v)
 
-                # === Hourly Indicator Panel (Enhanced): NTD + Trend ONLY (SHADED) ===
+                # === Hourly Indicator Panel (Enhanced): NTD + Trend ONLY (SHADED) + NEW S↔R channel ===
                 if show_nrsi:
                     ntd_i = compute_normalized_trend(ic, window=ntd_window)
                     ntd_trend_i, ntd_m_i = slope_line(ntd_i, slope_lb_hourly)
@@ -1843,20 +1930,14 @@ with tab2:
                     if shade_ntd and not ntd_i.dropna().empty:
                         shade_ntd_regions(ax3r, ntd_i)
 
+                    # NEW: S↔R Channel overlay on NTD panel
+                    if show_ntd_channel and np.isfinite(res_val2) and np.isfinite(sup_val2):
+                        overlay_inrange_on_ntd(ax3r, ic, sup_i, res_i)
+
                     ax3r.plot(ntd_i.index, ntd_i, "-", linewidth=1.6, label="NTD")
                     if not ntd_trend_i.empty:
                         ax3r.plot(ntd_trend_i.index, ntd_trend_i.values, "--", linewidth=2,
                                   label=f"NTD Trend {slope_lb_hourly} ({fmt_slope(ntd_m_i)}/bar)")
-
-                    if not ntd_i.dropna().empty:
-                        last_ntd = float(ntd_i.dropna().iloc[-1])
-                        t_dir = "UP" if last_ntd >= 0 else "DOWN"
-                        color = "tab:green" if last_ntd >= 0 else "tab:red"
-                        certainty = int(round(50 + 50*abs(last_ntd)))
-                        ax3r.text(0.50, 0.06, f"Trend: {t_dir} ({certainty}%)",
-                                  transform=ax3r.transAxes, ha="center", va="bottom",
-                                  fontsize=10, fontweight="bold", color=color,
-                                  bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.85))
 
                     ax3r.axhline(0.0,  linestyle="--", linewidth=1.0, color="black",    label="0.00")
                     ax3r.axhline(0.5,  linestyle="-",  linewidth=1.2, color="black",    label="+0.50")
