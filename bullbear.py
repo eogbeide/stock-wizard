@@ -220,6 +220,11 @@ show_hma    = st.sidebar.checkbox("Show HMA crossover signal", value=True, key="
 hma_period  = st.sidebar.slider("HMA period", 5, 120, 55, 1, key="sb_hma_period")
 hma_conf    = st.sidebar.slider("Crossover confidence", 0.50, 0.99, 0.95, 0.01, key="sb_hma_conf")
 
+# NEW: HMA(55) reversal markers on NTD panels
+st.sidebar.subheader("HMA(55) Reversal on NTD")
+show_hma_rev_ntd = st.sidebar.checkbox("Mark HMA cross + slope reversal on NTD", value=True, key="sb_hma_rev_ntd")
+hma_rev_lb       = st.sidebar.slider("HMA reversal slope lookback (bars)", 2, 10, 3, 1, key="sb_hma_rev_lb")
+
 # Forex-only controls
 if mode == "Forex":
     show_fx_news = st.sidebar.checkbox("Show Forex news markers (intraday)", value=True, key="sb_show_fx_news")
@@ -726,6 +731,54 @@ def annotate_crossover(ax, ts, px, side: str, conf: float):
     except Exception:
         pass
 
+# NEW: HMA reversal detection (for NTD panel markers)
+def _cross_series(price: pd.Series, line: pd.Series):
+    p = _coerce_1d_series(price)
+    l = _coerce_1d_series(line)
+    ok = p.notna() & l.notna()
+    if ok.sum() < 2:
+        idx = p.index if len(p) else l.index
+        return pd.Series(False, index=idx), pd.Series(False, index=idx)
+    p = p[ok]; l = l[ok]
+    above = p > l
+    cross_up = above & (~above.shift(1).fillna(False))
+    cross_dn = (~above) & (above.shift(1).fillna(False))
+    return cross_up.reindex(p.index, fill_value=False), cross_dn.reindex(p.index, fill_value=False)
+
+def detect_hma_reversal_masks(price: pd.Series, hma: pd.Series, lookback: int = 3):
+    """
+    Reversal = price crosses HMA and the HMA slope flips direction at that bar:
+      - BUY_REV: cross up AND HMA slope turns negative→positive
+      - SELL_REV: cross down AND HMA slope turns positive→negative
+    """
+    h = _coerce_1d_series(hma)
+    # approximate local slope by mean diff over small lookback
+    slope = h.diff().rolling(lookback, min_periods=1).mean()
+    sign_now = np.sign(slope)
+    sign_prev = np.sign(slope.shift(1))
+    cross_up, cross_dn = _cross_series(price, hma)
+    buy_rev = cross_up & (sign_now > 0) & (sign_prev < 0)
+    sell_rev = cross_dn & (sign_now < 0) & (sign_prev > 0)
+    buy_rev = buy_rev.fillna(False)
+    sell_rev = sell_rev.fillna(False)
+    return buy_rev, sell_rev
+
+def overlay_hma_reversal_on_ntd(ax, price: pd.Series, hma: pd.Series, lookback: int = 3,
+                                y_up: float = 0.95, y_dn: float = -0.95, label_prefix: str = "HMA REV", period: int = 55):
+    """Scatter markers at top/bottom of NTD panel for HMA cross+slope-reversal events."""
+    try:
+        buy_rev, sell_rev = detect_hma_reversal_masks(price, hma, lookback=lookback)
+        idx_up = list(buy_rev[buy_rev].index)
+        idx_dn = list(sell_rev[sell_rev].index)
+        if len(idx_up):
+            ax.scatter(idx_up, [y_up]*len(idx_up), marker="^", s=70, color="tab:green",
+                       zorder=8, label=f"HMA({period}) ↑ REV")
+        if len(idx_dn):
+            ax.scatter(idx_dn, [y_dn]*len(idx_dn), marker="v", s=70, color="tab:red",
+                       zorder=8, label=f"HMA({period}) ↓ REV")
+    except Exception:
+        pass
+
 # ========= Sessions (NEW) =========
 NY_TZ   = pytz.timezone("America/New_York")
 LDN_TZ  = pytz.timezone("Europe/London")
@@ -1156,8 +1209,8 @@ with tab1:
             bb_pctb_d_show= bb_pctb_d.reindex(df_show.index)
             bb_nbb_d_show = bb_nbb_d.reindex(df_show.index)
 
-            # HMA (Daily) for price chart + probabilistic crossover
-            hma_d_full = compute_hma(df, period=hma_period) if show_hma else pd.Series(index=df.index, dtype=float)
+            # HMA (Daily) — compute always (used for NTD reversal markers and optional price plot)
+            hma_d_full = compute_hma(df, period=hma_period)
             hma_d_show = hma_d_full.reindex(df_show.index)
 
             # PSAR (Daily)
@@ -1179,7 +1232,7 @@ with tab1:
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
 
-            # HMA line
+            # HMA line (optional)
             if show_hma and not hma_d_show.dropna().empty:
                 ax.plot(hma_d_show.index, hma_d_show.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
 
@@ -1258,14 +1311,17 @@ with tab1:
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw, ntd_d_show)
 
-            # NTD line
+            # NTD line + trendline
             if show_ntd and not ntd_d_show.dropna().empty:
                 axdw.plot(ntd_d_show.index, ntd_d_show, "-", linewidth=1.6, label=f"NTD (win={ntd_window})")
-                # NTD trendline
                 ntd_trend_d, ntd_m_d = slope_line(ntd_d_show, slope_lb_daily)
                 if not ntd_trend_d.empty:
                     axdw.plot(ntd_trend_d.index, ntd_trend_d.values, "--", linewidth=2,
                               label=f"NTD Trend {slope_lb_daily} ({fmt_slope(ntd_m_d)}/bar)")
+
+            # NEW: HMA reversal markers on NTD (Daily)
+            if show_hma_rev_ntd and not hma_d_show.dropna().empty and not df_show.dropna().empty:
+                overlay_hma_reversal_on_ntd(axdw, df_show, hma_d_show, lookback=hma_rev_lb, period=hma_period)
 
             # Reference lines
             axdw.axhline(0.0,  linestyle="--", linewidth=1.0, color="black",    label="0.00")
@@ -1309,8 +1365,8 @@ with tab1:
                 # Bollinger Bands (Hourly)
                 bb_mid_h, bb_up_h, bb_lo_h, bb_pctb_h, bb_nbb_h = compute_bbands(hc, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
-                # HMA (Hourly) overlay + probabilistic crossover signal
-                hma_h = compute_hma(hc, period=hma_period) if show_hma else pd.Series(index=hc.index, dtype=float)
+                # HMA (Hourly) — compute always (used for NTD reversal markers and optional price plot)
+                hma_h = compute_hma(hc, period=hma_period)
 
                 # PSAR (Hourly)
                 psar_h_df = compute_psar_from_ohlc(intraday, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
@@ -1327,7 +1383,7 @@ with tab1:
                 ax2.plot(hc.index, he, "--", label="20 EMA")
                 ax2.plot(hc.index, trend_h, "--", label=f"Trend (m={fmt_slope(slope_h)}/bar)", linewidth=2)
 
-                # HMA line
+                # HMA line (optional)
                 if show_hma and not hma_h.dropna().empty:
                     ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
 
@@ -1514,6 +1570,10 @@ with tab1:
                         ax2r.plot(ntd_trend_h.index, ntd_trend_h.values, "--", linewidth=2,
                                   label=f"NTD Trend {slope_lb_hourly} ({fmt_slope(ntd_m_h)}/bar)")
 
+                    # NEW: HMA reversal markers on NTD (Hourly)
+                    if show_hma_rev_ntd and not hma_h.dropna().empty and not hc.dropna().empty:
+                        overlay_hma_reversal_on_ntd(ax2r, hc, hma_h, lookback=hma_rev_lb, period=hma_period)
+
                     # Reference lines
                     ax2r.axhline(0.0,  linestyle="--", linewidth=1.0, color="black",    label="0.00")
                     ax2r.axhline(0.5,  linestyle="-",  linewidth=1.2, color="black",    label="+0.50")
@@ -1620,8 +1680,8 @@ with tab2:
             bb_pctb_d2_show= bb_pctb_d2.reindex(df_show.index)
             bb_nbb_d2_show = bb_nbb_d2.reindex(df_show.index)
 
-            # HMA (Daily, Enhanced)
-            hma_d2_full = compute_hma(df, period=hma_period) if show_hma else pd.Series(index=df.index, dtype=float)
+            # HMA (Daily, Enhanced) — compute always
+            hma_d2_full = compute_hma(df, period=hma_period)
             hma_d2_show = hma_d2_full.reindex(df_show.index)
 
             # PSAR (Daily, Enhanced)
@@ -1714,6 +1774,10 @@ with tab2:
                     axdw2.plot(ntd_trend_d2.index, ntd_trend_d2.values, "--", linewidth=2,
                                label=f"NTD Trend {slope_lb_daily} ({fmt_slope(ntd_m_d2)}/bar)")
 
+            # NEW: HMA reversal markers on NTD (Daily, Enhanced)
+            if show_hma_rev_ntd and not hma_d2_show.dropna().empty and not df_show.dropna().empty:
+                overlay_hma_reversal_on_ntd(axdw2, df_show, hma_d2_show, lookback=hma_rev_lb, period=hma_period)
+
             # Reference lines
             axdw2.axhline(0.0,  linestyle="--", linewidth=1.0, color="black",    label="0.00")
             axdw2.axhline(0.5,  linestyle="-",  linewidth=1.2, color="black",    label="+0.50")
@@ -1753,8 +1817,8 @@ with tab2:
                 # Bollinger Bands (Hourly, Enhanced)
                 bb_mid_i, bb_up_i, bb_lo_i, bb_pctb_i, bb_nbb_i = compute_bbands(ic, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
-                # HMA (Hourly, Enhanced)
-                hma_i = compute_hma(ic, period=hma_period) if show_hma else pd.Series(index=ic.index, dtype=float)
+                # HMA (Hourly, Enhanced) — compute always
+                hma_i = compute_hma(ic, period=hma_period)
 
                 # PSAR (Hourly, Enhanced)
                 psar_i_df = compute_psar_from_ohlc(intr, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
@@ -1939,6 +2003,10 @@ with tab2:
                         ax3r.plot(ntd_trend_i.index, ntd_trend_i.values, "--", linewidth=2,
                                   label=f"NTD Trend {slope_lb_hourly} ({fmt_slope(ntd_m_i)}/bar)")
 
+                    # NEW: HMA reversal markers on NTD (Hourly, Enhanced)
+                    if show_hma_rev_ntd and not hma_i.dropna().empty and not ic.dropna().empty:
+                        overlay_hma_reversal_on_ntd(ax3r, ic, hma_i, lookback=hma_rev_lb, period=hma_period)
+
                     ax3r.axhline(0.0,  linestyle="--", linewidth=1.0, color="black",    label="0.00")
                     ax3r.axhline(0.5,  linestyle="-",  linewidth=1.2, color="black",    label="+0.50")
                     ax3r.axhline(-0.5, linestyle="-",  linewidth=1.2, color="black",    label="-0.50")
@@ -2091,7 +2159,7 @@ with tab5:
             st.info(f"No symbols with Daily NTD < {thresh:+.2f}.")
         else:
             show = below_daily.copy()
-            show["NTD_Daily"] = show["NTD_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
+            show["NTD_Daily"] = show["NTD_Daily"] = show["NTD_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
             st.dataframe(show.reset_index(drop=True), use_container_width=True)
 
         # DAILY scan for both universes — Price > Kijun
