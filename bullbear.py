@@ -1,5 +1,6 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
+# (NEW) Normalized Price (NPX) plotted on NTD panels + crossing markers
 
 import streamlit as st
 import pandas as pd
@@ -154,8 +155,8 @@ st.sidebar.subheader("Hourly Momentum")
 show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True, key="sb_show_mom_hourly")
 mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, key="sb_mom_lb_hourly")
 
-# Hourly Normalized RSI controls (kept for layout; panel now shows only NTD + Trend)
-st.sidebar.subheader("Hourly Normalized RSI (panel now shows NTD + Trend only)")
+# Hourly Normalized RSI controls (kept for layout; panel now shows NTD + Price(NPX) + Trend)
+st.sidebar.subheader("Hourly Indicator Panel")
 show_nrsi   = st.sidebar.checkbox("Show Hourly NTD panel", value=True, key="sb_show_nrsi")
 nrsi_period = st.sidebar.slider("RSI period (unused)", 5, 60, 14, 1, key="sb_nrsi_period")
 
@@ -197,6 +198,9 @@ st.sidebar.subheader("Normalized Trend (NTD panels — Daily & Hourly)")
 show_ntd  = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd")
 ntd_window= st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
 shade_ntd = st.sidebar.checkbox("Shade NTD (Daily & Hourly: green=up, red=down)", value=True, key="sb_ntd_shade")
+# NEW: NPX on NTD + crossing markers
+show_npx_ntd   = st.sidebar.checkbox("Overlay normalized price (NPX) on NTD panels", value=True, key="sb_show_npx_ntd")
+mark_npx_cross = st.sidebar.checkbox("Mark NPX↔NTD crosses (▲/▼)", value=True, key="sb_mark_npx_cross")
 
 # Ichimoku controls (Normalized for EW panels + Kijun on price) — only Kijun used on price charts
 st.sidebar.subheader("Normalized Ichimoku (EW panels) + Kijun on price")
@@ -480,6 +484,23 @@ def compute_normalized_trend(close: pd.Series, window: int = 60) -> pd.Series:
     ntd_raw = (slope_roll * window) / vol
     ntd = np.tanh(ntd_raw / 2.0)
     return ntd.reindex(s.index)
+
+# ---- NEW: Normalized Price (NPX) for NTD panel (z-score → tanh in [-1,1]) ----
+def compute_normalized_price(close: pd.Series, window: int = 60) -> pd.Series:
+    """
+    NPX scales price to [-1,1] using a rolling z-score over `window`, then tanh:
+      NPX = tanh( (price - mean) / (2 * std) )
+    This aligns its range with NTD so crossings are visible on the same axis.
+    """
+    s = _coerce_1d_series(close).astype(float)
+    if s.empty or window < 3:
+        return pd.Series(index=s.index, dtype=float)
+    minp = max(5, window // 3)
+    m = s.rolling(window, min_periods=minp).mean()
+    sd = s.rolling(window, min_periods=minp).std().replace(0, np.nan)
+    z = (s - m) / sd
+    npx = np.tanh(z / 2.0)
+    return npx.reindex(s.index)
 
 def shade_ntd_regions(ax, ntd: pd.Series):
     if ntd is None or ntd.empty:
@@ -778,6 +799,37 @@ def overlay_hma_reversal_on_ntd(ax, price: pd.Series, hma: pd.Series, lookback: 
                        zorder=8, label=f"HMA({period}) ↓ REV")
     except Exception:
         pass
+
+# ========= NEW: NPX ↔ NTD overlay/helpers =========
+def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = True):
+    """
+    Plot NPX (normalized price) on the NTD panel and optionally mark crossovers.
+    - Up-cross: NPX crosses above NTD → green ▲ at the intersection (y = NTD at ts)
+    - Down-cross: NPX crosses below NTD → red ▼ at the intersection
+    """
+    npx = _coerce_1d_series(npx)
+    ntd = _coerce_1d_series(ntd)
+    idx = ntd.index.union(npx.index)
+    npx = npx.reindex(idx)
+    ntd = ntd.reindex(idx)
+
+    if npx.dropna().empty:
+        return
+
+    # NPX line (subtle gray to distinguish from NTD)
+    ax.plot(npx.index, npx.values, "-", linewidth=1.2, color="tab:gray", alpha=0.9, label="NPX (Norm Price)")
+
+    if mark_crosses and not ntd.dropna().empty:
+        up_mask, dn_mask = _cross_series(npx, ntd)
+        try:
+            up_idx = list(up_mask[up_mask].index)
+            dn_idx = list(dn_mask[dn_mask].index)
+            if len(up_idx):
+                ax.scatter(up_idx, ntd.loc[up_idx], marker="^", s=65, color="tab:green", zorder=9, label="Price↑NTD")
+            if len(dn_idx):
+                ax.scatter(dn_idx, ntd.loc[dn_idx], marker="v", s=65, color="tab:red", zorder=9, label="Price↓NTD")
+        except Exception:
+            pass
 
 # ========= Sessions (NEW) =========
 NY_TZ   = pytz.timezone("America/New_York")
@@ -1170,7 +1222,7 @@ with tab1:
         if mode == "Forex" and show_fx_news:
             fx_news = fetch_yf_news(sel, window_days=news_window_days)
 
-        # ----- Daily (Price + Indicator panel with NTD+Trend) -----
+        # ----- Daily (Price + Indicator panel with NTD+Trend+NPX) -----
         if chart in ("Daily","Both"):
             ema30 = df.ewm(span=30).mean()
             res30 = df.rolling(30, min_periods=1).max()
@@ -1181,6 +1233,9 @@ with tab1:
 
             # NTD for daily panel
             ntd_d = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
+            # NPX for daily panel
+            npx_d_full = compute_normalized_price(df, window=ntd_window) if show_npx_ntd else pd.Series(index=df.index, dtype=float)
+
             # Kijun for price chart (optional)
             kijun_d = pd.Series(index=df.index, dtype=float)
             if df_ohlc is not None and not df_ohlc.empty and show_ichi:
@@ -1200,6 +1255,7 @@ with tab1:
             yhat_d_show = yhat_d.reindex(df_show.index) if not yhat_d.empty else yhat_d
             yhat_ema_show = yhat_ema30.reindex(df_show.index) if not yhat_ema30.empty else yhat_ema30
             ntd_d_show  = ntd_d.reindex(df_show.index)
+            npx_d_show  = npx_d_full.reindex(df_show.index)
             kijun_d_show = kijun_d.reindex(df_show.index).ffill().bfill()
 
             # BB subset for the shown window
@@ -1306,8 +1362,8 @@ with tab1:
                         annotate_crossover(ax, ts, px_here, "SELL", hma_conf)
                         st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — last price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
 
-            # --- DAILY INDICATOR PANEL: NTD + Trend ONLY ---
-            axdw.set_title("Daily Indicator Panel — NTD + Trend")
+            # --- DAILY INDICATOR PANEL: NTD + NPX + Trend ---
+            axdw.set_title("Daily Indicator Panel — NTD + NPX (Normalized Price) + Trend")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw, ntd_d_show)
 
@@ -1318,6 +1374,10 @@ with tab1:
                 if not ntd_trend_d.empty:
                     axdw.plot(ntd_trend_d.index, ntd_trend_d.values, "--", linewidth=2,
                               label=f"NTD Trend {slope_lb_daily} ({fmt_slope(ntd_m_d)}/bar)")
+
+            # NEW: NPX overlay + cross markers
+            if show_npx_ntd and not npx_d_show.dropna().empty and not ntd_d_show.dropna().empty:
+                overlay_npx_on_ntd(axdw, npx_d_show, ntd_d_show, mark_crosses=mark_npx_cross)
 
             # NEW: HMA reversal markers on NTD (Daily)
             if show_hma_rev_ntd and not hma_d_show.dropna().empty and not df_show.dropna().empty:
@@ -1546,13 +1606,14 @@ with tab1:
                     ax2v.legend(loc="lower left", framealpha=0.5)
                     st.pyplot(fig2v)
 
-                # === Hourly Indicator Panel: NTD + Trend ONLY (SHADED) + NEW S↔R channel ===
+                # === Hourly Indicator Panel: NTD + NPX + Trend (SHADED) + NEW S↔R channel ===
                 if show_nrsi:
                     ntd_h = compute_normalized_trend(hc, window=ntd_window)
                     ntd_trend_h, ntd_m_h = slope_line(ntd_h, slope_lb_hourly)
+                    npx_h = compute_normalized_price(hc, window=ntd_window) if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
 
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
-                    ax2r.set_title(f"Hourly Indicator Panel — NTD + Trend (win={ntd_window})")
+                    ax2r.set_title(f"Hourly Indicator Panel — NTD + NPX (Normalized Price) + Trend (win={ntd_window})")
 
                     # NEW: shading (green above 0, red below 0)
                     if shade_ntd and not ntd_h.dropna().empty:
@@ -1564,6 +1625,10 @@ with tab1:
 
                     # NTD line
                     ax2r.plot(ntd_h.index, ntd_h, "-", linewidth=1.6, label="NTD")
+
+                    # NPX overlay + cross markers
+                    if show_npx_ntd and not npx_h.dropna().empty and not ntd_h.dropna().empty:
+                        overlay_npx_on_ntd(ax2r, npx_h, ntd_h, mark_crosses=mark_npx_cross)
 
                     # NTD trendline (dashed) + slope in legend
                     if not ntd_trend_h.empty:
@@ -1651,8 +1716,10 @@ with tab2:
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
-            # NTD for daily panel
+            # NTD + NPX for daily panel (Enhanced)
             ntd_d2 = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
+            npx_d2_full = compute_normalized_price(df, window=ntd_window) if show_npx_ntd else pd.Series(index=df.index, dtype=float)
+
             kijun_d2 = pd.Series(index=df.index, dtype=float)
             if df_ohlc is not None and not df_ohlc.empty and show_ichi:
                 _, kijun_d2, _, _, _ = ichimoku_lines(
@@ -1671,6 +1738,7 @@ with tab2:
             yhat_d_show = yhat_d.reindex(df_show.index) if not yhat_d.empty else yhat_d
             yhat_ema_show = yhat_ema30.reindex(df_show.index) if not yhat_ema30.empty else yhat_ema30
             ntd_d_show  = ntd_d2.reindex(df_show.index)
+            npx_d2_show = npx_d2_full.reindex(df_show.index)
             kijun_d2_show = kijun_d2.reindex(df_show.index).ffill().bfill()
 
             # BB subset (Enhanced)
@@ -1762,8 +1830,8 @@ with tab2:
                         annotate_crossover(ax, ts, px_here, "SELL", hma_conf)
                         st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — last price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
 
-            # --- DAILY INDICATOR PANEL (Enhanced): NTD + Trend ONLY ---
-            axdw2.set_title("Daily Indicator Panel — NTD + Trend")
+            # --- DAILY INDICATOR PANEL (Enhanced): NTD + NPX + Trend ---
+            axdw2.set_title("Daily Indicator Panel — NTD + NPX (Normalized Price) + Trend")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw2, ntd_d_show)
 
@@ -1773,6 +1841,10 @@ with tab2:
                 if not ntd_trend_d2.empty:
                     axdw2.plot(ntd_trend_d2.index, ntd_trend_d2.values, "--", linewidth=2,
                                label=f"NTD Trend {slope_lb_daily} ({fmt_slope(ntd_m_d2)}/bar)")
+
+            # NEW: NPX overlay + cross markers
+            if show_npx_ntd and not npx_d2_show.dropna().empty and not ntd_d_show.dropna().empty:
+                overlay_npx_on_ntd(axdw2, npx_d2_show, ntd_d_show, mark_crosses=mark_npx_cross)
 
             # NEW: HMA reversal markers on NTD (Daily, Enhanced)
             if show_hma_rev_ntd and not hma_d2_show.dropna().empty and not df_show.dropna().empty:
@@ -1982,13 +2054,14 @@ with tab2:
                     ax3v.legend(loc="lower left", framealpha=0.5)
                     st.pyplot(fig3v)
 
-                # === Hourly Indicator Panel (Enhanced): NTD + Trend ONLY (SHADED) + NEW S↔R channel ===
+                # === Hourly Indicator Panel (Enhanced): NTD + NPX + Trend (SHADED) + NEW S↔R channel ===
                 if show_nrsi:
                     ntd_i = compute_normalized_trend(ic, window=ntd_window)
                     ntd_trend_i, ntd_m_i = slope_line(ntd_i, slope_lb_hourly)
+                    npx_i = compute_normalized_price(ic, window=ntd_window) if show_npx_ntd else pd.Series(index=ic.index, dtype=float)
 
                     fig3r, ax3r = plt.subplots(figsize=(14,2.8))
-                    ax3r.set_title(f"Hourly Indicator Panel — NTD + Trend (win={ntd_window})")
+                    ax3r.set_title(f"Hourly Indicator Panel — NTD + NPX (Normalized Price) + Trend (win={ntd_window})")
 
                     # NEW: shading (green above 0, red below 0)
                     if shade_ntd and not ntd_i.dropna().empty:
@@ -1999,6 +2072,11 @@ with tab2:
                         overlay_inrange_on_ntd(ax3r, ic, sup_i, res_i)
 
                     ax3r.plot(ntd_i.index, ntd_i, "-", linewidth=1.6, label="NTD")
+
+                    # NPX overlay + cross markers
+                    if show_npx_ntd and not npx_i.dropna().empty and not ntd_i.dropna().empty:
+                        overlay_npx_on_ntd(ax3r, npx_i, ntd_i, mark_crosses=mark_npx_cross)
+
                     if not ntd_trend_i.empty:
                         ax3r.plot(ntd_trend_i.index, ntd_trend_i.values, "--", linewidth=2,
                                   label=f"NTD Trend {slope_lb_hourly} ({fmt_slope(ntd_m_i)}/bar)")
