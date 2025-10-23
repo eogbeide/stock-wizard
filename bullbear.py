@@ -47,8 +47,14 @@ def auto_refresh():
             pass
 
 auto_refresh()
+elapsed = time.time() - st.session_state.last_refresh
+remaining = max(0, int(REFRESH_INTERVAL - elapsed))
 pst_dt = datetime.fromtimestamp(st.session_state.last_refresh, tz=PACIFIC)
-st.sidebar.markdown(f"**Last refresh:** {pst_dt.strftime('%Y-%m-%d %H:%M:%S')} PST")
+st.sidebar.markdown(
+    f"**Auto-refresh:** every {REFRESH_INTERVAL//60} min  \n"
+    f"**Last refresh:** {pst_dt.strftime('%Y-%m-%d %H:%M:%S')} PST  \n"
+    f"**Next in:** ~{remaining}s"
+)
 
 # ---------- Helpers ----------
 def _coerce_1d_series(obj) -> pd.Series:
@@ -687,7 +693,7 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     if s.empty or window < 2 or not np.isfinite(mult):
         idx = s.index
         empty = pd.Series(index=idx, dtype=float)
-        return empty, empty, empty, empty, empty
+        return mid, upper, lower, pctb, nbb
 
     minp = max(2, window // 2)
     mid = s.ewm(span=window, adjust=False).mean() if use_ema else s.rolling(window, min_periods=minp).mean()
@@ -1185,12 +1191,10 @@ with tab1:
     )
     period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
 
-    auto_run = (
-        st.session_state.run_all and (
-            sel != st.session_state.ticker or
-            hour_range != st.session_state.get("hour_range")
-        )
-    )
+    # 👉 Important change:
+    # Once the user ran it once, auto-run on every app rerun (triggered by the timer above)
+    # so fresh data is fetched and the latest price shows on the charts.
+    auto_run = st.session_state.run_all
 
     if st.button("Run Forecast", key="btn_run_forecast") or auto_run:
         df_hist = fetch_hist(sel)
