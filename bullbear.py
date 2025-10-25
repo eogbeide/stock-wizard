@@ -5,7 +5,7 @@
 # (NEW) Interactive plots (Matplotlib → Plotly bridge) with zero UI/behavior change
 
 import streamlit as st
-import pandas as pdf
+import pandas as pd
 import numpy as np
 import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
