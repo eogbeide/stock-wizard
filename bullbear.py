@@ -2,6 +2,7 @@
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (NEW) Normalized Price (NPX) plotted on NTD panels + crossing markers
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
+# (NEW) Interactive plots (Matplotlib → Plotly bridge) with zero UI/behavior change
 
 import streamlit as st
 import pandas as pd
@@ -13,6 +14,23 @@ import matplotlib.pyplot as plt
 import time
 import pytz
 from matplotlib.transforms import blended_transform_factory  # for left-side labels
+
+# === NEW: universal interactive renderer ===
+def _render_interactive(fig):
+    """
+    Try to display the given Matplotlib figure as an interactive Plotly chart.
+    Falls back to st.pyplot(fig) if Plotly isn't available or conversion fails.
+    """
+    try:
+        import plotly.io as pio  # lazy import to avoid hard dependency at import time
+        pfig = pio.from_matplotlib(fig)
+        # Keep default look/feel; just enable interaction. Hide Plotly logo.
+        st.plotly_chart(pfig, use_container_width=True, config={"displaylogo": False})
+    except Exception:
+        st.pyplot(fig)
+    finally:
+        # Free Matplotlib memory either way
+        plt.close(fig)
 
 # --- Page config ---
 st.set_page_config(
@@ -264,7 +282,7 @@ else:
     universe = [
         'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X',
         'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X',
-        'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','EURCAD=X'
+        'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X'
     ]
 
 # --- Cache helpers (TTL = 120 seconds) ---
@@ -1483,7 +1501,7 @@ with tab1:
             axdw.set_ylim(-1.1, 1.1)
             axdw.set_xlabel("Date (PST)")
             axdw.legend(loc="lower left", framealpha=0.5)
-            st.pyplot(fig)
+            _render_interactive(fig)
 
         # ----- Hourly (price + NEW NTD panel + momentum + NEW Volume panel) -----
         if chart in ("Hourly","Both"):
@@ -1660,7 +1678,7 @@ with tab1:
                 ax2.set_xlabel("Time (PST)")
                 ax2.legend(loc="lower left", framealpha=0.5)
                 xlim_price = ax2.get_xlim()
-                st.pyplot(fig2)
+                _render_interactive(fig2)
 
                 # === NEW: Hourly Volume panel (separate chart) ===
                 vol = _coerce_1d_series(intraday.get("Volume", pd.Series(index=hc.index))).reindex(hc.index).astype(float)
@@ -1699,7 +1717,7 @@ with tab1:
                     ax2v.set_xlim(xlim_price)
                     ax2v.set_xlabel("Time (PST)")
                     ax2v.legend(loc="lower left", framealpha=0.5)
-                    st.pyplot(fig2v)
+                    _render_interactive(fig2v)
 
                 # === Hourly Indicator Panel: NTD + NPX + Trend (SHADED) + NEW S↔R channel ===
                 if show_nrsi:
@@ -1745,7 +1763,7 @@ with tab1:
                     ax2r.set_xlim(xlim_price)
                     ax2r.legend(loc="lower left", framealpha=0.5)
                     ax2r.set_xlabel("Time (PST)")
-                    st.pyplot(fig2r)
+                    _render_interactive(fig2r)
 
                 # Momentum panel (ROC%)
                 if show_mom_hourly:
@@ -1764,7 +1782,7 @@ with tab1:
                     ax2m.set_xlabel("Time (PST)")
                     ax2m.legend(loc="lower left", framealpha=0.5)
                     ax2m.set_xlim(xlim_price)
-                    st.pyplot(fig2m)
+                    _render_interactive(fig2m)
 
         if mode == "Forex" and show_fx_news:
             st.subheader("Recent Forex News (Yahoo Finance)")
@@ -1960,7 +1978,7 @@ with tab2:
             axdw2.set_ylim(-1.1, 1.1)
             axdw2.set_xlabel("Date (PST)")
             axdw2.legend(loc="lower left", framealpha=0.5)
-            st.pyplot(fig)
+            _render_interactive(fig)
 
         # ----- Intraday (Enhanced) -----
         if view in ("Intraday","Both"):
@@ -2123,7 +2141,7 @@ with tab2:
                 ax3.set_xlabel("Time (PST)")
                 ax3.legend(loc="lower left", framealpha=0.5)
                 xlim_price2 = ax3.get_xlim()
-                st.pyplot(fig3)
+                _render_interactive(fig3)
 
                 # === NEW: Intraday Volume panel (separate chart in Enhanced tab) ===
                 vol_i = _coerce_1d_series(intr.get("Volume", pd.Series(index=ic.index))).reindex(ic.index).astype(float)
@@ -2157,7 +2175,7 @@ with tab2:
                     ax3v.set_xlim(xlim_price2)
                     ax3v.set_xlabel("Time (PST)")
                     ax3v.legend(loc="lower left", framealpha=0.5)
-                    st.pyplot(fig3v)
+                    _render_interactive(fig3v)
 
                 # === Hourly Indicator Panel (Enhanced): NTD + NPX + Trend (SHADED) + NEW S↔R channel ===
                 if show_nrsi:
@@ -2195,7 +2213,7 @@ with tab2:
                     ax3r.set_xlim(xlim_price2)
                     ax3r.legend(loc="lower left", framealpha=0.5)
                     ax3r.set_xlabel("Time (PST)")
-                    st.pyplot(fig3r)
+                    _render_interactive(fig3r)
 
                 # Momentum panel (ROC%)
                 if show_mom_hourly:
@@ -2214,7 +2232,7 @@ with tab2:
                     ax3m.set_xlabel("Time (PST)")
                     ax3m.legend(loc="lower left", framealpha=0.5)
                     ax3m.set_xlim(xlim_price2)
-                    st.pyplot(fig3m)
+                    _render_interactive(fig3m)
 
 # --- Tab 3: Bull vs Bear ---
 with tab3:
@@ -2264,7 +2282,7 @@ with tab4:
         ax.plot(df3m.index, trend3m, "--", label="Trend")
         ax.set_xlabel("Date (PST)")
         ax.legend()
-        st.pyplot(fig)
+        _render_interactive(fig)
 
         st.markdown("---")
         df0 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
@@ -2287,7 +2305,7 @@ with tab4:
         ax0.plot(df0.index, trend0, "--", label="Trend")
         ax0.set_xlabel("Date (PST)")
         ax0.legend()
-        st.pyplot(fig0)
+        _render_interactive(fig0)
 
         st.markdown("---")
         st.subheader("Daily % Change")
@@ -2489,4 +2507,4 @@ with tab6:
             ax.set_xlabel("Date (PST)")
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
-            st.pyplot(fig)
+            _render_interactive(fig)
