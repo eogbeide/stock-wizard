@@ -62,10 +62,14 @@ def auto_refresh():
         st.session_state.last_refresh = time.time()
     elif time.time() - st.session_state.last_refresh > REFRESH_INTERVAL:
         st.session_state.last_refresh = time.time()
+        # Prefer new API, fall back to experimental on older Streamlit
         try:
-            st.experimental_rerun()
+            st.rerun()
         except Exception:
-            pass
+            try:
+                st.experimental_rerun()
+            except Exception:
+                pass
 
 auto_refresh()
 elapsed = time.time() - st.session_state.last_refresh
@@ -909,6 +913,93 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = 
                 ax.scatter(dn_idx, ntd.loc[dn_idx], marker="v", s=65, color="tab:red", zorder=9, label="Price↓NTD")
         except Exception:
             pass
+
+# ========= NEW HELPERS ADDED: BB divergence + NTD channel shading =========
+
+def bb_divergence_signals(
+    ax,
+    price: pd.Series,
+    bb_up: pd.Series,
+    bb_lo: pd.Series,
+    lookback: int = 60,
+    conf_up: float = np.nan,
+    conf_dn: float = np.nan,
+    conf_level: float = 0.95,
+):
+    """
+    Simple divergence over `lookback` bars:
+      • Bullish: price slope < 0 while BB 'drift' (avg slope of upper/lower) > 0,
+                 and conf_up >= conf_level → mark ▲ BUY at last bar
+      • Bearish: price slope > 0 while BB drift < 0,
+                 and conf_dn >= conf_level → mark ▼ SELL at last bar
+    """
+    p = _coerce_1d_series(price).astype(float).dropna()
+    u = _coerce_1d_series(bb_up).astype(float)
+    l = _coerce_1d_series(bb_lo).astype(float)
+
+    idx = p.index.intersection(u.index).intersection(l.index)
+    if len(idx) < max(3, lookback // 2):
+        return
+    p = p.reindex(idx)
+    u = u.reindex(idx)
+    l = l.reindex(idx)
+
+    _, mp = slope_line(p, lookback)
+    _, mu = slope_line(u, lookback)
+    _, ml = slope_line(l, lookback)
+    if not (np.isfinite(mp) and np.isfinite(mu) and np.isfinite(ml)):
+        return
+
+    drift = (mu + ml) / 2.0
+    t_last = idx[-1]
+    y_last = float(p.iloc[-1])
+    cu = float(conf_up) if np.isfinite(conf_up) else 0.0
+    cd = float(conf_dn) if np.isfinite(conf_dn) else 0.0
+
+    # Bullish divergence
+    if mp < 0 and drift > 0 and cu >= conf_level:
+        try:
+            ax.scatter([t_last], [y_last], marker="^", s=90, color="tab:green", zorder=8)
+            ax.text(t_last, y_last, f"  BB Div BUY {int(cu*100)}%",
+                    va="bottom", fontsize=9, color="tab:green", fontweight="bold")
+        except Exception:
+            pass
+
+    # Bearish divergence
+    if mp > 0 and drift < 0 and cd >= conf_level:
+        try:
+            ax.scatter([t_last], [y_last], marker="v", s=90, color="tab:red", zorder=8)
+            ax.text(t_last, y_last, f"  BB Div SELL {int(cd*100)}%",
+                    va="top", fontsize=9, color="tab:red", fontweight="bold")
+        except Exception:
+            pass
+
+def overlay_inrange_on_ntd(ax, price: pd.Series, sup: pd.Series, res: pd.Series, color="tab:purple"):
+    """
+    Shade the NTD panel background whenever price is between S and R.
+    Assumes NTD panel y-lims are about [-1.1, 1.1].
+    """
+    p = _coerce_1d_series(price).astype(float)
+    s = _coerce_1d_series(sup).astype(float).reindex(p.index).ffill()
+    r = _coerce_1d_series(res).astype(float).reindex(p.index).ffill()
+
+    if p.empty or s.empty or r.empty:
+        return
+
+    mask = p.notna() & s.notna() & r.notna() & (r > s) & (p >= s) & (p <= r)
+    if not mask.any():
+        return
+
+    # constant bands to fill between
+    ylow = pd.Series(-1.05, index=p.index)
+    yhigh = pd.Series(1.05, index=p.index)
+    try:
+        ax.fill_between(p.index, ylow, yhigh, where=mask, interpolate=True,
+                        alpha=0.08, color=color, label="S↔R channel")
+        # legend handle
+        ax.plot([], [], color=color, alpha=0.4, linewidth=6, label="Price within S↔R")
+    except Exception:
+        pass
 
 # ========= Sessions (NEW) =========
 NY_TZ   = pytz.timezone("America/New_York")
@@ -2102,6 +2193,7 @@ with tab2:
                     if not v_trend2.empty:
                         ax3v.plot(v_trend2.index, v_trend2.values, "--", linewidth=2,
                                   label=f"Trend {slope_lb_hourly} ({fmt_slope(v_m2)}/bar)")
+
                     ax3v.text(0.01, 0.02, f"Slope: {fmt_slope(v_m2)}/bar",
                               transform=ax3v.transAxes, ha="left", va="bottom",
                               fontsize=9, color="black",
