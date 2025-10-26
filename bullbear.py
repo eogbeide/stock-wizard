@@ -3,6 +3,8 @@
 # (NEW) Normalized Price (NPX) plotted on NTD panels + crossing markers
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
 # (NEW) Interactive plots (Matplotlib → Plotly bridge) with zero UI/behavior change
+# (NEW) Support→Resistance pip span (Forex intraday)
+# (NEW) Trend↔Band Distance panel (Forex intraday, in pips)
 
 import streamlit as st
 import pandas as pd
@@ -141,6 +143,49 @@ def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: i
     except Exception:
         pass
 
+# === NEW (FX): pip helpers + S↔R pip segment ===
+def infer_pip_size(symbol: str) -> float:
+    """
+    Heuristic pip size:
+      - JPY crosses → 0.01
+      - All other Forex pairs → 0.0001
+      - Fallback → 0.0001
+    """
+    if not isinstance(symbol, str):
+        return 0.0001
+    sym = symbol.upper()
+    if "JPY" in sym:
+        return 0.01
+    return 0.0001
+
+def draw_sr_pip_segment(ax, x_last, sup_val, res_val, symbol: str):
+    """
+    Draw a vertical line from Support→Resistance at the latest bar and annotate pip span.
+    Returns pip_span (float) or nan.
+    """
+    try:
+        if not np.isfinite(sup_val) or not np.isfinite(res_val):
+            return float("nan")
+        if res_val <= sup_val:
+            return float("nan")
+
+        pip = infer_pip_size(symbol)
+        pip_span = (res_val - sup_val) / pip if pip > 0 else float("nan")
+
+        # Vertical segment at the last timestamp
+        ax.vlines(x=x_last, ymin=sup_val, ymax=res_val,
+                  colors="tab:purple", linewidth=2.2, zorder=6, label="S↔R span")
+        # End markers
+        ax.scatter([x_last, x_last], [sup_val, res_val], color="tab:purple", s=30, zorder=7)
+        # Label at midpoint
+        y_mid = (sup_val + res_val) / 2.0
+        ax.text(x_last, y_mid, f"  {pip_span:.0f} pips",
+                va="center", ha="left", color="tab:purple", fontsize=10, fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.22", fc="white", ec="tab:purple", alpha=0.85), zorder=8)
+        return pip_span
+    except Exception:
+        return float("nan")
+
 # Range helper for daily views
 def subset_by_daily_view(obj, view_label: str):
     if obj is None or len(obj.index) == 0:
@@ -259,6 +304,10 @@ st.sidebar.subheader("BB Divergence Signals")
 show_bb_div = st.sidebar.checkbox("Show BB divergence signals", value=True, key="sb_bbdiv_show")
 bb_conf     = st.sidebar.slider("BB divergence confidence", 0.50, 0.99, 0.95, 0.01, key="sb_bbdiv_conf")
 
+# 🔶 NEW: Trend↔Band Distance panel toggle
+st.sidebar.subheader("Trend↔Band Distance (Hourly)")
+show_trend_band_dist = st.sidebar.checkbox("Show Trend↔BB distance panel", value=True, key="sb_show_tbd")
+
 # Forex-only controls
 if mode == "Forex":
     show_fx_news = st.sidebar.checkbox("Show Forex news markers (intraday)", value=True, key="sb_show_fx_news")
@@ -282,7 +331,7 @@ else:
     universe = [
         'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X',
         'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X',
-        'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','EURCAD=X'
+        'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X'
     ]
 
 # --- Cache helpers (TTL = 120 seconds) ---
@@ -1015,166 +1064,6 @@ def draw_news_markers(ax, times, ymin, ymax, label="News"):
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
 
-# ========= NEW: Channel-in-range helpers for NTD panel =========
-def channel_state_series(price: pd.Series, sup: pd.Series, res: pd.Series, eps: float = 0.0) -> pd.Series:
-    """
-    Returns a series with values:
-      -1 → price below Support
-       0 → price between Support & Resistance (IN RANGE)
-      +1 → price above Resistance
-    """
-    p = _coerce_1d_series(price)
-    s_sup = _coerce_1d_series(sup).reindex(p.index)
-    s_res = _coerce_1d_series(res).reindex(p.index)
-    state = pd.Series(index=p.index, dtype=float)
-    ok = p.notna() & s_sup.notna() & s_res.notna()
-    if ok.any():
-        below = p < (s_sup - eps)
-        above = p > (s_res + eps)
-        between = ~(below | above)
-        state[ok & below] = -1
-        state[ok & between] = 0
-        state[ok & above] = 1
-    return state
-
-def _true_spans(mask: pd.Series):
-    """Return list of (start_ts, end_ts) for contiguous True regions in boolean series."""
-    spans = []
-    if mask is None or mask.empty:
-        return spans
-    s = mask.fillna(False).astype(bool)
-    start = None
-    prev_t = None
-    for t, val in s.items():
-        if val and start is None:
-            start = t
-        if not val and start is not None:
-            if prev_t is not None:
-                spans.append((start, prev_t))
-            start = None
-        prev_t = t
-    if start is not None and prev_t is not None:
-        spans.append((start, prev_t))
-    return spans
-
-def overlay_inrange_on_ntd(ax, price: pd.Series, sup: pd.Series, res: pd.Series):
-    """
-    Shades time ranges on the NTD panel where price is between S/R (gold ribbon),
-    and marks entries into the channel from below (▲ green) and from above (▼ orange).
-    Returns the latest channel state (-1/0/+1).
-    """
-    state = channel_state_series(price, sup, res)
-    in_mask = (state == 0)
-
-    # Gold ribbons for IN-RANGE spans
-    for a, b in _true_spans(in_mask):
-        try:
-            ax.axvspan(a, b, color="gold", alpha=0.15, zorder=1)
-        except Exception:
-            pass
-    # Legend handle for ribbon
-    ax.plot([], [], linewidth=8, color="gold", alpha=0.20, label="In Range (S↔R)")
-
-    # Entry markers
-    enter_from_below = (state.shift(1) == -1) & (state == 0)
-    enter_from_above = (state.shift(1) ==  1) & (state == 0)
-    if enter_from_below.any():
-        ax.scatter(price.index[enter_from_below], [0.92]*int(enter_from_below.sum()),
-                   marker="^", s=60, color="tab:green", zorder=7, label="Enter from S")
-    if enter_from_above.any():
-        ax.scatter(price.index[enter_from_above], [0.92]*int(enter_from_above.sum()),
-                   marker="v", s=60, color="tab:orange", zorder=7, label="Enter from R")
-
-    # Status badge (top-right)
-    lbl = None; col = "black"
-    last = state.dropna().iloc[-1] if state.dropna().shape[0] else np.nan
-    if np.isfinite(last):
-        if last == 0:
-            lbl, col = "IN RANGE (S↔R)", "black"
-        elif last > 0:
-            lbl, col = "Above R", "tab:orange"
-        else:
-            lbl, col = "Below S", "tab:red"
-        ax.text(0.99, 0.94, lbl, transform=ax.transAxes, ha="right", va="top",
-                fontsize=9, color=col,
-                bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=col, alpha=0.85))
-    return last
-
-# ========= NEW: BB Divergence signal helper =========
-def _last_delta_sign(series_like: pd.Series) -> float:
-    s = _coerce_1d_series(series_like).dropna()
-    if len(s) < 2:
-        return np.nan
-    d = float(s.iloc[-1] - s.iloc[-2])
-    return np.sign(d) if np.isfinite(d) else np.nan
-
-def bb_divergence_signals(ax, price: pd.Series, bb_upper: pd.Series, bb_lower: pd.Series,
-                          lookback: int, conf_up: float, conf_dn: float, conf_level: float = 0.95):
-    """
-    BUY when:
-      - Price trend slope > 0 (upward)
-      - LOWER band slope < 0 (downward)
-      - Distance (price - lower) slope > 0 (moving away)
-      - Latest bar delta > 0
-      - conf_up ≥ conf_level
-
-    SELL when:
-      - Price trend slope < 0 (downward)
-      - UPPER band slope > 0 (upward)
-      - Distance (upper - price) slope > 0 (moving away)
-      - Latest bar delta < 0
-      - conf_dn ≥ conf_level
-    """
-    p = _coerce_1d_series(price).astype(float)
-    up = _coerce_1d_series(bb_upper).reindex(p.index).astype(float)
-    lo = _coerce_1d_series(bb_lower).reindex(p.index).astype(float)
-    if p.dropna().shape[0] < max(3, lookback) or up.dropna().empty or lo.dropna().empty:
-        return
-
-    # Align and slice to lookback window
-    p = p.dropna().iloc[-lookback:]
-    up = up.reindex(p.index).ffill().bfill()
-    lo = lo.reindex(p.index).ffill().bfill()
-    if p.empty or up.empty or lo.empty:
-        return
-
-    # Slopes
-    _, m_price = slope_line(p, lookback)
-    _, m_upper = slope_line(up, lookback)
-    _, m_lower = slope_line(lo, lookback)
-
-    # Distance slopes
-    _, m_dist_buy  = slope_line(p - lo, lookback)  # want > 0 for BUY
-    _, m_dist_sell = slope_line(up - p, lookback)  # want > 0 for SELL
-
-    last_sign = _last_delta_sign(p)
-    ts = p.index[-1]
-    px = float(p.iloc[-1]) if len(p) else np.nan
-
-    buy_cond = (m_price > 0) and (m_lower < 0) and (m_dist_buy > 0) and (last_sign > 0) and (conf_up >= conf_level)
-    sell_cond = (m_price < 0) and (m_upper > 0) and (m_dist_sell > 0) and (last_sign < 0) and (conf_dn >= conf_level)
-
-    # annotate
-    try:
-        if buy_cond and np.isfinite(px):
-            ax.scatter([ts], [px], marker="^", s=120, color="tab:green", zorder=9)
-            ax.text(ts, px, f"  BB BUY {int(conf_level*100)}%", va="bottom", fontsize=9,
-                    color="tab:green", fontweight="bold")
-            st.success(
-                f"**BB Divergence BUY** @ {fmt_price_val(px)} — trend↑ ({fmt_slope(m_price)}), "
-                f"lowerBB↓ ({fmt_slope(m_lower)}), Δ(price−lower)↑ ({fmt_slope(m_dist_buy)}), P(up)≥{int(conf_level*100)}%"
-            )
-        if sell_cond and np.isfinite(px):
-            ax.scatter([ts], [px], marker="v", s=120, color="tab:red", zorder=9)
-            ax.text(ts, px, f"  BB SELL {int(conf_level*100)}%", va="top", fontsize=9,
-                    color="tab:red", fontweight="bold")
-            st.error(
-                f"**BB Divergence SELL** @ {fmt_price_val(px)} — trend↓ ({fmt_slope(m_price)}), "
-                f"upperBB↑ ({fmt_slope(m_upper)}), Δ(upper−price)↑ ({fmt_slope(m_dist_sell)}), P(down)≥{int(conf_level*100)}%"
-            )
-    except Exception:
-        pass
-
 # ========= Cached last values for scanning =========
 @st.cache_data(ttl=120)
 def last_daily_ntd_value(symbol: str, ntd_win: int):
@@ -1514,6 +1403,8 @@ with tab1:
                 xh = np.arange(len(hc))
                 slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
                 trend_h = slope_h * xh + intercept_h
+                trend_h_s = pd.Series(trend_h, index=hc.index)  # series form for distance calc
+
                 # Use configurable S/R window
                 res_h = hc.rolling(sr_lb_hourly, min_periods=1).max()
                 sup_h = hc.rolling(sr_lb_hourly, min_periods=1).min()
@@ -1591,6 +1482,10 @@ with tab1:
                                colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
+
+                    # === NEW (FX): draw Support→Resistance pip span ===
+                    if mode == "Forex":
+                        draw_sr_pip_segment(ax2, hc.index[-1], sup_val, res_val, sel)
 
                 buy_sell_text = ""
                 if np.isfinite(sup_val): buy_sell_text += f" — ▲ BUY @{fmt_price_val(sup_val)}"
@@ -1718,6 +1613,43 @@ with tab1:
                     ax2v.set_xlabel("Time (PST)")
                     ax2v.legend(loc="lower left", framealpha=0.5)
                     _render_interactive(fig2v)
+
+                # === NEW: Trend↔Band Distance panel (Forex) ===
+                if mode == "Forex" and show_trend_band_dist and show_bbands and not bb_up_h.dropna().empty and not bb_lo_h.dropna().empty:
+                    pip = infer_pip_size(sel)
+                    # Distances in pips from trendline to BB upper/lower
+                    dist_up_pips = (bb_up_h - trend_h_s) / pip
+                    dist_lo_pips = (trend_h_s - bb_lo_h) / pip
+
+                    # Trendlines on those distances
+                    du_trend, m_du = slope_line(dist_up_pips, slope_lb_hourly)
+                    dl_trend, m_dl = slope_line(dist_lo_pips, slope_lb_hourly)
+
+                    fig2d, ax2d = plt.subplots(figsize=(14, 2.8))
+                    ax2d.set_title("Trend↔Band Distance (pips) — Upper/Lower + Trend")
+                    ax2d.plot(dist_up_pips.index, dist_up_pips, "-", linewidth=1.4, label="UpperDist (pips)")
+                    ax2d.plot(dist_lo_pips.index, dist_lo_pips, "-", linewidth=1.4, label="LowerDist (pips)")
+                    if not du_trend.empty:
+                        ax2d.plot(du_trend.index, du_trend.values, "--", linewidth=2,
+                                  label=f"UpperDist Trend {slope_lb_hourly} ({fmt_slope(m_du)} pips/bar)")
+                    if not dl_trend.empty:
+                        ax2d.plot(dl_trend.index, dl_trend.values, "--", linewidth=2,
+                                  label=f"LowerDist Trend {slope_lb_hourly} ({fmt_slope(m_dl)} pips/bar)")
+                    ax2d.axhline(0, linestyle="--", linewidth=1.0, color="black", label="0 pips")
+                    # Show latest values badge
+                    try:
+                        up_now = float(dist_up_pips.dropna().iloc[-1])
+                        lo_now = float(dist_lo_pips.dropna().iloc[-1])
+                        ax2d.text(0.99, 0.02, f"Now  •  Upper {up_now:.0f}  |  Lower {lo_now:.0f} pips",
+                                  transform=ax2d.transAxes, ha="right", va="bottom",
+                                  fontsize=9, color="black",
+                                  bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+                    except Exception:
+                        pass
+                    ax2d.set_xlim(xlim_price)
+                    ax2d.set_xlabel("Time (PST)")
+                    ax2d.legend(loc="lower left", framealpha=0.5)
+                    _render_interactive(fig2d)
 
                 # === Hourly Indicator Panel: NTD + NPX + Trend (SHADED) + NEW S↔R channel ===
                 if show_nrsi:
@@ -1991,6 +1923,8 @@ with tab2:
                 xi = np.arange(len(ic))
                 slope_i, intercept_i = np.polyfit(xi, ic.values, 1)
                 trend_i = slope_i * xi + intercept_i
+                trend_i_s = pd.Series(trend_i, index=ic.index)
+
                 res_i = ic.rolling(sr_lb_hourly, min_periods=1).max()
                 sup_i = ic.rolling(sr_lb_hourly, min_periods=1).min()
                 st_intraday = compute_supertrend(intr, atr_period=atr_period, atr_mult=atr_mult)
@@ -2062,6 +1996,10 @@ with tab2:
                                colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
                     label_on_left(ax3, res_val2, f"R {fmt_price_val(res_val2)}", color="tab:red")
                     label_on_left(ax3, sup_val2, f"S {fmt_price_val(sup_val2)}", color="tab:green")
+
+                    # === NEW (FX): draw Support→Resistance pip span ===
+                    if mode == "Forex":
+                        draw_sr_pip_segment(ax3, ic.index[-1], sup_val2, res_val2, st.session_state.ticker)
 
                 buy_sell_text2 = ""
                 if np.isfinite(sup_val2): buy_sell_text2 += f" — ▲ BUY @{fmt_price_val(sup_val2)}"
@@ -2176,6 +2114,39 @@ with tab2:
                     ax3v.set_xlabel("Time (PST)")
                     ax3v.legend(loc="lower left", framealpha=0.5)
                     _render_interactive(fig3v)
+
+                # === NEW: Trend↔Band Distance panel (Forex, Enhanced) ===
+                if mode == "Forex" and show_trend_band_dist and show_bbands and not bb_up_i.dropna().empty and not bb_lo_i.dropna().empty:
+                    pip2 = infer_pip_size(st.session_state.ticker)
+                    dist_up_pips2 = (bb_up_i - trend_i_s) / pip2
+                    dist_lo_pips2 = (trend_i_s - bb_lo_i) / pip2
+                    du_trend2, m_du2 = slope_line(dist_up_pips2, slope_lb_hourly)
+                    dl_trend2, m_dl2 = slope_line(dist_lo_pips2, slope_lb_hourly)
+
+                    fig3d, ax3d = plt.subplots(figsize=(14, 2.8))
+                    ax3d.set_title("Trend↔Band Distance (pips) — Upper/Lower + Trend")
+                    ax3d.plot(dist_up_pips2.index, dist_up_pips2, "-", linewidth=1.4, label="UpperDist (pips)")
+                    ax3d.plot(dist_lo_pips2.index, dist_lo_pips2, "-", linewidth=1.4, label="LowerDist (pips)")
+                    if not du_trend2.empty:
+                        ax3d.plot(du_trend2.index, du_trend2.values, "--", linewidth=2,
+                                  label=f"UpperDist Trend {slope_lb_hourly} ({fmt_slope(m_du2)} pips/bar)")
+                    if not dl_trend2.empty:
+                        ax3d.plot(dl_trend2.index, dl_trend2.values, "--", linewidth=2,
+                                  label=f"LowerDist Trend {slope_lb_hourly} ({fmt_slope(m_dl2)} pips/bar)")
+                    ax3d.axhline(0, linestyle="--", linewidth=1.0, color="black", label="0 pips")
+                    try:
+                        up_now2 = float(dist_up_pips2.dropna().iloc[-1])
+                        lo_now2 = float(dist_lo_pips2.dropna().iloc[-1])
+                        ax3d.text(0.99, 0.02, f"Now  •  Upper {up_now2:.0f}  |  Lower {lo_now2:.0f} pips",
+                                  transform=ax3d.transAxes, ha="right", va="bottom",
+                                  fontsize=9, color="black",
+                                  bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+                    except Exception:
+                        pass
+                    ax3d.set_xlim(xlim_price2)
+                    ax3d.set_xlabel("Time (PST)")
+                    ax3d.legend(loc="lower left", framealpha=0.5)
+                    _render_interactive(fig3d)
 
                 # === Hourly Indicator Panel (Enhanced): NTD + NPX + Trend (SHADED) + NEW S↔R channel ===
                 if show_nrsi:
