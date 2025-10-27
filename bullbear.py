@@ -13,7 +13,6 @@ from datetime import timedelta, datetime
 import matplotlib.pyplot as plt
 import time
 import pytz
-from pandas.tseries.offsets import BDay
 from matplotlib.transforms import blended_transform_factory  # for left-side labels
 
 # === NEW: universal interactive renderer ===
@@ -289,11 +288,10 @@ else:
 # --- Cache helpers (TTL = 120 seconds) ---
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
-    """
-    Daily closing prices on *actual trading days only* (no weekends/market holidays injected).
-    """
-    s = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close'].dropna()
-    # Keep Yahoo's trading-day index; just make it tz-aware for display
+    s = (
+        yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
+        .asfreq("D").fillna(method="ffill")
+    )
     try:
         s = s.tz_localize(PACIFIC)
     except TypeError:
@@ -302,9 +300,9 @@ def fetch_hist(ticker: str) -> pd.Series:
 
 @st.cache_data(ttl=120)
 def fetch_hist_max(ticker: str) -> pd.Series:
-    """Full history (Yahoo 'max') on trading days only; tz-aware for display."""
+    """Full history (Yahoo 'max'), daily freq with ffill, tz-aware."""
     df = yf.download(ticker, period="max")[['Close']].dropna()
-    s = df['Close']
+    s = df['Close'].asfreq("D").fillna(method="ffill")
     try:
         s = s.tz_localize(PACIFIC)
     except TypeError:
@@ -331,10 +329,6 @@ def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
 
 @st.cache_data(ttl=120)
 def compute_sarimax_forecast(series_like):
-    """
-    30-step SARIMAX forecast with an index aligned to *business days* going forward
-    (skips weekends to avoid plotting/printing closed-market dates).
-    """
     series = _coerce_1d_series(series_like).dropna()
     if isinstance(series.index, pd.DatetimeIndex):
         if series.index.tz is None:
@@ -349,13 +343,9 @@ def compute_sarimax_forecast(series_like):
             enforce_stationarity=False, enforce_invertibility=False
         ).fit(disp=False)
     fc = model.get_forecast(steps=30)
-
-    # Build a business-day index for the forecast horizon (skip weekends)
-    last_day_local = series.index[-1].tz_convert(PACIFIC).normalize().tz_localize(None)
-    bidx = pd.bdate_range(start=last_day_local + BDay(1), periods=30, freq="B")
-    bidx = bidx.tz_localize(PACIFIC)
-
-    return bidx, fc.predicted_mean, fc.conf_int()
+    idx = pd.date_range(series.index[-1] + timedelta(days=1),
+                        periods=30, freq="D", tz=PACIFIC)
+    return idx, fc.predicted_mean, fc.conf_int()
 
 # ---- Indicators ----
 def fibonacci_levels(series_like):
