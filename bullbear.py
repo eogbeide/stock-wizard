@@ -2,7 +2,7 @@
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (NEW) Normalized Price (NPX) plotted on NTD panels + crossing markers
 
-import streamlit as st
+import streamlit as std
 import pandas as pd
 import numpy as np
 import yfinance as yf
