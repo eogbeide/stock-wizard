@@ -1,6 +1,7 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (NEW) Normalized Price (NPX) plotted on NTD panels + crossing markers
+# (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
 
 import streamlit as st
 import pandas as pd
@@ -234,6 +235,11 @@ hma_conf    = st.sidebar.slider("Crossover confidence", 0.50, 0.99, 0.95, 0.01, 
 st.sidebar.subheader("HMA(55) Reversal on NTD")
 show_hma_rev_ntd = st.sidebar.checkbox("Mark HMA cross + slope reversal on NTD", value=True, key="sb_hma_rev_ntd")
 hma_rev_lb       = st.sidebar.slider("HMA reversal slope lookback (bars)", 2, 10, 3, 1, key="sb_hma_rev_lb")
+
+# 🔶 NEW: BB Divergence Signal controls
+st.sidebar.subheader("BB Divergence Signals")
+show_bb_div = st.sidebar.checkbox("Show BB divergence signals", value=True, key="sb_bbdiv_show")
+bb_conf     = st.sidebar.slider("BB divergence confidence", 0.50, 0.99, 0.95, 0.01, key="sb_bbdiv_conf")
 
 # Forex-only controls
 if mode == "Forex":
@@ -690,10 +696,10 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
       mid, upper, lower, pctB (0..1), nbb (-1..1)
     """
     s = _coerce_1d_series(close).astype(float)
+    idx = s.index
     if s.empty or window < 2 or not np.isfinite(mult):
-        idx = s.index
         empty = pd.Series(index=idx, dtype=float)
-        return mid, upper, lower, pctb, nbb
+        return empty, empty, empty, empty, empty
 
     minp = max(2, window // 2)
     mid = s.ewm(span=window, adjust=False).mean() if use_ema else s.rolling(window, min_periods=minp).mean()
@@ -1076,6 +1082,81 @@ def overlay_inrange_on_ntd(ax, price: pd.Series, sup: pd.Series, res: pd.Series)
                 bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=col, alpha=0.85))
     return last
 
+# ========= NEW: BB Divergence signal helper =========
+def _last_delta_sign(series_like: pd.Series) -> float:
+    s = _coerce_1d_series(series_like).dropna()
+    if len(s) < 2:
+        return np.nan
+    d = float(s.iloc[-1] - s.iloc[-2])
+    return np.sign(d) if np.isfinite(d) else np.nan
+
+def bb_divergence_signals(ax, price: pd.Series, bb_upper: pd.Series, bb_lower: pd.Series,
+                          lookback: int, conf_up: float, conf_dn: float, conf_level: float = 0.95):
+    """
+    BUY when:
+      - Price trend slope > 0 (upward)
+      - LOWER band slope < 0 (downward)
+      - Distance (price - lower) slope > 0 (moving away)
+      - Latest bar delta > 0
+      - conf_up ≥ conf_level
+
+    SELL when:
+      - Price trend slope < 0 (downward)
+      - UPPER band slope > 0 (upward)
+      - Distance (upper - price) slope > 0 (moving away)
+      - Latest bar delta < 0
+      - conf_dn ≥ conf_level
+    """
+    p = _coerce_1d_series(price).astype(float)
+    up = _coerce_1d_series(bb_upper).reindex(p.index).astype(float)
+    lo = _coerce_1d_series(bb_lower).reindex(p.index).astype(float)
+    if p.dropna().shape[0] < max(3, lookback) or up.dropna().empty or lo.dropna().empty:
+        return
+
+    # Align and slice to lookback window
+    p = p.dropna().iloc[-lookback:]
+    up = up.reindex(p.index).ffill().bfill()
+    lo = lo.reindex(p.index).ffill().bfill()
+    if p.empty or up.empty or lo.empty:
+        return
+
+    # Slopes
+    _, m_price = slope_line(p, lookback)
+    _, m_upper = slope_line(up, lookback)
+    _, m_lower = slope_line(lo, lookback)
+
+    # Distance slopes
+    _, m_dist_buy  = slope_line(p - lo, lookback)  # want > 0 for BUY
+    _, m_dist_sell = slope_line(up - p, lookback)  # want > 0 for SELL
+
+    last_sign = _last_delta_sign(p)
+    ts = p.index[-1]
+    px = float(p.iloc[-1]) if len(p) else np.nan
+
+    buy_cond = (m_price > 0) and (m_lower < 0) and (m_dist_buy > 0) and (last_sign > 0) and (conf_up >= conf_level)
+    sell_cond = (m_price < 0) and (m_upper > 0) and (m_dist_sell > 0) and (last_sign < 0) and (conf_dn >= conf_level)
+
+    # annotate
+    try:
+        if buy_cond and np.isfinite(px):
+            ax.scatter([ts], [px], marker="^", s=120, color="tab:green", zorder=9)
+            ax.text(ts, px, f"  BB BUY {int(conf_level*100)}%", va="bottom", fontsize=9,
+                    color="tab:green", fontweight="bold")
+            st.success(
+                f"**BB Divergence BUY** @ {fmt_price_val(px)} — trend↑ ({fmt_slope(m_price)}), "
+                f"lowerBB↓ ({fmt_slope(m_lower)}), Δ(price−lower)↑ ({fmt_slope(m_dist_buy)}), P(up)≥{int(conf_level*100)}%"
+            )
+        if sell_cond and np.isfinite(px):
+            ax.scatter([ts], [px], marker="v", s=120, color="tab:red", zorder=9)
+            ax.text(ts, px, f"  BB SELL {int(conf_level*100)}%", va="top", fontsize=9,
+                    color="tab:red", fontweight="bold")
+            st.error(
+                f"**BB Divergence SELL** @ {fmt_price_val(px)} — trend↓ ({fmt_slope(m_price)}), "
+                f"upperBB↑ ({fmt_slope(m_upper)}), Δ(upper−price)↑ ({fmt_slope(m_dist_sell)}), P(down)≥{int(conf_level*100)}%"
+            )
+    except Exception:
+        pass
+
 # ========= Cached last values for scanning =========
 @st.cache_data(ttl=120)
 def last_daily_ntd_value(symbol: str, ntd_win: int):
@@ -1366,6 +1447,11 @@ with tab1:
                         annotate_crossover(ax, ts, px_here, "SELL", hma_conf)
                         st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — last price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
 
+            # 🔶 NEW: BB Divergence signal (Daily)
+            if show_bb_div:
+                bb_divergence_signals(ax, df_show, bb_up_d_show, bb_lo_d_show,
+                                      lookback=slope_lb_daily, conf_up=p_up, conf_dn=p_dn, conf_level=bb_conf)
+
             # --- DAILY INDICATOR PANEL: NTD + NPX + Trend ---
             axdw.set_title("Daily Indicator Panel — NTD + NPX (Normalized Price) + Trend")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
@@ -1565,6 +1651,11 @@ with tab1:
                         elif cross_h["side"] == "SELL" and np.isfinite(p_dn) and p_dn >= hma_conf:
                             annotate_crossover(ax2, ts, px_here, "SELL", hma_conf)
                             st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
+
+                # 🔶 NEW: BB Divergence signal (Hourly)
+                if show_bb_div:
+                    bb_divergence_signals(ax2, hc, bb_up_h, bb_lo_h,
+                                          lookback=slope_lb_hourly, conf_up=p_up, conf_dn=p_dn, conf_level=bb_conf)
 
                 ax2.set_xlabel("Time (PST)")
                 ax2.legend(loc="lower left", framealpha=0.5)
@@ -1834,6 +1925,11 @@ with tab2:
                         annotate_crossover(ax, ts, px_here, "SELL", hma_conf)
                         st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — last price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
 
+            # 🔶 NEW: BB Divergence signal (Daily, Enhanced)
+            if show_bb_div:
+                bb_divergence_signals(ax, df_show, bb_up_d2_show, bb_lo_d2_show,
+                                      lookback=slope_lb_daily, conf_up=p_up, conf_dn=p_dn, conf_level=bb_conf)
+
             # --- DAILY INDICATOR PANEL (Enhanced): NTD + NPX + Trend ---
             axdw2.set_title("Daily Indicator Panel — NTD + NPX (Normalized Price) + Trend")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
@@ -2019,6 +2115,11 @@ with tab2:
                             annotate_crossover(ax3, ts, px_here, "SELL", hma_conf)
                             st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
 
+                # 🔶 NEW: BB Divergence signal (Hourly, Enhanced)
+                if show_bb_div:
+                    bb_divergence_signals(ax3, ic, bb_up_i, bb_lo_i,
+                                          lookback=slope_lb_hourly, conf_up=p_up, conf_dn=p_dn, conf_level=bb_conf)
+
                 ax3.set_xlabel("Time (PST)")
                 ax3.legend(loc="lower left", framealpha=0.5)
                 xlim_price2 = ax3.get_xlim()
@@ -2084,10 +2185,6 @@ with tab2:
                     if not ntd_trend_i.empty:
                         ax3r.plot(ntd_trend_i.index, ntd_trend_i.values, "--", linewidth=2,
                                   label=f"NTD Trend {slope_lb_hourly} ({fmt_slope(ntd_m_i)}/bar)")
-
-                    # NEW: HMA reversal markers on NTD (Hourly, Enhanced)
-                    if show_hma_rev_ntd and not hma_i.dropna().empty and not ic.dropna().empty:
-                        overlay_hma_reversal_on_ntd(ax3r, ic, hma_i, lookback=hma_rev_lb, period=hma_period)
 
                     ax3r.axhline(0.0,  linestyle="--", linewidth=1.0, color="black",    label="0.00")
                     ax3r.axhline(0.5,  linestyle="-",  linewidth=1.2, color="black",    label="+0.50")
