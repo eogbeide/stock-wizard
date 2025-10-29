@@ -33,28 +33,32 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- Auto-refresh logic ---
+# --- Auto-refresh (every 2 minutes) ---
 REFRESH_INTERVAL = 120  # seconds
 PACIFIC = pytz.timezone("US/Pacific")
 
-def auto_refresh():
-    if 'last_refresh' not in st.session_state:
-        st.session_state.last_refresh = time.time()
-    elif time.time() - st.session_state.last_refresh > REFRESH_INTERVAL:
-        st.session_state.last_refresh = time.time()
-        try:
-            st.experimental_rerun()
-        except Exception:
-            pass
+# Preferred: Streamlit autorefresh (keeps session state)
+_autorefresh_ok = False
+try:
+    from streamlit_autorefresh import st_autorefresh  # pip install streamlit-autorefresh
+    st_autorefresh(interval=REFRESH_INTERVAL * 1000, key="app_autorefresh")
+    _autorefresh_ok = True
+except Exception:
+    # Fallback: HTML meta refresh (may create a new browser session in some environments)
+    st.markdown(f"<meta http-equiv='refresh' content='{REFRESH_INTERVAL}'>", unsafe_allow_html=True)
 
-auto_refresh()
-elapsed = time.time() - st.session_state.last_refresh
-remaining = max(0, int(REFRESH_INTERVAL - elapsed))
+# Track last refresh time for display
+now_ts = time.time()
+if "last_refresh" not in st.session_state:
+    st.session_state.last_refresh = now_ts
+else:
+    # On each (auto) rerun, update the timestamp
+    st.session_state.last_refresh = now_ts
+
 pst_dt = datetime.fromtimestamp(st.session_state.last_refresh, tz=PACIFIC)
 st.sidebar.markdown(
     f"**Auto-refresh:** every {REFRESH_INTERVAL//60} min  \n"
-    f"**Last refresh:** {pst_dt.strftime('%Y-%m-%d %H:%M:%S')} PST  \n"
-    f"**Next in:** ~{remaining}s"
+    f"**Last refresh:** {pst_dt.strftime('%Y-%m-%d %H:%M:%S')} PST"
 )
 
 # ---------- Helpers ----------
@@ -1272,9 +1276,7 @@ with tab1:
     )
     period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
 
-    # 👉 Important change:
-    # Once the user ran it once, auto-run on every app rerun (triggered by the timer above)
-    # so fresh data is fetched and the latest price shows on the charts.
+    # 👉 Auto-run on every app rerun (triggered by the timer above)
     auto_run = st.session_state.run_all
 
     if st.button("Run Forecast", key="btn_run_forecast") or auto_run:
