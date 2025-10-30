@@ -5,6 +5,10 @@
 # (NEW) Normalized Price (NPX) plotted on NTD panels + crossing markers
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
 # (UPDATED) S↔R status badge moved to bottom-right INSIDE NTD charts (does not block time axis)
+# (NEW) Signal gating by Trend Direction:
+#       • BUY only when the green trendline (slope > 0) — TP = Resistance (R)
+#       • SELL only when the red trendline (slope < 0) — TP = Support (S)
+#       • HMA cross alerts follow the same rule
 
 import streamlit as st
 import pandas as pd
@@ -505,6 +509,10 @@ def shade_ntd_regions(ax, ntd: pd.Series):
     ax.fill_between(ntd.index, 0, neg, alpha=0.12)
 
 def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "Trend"):
+    """
+    Draw a regression line over the provided series.
+    Returns the slope m (float). Color is green if m>=0 else red.
+    """
     s = _coerce_1d_series(series_like).dropna()
     if s.shape[0] < 2:
         return np.nan
@@ -513,7 +521,7 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
     yhat = m * x + b
     color = "tab:green" if m >= 0 else "tab:red"
     ax.plot(s.index, yhat, "-", linewidth=2.4, color=color, label=f"{label_prefix} ({fmt_slope(m)}/bar)")
-    return m
+    return float(m)
 
 # ---- Supertrend helpers (hourly overlay) ----
 def _true_range(df: pd.DataFrame):
@@ -857,8 +865,15 @@ def elliott_conf_signal(price_now: float, fc_vals: pd.Series, conf: float = EW_C
         return {"side": "SELL", "prob": p_dn}
     return None
 
+# ⬇️ UPDATED: require trend slope direction + return TP level (R for BUY, S for SELL)
 def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
-                        fc_vals: pd.Series, threshold: float, prox: float):
+                        fc_vals: pd.Series, threshold: float, prox: float,
+                        trend_slope: float | None = None):
+    """
+    Returns signal dict or None.
+      • BUY only if trend_slope > 0 (green trendline). Entry near Support, TP at Resistance.
+      • SELL only if trend_slope < 0 (red trendline). Entry near Resistance, TP at Support.
+    """
     try:
         last_close = float(hc.iloc[-1])
         res = float(res_h.iloc[-1])
@@ -878,19 +893,26 @@ def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
     p_up_from_here = float(np.mean(fc > last_close))
     p_dn_from_here = float(np.mean(fc < last_close))
 
-    if near_support and p_up_from_here >= threshold:
+    # Enforce trend-direction gating
+    m = float(trend_slope) if trend_slope is not None and np.isfinite(trend_slope) else np.nan
+
+    # BUY: Only if trend up
+    if near_support and p_up_from_here >= threshold and np.isfinite(m) and m > 0:
         return {
             "side": "BUY",
             "prob": p_up_from_here,
-            "level": sup,
-            "reason": f"Near support {fmt_price_val(sup)} with {fmt_pct(p_up_from_here)} up-confidence ≥ {fmt_pct(threshold)}"
+            "entry": sup,
+            "tp": res,  # TP at Resistance
+            "reason": f"Trend↑ ({fmt_slope(m)}/bar), near Support {fmt_price_val(sup)}, TP=R {fmt_price_val(res)}, P(up)≥{fmt_pct(threshold)}"
         }
-    if near_resist and p_dn_from_here >= threshold:
+    # SELL: Only if trend down
+    if near_resist and p_dn_from_here >= threshold and np.isfinite(m) and m < 0:
         return {
             "side": "SELL",
             "prob": p_dn_from_here,
-            "level": res,
-            "reason": f"Near resistance {fmt_price_val(res)} with {fmt_pct(p_dn_from_here)} down-confidence ≥ {fmt_pct(threshold)}"
+            "entry": res,
+            "tp": sup,  # TP at Support
+            "reason": f"Trend↓ ({fmt_slope(m)}/bar), near Resistance {fmt_price_val(res)}, TP=S {fmt_price_val(sup)}, P(down)≥{fmt_pct(threshold)}"
         }
     return None
 
@@ -1312,8 +1334,8 @@ with tab1:
                 ax.plot(yhat_ema_show.index, yhat_ema_show.values, "-", linewidth=2,
                         label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
 
-            if len(df_show) > 1:
-                draw_trend_direction_line(ax, df_show, label_prefix="Trend")
+            # ⬇️ Trendline (colored) + capture slope for gating
+            m_trend_d = draw_trend_direction_line(ax, df_show, label_prefix="Trend")
 
             if piv and len(df_show) > 0:
                 x0, x1 = df_show.index[0], df_show.index[-1]
@@ -1329,16 +1351,17 @@ with tab1:
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
 
+            # ⬇️ HMA cross alerts gated by trend direction
             if show_hma and not hma_d_show.dropna().empty:
                 cross_d = detect_last_crossover(df_show, hma_d_show)
-                if cross_d is not None and cross_d["time"] is not None:
+                if cross_d is not None and cross_d["time"] is not None and np.isfinite(m_trend_d):
                     ts = cross_d["time"]; px_here = float(df_show.loc[ts])
-                    if cross_d["side"] == "BUY" and np.isfinite(p_up) and p_up >= hma_conf:
+                    if cross_d["side"] == "BUY" and (m_trend_d > 0) and np.isfinite(p_up) and p_up >= hma_conf:
                         annotate_crossover(ax, ts, px_here, "BUY", hma_conf)
-                        st.success(f"**HMA BUY** @ {fmt_price_val(px_here)} — last price crossed **up** HMA({hma_period}) with P(up)={fmt_pct(p_up)} ≥ {fmt_pct(hma_conf)}")
-                    elif cross_d["side"] == "SELL" and np.isfinite(p_dn) and p_dn >= hma_conf:
+                        st.success(f"**HMA BUY** @ {fmt_price_val(px_here)} — trend↑, price crossed **up** HMA({hma_period}), P(up)={fmt_pct(p_up)} ≥ {fmt_pct(hma_conf)}  |  **TP=R**")
+                    elif cross_d["side"] == "SELL" and (m_trend_d < 0) and np.isfinite(p_dn) and p_dn >= hma_conf:
                         annotate_crossover(ax, ts, px_here, "SELL", hma_conf)
-                        st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — last price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
+                        st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — trend↓, price crossed **down** HMA({hma_period}), P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}  |  **TP=S**")
 
             if show_bb_div:
                 bb_divergence_signals(ax, df_show, bb_up_d_show, bb_lo_d_show,
@@ -1430,16 +1453,6 @@ with tab1:
                     ax2.plot(bb_up_h.index, bb_up_h.values, ":", linewidth=1.0)
                     ax2.plot(bb_lo_h.index, bb_lo_h.values, ":", linewidth=1.0)
 
-                if show_psar and not psar_h_df.dropna().empty:
-                    up_mask = psar_h_df["in_uptrend"] == True
-                    dn_mask = ~up_mask
-                    if up_mask.any():
-                        ax2.scatter(psar_h_df.index[up_mask], psar_h_df["PSAR"][up_mask],
-                                    s=15, color="tab:green", zorder=6, label=f"PSAR (step={psar_step:.02f}, max={psar_max:.02f})")
-                    if dn_mask.any():
-                        ax2.scatter(psar_h_df.index[dn_mask], psar_h_df["PSAR"][dn_mask],
-                                    s=15, color="tab:red", zorder=6)
-
                 res_val = sup_val = px_val = np.nan
                 try:
                     res_val = float(res_h.iloc[-1]); sup_val = float(sup_h.iloc[-1]); px_val  = float(hc.iloc[-1])
@@ -1500,32 +1513,38 @@ with tab1:
                     for lbl, y in fibs_h.items():
                         ax2.text(hc.index[-1], y, f" {lbl}", va="center")
 
-                if mode == "Forex" and show_fx_news and not hc.empty:
-                    fx_news = fetch_yf_news(sel, window_days=news_window_days)
-                    if not fx_news.empty:
-                        t0, t1 = hc.index[0], hc.index[-1]
-                        times = [t for t in fx_news["time"] if t0 <= t <= t1]
-                        if times:
-                            draw_news_markers(ax2, times, float(hc.min()), float(hc.max()), label="News")
+                # ⬇️ Draw colored trendline and capture slope to gate signals
+                m_trend_h = draw_trend_direction_line(ax2, hc, label_prefix="Trend")
 
-                signal = sr_proximity_signal(hc, res_h, sup_h, st.session_state.fc_vals,
-                                             threshold=signal_threshold, prox=sr_prox_pct)
+                # ⬇️ Proximity signal (now gated by trend direction) + TP mapping
+                signal = sr_proximity_signal(
+                    hc, res_h, sup_h, st.session_state.fc_vals,
+                    threshold=signal_threshold, prox=sr_prox_pct,
+                    trend_slope=m_trend_h
+                )
                 if signal is not None and np.isfinite(px_val):
                     if signal["side"] == "BUY":
-                        st.success(f"**BUY** @ {fmt_price_val(signal['level'])} — {signal['reason']}")
+                        st.success(
+                            f"**BUY** near S @ {fmt_price_val(signal['entry'])} — {signal['reason']}  |  "
+                            f"**TP=R** {fmt_price_val(signal['tp'])}"
+                        )
                     elif signal["side"] == "SELL":
-                        st.error(f"**SELL** @ {fmt_price_val(signal['level'])} — {signal['reason']}")
+                        st.error(
+                            f"**SELL** near R @ {fmt_price_val(signal['entry'])} — {signal['reason']}  |  "
+                            f"**TP=S** {fmt_price_val(signal['tp'])}"
+                        )
 
-                if show_hma and not hma_h.dropna().empty:
+                # ⬇️ HMA crossover alerts — gated by trend direction
+                if show_hma and not hma_h.dropna().empty and np.isfinite(m_trend_h):
                     cross_h = detect_last_crossover(hc, hma_h)
                     if cross_h is not None and cross_h["time"] is not None:
                         ts = cross_h["time"]; px_here = float(hc.loc[ts])
-                        if cross_h["side"] == "BUY" and np.isfinite(p_up) and p_up >= hma_conf:
+                        if cross_h["side"] == "BUY" and (m_trend_h > 0) and np.isfinite(p_up) and p_up >= hma_conf:
                             annotate_crossover(ax2, ts, px_here, "BUY", hma_conf)
-                            st.success(f"**HMA BUY** @ {fmt_price_val(px_here)} — price crossed **up** HMA({hma_period}) with P(up)={fmt_pct(p_up)} ≥ {fmt_pct(hma_conf)}")
-                        elif cross_h["side"] == "SELL" and np.isfinite(p_dn) and p_dn >= hma_conf:
+                            st.success(f"**HMA BUY** @ {fmt_price_val(px_here)} — trend↑, price crossed **up** HMA({hma_period}), P(up)={fmt_pct(p_up)} ≥ {fmt_pct(hma_conf)}  |  **TP=R** {fmt_price_val(res_val) if np.isfinite(res_val) else 'R'}")
+                        elif cross_h["side"] == "SELL" and (m_trend_h < 0) and np.isfinite(p_dn) and p_dn >= hma_conf:
                             annotate_crossover(ax2, ts, px_here, "SELL", hma_conf)
-                            st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
+                            st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — trend↓, price crossed **down** HMA({hma_period}), P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}  |  **TP=S** {fmt_price_val(sup_val) if np.isfinite(sup_val) else 'S'}")
 
                 if show_bb_div:
                     bb_divergence_signals(ax2, hc, bb_up_h, bb_lo_h,
@@ -1746,8 +1765,8 @@ with tab2:
                 ax.plot(yhat_ema_show.index, yhat_ema_show.values, "-", linewidth=2,
                         label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
 
-            if len(df_show) > 1:
-                draw_trend_direction_line(ax, df_show, label_prefix="Trend")
+            # ⬇️ Trendline (colored) + capture slope for gating
+            m_trend_d2 = draw_trend_direction_line(ax, df_show, label_prefix="Trend")
 
             if piv and len(df_show) > 0:
                 x0, x1 = df_show.index[0], df_show.index[-1]
@@ -1763,16 +1782,17 @@ with tab2:
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
 
+            # ⬇️ HMA cross alerts gated by trend direction (daily)
             if show_hma and not hma_d2_show.dropna().empty:
                 cross_d2 = detect_last_crossover(df_show, hma_d2_show)
-                if cross_d2 is not None and cross_d2["time"] is not None:
+                if cross_d2 is not None and cross_d2["time"] is not None and np.isfinite(m_trend_d2):
                     ts = cross_d2["time"]; px_here = float(df_show.loc[ts])
-                    if cross_d2["side"] == "BUY" and np.isfinite(p_up) and p_up >= hma_conf:
+                    if cross_d2["side"] == "BUY" and (m_trend_d2 > 0) and np.isfinite(p_up) and p_up >= hma_conf:
                         annotate_crossover(ax, ts, px_here, "BUY", hma_conf)
-                        st.success(f"**HMA BUY** @ {fmt_price_val(px_here)} — last price crossed **up** HMA({hma_period}) with P(up)={fmt_pct(p_up)} ≥ {fmt_pct(hma_conf)}")
-                    elif cross_d2["side"] == "SELL" and np.isfinite(p_dn) and p_dn >= hma_conf:
+                        st.success(f"**HMA BUY** @ {fmt_price_val(px_here)} — trend↑, crossed **up** HMA({hma_period}), P(up)={fmt_pct(p_up)} ≥ {fmt_pct(hma_conf)}  |  **TP=R**")
+                    elif cross_d2["side"] == "SELL" and (m_trend_d2 < 0) and np.isfinite(p_dn) and p_dn >= hma_conf:
                         annotate_crossover(ax, ts, px_here, "SELL", hma_conf)
-                        st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — last price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
+                        st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — trend↓, crossed **down** HMA({hma_period}), P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}  |  **TP=S**")
 
             if show_bb_div:
                 bb_divergence_signals(ax, df_show, bb_up_d2_show, bb_lo_d2_show,
@@ -1920,24 +1940,38 @@ with tab2:
                     for lbl, y in fibs_h.items():
                         ax3.text(ic.index[-1], y, f" {lbl}", va="center")
 
-                signal2 = sr_proximity_signal(ic, res_i, sup_i, st.session_state.fc_vals,
-                                              threshold=signal_threshold, prox=sr_prox_pct)
+                # ⬇️ Trendline (colored) + slope for gating
+                m_trend_i = draw_trend_direction_line(ax3, ic, label_prefix="Trend")
+
+                # ⬇️ Proximity signal (gated) + TP mapping
+                signal2 = sr_proximity_signal(
+                    ic, res_i, sup_i, st.session_state.fc_vals,
+                    threshold=signal_threshold, prox=sr_prox_pct,
+                    trend_slope=m_trend_i
+                )
                 if signal2 is not None and np.isfinite(px_val2):
                     if signal2["side"] == "BUY":
-                        st.success(f"**BUY** @ {fmt_price_val(signal2['level'])} — {signal2['reason']}")
+                        st.success(
+                            f"**BUY** near S @ {fmt_price_val(signal2['entry'])} — {signal2['reason']}  |  "
+                            f"**TP=R** {fmt_price_val(signal2['tp'])}"
+                        )
                     elif signal2["side"] == "SELL":
-                        st.error(f"**SELL** @ {fmt_price_val(signal2['level'])} — {signal2['reason']}")
+                        st.error(
+                            f"**SELL** near R @ {fmt_price_val(signal2['entry'])} — {signal2['reason']}  |  "
+                            f"**TP=S** {fmt_price_val(signal2['tp'])}"
+                        )
 
-                if show_hma and not hma_i.dropna().empty:
+                # ⬇️ HMA crossover gated by trend direction
+                if show_hma and not hma_i.dropna().empty and np.isfinite(m_trend_i):
                     cross_i = detect_last_crossover(ic, hma_i)
                     if cross_i is not None and cross_i["time"] is not None:
                         ts = cross_i["time"]; px_here = float(ic.loc[ts])
-                        if cross_i["side"] == "BUY" and np.isfinite(p_up) and p_up >= hma_conf:
+                        if cross_i["side"] == "BUY" and (m_trend_i > 0) and np.isfinite(p_up) and p_up >= hma_conf:
                             annotate_crossover(ax3, ts, px_here, "BUY", hma_conf)
-                            st.success(f"**HMA BUY** @ {fmt_price_val(px_here)} — price crossed **up** HMA({hma_period}) with P(up)={fmt_pct(p_up)} ≥ {fmt_pct(hma_conf)}")
-                        elif cross_i["side"] == "SELL" and np.isfinite(p_dn) and p_dn >= hma_conf:
+                            st.success(f"**HMA BUY** @ {fmt_price_val(px_here)} — trend↑, crossed **up** HMA({hma_period}), P(up)={fmt_pct(p_up)} ≥ {fmt_pct(hma_conf)}  |  **TP=R** {fmt_price_val(res_val2) if np.isfinite(res_val2) else 'R'}")
+                        elif cross_i["side"] == "SELL" and (m_trend_i < 0) and np.isfinite(p_dn) and p_dn >= hma_conf:
                             annotate_crossover(ax3, ts, px_here, "SELL", hma_conf)
-                            st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
+                            st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — trend↓, crossed **down** HMA({hma_period}), P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}  |  **TP=S** {fmt_price_val(sup_val2) if np.isfinite(sup_val2) else 'S'}")
 
                 if show_bb_div:
                     bb_divergence_signals(ax3, ic, bb_up_i, bb_lo_i,
