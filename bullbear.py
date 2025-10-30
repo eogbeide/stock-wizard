@@ -4,6 +4,7 @@
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (NEW) Normalized Price (NPX) plotted on NTD panels + crossing markers
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
+# (UPDATED) S↔R sign moved to the bottom outside the chart area on NTD panels
 
 import streamlit as st
 import pandas as pd
@@ -268,7 +269,7 @@ else:
     universe = [
         'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X',
         'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X',
-        'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','EURCAD=X'
+        'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X'
     ]
 
 # --- Cache helpers (TTL = 120 seconds) ---
@@ -1053,6 +1054,8 @@ def overlay_inrange_on_ntd(ax, price: pd.Series, sup: pd.Series, res: pd.Series)
     Shades time ranges on the NTD panel where price is between S/R (gold ribbon),
     and marks entries into the channel from below (▲ green) and from above (▼ orange).
     Returns the latest channel state (-1/0/+1).
+
+    Also places a small S↔R badge at the **bottom, outside** the chart area.
     """
     state = channel_state_series(price, sup, res)
     in_mask = (state == 0)
@@ -1063,8 +1066,6 @@ def overlay_inrange_on_ntd(ax, price: pd.Series, sup: pd.Series, res: pd.Series)
             ax.axvspan(a, b, color="gold", alpha=0.15, zorder=1)
         except Exception:
             pass
-    # Legend handle for ribbon
-    ax.plot([], [], linewidth=8, color="gold", alpha=0.20, label="In Range (S↔R)")
 
     # Entry markers
     enter_from_below = (state.shift(1) == -1) & (state == 0)
@@ -1076,12 +1077,12 @@ def overlay_inrange_on_ntd(ax, price: pd.Series, sup: pd.Series, res: pd.Series)
         ax.scatter(price.index[enter_from_above], [0.92]*int(enter_from_above.sum()),
                    marker="v", s=60, color="tab:orange", zorder=7, label="Enter from R")
 
-    # Status badge (top-right)
+    # Status badge (top-right) — keep concise (no S↔R here)
     lbl = None; col = "black"
     last = state.dropna().iloc[-1] if state.dropna().shape[0] else np.nan
     if np.isfinite(last):
         if last == 0:
-            lbl, col = "IN RANGE (S↔R)", "black"
+            lbl, col = "IN RANGE", "black"
         elif last > 0:
             lbl, col = "Above R", "tab:orange"
         else:
@@ -1089,6 +1090,17 @@ def overlay_inrange_on_ntd(ax, price: pd.Series, sup: pd.Series, res: pd.Series)
         ax.text(0.99, 0.94, lbl, transform=ax.transAxes, ha="right", va="top",
                 fontsize=9, color=col,
                 bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=col, alpha=0.85))
+
+    # --- NEW: S↔R sign at the bottom, *outside* the chart area
+    try:
+        ax.text(0.5, -0.18, "S↔R",
+                transform=ax.transAxes, ha="center", va="top",
+                fontsize=11, fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="gold", alpha=0.95),
+                clip_on=False, zorder=10)
+    except Exception:
+        pass
+
     return last
 
 # ========= NEW: BB Divergence signal helper =========
@@ -1370,7 +1382,8 @@ with tab1:
                 2, 1, sharex=True, figsize=(14, 8),
                 gridspec_kw={"height_ratios": [3.2, 1.3]}
             )
-            plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93)
+            # add bottom space for the S↔R badge under the NTD panel
+            plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93, bottom=0.14)
 
             # --- PRICE CHART ---
             ax.set_title(f"{sel} Daily — {daily_view} — History, 30 EMA, 30 S/R, Slope, Pivots")
@@ -1478,6 +1491,10 @@ with tab1:
             # NEW: HMA reversal markers on NTD (Daily)
             if show_hma_rev_ntd and not hma_d_show.dropna().empty and not df_show.dropna().empty:
                 overlay_hma_reversal_on_ntd(axdw, df_show, hma_d_show, lookback=hma_rev_lb, period=hma_period)
+
+            # NEW: S↔R channel ribbon + bottom badge
+            if show_ntd_channel:
+                overlay_inrange_on_ntd(axdw, df_show, sup30_show, res30_show)
 
             # Reference lines
             axdw.axhline(0.0,  linestyle="--", linewidth=1.0, color="black",    label="0.00")
@@ -1714,13 +1731,15 @@ with tab1:
                     npx_h = compute_normalized_price(hc, window=ntd_window) if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
 
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
+                    # generous bottom space for the outside S↔R badge
+                    plt.subplots_adjust(bottom=0.28)
                     ax2r.set_title(f"Hourly Indicator Panel — NTD + NPX (Normalized Price) + Trend (win={ntd_window})")
 
                     # NEW: shading (green above 0, red below 0)
                     if shade_ntd and not ntd_h.dropna().empty:
                         shade_ntd_regions(ax2r, ntd_h)
 
-                    # NEW: S↔R Channel overlay on NTD panel
+                    # NEW: S↔R Channel overlay on NTD panel (with outside badge)
                     if show_ntd_channel and np.isfinite(res_val) and np.isfinite(sup_val):
                         overlay_inrange_on_ntd(ax2r, hc, sup_h, res_h)
 
@@ -1863,7 +1882,8 @@ with tab2:
                 2, 1, sharex=True, figsize=(14, 8),
                 gridspec_kw={"height_ratios": [3.2, 1.3]}
             )
-            plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93)
+            # add bottom space for the S↔R badge under the NTD panel
+            plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93, bottom=0.14)
 
             ax.set_title(f"{st.session_state.ticker} Daily — {daily_view} — History, 30 EMA, 30 S/R, Slope, Pivots")
             ax.plot(df_show, label="History")
@@ -1955,6 +1975,10 @@ with tab2:
             # NEW: HMA reversal markers on NTD (Daily, Enhanced)
             if show_hma_rev_ntd and not hma_d2_show.dropna().empty and not df_show.dropna().empty:
                 overlay_hma_reversal_on_ntd(axdw2, df_show, hma_d2_show, lookback=hma_rev_lb, period=hma_period)
+
+            # NEW: S↔R channel ribbon + bottom badge
+            if show_ntd_channel:
+                overlay_inrange_on_ntd(axdw2, df_show, sup30_show, res30_show)
 
             # Reference lines
             axdw2.axhline(0.0,  linestyle="--", linewidth=1.0, color="black",    label="0.00")
@@ -2172,13 +2196,15 @@ with tab2:
                     npx_i = compute_normalized_price(ic, window=ntd_window) if show_npx_ntd else pd.Series(index=ic.index, dtype=float)
 
                     fig3r, ax3r = plt.subplots(figsize=(14,2.8))
+                    # generous bottom space for the outside S↔R badge
+                    plt.subplots_adjust(bottom=0.28)
                     ax3r.set_title(f"Hourly Indicator Panel — NTD + NPX (Normalized Price) + Trend (win={ntd_window})")
 
                     # NEW: shading (green above 0, red below 0)
                     if shade_ntd and not ntd_i.dropna().empty:
                         shade_ntd_regions(ax3r, ntd_i)
 
-                    # NEW: S↔R Channel overlay on NTD panel
+                    # NEW: S↔R Channel overlay on NTD panel (with outside badge)
                     if show_ntd_channel and np.isfinite(res_val2) and np.isfinite(sup_val2):
                         overlay_inrange_on_ntd(ax3r, ic, sup_i, res_i)
 
