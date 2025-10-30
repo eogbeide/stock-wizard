@@ -4,7 +4,7 @@
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (NEW) Normalized Price (NPX) plotted on NTD panels + crossing markers
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
-# (UPDATED) S↔R sign moved to the bottom outside the chart area on NTD panels
+# (UPDATED) S↔R status badge moved to bottom-right INSIDE NTD charts (does not block time axis)
 
 import streamlit as st
 import pandas as pd
@@ -99,7 +99,6 @@ def fmt_price_val(y: float) -> str:
     return f"{y:,.3f}"
 
 def fmt_slope(m: float) -> str:
-    """Robust slope formatter (handles numpy scalars/arrays)."""
     try:
         mv = float(np.squeeze(m))
     except Exception:
@@ -107,7 +106,6 @@ def fmt_slope(m: float) -> str:
     return f"{mv:.4f}" if np.isfinite(mv) else "n/a"
 
 def fmt_r2(r2: float, digits: int = 1) -> str:
-    """Format R² as a percentage string (coefficient of determination)."""
     try:
         rv = float(r2)
     except Exception:
@@ -269,39 +267,27 @@ else:
     universe = [
         'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X',
         'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X',
-        'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','EURCAD=X'
+        'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X'
     ]
 
 # --- Cache helpers (TTL = 120 seconds) ---
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
-    """
-    Daily history: keep business-day index as returned by Yahoo (no asfreq, no tz conversion)
-    to avoid calendar/daylight shifts.
-    """
     df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Close']].dropna()
     return df['Close']
 
 @st.cache_data(ttl=120)
 def fetch_hist_max(ticker: str) -> pd.Series:
-    """Full history (Yahoo 'max') — keep original daily index (no asfreq, no tz)."""
     df = yf.download(ticker, period="max")[['Close']].dropna()
     return df['Close']
 
 @st.cache_data(ttl=120)
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
-    """Daily OHLC — keep original index (no tz attach/convert)."""
     df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Open','High','Low','Close']].dropna()
     return df
 
 @st.cache_data(ttl=120)
 def fetch_intraday(ticker: str, period: str = "1d", is_forex: bool = False) -> pd.DataFrame:
-    """
-    Intraday 5m bars:
-      - If tz-aware: convert to PST.
-      - If tz-naive: assume UTC for Forex, US/Eastern for US stocks; then convert to PST.
-    This prevents apparent time/price shifting from incorrect tz assumptions.
-    """
     df = yf.download(ticker, period=period, interval="5m")
     if df is None or df.empty:
         return df
@@ -309,25 +295,18 @@ def fetch_intraday(ticker: str, period: str = "1d", is_forex: bool = False) -> p
     try:
         if isinstance(idx, pd.DatetimeIndex):
             if idx.tz is not None:
-                # Convert from whatever tz to Pacific
                 df = df.tz_convert(PACIFIC)
             else:
-                # Attach the most likely source tz, then convert to Pacific
                 base_tz = pytz.UTC if is_forex else NY_TZ
                 df = df.tz_localize(base_tz).tz_convert(PACIFIC)
     except Exception:
-        # Fallback: leave as-is
         pass
     return df
 
 @st.cache_data(ttl=120)
 def compute_sarimax_forecast(series_like):
-    """
-    Preserve the input index's timezone (if any). Do not force PST, to avoid date shifts.
-    """
     series = _coerce_1d_series(series_like).dropna()
     if not isinstance(series.index, pd.DatetimeIndex):
-        # create a simple daily index for forecasting
         series.index = pd.date_range(end=pd.Timestamp.today().normalize(), periods=len(series), freq="B")
     tz = series.index.tz
     try:
@@ -351,12 +330,8 @@ def fibonacci_levels(series_like):
         return {}
     diff = hi - lo
     return {
-        "0%": hi,
-        "23.6%": hi - 0.236 * diff,
-        "38.2%": hi - 0.382 * diff,
-        "50%": hi - 0.5   * diff,
-        "61.8%": hi - 0.618 * diff,
-        "78.6%": hi - 0.786 * diff,
+        "0%": hi, "23.6%": hi - 0.236 * diff, "38.2%": hi - 0.382 * diff,
+        "50%": hi - 0.5 * diff, "61.8%": hi - 0.618 * diff, "78.6%": hi - 0.786 * diff,
         "100%": lo,
     }
 
@@ -389,7 +364,6 @@ def slope_line(series_like, lookback: int):
     return yhat, float(m)
 
 def regression_r2(series_like, lookback: int):
-    """R² for a simple linear fit over the last `lookback` bars of `series_like`."""
     s = _coerce_1d_series(series_like).dropna()
     if lookback > 0:
         s = s.iloc[-lookback:]
@@ -432,7 +406,7 @@ def compute_nrsi(close: pd.Series, period: int = 14) -> pd.Series:
     nrsi = ((rsi - 50.0) / 50.0).clip(-1.0, 1.0)
     return nrsi.reindex(rsi.index)
 
-# ---- Normalized MACD (price-based) ----
+# ---- Normalized MACD ----
 def compute_nmacd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9,
                   norm_win: int = 240):
     s = _coerce_1d_series(close).astype(float)
@@ -444,7 +418,6 @@ def compute_nmacd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int 
     sig  = macd.ewm(span=int(signal), adjust=False).mean()
     hist = macd - sig
 
-    # Normalize MACD & signal to [-1,1] using rolling z then tanh
     minp = max(10, norm_win//10)
     def _norm(x):
         m = x.rolling(norm_win, min_periods=minp).mean()
@@ -456,7 +429,7 @@ def compute_nmacd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int 
     nhist = nmacd - nsignal
     return nmacd.reindex(s.index), nsignal.reindex(s.index), nhist.reindex(s.index)
 
-# ---- Normalized Volume (z-score → tanh in [-1,1]) ----
+# ---- Normalized Volume ----
 def compute_nvol(volume: pd.Series, norm_win: int = 240) -> pd.Series:
     v = _coerce_1d_series(volume).astype(float)
     if v.empty:
@@ -467,7 +440,7 @@ def compute_nvol(volume: pd.Series, norm_win: int = 240) -> pd.Series:
     z = (v - m) / sd
     return np.tanh(z / 3.0)
 
-# ---- Normalized Price Oscillator (for EW panel) ----
+# ---- Normalized Price Oscillator ----
 def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int = 240) -> pd.Series:
     s = _coerce_1d_series(close)
     if s.empty or not np.isfinite(fast) or not np.isfinite(slow) or fast <= 0 or slow <= 0:
@@ -486,7 +459,7 @@ def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int 
     npo = np.tanh(z / 2.0)
     return npo.reindex(s.index)
 
-# ---- Normalized Trend Direction (for NTD panels) ----
+# ---- Normalized Trend Direction ----
 def compute_normalized_trend(close: pd.Series, window: int = 60) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
     if s.empty or window < 3:
@@ -510,13 +483,8 @@ def compute_normalized_trend(close: pd.Series, window: int = 60) -> pd.Series:
     ntd = np.tanh(ntd_raw / 2.0)
     return ntd.reindex(s.index)
 
-# ---- NEW: Normalized Price (NPX) for NTD panel (z-score → tanh in [-1,1]) ----
+# ---- Normalized Price (NPX) for NTD panel ----
 def compute_normalized_price(close: pd.Series, window: int = 60) -> pd.Series:
-    """
-    NPX scales price to [-1,1] using a rolling z-score over `window`, then tanh:
-      NPX = tanh( (price - mean) / (2 * std) )
-    This aligns its range with NTD so crossings are visible on the same axis.
-    """
     s = _coerce_1d_series(close).astype(float)
     if s.empty or window < 3:
         return pd.Series(index=s.index, dtype=float)
@@ -533,14 +501,9 @@ def shade_ntd_regions(ax, ntd: pd.Series):
     ntd = ntd.copy()
     pos = ntd.where(ntd > 0)
     neg = ntd.where(ntd < 0)
-    ax.fill_between(ntd.index, 0, pos, alpha=0.12, color="tab:green")
-    ax.fill_between(ntd.index, 0, neg, alpha=0.12, color="tab:red")
+    ax.fill_between(ntd.index, 0, pos, alpha=0.12)
+    ax.fill_between(ntd.index, 0, neg, alpha=0.12)
 
-# Red shading under NPO curve (unused now)
-def shade_npo_regions(ax, npo: pd.Series):
-    return
-
-# Daily trend-direction line helper (PRICE chart)
 def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "Trend"):
     s = _coerce_1d_series(series_like).dropna()
     if s.shape[0] < 2:
@@ -597,7 +560,6 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
 
 # --- Parabolic SAR (NEW) ---
 def compute_parabolic_sar(high: pd.Series, low: pd.Series, step: float = 0.02, max_step: float = 0.2):
-    """Return PSAR series and a boolean series in_uptrend (True when dots below price)."""
     H = _coerce_1d_series(high).astype(float)
     L = _coerce_1d_series(low).astype(float)
     df = pd.concat([H.rename("H"), L.rename("L")], axis=1).dropna()
@@ -609,10 +571,9 @@ def compute_parabolic_sar(high: pd.Series, low: pd.Series, step: float = 0.02, m
     psar = np.zeros(n) * np.nan
     up = np.zeros(n, dtype=bool)
 
-    # initialize
     uptrend = True
     af = float(step)
-    ep = df["H"].iloc[0]     # extreme point
+    ep = df["H"].iloc[0]
     psar[0] = df["L"].iloc[0]
     up[0] = True
 
@@ -620,18 +581,15 @@ def compute_parabolic_sar(high: pd.Series, low: pd.Series, step: float = 0.02, m
         prev_psar = psar[i-1]
         if uptrend:
             psar[i] = prev_psar + af * (ep - prev_psar)
-            # limit
             lo1 = df["L"].iloc[i-1]
             lo2 = df["L"].iloc[i-2] if i >= 2 else lo1
             psar[i] = min(psar[i], lo1, lo2)
-            # update EP/AF
             if df["H"].iloc[i] > ep:
                 ep = df["H"].iloc[i]
                 af = min(af + step, max_step)
-            # flip?
             if df["L"].iloc[i] < psar[i]:
                 uptrend = False
-                psar[i] = ep  # on flip, PSAR equals EP
+                psar[i] = ep
                 ep = df["L"].iloc[i]
                 af = step
         else:
@@ -698,16 +656,11 @@ def ichimoku_lines(high: pd.Series, low: pd.Series, close: pd.Series,
 def compute_normalized_ichimoku(high: pd.Series, low: pd.Series, close: pd.Series,
                                 conv: int = 9, base: int = 26, span_b: int = 52,
                                 norm_win: int = 240, price_weight: float = 0.6) -> pd.Series:
-    # Kept for compatibility; not used on indicator panels
     C = _coerce_1d_series(close).astype(float)
     return pd.Series(index=C.index, dtype=float)
 
-# ---- Bollinger Bands (SMA/EMA midline) + normalized %B (NBB) ----
+# ---- Bollinger Bands ----
 def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_ema: bool = False):
-    """
-    Returns:
-      mid, upper, lower, pctB (0..1), nbb (-1..1)
-    """
     s = _coerce_1d_series(close).astype(float)
     idx = s.index
     if s.empty or window < 2 or not np.isfinite(mult):
@@ -725,7 +678,7 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     nbb = pctb * 2.0 - 1.0
     return mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index)
 
-# ---- HMA (Hull Moving Average) + crossover helpers (NEW) ----
+# ---- HMA (Hull Moving Average) ----
 def _wma(s: pd.Series, window: int) -> pd.Series:
     s = _coerce_1d_series(s).astype(float)
     if s.empty or window < 1:
@@ -746,7 +699,6 @@ def compute_hma(close: pd.Series, period: int = 55) -> pd.Series:
     return hma.reindex(s.index)
 
 def detect_last_crossover(price: pd.Series, line: pd.Series):
-    """Return {'time': ts, 'side': 'BUY'|'SELL'} for the most-recent price↔line crossover (if any)."""
     p = _coerce_1d_series(price)
     l = _coerce_1d_series(line)
     mask = p.notna() & l.notna()
@@ -766,7 +718,6 @@ def detect_last_crossover(price: pd.Series, line: pd.Series):
         return {"time": t_dn, "side": "SELL"}
 
 def annotate_crossover(ax, ts, px, side: str, conf: float):
-    """Put a ▲/▼ marker and a small label at the crossover point."""
     try:
         if side == "BUY":
             ax.scatter([ts], [px], marker="^", s=90, color="tab:green", zorder=7)
@@ -792,13 +743,7 @@ def _cross_series(price: pd.Series, line: pd.Series):
     return cross_up.reindex(p.index, fill_value=False), cross_dn.reindex(p.index, fill_value=False)
 
 def detect_hma_reversal_masks(price: pd.Series, hma: pd.Series, lookback: int = 3):
-    """
-    Reversal = price crosses HMA and the HMA slope flips direction at that bar:
-      - BUY_REV: cross up AND HMA slope turns negative→positive
-      - SELL_REV: cross down AND HMA slope turns positive→negative
-    """
     h = _coerce_1d_series(hma)
-    # approximate local slope by mean diff over small lookback
     slope = h.diff().rolling(lookback, min_periods=1).mean()
     sign_now = np.sign(slope)
     sign_prev = np.sign(slope.shift(1))
@@ -811,7 +756,6 @@ def detect_hma_reversal_masks(price: pd.Series, hma: pd.Series, lookback: int = 
 
 def overlay_hma_reversal_on_ntd(ax, price: pd.Series, hma: pd.Series, lookback: int = 3,
                                 y_up: float = 0.95, y_dn: float = -0.95, label_prefix: str = "HMA REV", period: int = 55):
-    """Scatter markers at top/bottom of NTD panel for HMA cross+slope-reversal events."""
     try:
         buy_rev, sell_rev = detect_hma_reversal_masks(price, hma, lookback=lookback)
         idx_up = list(buy_rev[buy_rev].index)
@@ -825,13 +769,8 @@ def overlay_hma_reversal_on_ntd(ax, price: pd.Series, hma: pd.Series, lookback: 
     except Exception:
         pass
 
-# ========= NEW: NPX ↔ NTD overlay/helpers =========
+# ========= NPX ↔ NTD overlay =========
 def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = True):
-    """
-    Plot NPX (normalized price) on the NTD panel and optionally mark crossovers.
-    - Up-cross: NPX crosses above NTD → green ▲ at the intersection (y = NTD at ts)
-    - Down-cross: NPX crosses below NTD → red ▼ at the intersection
-    """
     npx = _coerce_1d_series(npx)
     ntd = _coerce_1d_series(ntd)
     idx = ntd.index.union(npx.index)
@@ -841,7 +780,6 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = 
     if npx.dropna().empty:
         return
 
-    # NPX line (subtle gray to distinguish from NTD)
     ax.plot(npx.index, npx.values, "-", linewidth=1.2, color="tab:gray", alpha=0.9, label="NPX (Norm Price)")
 
     if mark_crosses and not ntd.dropna().empty:
@@ -856,26 +794,20 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = 
         except Exception:
             pass
 
-# ========= Sessions (NEW) =========
+# ========= Sessions =========
 def session_markers_for_index(idx: pd.DatetimeIndex, session_tz, open_hr: int, close_hr: int):
-    """Return two lists (open_times_pst, close_times_pst) within idx range, converted to PST.
-    Uses local session dates & pytz to handle DST correctly."""
     opens, closes = [], []
     if not isinstance(idx, pd.DatetimeIndex) or idx.tz is None or idx.empty:
         return opens, closes
-    # session-local date range covering the visible data
     start_d = idx[0].astimezone(session_tz).date()
     end_d   = idx[-1].astimezone(session_tz).date()
-    # iterate inclusive
     rng = pd.date_range(start=start_d, end=end_d, freq="D")
     lo, hi = idx.min(), idx.max()
     for d in rng:
-        # localize session open/close at that session-local date
         try:
             dt_open_local  = session_tz.localize(datetime(d.year, d.month, d.day, open_hr, 0, 0), is_dst=None)
             dt_close_local = session_tz.localize(datetime(d.year, d.month, d.day, close_hr, 0, 0), is_dst=None)
         except Exception:
-            # if ambiguous/nonexistent times, let pytz resolve
             dt_open_local  = session_tz.localize(datetime(d.year, d.month, d.day, open_hr, 0, 0))
             dt_close_local = session_tz.localize(datetime(d.year, d.month, d.day, close_hr, 0, 0))
         dt_open_pst  = dt_open_local.astimezone(PACIFIC)
@@ -885,22 +817,18 @@ def session_markers_for_index(idx: pd.DatetimeIndex, session_tz, open_hr: int, c
     return opens, closes
 
 def compute_session_lines(idx: pd.DatetimeIndex):
-    """Collect London & New York session open/close times in PST for the given intraday index."""
-    ldn_open, ldn_close = session_markers_for_index(idx, LDN_TZ, 8, 17)  # 8:00–17:00 London local
-    ny_open, ny_close   = session_markers_for_index(idx, NY_TZ,  8, 17)  # 8:00–17:00 New York local
+    ldn_open, ldn_close = session_markers_for_index(idx, LDN_TZ, 8, 17)
+    ny_open, ny_close   = session_markers_for_index(idx, NY_TZ,  8, 17)
     return {
         "ldn_open": ldn_open, "ldn_close": ldn_close,
         "ny_open": ny_open,   "ny_close": ny_close
     }
 
 def draw_session_lines(ax, lines: dict):
-    """Draw vertical lines for session opens/closes with legend entries. Solid=open, dashed=close."""
-    # Legend handles (one each)
     ax.plot([], [], linestyle="-",  color="tab:blue",   label="London Open (PST)")
     ax.plot([], [], linestyle="--", color="tab:blue",   label="London Close (PST)")
     ax.plot([], [], linestyle="-",  color="tab:orange", label="New York Open (PST)")
     ax.plot([], [], linestyle="--", color="tab:orange", label="New York Close (PST)")
-    # Lines (light alpha)
     for t in lines.get("ldn_open", []):
         ax.axvline(t, linestyle="-",  linewidth=1.0, color="tab:blue",   alpha=0.35)
     for t in lines.get("ldn_close", []):
@@ -909,7 +837,6 @@ def draw_session_lines(ax, lines: dict):
         ax.axvline(t, linestyle="-",  linewidth=1.0, color="tab:orange", alpha=0.35)
     for t in lines.get("ny_close", []):
         ax.axvline(t, linestyle="--", linewidth=1.0, color="tab:orange", alpha=0.35)
-    # Why: keeps the viewer aware that all session markers are PST
     ax.text(0.99, 0.98, "Session times in PST",
             transform=ax.transAxes, ha="right", va="top",
             fontsize=8, color="black",
@@ -1007,14 +934,8 @@ def draw_news_markers(ax, times, ymin, ymax, label="News"):
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
 
-# ========= NEW: Channel-in-range helpers for NTD panel =========
+# ========= Channel-in-range helpers for NTD panel =========
 def channel_state_series(price: pd.Series, sup: pd.Series, res: pd.Series, eps: float = 0.0) -> pd.Series:
-    """
-    Returns a series with values:
-      -1 → price below Support
-       0 → price between Support & Resistance (IN RANGE)
-      +1 → price above Resistance
-    """
     p = _coerce_1d_series(price)
     s_sup = _coerce_1d_series(sup).reindex(p.index)
     s_res = _coerce_1d_series(res).reindex(p.index)
@@ -1030,7 +951,6 @@ def channel_state_series(price: pd.Series, sup: pd.Series, res: pd.Series, eps: 
     return state
 
 def _true_spans(mask: pd.Series):
-    """Return list of (start_ts, end_ts) for contiguous True regions in boolean series."""
     spans = []
     if mask is None or mask.empty:
         return spans
@@ -1052,20 +972,20 @@ def _true_spans(mask: pd.Series):
 def overlay_inrange_on_ntd(ax, price: pd.Series, sup: pd.Series, res: pd.Series):
     """
     Shades time ranges on the NTD panel where price is between S/R (gold ribbon),
-    and marks entries into the channel from below (▲ green) and from above (▼ orange).
+    and marks entries into the channel. Status badge is at the *bottom-right inside*
+    the axes (not covering the x-axis tick labels).
     Returns the latest channel state (-1/0/+1).
-
-    Also places a small S↔R badge at the **bottom, outside** the chart area.
     """
     state = channel_state_series(price, sup, res)
     in_mask = (state == 0)
 
-    # Gold ribbons for IN-RANGE spans
+    # Gold ribbons
     for a, b in _true_spans(in_mask):
         try:
             ax.axvspan(a, b, color="gold", alpha=0.15, zorder=1)
         except Exception:
             pass
+    ax.plot([], [], linewidth=8, color="gold", alpha=0.20, label="In Range (S↔R)")
 
     # Entry markers
     enter_from_below = (state.shift(1) == -1) & (state == 0)
@@ -1077,33 +997,23 @@ def overlay_inrange_on_ntd(ax, price: pd.Series, sup: pd.Series, res: pd.Series)
         ax.scatter(price.index[enter_from_above], [0.92]*int(enter_from_above.sum()),
                    marker="v", s=60, color="tab:orange", zorder=7, label="Enter from R")
 
-    # Status badge (top-right) — keep concise (no S↔R here)
+    # Status badge — bottom-right INSIDE (doesn't block time labels)
     lbl = None; col = "black"
     last = state.dropna().iloc[-1] if state.dropna().shape[0] else np.nan
     if np.isfinite(last):
         if last == 0:
-            lbl, col = "IN RANGE", "black"
+            lbl, col = "IN RANGE (S↔R)", "black"
         elif last > 0:
             lbl, col = "Above R", "tab:orange"
         else:
             lbl, col = "Below S", "tab:red"
-        ax.text(0.99, 0.94, lbl, transform=ax.transAxes, ha="right", va="top",
+        ax.text(0.995, 0.02, lbl, transform=ax.transAxes, ha="right", va="bottom",
                 fontsize=9, color=col,
-                bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=col, alpha=0.85))
-
-    # --- NEW: S↔R sign at the bottom, *outside* the chart area
-    try:
-        ax.text(0.5, -0.18, "S↔R",
-                transform=ax.transAxes, ha="center", va="top",
-                fontsize=11, fontweight="bold",
-                bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="gold", alpha=0.95),
-                clip_on=False, zorder=10)
-    except Exception:
-        pass
-
+                bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=col, alpha=0.85),
+                zorder=10)  # inside the axes, just above the x-axis labels
     return last
 
-# ========= NEW: BB Divergence signal helper =========
+# ========= BB Divergence signal helper =========
 def _last_delta_sign(series_like: pd.Series) -> float:
     s = _coerce_1d_series(series_like).dropna()
     if len(s) < 2:
@@ -1113,42 +1023,23 @@ def _last_delta_sign(series_like: pd.Series) -> float:
 
 def bb_divergence_signals(ax, price: pd.Series, bb_upper: pd.Series, bb_lower: pd.Series,
                           lookback: int, conf_up: float, conf_dn: float, conf_level: float = 0.95):
-    """
-    BUY when:
-      - Price trend slope > 0 (upward)
-      - LOWER band slope < 0 (downward)
-      - Distance (price - lower) slope > 0 (moving away)
-      - Latest bar delta > 0
-      - conf_up ≥ conf_level
-
-    SELL when:
-      - Price trend slope < 0 (downward)
-      - UPPER band slope > 0 (upward)
-      - Distance (upper - price) slope > 0 (moving away)
-      - Latest bar delta < 0
-      - conf_dn ≥ conf_level
-    """
     p = _coerce_1d_series(price).astype(float)
     up = _coerce_1d_series(bb_upper).reindex(p.index).astype(float)
     lo = _coerce_1d_series(bb_lower).reindex(p.index).astype(float)
     if p.dropna().shape[0] < max(3, lookback) or up.dropna().empty or lo.dropna().empty:
         return
 
-    # Align and slice to lookback window
     p = p.dropna().iloc[-lookback:]
     up = up.reindex(p.index).ffill().bfill()
     lo = lo.reindex(p.index).ffill().bfill()
     if p.empty or up.empty or lo.empty:
         return
 
-    # Slopes
     _, m_price = slope_line(p, lookback)
     _, m_upper = slope_line(up, lookback)
     _, m_lower = slope_line(lo, lookback)
-
-    # Distance slopes
-    _, m_dist_buy  = slope_line(p - lo, lookback)  # want > 0 for BUY
-    _, m_dist_sell = slope_line(up - p, lookback)  # want > 0 for SELL
+    _, m_dist_buy  = slope_line(p - lo, lookback)
+    _, m_dist_sell = slope_line(up - p, lookback)
 
     last_sign = _last_delta_sign(p)
     ts = p.index[-1]
@@ -1157,7 +1048,6 @@ def bb_divergence_signals(ax, price: pd.Series, bb_upper: pd.Series, bb_lower: p
     buy_cond = (m_price > 0) and (m_lower < 0) and (m_dist_buy > 0) and (last_sign > 0) and (conf_up >= conf_level)
     sell_cond = (m_price < 0) and (m_upper > 0) and (m_dist_sell > 0) and (last_sign < 0) and (conf_dn >= conf_level)
 
-    # annotate
     try:
         if buy_cond and np.isfinite(px):
             ax.scatter([ts], [px], marker="^", s=120, color="tab:green", zorder=9)
@@ -1204,9 +1094,8 @@ def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d", is_fore
     except Exception:
         return np.nan, None
 
-# ---- Price > Kijun detection (Daily & Hourly) ----
+# ---- Price > Kijun detection ----
 def _price_above_kijun_from_df(df: pd.DataFrame, base: int = 26):
-    """Returns (above_now, timestamp, close_now, kijun_now) for the latest bar."""
     if df is None or df.empty or not {'High','Low','Close'}.issubset(df.columns):
         return False, None, np.nan, np.nan
     ohlc = df[['High','Low','Close']].copy()
@@ -1241,7 +1130,6 @@ def price_above_kijun_info_hourly(symbol: str, period: str = "1d", base: int = 2
 
 # --- Volume helpers (new) ---
 def rolling_midline(series_like: pd.Series, window: int) -> pd.Series:
-    """Mid-line as (rolling max + rolling min)/2 over `window`."""
     s = _coerce_1d_series(series_like).astype(float)
     if s.empty:
         return pd.Series(index=s.index, dtype=float)
@@ -1250,7 +1138,6 @@ def rolling_midline(series_like: pd.Series, window: int) -> pd.Series:
     return mid.reindex(s.index)
 
 def _has_volume_to_plot(vol: pd.Series) -> bool:
-    """Robust scalar check to decide if volume panel should render."""
     s = _coerce_1d_series(vol).astype(float).replace([np.inf, -np.inf], np.nan).dropna()
     if s.shape[0] < 2:
         return False
@@ -1334,12 +1221,9 @@ with tab1:
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
-            # NTD for daily panel
             ntd_d = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
-            # NPX for daily panel
             npx_d_full = compute_normalized_price(df, window=ntd_window) if show_npx_ntd else pd.Series(index=df.index, dtype=float)
 
-            # Kijun for price chart (optional)
             kijun_d = pd.Series(index=df.index, dtype=float)
             if df_ohlc is not None and not df_ohlc.empty and show_ichi:
                 _, kijun_d, _, _, _ = ichimoku_lines(
@@ -1348,7 +1232,6 @@ with tab1:
                 )
                 kijun_d = kijun_d.ffill().bfill()
 
-            # BBands (Daily)
             bb_mid_d, bb_up_d, bb_lo_d, bb_pctb_d, bb_nbb_d = compute_bbands(df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
             df_show     = subset_by_daily_view(df, daily_view)
@@ -1361,18 +1244,15 @@ with tab1:
             npx_d_show  = npx_d_full.reindex(df_show.index)
             kijun_d_show = kijun_d.reindex(df_show.index).ffill().bfill()
 
-            # BB subset for the shown window
             bb_mid_d_show = bb_mid_d.reindex(df_show.index)
             bb_up_d_show  = bb_up_d.reindex(df_show.index)
             bb_lo_d_show  = bb_lo_d.reindex(df_show.index)
             bb_pctb_d_show= bb_pctb_d.reindex(df_show.index)
             bb_nbb_d_show = bb_nbb_d.reindex(df_show.index)
 
-            # HMA (Daily) — compute always
             hma_d_full = compute_hma(df, period=hma_period)
             hma_d_show = hma_d_full.reindex(df_show.index)
 
-            # PSAR (Daily)
             psar_d_df = compute_psar_from_ohlc(df_ohlc, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
             if not psar_d_df.empty and len(df_show.index) > 0:
                 x0, x1 = df_show.index[0], df_show.index[-1]
@@ -1382,8 +1262,8 @@ with tab1:
                 2, 1, sharex=True, figsize=(14, 8),
                 gridspec_kw={"height_ratios": [3.2, 1.3]}
             )
-            # add bottom space for the S↔R badge under the NTD panel
-            plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93, bottom=0.14)
+            # Normal bottom margin (badge is inside axes)
+            plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93, bottom=0.12)
 
             # --- PRICE CHART ---
             ax.set_title(f"{sel} Daily — {daily_view} — History, 30 EMA, 30 S/R, Slope, Pivots")
@@ -1392,23 +1272,19 @@ with tab1:
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
 
-            # HMA line (optional)
             if show_hma and not hma_d_show.dropna().empty:
                 ax.plot(hma_d_show.index, hma_d_show.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
 
-            # Kijun (Daily)
             if show_ichi and not kijun_d_show.dropna().empty:
                 ax.plot(kijun_d_show.index, kijun_d_show.values, "-", linewidth=1.8, color="black",
                         label=f"Ichimoku Kijun ({ichi_base})")
 
-            # Bollinger Bands (Daily)
             if show_bbands and not bb_up_d_show.dropna().empty and not bb_lo_d_show.dropna().empty:
                 ax.fill_between(df_show.index, bb_lo_d_show, bb_up_d_show, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
                 ax.plot(bb_mid_d_show.index, bb_mid_d_show.values, "-", linewidth=1.1,
                         label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
                 ax.plot(bb_up_d_show.index, bb_up_d_show.values, ":", linewidth=1.0)
                 ax.plot(bb_lo_d_show.index, bb_lo_d_show.values, ":", linewidth=1.0)
-                # NBB badge (bottom-right)
                 try:
                     last_pct = float(bb_pctb_d_show.dropna().iloc[-1])
                     last_nbb = float(bb_nbb_d_show.dropna().iloc[-1])
@@ -1419,7 +1295,6 @@ with tab1:
                 except Exception:
                     pass
 
-            # PSAR overlay (Daily)
             if show_psar and not psar_d_df.empty:
                 up_mask = psar_d_df["in_uptrend"] == True
                 dn_mask = ~up_mask
@@ -1454,7 +1329,6 @@ with tab1:
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
 
-            # Probabilistic HMA crossover (Daily)
             if show_hma and not hma_d_show.dropna().empty:
                 cross_d = detect_last_crossover(df_show, hma_d_show)
                 if cross_d is not None and cross_d["time"] is not None:
@@ -1466,7 +1340,6 @@ with tab1:
                         annotate_crossover(ax, ts, px_here, "SELL", hma_conf)
                         st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — last price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
 
-            # 🔶 NEW: BB Divergence signal (Daily)
             if show_bb_div:
                 bb_divergence_signals(ax, df_show, bb_up_d_show, bb_lo_d_show,
                                       lookback=slope_lb_daily, conf_up=p_up, conf_dn=p_dn, conf_level=bb_conf)
@@ -1476,7 +1349,6 @@ with tab1:
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw, ntd_d_show)
 
-            # NTD line + trendline
             if show_ntd and not ntd_d_show.dropna().empty:
                 axdw.plot(ntd_d_show.index, ntd_d_show, "-", linewidth=1.6, label=f"NTD (win={ntd_window})")
                 ntd_trend_d, ntd_m_d = slope_line(ntd_d_show, slope_lb_daily)
@@ -1484,19 +1356,15 @@ with tab1:
                     axdw.plot(ntd_trend_d.index, ntd_trend_d.values, "--", linewidth=2,
                               label=f"NTD Trend {slope_lb_daily} ({fmt_slope(ntd_m_d)}/bar)")
 
-            # NEW: NPX overlay + cross markers
             if show_npx_ntd and not npx_d_show.dropna().empty and not ntd_d_show.dropna().empty:
                 overlay_npx_on_ntd(axdw, npx_d_show, ntd_d_show, mark_crosses=mark_npx_cross)
 
-            # NEW: HMA reversal markers on NTD (Daily)
             if show_hma_rev_ntd and not hma_d_show.dropna().empty and not df_show.dropna().empty:
                 overlay_hma_reversal_on_ntd(axdw, df_show, hma_d_show, lookback=hma_rev_lb, period=hma_period)
 
-            # NEW: S↔R channel ribbon + bottom badge
-            if show_ntd_channel:
+            if show_ntd_channel and len(sup30_show) and len(res30_show):
                 overlay_inrange_on_ntd(axdw, df_show, sup30_show, res30_show)
 
-            # Reference lines
             axdw.axhline(0.0,  linestyle="--", linewidth=1.0, color="black",    label="0.00")
             axdw.axhline(0.5,  linestyle="-",  linewidth=1.2, color="black",    label="+0.50")
             axdw.axhline(-0.5, linestyle="-",  linewidth=1.2, color="black",    label="-0.50")
@@ -1508,7 +1376,7 @@ with tab1:
             axdw.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (price + NEW NTD panel + momentum + NEW Volume panel) -----
+        # ----- Hourly (price + NTD panel + momentum + Volume) -----
         if chart in ("Hourly","Both"):
             intraday = st.session_state.intraday
             if intraday is None or intraday.empty or "Close" not in intraday:
@@ -1519,14 +1387,12 @@ with tab1:
                 xh = np.arange(len(hc))
                 slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
                 trend_h = slope_h * xh + intercept_h
-                # Use configurable S/R window
                 res_h = hc.rolling(sr_lb_hourly, min_periods=1).max()
                 sup_h = hc.rolling(sr_lb_hourly, min_periods=1).min()
 
                 st_intraday = compute_supertrend(intraday, atr_period=atr_period, atr_mult=atr_mult)
                 st_line_intr = st_intraday["ST"].reindex(hc.index) if "ST" in st_intraday else pd.Series(index=hc.index, dtype=float)
 
-                # Ichimoku Kijun on price chart (solid black)
                 kijun_h = pd.Series(index=hc.index, dtype=float)
                 if {'High','Low','Close'}.issubset(intraday.columns) and show_ichi:
                     _, kijun_h, _, _, _ = ichimoku_lines(
@@ -1535,17 +1401,11 @@ with tab1:
                     )
                     kijun_h = kijun_h.reindex(hc.index).ffill().bfill()
 
-                # Bollinger Bands (Hourly)
                 bb_mid_h, bb_up_h, bb_lo_h, bb_pctb_h, bb_nbb_h = compute_bbands(hc, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
-
-                # HMA (Hourly) — compute always
                 hma_h = compute_hma(hc, period=hma_period)
-
-                # PSAR (Hourly)
                 psar_h_df = compute_psar_from_ohlc(intraday, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
                 psar_h_df = psar_h_df.reindex(hc.index)
 
-                # Lookback slope & R²
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
                 r2_h = regression_r2(hc, slope_lb_hourly)
 
@@ -1556,7 +1416,6 @@ with tab1:
                 ax2.plot(hc.index, he, "--", label="20 EMA")
                 ax2.plot(hc.index, trend_h, "--", label=f"Trend (m={fmt_slope(slope_h)}/bar)", linewidth=2)
 
-                # HMA line (optional)
                 if show_hma and not hma_h.dropna().empty:
                     ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
 
@@ -1564,7 +1423,6 @@ with tab1:
                     ax2.plot(kijun_h.index, kijun_h.values, "-", linewidth=1.8, color="black",
                              label=f"Ichimoku Kijun ({ichi_base})")
 
-                # Plot BBands (Hourly)
                 if show_bbands and not bb_up_h.dropna().empty and not bb_lo_h.dropna().empty:
                     ax2.fill_between(hc.index, bb_lo_h, bb_up_h, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
                     ax2.plot(bb_mid_h.index, bb_mid_h.values, "-", linewidth=1.1,
@@ -1572,7 +1430,6 @@ with tab1:
                     ax2.plot(bb_up_h.index, bb_up_h.values, ":", linewidth=1.0)
                     ax2.plot(bb_lo_h.index, bb_lo_h.values, ":", linewidth=1.0)
 
-                # PSAR overlay (Hourly)
                 if show_psar and not psar_h_df.dropna().empty:
                     up_mask = psar_h_df["in_uptrend"] == True
                     dn_mask = ~up_mask
@@ -1602,7 +1459,6 @@ with tab1:
                 if np.isfinite(res_val): buy_sell_text += f"  ▼ SELL @{fmt_price_val(res_val)}"
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text}")
 
-                # === Current price badge (bottom-right) ===
                 if np.isfinite(px_val):
                     nbb_txt = ""
                     try:
@@ -1623,19 +1479,16 @@ with tab1:
                     ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
                              label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
-                # Bottom-left slope badge
                 ax2.text(0.01, 0.02, f"Slope: {fmt_slope(slope_h)}/bar",
                          transform=ax2.transAxes, ha="left", va="bottom",
                          fontsize=9, color="black",
                          bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-                # Bottom-center R² badge
                 ax2.text(0.50, 0.02, f"R² ({slope_lb_hourly} bars): {fmt_r2(r2_h)}",
                          transform=ax2.transAxes, ha="center", va="bottom",
                          fontsize=9, color="black",
                          bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-                # --- NEW: Session lines (PST) for Forex intraday ---
                 if mode == "Forex" and show_sessions_pst and not hc.empty and (hc.index.tz is not None):
                     sess = compute_session_lines(hc.index)
                     draw_session_lines(ax2, sess)
@@ -1663,7 +1516,6 @@ with tab1:
                     elif signal["side"] == "SELL":
                         st.error(f"**SELL** @ {fmt_price_val(signal['level'])} — {signal['reason']}")
 
-                # Probabilistic HMA crossover (Hourly)
                 if show_hma and not hma_h.dropna().empty:
                     cross_h = detect_last_crossover(hc, hma_h)
                     if cross_h is not None and cross_h["time"] is not None:
@@ -1675,7 +1527,6 @@ with tab1:
                             annotate_crossover(ax2, ts, px_here, "SELL", hma_conf)
                             st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
 
-                # 🔶 NEW: BB Divergence signal (Hourly)
                 if show_bb_div:
                     bb_divergence_signals(ax2, hc, bb_up_h, bb_lo_h,
                                           lookback=slope_lb_hourly, conf_up=p_up, conf_dn=p_dn, conf_level=bb_conf)
@@ -1685,7 +1536,7 @@ with tab1:
                 xlim_price = ax2.get_xlim()
                 st.pyplot(fig2)
 
-                # === NEW: Hourly Volume panel (separate chart) ===
+                # === Hourly Volume panel ===
                 vol = _coerce_1d_series(intraday.get("Volume", pd.Series(index=hc.index))).reindex(hc.index).astype(float)
                 if _has_volume_to_plot(vol):
                     v_mid = rolling_midline(vol, window=max(3, int(slope_lb_hourly)))
@@ -1694,22 +1545,12 @@ with tab1:
 
                     fig2v, ax2v = plt.subplots(figsize=(14, 2.8))
                     ax2v.set_title(f"Volume (Hourly) — Mid-line & Trend  |  Slope={fmt_slope(v_m)}/bar")
-                    # BLUE volume area + line
                     ax2v.fill_between(vol.index, 0, vol, alpha=0.18, label="Volume", color="tab:blue")
                     ax2v.plot(vol.index, vol, linewidth=1.0, color="tab:blue")
-
-                    # Rolling mid-line + label
                     ax2v.plot(v_mid.index, v_mid, ":", linewidth=1.6, label=f"Mid-line ({slope_lb_hourly}-roll)")
-                    if v_mid.notna().any():
-                        last_mid = float(v_mid.dropna().iloc[-1])
-                        ax2v.hlines(last_mid, xmin=vol.index[0], xmax=vol.index[-1],
-                                    linestyles="dotted", linewidth=1.0)
-                        label_on_left(ax2v, last_mid, f"Mid {last_mid:,.0f}", color="black")
-
                     if not v_trend.empty:
                         ax2v.plot(v_trend.index, v_trend.values, "--", linewidth=2,
                                   label=f"Trend {slope_lb_hourly} ({fmt_slope(v_m)}/bar)")
-
                     ax2v.text(0.01, 0.02, f"Slope: {fmt_slope(v_m)}/bar",
                               transform=ax2v.transAxes, ha="left", va="bottom",
                               fontsize=9, color="black",
@@ -1718,48 +1559,40 @@ with tab1:
                               transform=ax2v.transAxes, ha="center", va="bottom",
                               fontsize=9, color="black",
                               bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-
                     ax2v.set_xlim(xlim_price)
                     ax2v.set_xlabel("Time (PST)")
                     ax2v.legend(loc="lower left", framealpha=0.5)
                     st.pyplot(fig2v)
 
-                # === Hourly Indicator Panel: NTD + NPX + Trend (SHADED) + NEW S↔R channel ===
+                # === Hourly Indicator Panel: NTD + NPX + Trend (+ S↔R channel) ===
                 if show_nrsi:
                     ntd_h = compute_normalized_trend(hc, window=ntd_window)
                     ntd_trend_h, ntd_m_h = slope_line(ntd_h, slope_lb_hourly)
                     npx_h = compute_normalized_price(hc, window=ntd_window) if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
 
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
-                    # generous bottom space for the outside S↔R badge
-                    plt.subplots_adjust(bottom=0.28)
+                    # standard bottom margin (badge is inside)
+                    plt.subplots_adjust(bottom=0.12)
                     ax2r.set_title(f"Hourly Indicator Panel — NTD + NPX (Normalized Price) + Trend (win={ntd_window})")
 
-                    # NEW: shading (green above 0, red below 0)
                     if shade_ntd and not ntd_h.dropna().empty:
                         shade_ntd_regions(ax2r, ntd_h)
 
-                    # NEW: S↔R Channel overlay on NTD panel (with outside badge)
                     if show_ntd_channel and np.isfinite(res_val) and np.isfinite(sup_val):
                         overlay_inrange_on_ntd(ax2r, hc, sup_h, res_h)
 
-                    # NTD line
                     ax2r.plot(ntd_h.index, ntd_h, "-", linewidth=1.6, label="NTD")
 
-                    # NPX overlay + cross markers
                     if show_npx_ntd and not npx_h.dropna().empty and not ntd_h.dropna().empty:
                         overlay_npx_on_ntd(ax2r, npx_h, ntd_h, mark_crosses=mark_npx_cross)
 
-                    # NTD trendline (dashed) + slope in legend
                     if not ntd_trend_h.empty:
                         ax2r.plot(ntd_trend_h.index, ntd_trend_h.values, "--", linewidth=2,
                                   label=f"NTD Trend {slope_lb_hourly} ({fmt_slope(ntd_m_h)}/bar)")
 
-                    # NEW: HMA reversal markers on NTD (Hourly)
                     if show_hma_rev_ntd and not hma_h.dropna().empty and not hc.dropna().empty:
                         overlay_hma_reversal_on_ntd(ax2r, hc, hma_h, lookback=hma_rev_lb, period=hma_period)
 
-                    # Reference lines
                     ax2r.axhline(0.0,  linestyle="--", linewidth=1.0, color="black",    label="0.00")
                     ax2r.axhline(0.5,  linestyle="-",  linewidth=1.2, color="black",    label="+0.50")
                     ax2r.axhline(-0.5, linestyle="-",  linewidth=1.2, color="black",    label="-0.50")
@@ -1772,7 +1605,6 @@ with tab1:
                     ax2r.set_xlabel("Time (PST)")
                     st.pyplot(fig2r)
 
-                # Momentum panel (ROC%)
                 if show_mom_hourly:
                     roc = compute_roc(hc, n=mom_lb_hourly)
                     res_m = roc.rolling(60, min_periods=1).max()
@@ -1836,7 +1668,6 @@ with tab2:
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
-            # NTD + NPX for daily panel (Enhanced)
             ntd_d2 = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
             npx_d2_full = compute_normalized_price(df, window=ntd_window) if show_npx_ntd else pd.Series(index=df.index, dtype=float)
 
@@ -1848,7 +1679,6 @@ with tab2:
                 )
                 kijun_d2 = kijun_d2.ffill().bfill()
 
-            # BBands (Daily, Enhanced)
             bb_mid_d2, bb_up_d2, bb_lo_d2, bb_pctb_d2, bb_nbb_d2 = compute_bbands(df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
             df_show     = subset_by_daily_view(df, daily_view)
@@ -1861,18 +1691,15 @@ with tab2:
             npx_d2_show = npx_d2_full.reindex(df_show.index)
             kijun_d2_show = kijun_d2.reindex(df_show.index).ffill().bfill()
 
-            # BB subset (Enhanced)
             bb_mid_d2_show = bb_mid_d2.reindex(df_show.index)
             bb_up_d2_show  = bb_up_d2.reindex(df_show.index)
             bb_lo_d2_show  = bb_lo_d2.reindex(df_show.index)
             bb_pctb_d2_show= bb_pctb_d2.reindex(df_show.index)
             bb_nbb_d2_show = bb_nbb_d2.reindex(df_show.index)
 
-            # HMA (Daily, Enhanced) — compute always
             hma_d2_full = compute_hma(df, period=hma_period)
             hma_d2_show = hma_d2_full.reindex(df_show.index)
 
-            # PSAR (Daily, Enhanced)
             psar_d2_df = compute_psar_from_ohlc(df_ohlc, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
             if not psar_d2_df.empty and len(df_show.index) > 0:
                 x0, x1 = df_show.index[0], df_show.index[-1]
@@ -1882,8 +1709,7 @@ with tab2:
                 2, 1, sharex=True, figsize=(14, 8),
                 gridspec_kw={"height_ratios": [3.2, 1.3]}
             )
-            # add bottom space for the S↔R badge under the NTD panel
-            plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93, bottom=0.14)
+            plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93, bottom=0.12)
 
             ax.set_title(f"{st.session_state.ticker} Daily — {daily_view} — History, 30 EMA, 30 S/R, Slope, Pivots")
             ax.plot(df_show, label="History")
@@ -1896,7 +1722,6 @@ with tab2:
                 ax.plot(kijun_d2_show.index, kijun_d2_show.values, "-", linewidth=1.8, color="black",
                         label=f"Ichimoku Kijun ({ichi_base})")
 
-            # Plot BBands (Daily, Enhanced)
             if show_bbands and not bb_up_d2_show.dropna().empty and not bb_lo_d2_show.dropna().empty:
                 ax.fill_between(df_show.index, bb_lo_d2_show, bb_up_d2_show, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
                 ax.plot(bb_mid_d2_show.index, bb_mid_d2_show.values, "-", linewidth=1.1,
@@ -1904,7 +1729,6 @@ with tab2:
                 ax.plot(bb_up_d2_show.index, bb_up_d2_show.values, ":", linewidth=1.0)
                 ax.plot(bb_lo_d2_show.index, bb_lo_d2_show.values, ":", linewidth=1.0)
 
-            # PSAR overlay (Daily, Enhanced)
             if show_psar and not psar_d2_df.empty:
                 up_mask = psar_d2_df["in_uptrend"] == True
                 dn_mask = ~up_mask
@@ -1939,7 +1763,6 @@ with tab2:
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
 
-            # Probabilistic HMA crossover (Daily, Enhanced)
             if show_hma and not hma_d2_show.dropna().empty:
                 cross_d2 = detect_last_crossover(df_show, hma_d2_show)
                 if cross_d2 is not None and cross_d2["time"] is not None:
@@ -1951,7 +1774,6 @@ with tab2:
                         annotate_crossover(ax, ts, px_here, "SELL", hma_conf)
                         st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — last price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
 
-            # 🔶 NEW: BB Divergence signal (Daily, Enhanced)
             if show_bb_div:
                 bb_divergence_signals(ax, df_show, bb_up_d2_show, bb_lo_d2_show,
                                       lookback=slope_lb_daily, conf_up=p_up, conf_dn=p_dn, conf_level=bb_conf)
@@ -1968,19 +1790,15 @@ with tab2:
                     axdw2.plot(ntd_trend_d2.index, ntd_trend_d2.values, "--", linewidth=2,
                                label=f"NTD Trend {slope_lb_daily} ({fmt_slope(ntd_m_d2)}/bar)")
 
-            # NEW: NPX overlay + cross markers
             if show_npx_ntd and not npx_d2_show.dropna().empty and not ntd_d_show.dropna().empty:
                 overlay_npx_on_ntd(axdw2, npx_d2_show, ntd_d_show, mark_crosses=mark_npx_cross)
 
-            # NEW: HMA reversal markers on NTD (Daily, Enhanced)
             if show_hma_rev_ntd and not hma_d2_show.dropna().empty and not df_show.dropna().empty:
                 overlay_hma_reversal_on_ntd(axdw2, df_show, hma_d2_show, lookback=hma_rev_lb, period=hma_period)
 
-            # NEW: S↔R channel ribbon + bottom badge
-            if show_ntd_channel:
+            if show_ntd_channel and len(sup30_show) and len(res30_show):
                 overlay_inrange_on_ntd(axdw2, df_show, sup30_show, res30_show)
 
-            # Reference lines
             axdw2.axhline(0.0,  linestyle="--", linewidth=1.0, color="black",    label="0.00")
             axdw2.axhline(0.5,  linestyle="-",  linewidth=1.2, color="black",    label="+0.50")
             axdw2.axhline(-0.5, linestyle="-",  linewidth=1.2, color="black",    label="-0.50")
@@ -2016,17 +1834,10 @@ with tab2:
                     )
                     kijun_i = kijun_i.reindex(ic.index).ffill().bfill()
 
-                # Bollinger Bands (Hourly, Enhanced)
                 bb_mid_i, bb_up_i, bb_lo_i, bb_pctb_i, bb_nbb_i = compute_bbands(ic, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
-
-                # HMA (Hourly, Enhanced) — compute always
                 hma_i = compute_hma(ic, period=hma_period)
-
-                # PSAR (Hourly, Enhanced)
                 psar_i_df = compute_psar_from_ohlc(intr, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
                 psar_i_df = psar_i_df.reindex(ic.index)
-
-                # Lookback slope & R²
                 yhat_h, m_h = slope_line(ic, slope_lb_hourly)
                 r2_i = regression_r2(ic, slope_lb_hourly)
 
@@ -2042,24 +1853,12 @@ with tab2:
                     ax3.plot(kijun_i.index, kijun_i.values, "-", linewidth=1.8, color="black",
                              label=f"Ichimoku Kijun ({ichi_base})")
 
-                # Plot BBands (Hourly, Enhanced)
                 if show_bbands and not bb_up_i.dropna().empty and not bb_lo_i.dropna().empty:
                     ax3.fill_between(ic.index, bb_lo_i, bb_up_i, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
                     ax3.plot(bb_mid_i.index, bb_mid_i.values, "-", linewidth=1.1,
                              label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
                     ax3.plot(bb_up_i.index, bb_up_i.values, ":", linewidth=1.0)
                     ax3.plot(bb_lo_i.index, bb_lo_i.values, ":", linewidth=1.0)
-
-                # PSAR overlay (Hourly, Enhanced)
-                if show_psar and not psar_i_df.dropna().empty:
-                    up_mask = psar_i_df["in_uptrend"] == True
-                    dn_mask = ~up_mask
-                    if up_mask.any():
-                        ax3.scatter(psar_i_df.index[up_mask], psar_i_df["PSAR"][up_mask],
-                                    s=15, color="tab:green", zorder=6, label=f"PSAR (step={psar_step:.02f}, max={psar_max:.02f})")
-                    if dn_mask.any():
-                        ax3.scatter(psar_i_df.index[dn_mask], psar_i_df["PSAR"][dn_mask],
-                                    s=15, color="tab:red", zorder=6)
 
                 res_val2 = sup_val2 = px_val2 = np.nan
                 try:
@@ -2080,7 +1879,6 @@ with tab2:
                 if np.isfinite(res_val2): buy_sell_text2 += f"  ▼ SELL @{fmt_price_val(res_val2)}"
                 ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text2}")
 
-                # === Current price badge (bottom-right) ===
                 if np.isfinite(px_val2):
                     nbb_txt2 = ""
                     try:
@@ -2101,19 +1899,16 @@ with tab2:
                     ax3.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
                              label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
-                # Bottom-left slope badge
                 ax3.text(0.01, 0.02, f"Slope: {fmt_slope(slope_i)}/bar",
                          transform=ax3.transAxes, ha="left", va="bottom",
                          fontsize=9, color="black",
                          bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-                # Bottom-center R² badge
                 ax3.text(0.50, 0.02, f"R² ({slope_lb_hourly} bars): {fmt_r2(r2_i)}",
                          transform=ax3.transAxes, ha="center", va="bottom",
                          fontsize=9, color="black",
                          bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-                # --- NEW: Session lines (PST) for Forex intraday (Enhanced tab) ---
                 if mode == "Forex" and show_sessions_pst and not ic.empty and (ic.index.tz is not None):
                     sess2 = compute_session_lines(ic.index)
                     draw_session_lines(ax3, sess2)
@@ -2133,7 +1928,6 @@ with tab2:
                     elif signal2["side"] == "SELL":
                         st.error(f"**SELL** @ {fmt_price_val(signal2['level'])} — {signal2['reason']}")
 
-                # Probabilistic HMA crossover (Hourly, Enhanced)
                 if show_hma and not hma_i.dropna().empty:
                     cross_i = detect_last_crossover(ic, hma_i)
                     if cross_i is not None and cross_i["time"] is not None:
@@ -2145,7 +1939,6 @@ with tab2:
                             annotate_crossover(ax3, ts, px_here, "SELL", hma_conf)
                             st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — price crossed **down** HMA({hma_period}) with P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)}")
 
-                # 🔶 NEW: BB Divergence signal (Hourly, Enhanced)
                 if show_bb_div:
                     bb_divergence_signals(ax3, ic, bb_up_i, bb_lo_i,
                                           lookback=slope_lb_hourly, conf_up=p_up, conf_dn=p_dn, conf_level=bb_conf)
@@ -2155,7 +1948,7 @@ with tab2:
                 xlim_price2 = ax3.get_xlim()
                 st.pyplot(fig3)
 
-                # === NEW: Intraday Volume panel (separate chart in Enhanced tab) ===
+                # === Intraday Volume panel (Enhanced tab) ===
                 vol_i = _coerce_1d_series(intr.get("Volume", pd.Series(index=ic.index))).reindex(ic.index).astype(float)
                 if _has_volume_to_plot(vol_i):
                     v_mid2 = rolling_midline(vol_i, window=max(3, int(slope_lb_hourly)))
@@ -2164,15 +1957,9 @@ with tab2:
 
                     fig3v, ax3v = plt.subplots(figsize=(14, 2.8))
                     ax3v.set_title(f"Volume (Hourly) — Mid-line & Trend  |  Slope={fmt_slope(v_m2)}/bar")
-                    # BLUE volume area + line
                     ax3v.fill_between(vol_i.index, 0, vol_i, alpha=0.18, label="Volume", color="tab:blue")
                     ax3v.plot(vol_i.index, vol_i, linewidth=1.0, color="tab:blue")
                     ax3v.plot(v_mid2.index, v_mid2, ":", linewidth=1.6, label=f"Mid-line ({slope_lb_hourly}-roll)")
-                    if v_mid2.notna().any():
-                        last_mid2 = float(v_mid2.dropna().iloc[-1])
-                        ax3v.hlines(last_mid2, xmin=vol_i.index[0], xmax=vol_i.index[-1],
-                                    linestyles="dotted", linewidth=1.0)
-                        label_on_left(ax3v, last_mid2, f"Mid {last_mid2:,.0f}", color="black")
                     if not v_trend2.empty:
                         ax3v.plot(v_trend2.index, v_trend2.values, "--", linewidth=2,
                                   label=f"Trend {slope_lb_hourly} ({fmt_slope(v_m2)}/bar)")
@@ -2189,28 +1976,24 @@ with tab2:
                     ax3v.legend(loc="lower left", framealpha=0.5)
                     st.pyplot(fig3v)
 
-                # === Hourly Indicator Panel (Enhanced): NTD + NPX + Trend (SHADED) + NEW S↔R channel ===
+                # === Hourly Indicator Panel (Enhanced): NTD + NPX + Trend (+ S↔R channel) ===
                 if show_nrsi:
                     ntd_i = compute_normalized_trend(ic, window=ntd_window)
                     ntd_trend_i, ntd_m_i = slope_line(ntd_i, slope_lb_hourly)
                     npx_i = compute_normalized_price(ic, window=ntd_window) if show_npx_ntd else pd.Series(index=ic.index, dtype=float)
 
                     fig3r, ax3r = plt.subplots(figsize=(14,2.8))
-                    # generous bottom space for the outside S↔R badge
-                    plt.subplots_adjust(bottom=0.28)
+                    plt.subplots_adjust(bottom=0.12)
                     ax3r.set_title(f"Hourly Indicator Panel — NTD + NPX (Normalized Price) + Trend (win={ntd_window})")
 
-                    # NEW: shading (green above 0, red below 0)
                     if shade_ntd and not ntd_i.dropna().empty:
                         shade_ntd_regions(ax3r, ntd_i)
 
-                    # NEW: S↔R Channel overlay on NTD panel (with outside badge)
                     if show_ntd_channel and np.isfinite(res_val2) and np.isfinite(sup_val2):
                         overlay_inrange_on_ntd(ax3r, ic, sup_i, res_i)
 
                     ax3r.plot(ntd_i.index, ntd_i, "-", linewidth=1.6, label="NTD")
 
-                    # NPX overlay + cross markers
                     if show_npx_ntd and not npx_i.dropna().empty and not ntd_i.dropna().empty:
                         overlay_npx_on_ntd(ax3r, npx_i, ntd_i, mark_crosses=mark_npx_cross)
 
@@ -2229,7 +2012,6 @@ with tab2:
                     ax3r.set_xlabel("Time (PST)")
                     st.pyplot(fig3r)
 
-                # Momentum panel (ROC%)
                 if show_mom_hourly:
                     roc_i = compute_roc(ic, n=mom_lb_hourly)
                     res_m2 = roc_i.rolling(60, min_periods=1).max()
@@ -2353,7 +2135,6 @@ with tab5:
         run = st.button("Scan Universe", key="btn_ntd_scan")
 
     if run:
-        # DAILY scan for both universes — NTD
         daily_rows = []
         for sym in universe:
             ntd_val, ts = last_daily_ntd_value(sym, ntd_window)
@@ -2373,7 +2154,6 @@ with tab5:
             show["NTD_Daily"] = show["NTD_Daily"] = show["NTD_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
             st.dataframe(show.reset_index(drop=True), use_container_width=True)
 
-        # DAILY scan for both universes — Price > Kijun
         st.markdown("---")
         st.subheader(f"Daily — **Price > Ichimoku Kijun({ichi_base})** (latest bar)")
         above_rows = []
@@ -2401,7 +2181,6 @@ with tab5:
             view_above["Kijun"] = view_above["Kijun"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
             st.dataframe(view_above[["Symbol","Timestamp","Close","Kijun"]].reset_index(drop=True), use_container_width=True)
 
-        # HOURLY scan for Forex — NTD & Price > Kijun
         if mode == "Forex":
             st.markdown("---")
             st.subheader(f"Forex Hourly — NTD < {thresh:+.2f}  ({scan_hour_range} lookback)")
@@ -2452,13 +2231,11 @@ with tab5:
 # --- Tab 6: Long-Term History (5/10/15/20y) ---
 with tab6:
     st.header("Long-Term History — Price with S/R & Trend")
-    # Ticker selector (defaults to the one used in Tab 1, if set)
     default_idx = 0
     if st.session_state.get("ticker") in universe:
         default_idx = universe.index(st.session_state["ticker"])
     sym = st.selectbox("Ticker:", universe, index=default_idx, key="hist_long_ticker")
 
-    # Year buttons
     c1, c2, c3, c4 = st.columns(4)
     if c1.button("5Y", key="btn_5y"):  st.session_state.hist_years = 5
     if c2.button("10Y", key="btn_10y"): st.session_state.hist_years = 10
@@ -2467,7 +2244,6 @@ with tab6:
     years = int(st.session_state.hist_years)
     st.caption(f"Showing last **{years} years**. Support/Resistance = rolling **252-day** extremes; trendline fits the shown window.")
 
-    # Fetch full history once; slice to desired years
     s_full = fetch_hist_max(sym)
     if s_full is None or s_full.empty:
         st.warning("No historical data available.")
@@ -2478,20 +2254,16 @@ with tab6:
         if s.empty:
             st.warning(f"No data in the last {years} years for {sym}.")
         else:
-            # 252-trading-day rolling extremes (approx 1y)
             res_roll = s.rolling(252, min_periods=1).max()
             sup_roll = s.rolling(252, min_periods=1).min()
             res_last = float(res_roll.iloc[-1]) if len(res_roll) else np.nan
             sup_last = float(sup_roll.iloc[-1]) if len(sup_roll) else np.nan
-
-            # Overall trendline across the shown window
             yhat_all, m_all = slope_line(s, lookback=len(s))
 
             fig, ax = plt.subplots(figsize=(14,5))
             ax.set_title(f"{sym} — Last {years} Years — Price + 252d S/R + Trend")
             ax.plot(s.index, s.values, label="Close")
 
-            # Draw S/R as straight lines across the whole window (use last 252d extremes)
             if np.isfinite(res_last) and np.isfinite(sup_last):
                 ax.hlines(res_last, xmin=s.index[0], xmax=s.index[-1],
                           colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance (252d)")
@@ -2500,17 +2272,14 @@ with tab6:
                 label_on_left(ax, res_last, f"R {fmt_price_val(res_last)}", color="tab:red")
                 label_on_left(ax, sup_last, f"S {fmt_price_val(sup_last)}", color="tab:green")
 
-            # Trendline and slope badge
             if not yhat_all.empty:
                 ax.plot(yhat_all.index, yhat_all.values, "--", linewidth=2,
                         label=f"Trend (m={fmt_slope(m_all)}/bar)")
-
                 ax.text(0.01, 0.02, f"Slope: {fmt_slope(m_all)}/bar",
                         transform=ax.transAxes, ha="left", va="bottom",
                         fontsize=9, color="black",
                         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-            # Current price badge (bottom-right)
             px_now = _safe_last_float(s)
             if np.isfinite(px_now):
                 ax.text(0.99, 0.02, f"Current price: {fmt_price_val(px_now)}",
