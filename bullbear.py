@@ -5,7 +5,7 @@
 # (NEW) Normalized Price (NPX) plotted on NTD panels + crossing markers
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
 
-import streamlit as stx
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
