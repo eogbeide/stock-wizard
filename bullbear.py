@@ -1,6 +1,4 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
-# (FIXED) Prevent price/time shifting: keep daily data timezone-naive & business-day indexed;
-#          handle intraday tz by asset class (Forex=UTC → PST, Stocks=US/Eastern → PST).
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (NEW) Normalized Price (NPX) plotted on NTD panels + crossing markers
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
@@ -38,8 +36,6 @@ st.markdown("""
 # --- Auto-refresh logic ---
 REFRESH_INTERVAL = 120  # seconds
 PACIFIC = pytz.timezone("US/Pacific")
-NY_TZ   = pytz.timezone("America/New_York")
-LDN_TZ  = pytz.timezone("Europe/London")
 
 def auto_refresh():
     if 'last_refresh' not in st.session_state:
@@ -274,61 +270,53 @@ else:
 # --- Cache helpers (TTL = 120 seconds) ---
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
-    """
-    Daily history: keep business-day index as returned by Yahoo (no asfreq, no tz conversion)
-    to avoid calendar/daylight shifts.
-    """
-    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Close']].dropna()
-    return df['Close']
+    s = (
+        yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
+        .asfreq("D").fillna(method="ffill")
+    )
+    try:
+        s = s.tz_localize(PACIFIC)
+    except TypeError:
+        s = s.tz_convert(PACIFIC)
+    return s
 
 @st.cache_data(ttl=120)
 def fetch_hist_max(ticker: str) -> pd.Series:
-    """Full history (Yahoo 'max') — keep original daily index (no asfreq, no tz)."""
+    """Full history (Yahoo 'max'), daily freq with ffill, tz-aware."""
     df = yf.download(ticker, period="max")[['Close']].dropna()
-    return df['Close']
+    s = df['Close'].asfreq("D").fillna(method="ffill")
+    try:
+        s = s.tz_localize(PACIFIC)
+    except TypeError:
+        s = s.tz_convert(PACIFIC)
+    return s
 
 @st.cache_data(ttl=120)
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
-    """Daily OHLC — keep original index (no tz attach/convert)."""
     df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Open','High','Low','Close']].dropna()
+    try:
+        df = df.tz_localize(PACIFIC)
+    except TypeError:
+        df = df.tz_convert(PACIFIC)
     return df
 
 @st.cache_data(ttl=120)
-def fetch_intraday(ticker: str, period: str = "1d", is_forex: bool = False) -> pd.DataFrame:
-    """
-    Intraday 5m bars:
-      - If tz-aware: convert to PST.
-      - If tz-naive: assume UTC for Forex, US/Eastern for US stocks; then convert to PST.
-    This prevents apparent time/price shifting from incorrect tz assumptions.
-    """
+def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
     df = yf.download(ticker, period=period, interval="5m")
-    if df is None or df.empty:
-        return df
-    idx = df.index
     try:
-        if isinstance(idx, pd.DatetimeIndex):
-            if idx.tz is not None:
-                # Convert from whatever tz to Pacific
-                df = df.tz_convert(PACIFIC)
-            else:
-                # Attach the most likely source tz, then convert to Pacific
-                base_tz = pytz.UTC if is_forex else NY_TZ
-                df = df.tz_localize(base_tz).tz_convert(PACIFIC)
-    except Exception:
-        # Fallback: leave as-is
+        df = df.tz_localize('UTC')
+    except TypeError:
         pass
-    return df
+    return df.tz_convert(PACIFIC)
 
 @st.cache_data(ttl=120)
 def compute_sarimax_forecast(series_like):
-    """
-    Preserve the input index's timezone (if any). Do not force PST, to avoid date shifts.
-    """
     series = _coerce_1d_series(series_like).dropna()
-    if not isinstance(series.index, pd.DatetimeIndex):
-        # create a simple daily index for forecasting
-        series.index = pd.date_range(end=pd.Timestamp.today().normalize(), periods=len(series), freq="B")
-    tz = series.index.tz
+    if isinstance(series.index, pd.DatetimeIndex):
+        if series.index.tz is None:
+            series.index = series.index.tz_localize(PACIFIC)
+        else:
+            series.index = series.index.tz_convert(PACIFIC)
     try:
         model = SARIMAX(series, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
     except np.linalg.LinAlgError:
@@ -338,7 +326,7 @@ def compute_sarimax_forecast(series_like):
         ).fit(disp=False)
     fc = model.get_forecast(steps=30)
     idx = pd.date_range(series.index[-1] + timedelta(days=1),
-                        periods=30, freq="D", tz=tz)
+                        periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
 
 # ---- Indicators ----
@@ -856,6 +844,9 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = 
             pass
 
 # ========= Sessions (NEW) =========
+NY_TZ   = pytz.timezone("America/New_York")
+LDN_TZ  = pytz.timezone("Europe/London")
+
 def session_markers_for_index(idx: pd.DatetimeIndex, session_tz, open_hr: int, close_hr: int):
     """Return two lists (open_times_pst, close_times_pst) within idx range, converted to PST.
     Uses local session dates & pytz to handle DST correctly."""
@@ -1179,9 +1170,9 @@ def last_daily_ntd_value(symbol: str, ntd_win: int):
         return np.nan, None
 
 @st.cache_data(ttl=120)
-def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d", is_forex: bool = False):
+def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
     try:
-        df = fetch_intraday(symbol, period=period, is_forex=is_forex)
+        df = fetch_intraday(symbol, period=period)
         if df is None or df.empty or "Close" not in df:
             return np.nan, None
         s = df["Close"].ffill()
@@ -1220,9 +1211,9 @@ def price_above_kijun_info_daily(symbol: str, base: int = 26):
         return False, None, np.nan, np.nan
 
 @st.cache_data(ttl=120)
-def price_above_kijun_info_hourly(symbol: str, period: str = "1d", base: int = 26, is_forex: bool = False):
+def price_above_kijun_info_hourly(symbol: str, period: str = "1d", base: int = 26):
     try:
-        df = fetch_intraday(symbol, period=period, is_forex=is_forex)
+        df = fetch_intraday(symbol, period=period)
         return _price_above_kijun_from_df(df, base=base)
     except Exception:
         return False, None, np.nan, np.nan
@@ -1281,13 +1272,16 @@ with tab1:
     )
     period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
 
+    # 👉 Important change:
+    # Once the user ran it once, auto-run on every app rerun (triggered by the timer above)
+    # so fresh data is fetched and the latest price shows on the charts.
     auto_run = st.session_state.run_all
 
     if st.button("Run Forecast", key="btn_run_forecast") or auto_run:
         df_hist = fetch_hist(sel)
         df_ohlc = fetch_hist_ohlc(sel)
         fc_idx, fc_vals, fc_ci = compute_sarimax_forecast(df_hist)
-        intraday = fetch_intraday(sel, period=period_map[hour_range], is_forex=(mode=="Forex"))
+        intraday = fetch_intraday(sel, period=period_map[hour_range])
         st.session_state.update({
             "df_hist": df_hist,
             "df_ohlc": df_ohlc,
@@ -1356,7 +1350,7 @@ with tab1:
             bb_pctb_d_show= bb_pctb_d.reindex(df_show.index)
             bb_nbb_d_show = bb_nbb_d.reindex(df_show.index)
 
-            # HMA (Daily) — compute always
+            # HMA (Daily) — compute always (used for NTD reversal markers and optional price plot)
             hma_d_full = compute_hma(df, period=hma_period)
             hma_d_show = hma_d_full.reindex(df_show.index)
 
@@ -1487,7 +1481,7 @@ with tab1:
             axdw.axhline(-0.75, linestyle="-", linewidth=3.0, color="tab:red",   label="-0.75")
 
             axdw.set_ylim(-1.1, 1.1)
-            axdw.set_xlabel("Date")
+            axdw.set_xlabel("Date (PST)")
             axdw.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
@@ -1521,7 +1515,7 @@ with tab1:
                 # Bollinger Bands (Hourly)
                 bb_mid_h, bb_up_h, bb_lo_h, bb_pctb_h, bb_nbb_h = compute_bbands(hc, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
-                # HMA (Hourly) — compute always
+                # HMA (Hourly) — compute always (used for NTD reversal markers and optional price plot)
                 hma_h = compute_hma(hc, period=hma_period)
 
                 # PSAR (Hourly)
@@ -1619,7 +1613,7 @@ with tab1:
                          bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
                 # --- NEW: Session lines (PST) for Forex intraday ---
-                if mode == "Forex" and show_sessions_pst and not hc.empty and (hc.index.tz is not None):
+                if mode == "Forex" and show_sessions_pst and not hc.empty:
                     sess = compute_session_lines(hc.index)
                     draw_session_lines(ax2, sess)
 
@@ -1964,7 +1958,7 @@ with tab2:
             axdw2.axhline(-0.75, linestyle="-", linewidth=3.0, color="tab:red",   label="-0.75")
 
             axdw2.set_ylim(-1.1, 1.1)
-            axdw2.set_xlabel("Date")
+            axdw2.set_xlabel("Date (PST)")
             axdw2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
@@ -2090,7 +2084,7 @@ with tab2:
                          bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
                 # --- NEW: Session lines (PST) for Forex intraday (Enhanced tab) ---
-                if mode == "Forex" and show_sessions_pst and not ic.empty and (ic.index.tz is not None):
+                if mode == "Forex" and show_sessions_pst and not ic.empty:
                     sess2 = compute_session_lines(ic.index)
                     draw_session_lines(ax3, sess2)
 
@@ -2268,7 +2262,7 @@ with tab4:
         ax.plot(res3m.index, res3m, ":", label="Resistance")
         ax.plot(sup3m, ":", label="Support")
         ax.plot(df3m.index, trend3m, "--", label="Trend")
-        ax.set_xlabel("Date")
+        ax.set_xlabel("Date (PST)")
         ax.legend()
         st.pyplot(fig)
 
@@ -2291,7 +2285,7 @@ with tab4:
         ax0.plot(res0, ":", label="Resistance")
         ax0.plot(sup0, ":", label="Support")
         ax0.plot(df0.index, trend0, "--", label="Trend")
-        ax0.set_xlabel("Date")
+        ax0.set_xlabel("Date (PST)")
         ax0.legend()
         st.pyplot(fig0)
 
@@ -2381,7 +2375,7 @@ with tab5:
             st.subheader(f"Forex Hourly — NTD < {thresh:+.2f}  ({scan_hour_range} lookback)")
             hourly_rows = []
             for sym in universe:
-                v, ts = last_hourly_ntd_value(sym, ntd_window, period=scan_period, is_forex=True)
+                v, ts = last_hourly_ntd_value(sym, ntd_window, period=scan_period)
                 hourly_rows.append({"Symbol": sym, "NTD_Hourly": v, "Timestamp": ts})
             df_hour = pd.DataFrame(hourly_rows)
             below_hour = df_hour[np.isfinite(df_hour["NTD_Hourly"]) & (df_hour["NTD_Hourly"] < thresh)].sort_values("NTD_Hourly")
@@ -2400,7 +2394,7 @@ with tab5:
             st.subheader(f"Forex Hourly — **Price > Ichimoku Kijun({ichi_base})** (latest bar, {scan_hour_range})")
             habove_rows = []
             for sym in universe:
-                above_h, ts_h, close_h, kij_h = price_above_kijun_info_hourly(sym, period=scan_period, base=ichi_base, is_forex=True)
+                above_h, ts_h, close_h, kij_h = price_above_kijun_info_hourly(sym, period=scan_period, base=ichi_base)
                 habove_rows.append({
                     "Symbol": sym,
                     "AboveNow": above_h,
@@ -2492,7 +2486,7 @@ with tab6:
                         fontsize=11, fontweight="bold",
                         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-            ax.set_xlabel("Date")
+            ax.set_xlabel("Date (PST)")
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
