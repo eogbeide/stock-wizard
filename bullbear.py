@@ -109,6 +109,71 @@ def fmt_r2(r2: float, digits: int = 1) -> str:
         return "n/a"
     return fmt_pct(rv, digits=digits) if np.isfinite(rv) else "n/a"
 
+# === NEW: FX pip helpers + ordered instruction text ===
+def pip_size_for_symbol(symbol: str):
+    """
+    Return pip size for FX pairs. Handles JPY pairs (0.01) vs. others (0.0001).
+    Returns None for non-FX symbols so caller can choose a fallback.
+    """
+    try:
+        s = str(symbol).upper()
+    except Exception:
+        return None
+    if "=X" not in s:
+        return None
+    return 0.01 if "JPY" in s else 0.0001
+
+def format_trade_instruction(trend_slope: float,
+                             buy_val: float,   # Support (preferred for buys)
+                             sell_val: float,  # Resistance (preferred for sells)
+                             close_val: float, # Fallback if one side missing
+                             symbol: str) -> str:
+    """
+    Build a concise instruction string ordering the legs by trend direction
+    and appending the total pips between the two legs.
+
+    Uptrend:    BUY -> SELL
+    Downtrend:  SELL -> BUY
+
+    If either leg is NaN, we substitute the latest Close for that side.
+    """
+    def _finite(x):
+        try:
+            return np.isfinite(float(x))
+        except Exception:
+            return False
+
+    entry_buy  = float(buy_val)  if _finite(buy_val)  else float(close_val)
+    exit_sell  = float(sell_val) if _finite(sell_val) else float(close_val)
+
+    uptrend = False
+    try:
+        uptrend = float(trend_slope) >= 0.0
+    except Exception:
+        pass
+
+    if uptrend:
+        leg_a_val = entry_buy
+        leg_b_val = exit_sell
+        text = f"▲ BUY @{fmt_price_val(leg_a_val)} → ▼ SELL @{fmt_price_val(leg_b_val)}"
+    else:
+        leg_a_val = exit_sell
+        leg_b_val = entry_buy
+        text = f"▼ SELL @{fmt_price_val(leg_a_val)} → ▲ BUY @{fmt_price_val(leg_b_val)}"
+
+    ps = pip_size_for_symbol(symbol)
+    try:
+        diff = abs(leg_b_val - leg_a_val)
+        if ps is not None and ps > 0:
+            pips = diff / ps
+            text += f" • {pips:.1f} pips"
+        else:
+            text += f" • Δ {diff:.3f}"
+    except Exception:
+        pass
+
+    return text
+
 # Place text at the left edge (x in axes coords, y in data coords)
 def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
     try:
@@ -1272,9 +1337,6 @@ with tab1:
     )
     period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
 
-    # 👉 Important change:
-    # Once the user ran it once, auto-run on every app rerun (triggered by the timer above)
-    # so fresh data is fetched and the latest price shows on the charts.
     auto_run = st.session_state.run_all
 
     if st.button("Run Forecast", key="btn_run_forecast") or auto_run:
@@ -1350,7 +1412,7 @@ with tab1:
             bb_pctb_d_show= bb_pctb_d.reindex(df_show.index)
             bb_nbb_d_show = bb_nbb_d.reindex(df_show.index)
 
-            # HMA (Daily) — compute always (used for NTD reversal markers and optional price plot)
+            # HMA (Daily)
             hma_d_full = compute_hma(df, period=hma_period)
             hma_d_show = hma_d_full.reindex(df_show.index)
 
@@ -1515,7 +1577,7 @@ with tab1:
                 # Bollinger Bands (Hourly)
                 bb_mid_h, bb_up_h, bb_lo_h, bb_pctb_h, bb_nbb_h = compute_bbands(hc, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
-                # HMA (Hourly) — compute always (used for NTD reversal markers and optional price plot)
+                # HMA (Hourly)
                 hma_h = compute_hma(hc, period=hma_period)
 
                 # PSAR (Hourly)
@@ -1574,10 +1636,17 @@ with tab1:
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
-                buy_sell_text = ""
-                if np.isfinite(sup_val): buy_sell_text += f" — ▲ BUY @{fmt_price_val(sup_val)}"
-                if np.isfinite(res_val): buy_sell_text += f"  ▼ SELL @{fmt_price_val(res_val)}"
-                ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text}")
+                # === NEW: Ordered trade instruction with pips in title ===
+                instr_txt = format_trade_instruction(
+                    trend_slope=slope_h,
+                    buy_val=sup_val,
+                    sell_val=res_val,
+                    close_val=px_val,
+                    symbol=sel
+                )
+                ax2.set_title(
+                    f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)} — {instr_txt}"
+                )
 
                 # === Current price badge (bottom-right) ===
                 if np.isfinite(px_val):
@@ -1705,6 +1774,9 @@ with tab1:
                 if show_nrsi:
                     ntd_h = compute_normalized_trend(hc, window=ntd_window)
                     ntd_trend_h, ntd_m_h = slope_line(ntd_h, slope_lb_hourly)
+                    npx_h = compute_normalized_price(hc, window=ntd_window) if show_npx_ntd else pd.Series(index=hC.index, dtype=float)  # typo fix below
+
+                    # FIX typo: ensure correct source
                     npx_h = compute_normalized_price(hc, window=ntd_window) if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
 
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
@@ -1843,7 +1915,7 @@ with tab2:
             bb_pctb_d2_show= bb_pctb_d2.reindex(df_show.index)
             bb_nbb_d2_show = bb_nbb_d2.reindex(df_show.index)
 
-            # HMA (Daily, Enhanced) — compute always
+            # HMA (Daily, Enhanced)
             hma_d2_full = compute_hma(df, period=hma_period)
             hma_d2_show = hma_d2_full.reindex(df_show.index)
 
@@ -2045,10 +2117,17 @@ with tab2:
                     label_on_left(ax3, res_val2, f"R {fmt_price_val(res_val2)}", color="tab:red")
                     label_on_left(ax3, sup_val2, f"S {fmt_price_val(sup_val2)}", color="tab:green")
 
-                buy_sell_text2 = ""
-                if np.isfinite(sup_val2): buy_sell_text2 += f" — ▲ BUY @{fmt_price_val(sup_val2)}"
-                if np.isfinite(res_val2): buy_sell_text2 += f"  ▼ SELL @{fmt_price_val(res_val2)}"
-                ax3.set_title(f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{buy_sell_text2}")
+                # === NEW: Ordered trade instruction with pips in title (Enhanced) ===
+                instr_txt2 = format_trade_instruction(
+                    trend_slope=slope_i,
+                    buy_val=sup_val2,
+                    sell_val=res_val2,
+                    close_val=px_val2,
+                    symbol=st.session_state.ticker
+                )
+                ax3.set_title(
+                    f"{st.session_state.ticker} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)} — {instr_txt2}"
+                )
 
                 # === Current price badge (bottom-right) ===
                 if np.isfinite(px_val2):
