@@ -123,6 +123,18 @@ def pip_size_for_symbol(symbol: str):
         return None
     return 0.01 if "JPY" in s else 0.0001
 
+def _diff_text(a: float, b: float, symbol: str) -> str:
+    """Human string for distance between two prices in pips (FX) or raw Δ for non-FX."""
+    try:
+        av = float(a); bv = float(b)
+    except Exception:
+        return ""
+    ps = pip_size_for_symbol(symbol)
+    diff = abs(bv - av)
+    if ps is not None and ps > 0:
+        return f"{diff/ps:.1f} pips"
+    return f"Δ {diff:.3f}"
+
 def format_trade_instruction(trend_slope: float,
                              buy_val: float,   # Support (preferred for buys)
                              sell_val: float,  # Resistance (preferred for sells)
@@ -161,17 +173,8 @@ def format_trade_instruction(trend_slope: float,
         leg_b_val = entry_buy
         text = f"▼ SELL @{fmt_price_val(leg_a_val)} → ▲ BUY @{fmt_price_val(leg_b_val)}"
 
-    ps = pip_size_for_symbol(symbol)
-    try:
-        diff = abs(leg_b_val - leg_a_val)
-        if ps is not None and ps > 0:
-            pips = diff / ps
-            text += f" • {pips:.1f} pips"
-        else:
-            text += f" • Δ {diff:.3f}"
-    except Exception:
-        pass
-
+    # pips/Δ
+    text += f" • {_diff_text(leg_a_val, leg_b_val, symbol)}"
     return text
 
 # Place text at the left edge (x in axes coords, y in data coords)
@@ -987,6 +990,7 @@ def elliott_conf_signal(price_now: float, fc_vals: pd.Series, conf: float = EW_C
 
 def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
                         fc_vals: pd.Series, threshold: float, prox: float):
+    """Returns a *trigger* that price is near S/R and model probabilities clear threshold."""
     try:
         last_close = float(hc.iloc[-1])
         res = float(res_h.iloc[-1])
@@ -1007,19 +1011,9 @@ def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
     p_dn_from_here = float(np.mean(fc < last_close))
 
     if near_support and p_up_from_here >= threshold:
-        return {
-            "side": "BUY",
-            "prob": p_up_from_here,
-            "level": sup,
-            "reason": f"Near support {fmt_price_val(sup)} with {fmt_pct(p_up_from_here)} up-confidence ≥ {fmt_pct(threshold)}"
-        }
+        return {"side": "BUY", "prob": p_up_from_here, "level": sup}
     if near_resist and p_dn_from_here >= threshold:
-        return {
-            "side": "SELL",
-            "prob": p_dn_from_here,
-            "level": res,
-            "reason": f"Near resistance {fmt_price_val(res)} with {fmt_pct(p_dn_from_here)} down-confidence ≥ {fmt_pct(threshold)}"
-        }
+        return {"side": "SELL", "prob": p_dn_from_here, "level": res}
     return None
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -1701,13 +1695,21 @@ with tab1:
                         if times:
                             draw_news_markers(ax2, times, float(hc.min()), float(hc.max()), label="News")
 
+                # ===== SIGNAL (near S/R) — banner now uses TOP-OF-CHART confidence + PIPS =====
                 signal = sr_proximity_signal(hc, res_h, sup_h, st.session_state.fc_vals,
                                              threshold=signal_threshold, prox=sr_prox_pct)
                 if signal is not None and np.isfinite(px_val):
+                    # Confidence pulled from the SAME values shown at the top of the chart
                     if signal["side"] == "BUY":
-                        st.success(f"**BUY** @ {fmt_price_val(signal['level'])} — {signal['reason']}")
+                        conf_tag = f"↑{fmt_pct(p_up)}" if np.isfinite(p_up) else "↑n/a"
+                        near_txt = f"Near support {fmt_price_val(sup_val)}"
+                        pips_txt = _diff_text(sup_val, res_val, sel) if np.isfinite(sup_val) and np.isfinite(res_val) else ""
+                        st.success(f"**BUY** @ {fmt_price_val(signal['level'])} — {near_txt} with {conf_tag} • {pips_txt}")
                     elif signal["side"] == "SELL":
-                        st.error(f"**SELL** @ {fmt_price_val(signal['level'])} — {signal['reason']}")
+                        conf_tag = f"↓{fmt_pct(p_dn)}" if np.isfinite(p_dn) else "↓n/a"
+                        near_txt = f"Near resistance {fmt_price_val(res_val)}"
+                        pips_txt = _diff_text(sup_val, res_val, sel) if np.isfinite(sup_val) and np.isfinite(res_val) else ""
+                        st.error(f"**SELL** @ {fmt_price_val(signal['level'])} — {near_txt} with {conf_tag} • {pips_txt}")
 
                 # Probabilistic HMA crossover (Hourly)
                 if show_hma and not hma_h.dropna().empty:
@@ -1774,9 +1776,6 @@ with tab1:
                 if show_nrsi:
                     ntd_h = compute_normalized_trend(hc, window=ntd_window)
                     ntd_trend_h, ntd_m_h = slope_line(ntd_h, slope_lb_hourly)
-                    npx_h = compute_normalized_price(hc, window=ntd_window) if show_npx_ntd else pd.Series(index=hC.index, dtype=float)  # typo fix below
-
-                    # FIX typo: ensure correct source
                     npx_h = compute_normalized_price(hc, window=ntd_window) if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
 
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
@@ -2174,13 +2173,20 @@ with tab2:
                     for lbl, y in fibs_h.items():
                         ax3.text(ic.index[-1], y, f" {lbl}", va="center")
 
+                # ===== SIGNAL (near S/R) — banner now uses TOP-OF-CHART confidence + PIPS =====
                 signal2 = sr_proximity_signal(ic, res_i, sup_i, st.session_state.fc_vals,
                                               threshold=signal_threshold, prox=sr_prox_pct)
                 if signal2 is not None and np.isfinite(px_val2):
                     if signal2["side"] == "BUY":
-                        st.success(f"**BUY** @ {fmt_price_val(signal2['level'])} — {signal2['reason']}")
+                        conf_tag2 = f"↑{fmt_pct(p_up)}" if np.isfinite(p_up) else "↑n/a"
+                        near_txt2 = f"Near support {fmt_price_val(sup_val2)}"
+                        pips_txt2 = _diff_text(sup_val2, res_val2, st.session_state.ticker) if np.isfinite(sup_val2) and np.isfinite(res_val2) else ""
+                        st.success(f"**BUY** @ {fmt_price_val(signal2['level'])} — {near_txt2} with {conf_tag2} • {pips_txt2}")
                     elif signal2["side"] == "SELL":
-                        st.error(f"**SELL** @ {fmt_price_val(signal2['level'])} — {signal2['reason']}")
+                        conf_tag2 = f"↓{fmt_pct(p_dn)}" if np.isfinite(p_dn) else "↓n/a"
+                        near_txt2 = f"Near resistance {fmt_price_val(res_val2)}"
+                        pips_txt2 = _diff_text(sup_val2, res_val2, st.session_state.ticker) if np.isfinite(sup_val2) and np.isfinite(res_val2) else ""
+                        st.error(f"**SELL** @ {fmt_price_val(signal2['level'])} — {near_txt2} with {conf_tag2} • {pips_txt2}")
 
                 # Probabilistic HMA crossover (Hourly, Enhanced)
                 if show_hma and not hma_i.dropna().empty:
