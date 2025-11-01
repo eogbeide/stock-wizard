@@ -5,7 +5,7 @@
 
 import streamlit as st
 import pandas as pd
-import numpy as npg
+import numpy as np
 import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import timedelta, datetime
