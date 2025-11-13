@@ -3,8 +3,9 @@
 # (NEW) Normalized Price (NPX) plotted on NTD panels + crossing markers
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
-# (NEW) Purple triangles for NTD crosses: ▲ Buy at -0.75 upward cross, ▼ Sell at +0.75 downward cross
-#       — shown on both NTD panels and the price charts
+# (UPDATED) NTD cross markers:
+#          • NTD panels: purple ▲/▼ at −0.75 / +0.75
+#          • PRICE charts: green ▲ for −0.75 upward (BUY), red ▼ for +0.75 downward (SELL)
 
 import streamlit as st
 import pandas as pd
@@ -656,7 +657,7 @@ def compute_parabolic_sar(high: pd.Series, low: pd.Series, step: float = 0.02, m
     return psar_s, up_s
 
 def compute_psar_from_ohlc(df: pd.DataFrame, step: float = 0.02, max_step: float = 0.2) -> pd.DataFrame:
-    if df is None or df.empty or not {"High","Low"}.issubset(df.columns):
+    if df is None or df.empty or not {"High","Low","Close"}.issubset(df.columns):
         idx = df.index if df is not None else pd.Index([])
         return pd.DataFrame(index=idx, columns=["PSAR","in_uptrend"])
     ps, up = compute_parabolic_sar(df["High"], df["Low"], step=step, max_step=max_step)
@@ -814,7 +815,7 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = 
         except Exception:
             pass
 
-# ========= NEW: NTD threshold crossing → purple triangles =========
+# ========= NEW: NTD threshold crossing masks =========
 def _ntd_cross_masks(ntd: pd.Series, low_thr: float = -0.75, high_thr: float = 0.75):
     """
     Returns (buy_mask, sell_mask) where:
@@ -843,23 +844,34 @@ def overlay_ntd_triangles_on_panel(ax, ntd: pd.Series, low_thr: float = -0.75, h
     except Exception:
         pass
 
-def overlay_ntd_triangles_on_price(ax, ntd: pd.Series, price: pd.Series, low_thr: float = -0.75, high_thr: float = 0.75):
+# ====== UPDATED: NTD triangles on PRICE (green BUY, red SELL) ======
+def overlay_ntd_triangles_on_price(ax, ntd: pd.Series, price: pd.Series,
+                                   low_thr: float = -0.75, high_thr: float = 0.75,
+                                   buy_color: str = "tab:green", sell_color: str = "tab:red",
+                                   size: int = 120, add_legend_handle: bool = True):
     """
-    Draw purple ▲/▼ on the price series at timestamps where NTD crosses the thresholds.
+    Draw green ▲ on price for -0.75 upward NTD crosses (BUY),
+    and red ▼ on price for +0.75 downward NTD crosses (SELL).
     """
     try:
         buy_mask, sell_mask = _ntd_cross_masks(ntd, low_thr, high_thr)
         p = _coerce_1d_series(price).astype(float)
+
+        # optional legend handles (empty plots just for legend)
+        if add_legend_handle:
+            ax.plot([], [], marker="^", linestyle="None", color=buy_color, label="NTD BUY (−0.75 ↑)")
+            ax.plot([], [], marker="v", linestyle="None", color=sell_color, label="NTD SELL (+0.75 ↓)")
+
         if buy_mask.any():
             idx_up = ntd.index[buy_mask]
             px_up = p.reindex(idx_up).dropna()
             if not px_up.empty:
-                ax.scatter(px_up.index, px_up.values, marker="^", s=120, color="purple", zorder=11)
+                ax.scatter(px_up.index, px_up.values, marker="^", s=size, color=buy_color, zorder=11)
         if sell_mask.any():
             idx_dn = ntd.index[sell_mask]
             px_dn = p.reindex(idx_dn).dropna()
             if not px_dn.empty:
-                ax.scatter(px_dn.index, px_dn.values, marker="v", s=120, color="purple", zorder=11)
+                ax.scatter(px_dn.index, px_dn.values, marker="v", s=size, color=sell_color, zorder=11)
     except Exception:
         pass
 
@@ -1285,7 +1297,7 @@ with tab1:
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
-            # compute NTD/NPX (NTD needed for purple triangles on price)
+            # compute NTD/NPX (NTD needed for price triangles)
             ntd_d = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
             npx_d_full = compute_normalized_price(df, window=ntd_window) if show_npx_ntd else pd.Series(index=df.index, dtype=float)
 
@@ -1381,7 +1393,7 @@ with tab1:
                 ax.text(df_show.index[-1], r30_last, f"  30R = {fmt_price_val(r30_last)}", va="bottom")
                 ax.text(df_show.index[-1], s30_last, f"  30S = {fmt_price_val(s30_last)}", va="top")
 
-            # === NEW: Purple triangles on DAILY PRICE for NTD crosses ===
+            # === UPDATED: red/green triangles on DAILY PRICE for NTD crosses ===
             if show_ntd and not ntd_d_show.dropna().empty:
                 overlay_ntd_triangles_on_price(ax, ntd_d_show, df_show, low_thr=-0.75, high_thr=0.75)
 
@@ -1419,7 +1431,7 @@ with tab1:
                 if not ntd_trend_d.empty:
                     axdw.plot(ntd_trend_d.index, ntd_trend_d.values, "--", linewidth=2,
                               label=f"NTD Trend {slope_lb_daily} ({fmt_slope(ntd_m_d)}/bar)")
-                # === NEW: Purple triangles on DAILY NTD panel ===
+                # NTD panel keeps purple markers
                 overlay_ntd_triangles_on_panel(axdw, ntd_d_show, low_thr=-0.75, high_thr=0.75)
 
             if show_npx_ntd and not npx_d_show.dropna().empty and not ntd_d_show.dropna().empty:
@@ -1464,7 +1476,7 @@ with tab1:
                 psar_h_df = compute_psar_from_ohlc(intraday, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
                 psar_h_df = psar_h_df.reindex(hc.index)
 
-                # 🔹 compute NTD for HOURLY (needed for purple triangles on price)
+                # compute NTD for HOURLY
                 ntd_h = compute_normalized_trend(hc, window=ntd_window)
 
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
@@ -1596,7 +1608,7 @@ with tab1:
                 elif show_bb_div and use_adx_filter and not adx_ok_h:
                     st.info(f"BB Divergence gated off: ADX {adx_last_h:.1f} < {adx_min}")
 
-                # === NEW: Purple triangles on HOURLY PRICE for NTD crosses ===
+                # === UPDATED: red/green triangles on HOURLY PRICE for NTD crosses ===
                 if not ntd_h.dropna().empty:
                     overlay_ntd_triangles_on_price(ax2, ntd_h, hc, low_thr=-0.75, high_thr=0.75)
 
@@ -1627,8 +1639,7 @@ with tab1:
                               fontsize=9, color="black",
                               bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
                     ax2v.text(0.50, 0.02, f"R² ({slope_lb_hourly} bars): {fmt_r2(v_r2)}",
-                              transform=ax2v.transAxes, ha="center", va="bottom",
-                              fontsize=9, color="black",
+                              transform=ax2v.transAxes, ha="center", va="bottom", fontsize=9, color="black",
                               bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
                     ax2v.set_xlim(xlim_price)
                     ax2v.set_xlabel("Time (PST)")
@@ -1637,7 +1648,6 @@ with tab1:
 
                 # === Hourly Indicator Panel: NTD + NPX + S↔R channel ===
                 if show_nrsi:
-                    # reuse ntd_h computed above
                     ntd_trend_h, ntd_m_h = slope_line(ntd_h, slope_lb_hourly)
                     npx_h = compute_normalized_price(hc, window=ntd_window) if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
@@ -1655,7 +1665,7 @@ with tab1:
                     if show_hma_rev_ntd and not hma_h.dropna().empty and not hc.dropna().empty:
                         overlay_hma_reversal_on_ntd(ax2r, hc, hma_h, lookback=hma_rev_lb, period=hma_period)
 
-                    # === NEW: Purple triangles on HOURLY NTD panel ===
+                    # NTD panel keeps purple markers
                     overlay_ntd_triangles_on_panel(ax2r, ntd_h, low_thr=-0.75, high_thr=0.75)
 
                     ax2r.axhline(0.0,  linestyle="--", linewidth=1.0, color="black",    label="0.00")
@@ -1703,9 +1713,7 @@ with tab1:
         }, index=st.session_state.fc_idx))
 
 # --- Tab 2: Enhanced Forecast ---
-# (UNCHANGED except ADX badges/gating are already handled in Tab 1, which drives main signals)
-# To keep file size reasonable, Tab 2 mirrors Tab 1 logic and visuals (already present in your prior version).
-# You can leave Tab 2 as-is or replicate the same ADX additions there if you want identical behavior.
+# (UNCHANGED — mirrors Tab 1 visuals & logic if you duplicated it previously)
 
 # --- Tab 3: Bull vs Bear ---
 with tab3:
@@ -1751,7 +1759,7 @@ with tab4:
         ax.plot(df3m.index, df3m, label="Close")
         ax.plot(df3m.index, ma30_3m, label="30 MA")
         ax.plot(res3m.index, res3m, ":", label="Resistance")
-        ax.plot(sup3m, ":", label="Support")
+        ax.plot(sup3m.index, sup3m, ":", label="Support")
         ax.plot(df3m.index, trend3m, "--", label="Trend")
         ax.set_xlabel("Date (PST)")
         ax.legend()
