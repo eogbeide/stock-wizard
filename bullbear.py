@@ -3,6 +3,7 @@
 # (NEW) Normalized Price (NPX) plotted on NTD panels + crossing markers
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
+# (NEW) Purple ▲/▼ markers when NTD crosses -0.75 upward (BUY) and +0.75 downward (SELL)
 
 import streamlit as st
 import pandas as pd
@@ -568,6 +569,33 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
     color = "tab:green" if m >= 0 else "tab:red"
     ax.plot(s.index, yhat, "-", linewidth=2.4, color=color, label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return m
+
+# --- NEW: NTD threshold cross annotations (PURPLE ▲/▼) ---
+def annotate_ntd_threshold_crosses(ax, ntd: pd.Series, buy_level: float = -0.75, sell_level: float = 0.75,
+                                   color: str = "purple", size: int = 95):
+    """
+    Plot purple ▲ at y=buy_level when NTD crosses upward through buy_level,
+    and purple ▼ at y=sell_level when NTD crosses downward through sell_level.
+    """
+    s = _coerce_1d_series(ntd)
+    s = s.dropna()
+    if s.shape[0] < 2:
+        return
+    # Upward cross through buy_level
+    above_buy = s > buy_level
+    cross_up_buy = above_buy & (~above_buy.shift(1).fillna(False))
+    # Downward cross through sell_level
+    below_sell = s < sell_level
+    cross_dn_sell = (~below_sell) & (below_sell.shift(1).fillna(False))
+    try:
+        idx_buy = list(cross_up_buy[cross_up_buy].index)
+        if len(idx_buy):
+            ax.scatter(idx_buy, [buy_level]*len(idx_buy), marker="^", s=size, color=color, zorder=10, label="NTD ▲ BUY @ -0.75")
+        idx_sell = list(cross_dn_sell[cross_dn_sell].index)
+        if len(idx_sell):
+            ax.scatter(idx_sell, [sell_level]*len(idx_sell), marker="v", s=size, color=color, zorder=10, label="NTD ▼ SELL @ +0.75")
+    except Exception:
+        pass
 
 # ---- Supertrend (hourly overlay) ----
 def _true_range(df: pd.DataFrame):
@@ -1362,6 +1390,8 @@ with tab1:
                 if not ntd_trend_d.empty:
                     axdw.plot(ntd_trend_d.index, ntd_trend_d.values, "--", linewidth=2,
                               label=f"NTD Trend {slope_lb_daily} ({fmt_slope(ntd_m_d)}/bar)")
+                # NEW: Purple ▲/▼ markers for NTD threshold crosses
+                annotate_ntd_threshold_crosses(axdw, ntd_d_show, buy_level=-0.75, sell_level=0.75, color="purple", size=95)
             if show_npx_ntd and not npx_d_show.dropna().empty and not ntd_d_show.dropna().empty:
                 overlay_npx_on_ntd(axdw, npx_d_show, ntd_d_show, mark_crosses=mark_npx_cross)
             if show_hma_rev_ntd and not hma_d_show.dropna().empty and not df_show.dropna().empty:
@@ -1580,6 +1610,9 @@ with tab1:
                     if show_ntd_channel and np.isfinite(res_val) and np.isfinite(sup_val):
                         overlay_inrange_on_ntd(ax2r, hc, sup_h, res_h)
                     ax2r.plot(ntd_h.index, ntd_h, "-", linewidth=1.6, label="NTD")
+                    # NEW: Purple ▲/▼ markers for NTD threshold crosses
+                    if not ntd_h.dropna().empty:
+                        annotate_ntd_threshold_crosses(ax2r, ntd_h, buy_level=-0.75, sell_level=0.75, color="purple", size=95)
                     if show_npx_ntd and not npx_h.dropna().empty and not ntd_h.dropna().empty:
                         overlay_npx_on_ntd(ax2r, npx_h, ntd_h, mark_crosses=mark_npx_cross)
                     if not ntd_trend_h.empty:
@@ -1632,9 +1665,7 @@ with tab1:
         }, index=st.session_state.fc_idx))
 
 # --- Tab 2: Enhanced Forecast ---
-# (UNCHANGED except ADX badges/gating are already handled in Tab 1, which drives main signals)
-# To keep file size reasonable, Tab 2 mirrors Tab 1 logic and visuals (already present in your prior version).
-# You can leave Tab 2 as-is or replicate the same ADX additions there if you want identical behavior.
+# (UNCHANGED except ADX badges/gating are handled in Tab 1 logic.)
 
 # --- Tab 3: Bull vs Bear ---
 with tab3:
