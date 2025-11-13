@@ -5,7 +5,7 @@
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
 # (NEW) Purple triangle BUY/SELL markers on NTD panel when NTD crosses −0.75 upward (BUY) or +0.75 downward (SELL)
 
-import streamlit as stg
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
