@@ -5,6 +5,11 @@
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
 # (NEW) Purple triangles for NTD crosses: ▲ Buy at -0.75 upward cross, ▼ Sell at +0.75 downward cross
 #       — shown on both NTD panels and the price charts
+# (NEW) Red/Green NPX↔NTD cross triangles mirrored onto PRICE charts at the same timestamps as NTD panel crosses
+#       — with slight vertical offsets only if they would overlap purple markers (timestamps remain identical)
+# (FIXED) Remove closed-market periods:
+#         - DAILY: keep natural trading-day index (no weekend/holiday padding)
+#         - INTRADAY: optional RTH filter for stocks; 24×5 window for FX
 
 import streamlit as st
 import pandas as pd
@@ -319,43 +324,73 @@ else:
 # --- Cache helpers (TTL = 120 seconds) ---
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
-    s = (
-        yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
-        .asfreq("D").fillna(method="ffill")
-    )
-    try:
-        s = s.tz_localize(PACIFIC)
-    except TypeError:
-        s = s.tz_convert(PACIFIC)
+    """
+    DAILY close series on *trading days only* (no weekend/holiday padding).
+    """
+    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))
+    s = df['Close'].dropna()
+    # Keep timezone-naive trading-day index to avoid plotting closed periods
     return s
 
 @st.cache_data(ttl=120)
 def fetch_hist_max(ticker: str) -> pd.Series:
+    """
+    Max-range DAILY close on trading days only (no padding).
+    """
     df = yf.download(ticker, period="max")[['Close']].dropna()
-    s = df['Close'].asfreq("D").fillna(method="ffill")
-    try:
-        s = s.tz_localize(PACIFIC)
-    except TypeError:
-        s = s.tz_convert(PACIFIC)
-    return s
+    return df['Close']
 
 @st.cache_data(ttl=120)
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
+    """
+    DAILY OHLC on trading days only (no padding).
+    """
     df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Open','High','Low','Close']].dropna()
-    try:
-        df = df.tz_localize(PACIFIC)
-    except TypeError:
-        df = df.tz_convert(PACIFIC)
     return df
 
 @st.cache_data(ttl=120)
 def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
+    """
+    Raw intraday from yfinance in 5m bars, converted to PST (timezone-aware).
+    """
     df = yf.download(ticker, period=period, interval="5m")
     try:
         df = df.tz_localize('UTC')
     except TypeError:
         pass
     return df.tz_convert(PACIFIC)
+
+# --- NEW: Intraday market-hours filters (to avoid closed periods entirely) ---
+NY_TZ   = pytz.timezone("America/New_York")
+LDN_TZ  = pytz.timezone("Europe/London")
+
+def _filter_intraday_for_market_hours(df: pd.DataFrame, market: str) -> pd.DataFrame:
+    """
+    Compress intraday to actual trading windows:
+      - Stock: US equities Regular Trading Hours (09:30–16:00 ET, Mon–Fri)
+      - Forex: 24×5 (Sun 14:00 PT → Fri 14:00 PT); weekends removed
+    """
+    if df is None or df.empty or not isinstance(df.index, pd.DatetimeIndex) or df.index.tz is None:
+        return df
+    if market == "Stock":
+        idx_ny = df.index.tz_convert(NY_TZ)
+        wd = np.array(idx_ny.weekday)
+        hr = np.array(idx_ny.hour)
+        mn = np.array(idx_ny.minute)
+        # 09:30–16:00 ET, Mon–Fri
+        after_open  = (hr > 9) | ((hr == 9) & (mn >= 30))
+        before_close= (hr < 16) | ((hr == 16) & (mn == 0))
+        mask = (wd < 5) & after_open & before_close
+        return df[mask]
+    else:  # Forex
+        idx_pst = df.index.tz_convert(PACIFIC)
+        wd = np.array(idx_pst.weekday)  # Mon=0 ... Sun=6
+        hr = np.array(idx_pst.hour)
+        # Open Sun 14:00 PT, Close Fri 14:00 PT
+        closed = ((wd == 5) |                                   # Saturday
+                  ((wd == 6) & (hr < 14)) |                     # Sunday before 2pm PT
+                  ((wd == 4) & (hr >= 14)))                     # Friday after 2pm PT
+        return df[~closed]
 
 @st.cache_data(ttl=120)
 def compute_sarimax_forecast(series_like):
@@ -656,7 +691,7 @@ def compute_parabolic_sar(high: pd.Series, low: pd.Series, step: float = 0.02, m
     return psar_s, up_s
 
 def compute_psar_from_ohlc(df: pd.DataFrame, step: float = 0.02, max_step: float = 0.2) -> pd.DataFrame:
-    if df is None or df.empty or not {"High","Low"}.issubset(df.columns):
+    if df is None or df.empty or not {"High","Low","Close"}.issubset(df.columns):
         idx = df.index if df is not None else pd.Index([])
         return pd.DataFrame(index=idx, columns=["PSAR","in_uptrend"])
     ps, up = compute_parabolic_sar(df["High"], df["Low"], step=step, max_step=max_step)
@@ -863,10 +898,67 @@ def overlay_ntd_triangles_on_price(ax, ntd: pd.Series, price: pd.Series, low_thr
     except Exception:
         pass
 
-# ========= Sessions =========
-NY_TZ   = pytz.timezone("America/New_York")
-LDN_TZ  = pytz.timezone("Europe/London")
+# ========= NEW: Mirror NPX↔NTD crosses onto PRICE (align timestamps; avoid purple overlap) =========
+def overlay_npx_ntd_crosses_on_price(ax, price: pd.Series, npx: pd.Series, ntd: pd.Series,
+                                     low_thr: float = -0.75, high_thr: float = 0.75,
+                                     y_offset_ratio: float = 0.006, size: int = 120):
+    """
+    Draw green ▲ (NPX crosses above NTD) and red ▼ (NPX crosses below NTD) on the PRICE chart
+    at the exact timestamps of the NTD panel crosses. If a timestamp also has a purple NTD-threshold
+    triangle, apply a tiny vertical offset so markers don't visually overlap. Timestamps are unchanged.
+    """
+    try:
+        p = _coerce_1d_series(price).astype(float)
+        npx = _coerce_1d_series(npx)
+        ntd = _coerce_1d_series(ntd)
+        if p.dropna().shape[0] < 2 or ntd.dropna().shape[0] < 2 or npx.dropna().shape[0] < 2:
+            return
 
+        # NPX↔NTD cross masks (match panel)
+        up_mask, dn_mask = _cross_series(npx.reindex(ntd.index), ntd)
+
+        # Purple masks to avoid overlap
+        pur_buy, pur_sell = _ntd_cross_masks(ntd, low_thr, high_thr)
+        pur_any = pur_buy | pur_sell
+
+        # Vertical offset based on visible price range
+        pr = p.dropna()
+        if pr.empty:
+            return
+        pr_min, pr_max = float(pr.min()), float(pr.max())
+        y_offset = (pr_max - pr_min) * max(0.0, float(y_offset_ratio))
+
+        # UP (green ▲)
+        if up_mask.any():
+            idx_up = up_mask[up_mask].index
+            y_vals = []
+            x_vals = []
+            for t in idx_up:
+                if t in p.index and np.isfinite(p.loc[t]):
+                    y = float(p.loc[t])
+                    if pur_any.loc[t] if t in pur_any.index else False:
+                        y = y + y_offset
+                    y_vals.append(y); x_vals.append(t)
+            if x_vals:
+                ax.scatter(x_vals, y_vals, marker="^", s=size, color="tab:green", zorder=12)
+
+        # DOWN (red ▼)
+        if dn_mask.any():
+            idx_dn = dn_mask[dn_mask].index
+            y_vals = []
+            x_vals = []
+            for t in idx_dn:
+                if t in p.index and np.isfinite(p.loc[t]):
+                    y = float(p.loc[t])
+                    if pur_any.loc[t] if t in pur_any.index else False:
+                        y = y - y_offset
+                    y_vals.append(y); x_vals.append(t)
+            if x_vals:
+                ax.scatter(x_vals, y_vals, marker="v", s=size, color="tab:red", zorder=12)
+    except Exception:
+        pass
+
+# ========= Sessions =========
 def session_markers_for_index(idx: pd.DatetimeIndex, session_tz, open_hr: int, close_hr: int):
     opens, closes = [], []
     if not isinstance(idx, pd.DatetimeIndex) or idx.tz is None or idx.empty:
@@ -1247,10 +1339,10 @@ with tab1:
     auto_run = st.session_state.run_all
 
     if st.button("Run Forecast", key="btn_run_forecast") or auto_run:
-        df_hist = fetch_hist(sel)
-        df_ohlc = fetch_hist_ohlc(sel)
+        df_hist = fetch_hist(sel)              # DAILY — trading days only
+        df_ohlc = fetch_hist_ohlc(sel)         # DAILY OHLC — trading days only
         fc_idx, fc_vals, fc_ci = compute_sarimax_forecast(df_hist)
-        intraday = fetch_intraday(sel, period=period_map[hour_range])
+        intraday = fetch_intraday(sel, period=period_map[hour_range])  # raw 5m PST
         st.session_state.update({
             "df_hist": df_hist,
             "df_ohlc": df_ohlc,
@@ -1285,8 +1377,9 @@ with tab1:
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
-            # compute NTD/NPX (NTD needed for purple triangles on price)
-            ntd_d = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
+            # NTD/NPX for markers
+            ntd_d = compute_normalized_trend(df, window=ntd_window)  # compute regardless of show flag (needed for markers)
+            npx_d_for_price = compute_normalized_price(df, window=ntd_window)  # for price overlay
             npx_d_full = compute_normalized_price(df, window=ntd_window) if show_npx_ntd else pd.Series(index=df.index, dtype=float)
 
             # Kijun
@@ -1381,9 +1474,15 @@ with tab1:
                 ax.text(df_show.index[-1], r30_last, f"  30R = {fmt_price_val(r30_last)}", va="bottom")
                 ax.text(df_show.index[-1], s30_last, f"  30S = {fmt_price_val(s30_last)}", va="top")
 
-            # === NEW: Purple triangles on DAILY PRICE for NTD crosses ===
-            if show_ntd and not ntd_d_show.dropna().empty:
+            # === Purple triangles on DAILY PRICE for NTD threshold crosses ===
+            if not ntd_d_show.dropna().empty:
                 overlay_ntd_triangles_on_price(ax, ntd_d_show, df_show, low_thr=-0.75, high_thr=0.75)
+
+            # === NEW: Red/Green NPX↔NTD crosses mirrored on DAILY PRICE (aligned, no overlap with purple) ===
+            if not ntd_d_show.dropna().empty:
+                npx_d_for_price_show = npx_d_for_price.reindex(df_show.index)
+                overlay_npx_ntd_crosses_on_price(ax, df_show, npx_d_for_price_show, ntd_d_show,
+                                                 low_thr=-0.75, high_thr=0.75, y_offset_ratio=0.006, size=120)
 
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
@@ -1419,7 +1518,7 @@ with tab1:
                 if not ntd_trend_d.empty:
                     axdw.plot(ntd_trend_d.index, ntd_trend_d.values, "--", linewidth=2,
                               label=f"NTD Trend {slope_lb_daily} ({fmt_slope(ntd_m_d)}/bar)")
-                # === NEW: Purple triangles on DAILY NTD panel ===
+                # Purple triangles on NTD panel
                 overlay_ntd_triangles_on_panel(axdw, ntd_d_show, low_thr=-0.75, high_thr=0.75)
 
             if show_npx_ntd and not npx_d_show.dropna().empty and not ntd_d_show.dropna().empty:
@@ -1437,6 +1536,9 @@ with tab1:
         # ----- Hourly -----
         if chart in ("Hourly","Both"):
             intraday = st.session_state.intraday
+            # NEW: filter to active trading windows to remove closed periods entirely
+            intraday = _filter_intraday_for_market_hours(intraday, market=mode)
+
             if intraday is None or intraday.empty or "Close" not in intraday:
                 st.warning("No intraday data available.")
             else:
@@ -1464,8 +1566,9 @@ with tab1:
                 psar_h_df = compute_psar_from_ohlc(intraday, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
                 psar_h_df = psar_h_df.reindex(hc.index)
 
-                # 🔹 compute NTD for HOURLY (needed for purple triangles on price)
+                # NTD + NPX for markers (hourly)
                 ntd_h = compute_normalized_trend(hc, window=ntd_window)
+                npx_h_for_price = compute_normalized_price(hc, window=ntd_window)
 
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
                 r2_h = regression_r2(hc, slope_lb_hourly)
@@ -1596,9 +1699,14 @@ with tab1:
                 elif show_bb_div and use_adx_filter and not adx_ok_h:
                     st.info(f"BB Divergence gated off: ADX {adx_last_h:.1f} < {adx_min}")
 
-                # === NEW: Purple triangles on HOURLY PRICE for NTD crosses ===
+                # === Purple triangles on HOURLY PRICE for NTD threshold crosses ===
                 if not ntd_h.dropna().empty:
                     overlay_ntd_triangles_on_price(ax2, ntd_h, hc, low_thr=-0.75, high_thr=0.75)
+
+                # === NEW: Red/Green NPX↔NTD crosses mirrored on HOURLY PRICE (aligned, no overlap with purple) ===
+                if not ntd_h.dropna().empty:
+                    overlay_npx_ntd_crosses_on_price(ax2, hc, npx_h_for_price, ntd_h,
+                                                     low_thr=-0.75, high_thr=0.75, y_offset_ratio=0.006, size=120)
 
                 ax2.set_xlabel("Time (PST)")
                 ax2.legend(loc="lower left", framealpha=0.5)
@@ -1637,7 +1745,6 @@ with tab1:
 
                 # === Hourly Indicator Panel: NTD + NPX + S↔R channel ===
                 if show_nrsi:
-                    # reuse ntd_h computed above
                     ntd_trend_h, ntd_m_h = slope_line(ntd_h, slope_lb_hourly)
                     npx_h = compute_normalized_price(hc, window=ntd_window) if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
@@ -1655,7 +1762,7 @@ with tab1:
                     if show_hma_rev_ntd and not hma_h.dropna().empty and not hc.dropna().empty:
                         overlay_hma_reversal_on_ntd(ax2r, hc, hma_h, lookback=hma_rev_lb, period=hma_period)
 
-                    # === NEW: Purple triangles on HOURLY NTD panel ===
+                    # Purple triangles on HOURLY NTD panel
                     overlay_ntd_triangles_on_panel(ax2r, ntd_h, low_thr=-0.75, high_thr=0.75)
 
                     ax2r.axhline(0.0,  linestyle="--", linewidth=1.0, color="black",    label="0.00")
@@ -1703,9 +1810,7 @@ with tab1:
         }, index=st.session_state.fc_idx))
 
 # --- Tab 2: Enhanced Forecast ---
-# (UNCHANGED except ADX badges/gating are already handled in Tab 1, which drives main signals)
-# To keep file size reasonable, Tab 2 mirrors Tab 1 logic and visuals (already present in your prior version).
-# You can leave Tab 2 as-is or replicate the same ADX additions there if you want identical behavior.
+# (UNCHANGED)
 
 # --- Tab 3: Bull vs Bear ---
 with tab3:
@@ -1731,7 +1836,7 @@ with tab4:
     if not st.session_state.run_all:
         st.info("Run Tab 1 first.")
     else:
-        df_hist = fetch_hist(st.session_state.ticker)
+        df_hist = fetch_hist(st.session_state.ticker)  # trading days only
         last_price = _safe_last_float(df_hist)
         idx, vals, ci = compute_sarimax_forecast(df_hist)
         p_up = np.mean(vals.to_numpy() > last_price) if np.isfinite(last_price) else np.nan
@@ -1751,7 +1856,7 @@ with tab4:
         ax.plot(df3m.index, df3m, label="Close")
         ax.plot(df3m.index, ma30_3m, label="30 MA")
         ax.plot(res3m.index, res3m, ":", label="Resistance")
-        ax.plot(sup3m, ":", label="Support")
+        ax.plot(sup3m.index, sup3m, ":", label="Support")
         ax.plot(df3m.index, trend3m, "--", label="Trend")
         ax.set_xlabel("Date (PST)")
         ax.legend()
@@ -1880,7 +1985,7 @@ with tab5:
                 vch["Kijun"] = vch["Kijun"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
                 st.dataframe(vch[["Symbol","Timestamp","Close","Kijun"]].reset_index(drop=True), use_container_width=True)
 
-# --- Tab 6: Long-Term History (unchanged) ---
+# --- Tab 6: Long-Term History (unchanged logic; daily now trading days only) ---
 with tab6:
     st.header("Long-Term History — Price with S/R & Trend")
     default_idx = 0
@@ -1894,7 +1999,7 @@ with tab6:
     if c4.button("20Y", key="btn_20y"): st.session_state.hist_years = 20
     years = int(st.session_state.hist_years)
     st.caption(f"Showing last **{years} years**. Support/Resistance = rolling **252-day** extremes; trendline fits the shown window.")
-    s_full = fetch_hist_max(sym)
+    s_full = fetch_hist_max(sym)  # trading days only
     if s_full is None or s_full.empty:
         st.warning("No historical data available.")
     else:
