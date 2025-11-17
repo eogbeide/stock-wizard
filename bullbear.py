@@ -11,7 +11,7 @@
 #         - DAILY: keep natural trading-day index (no weekend/holiday padding)
 #         - INTRADAY: optional RTH filter for stocks; 24×5 window for FX
 
-import streamlit as std
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
