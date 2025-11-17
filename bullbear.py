@@ -7,6 +7,7 @@
 #       — shown on both NTD panels and the price charts
 # (NEW) Red/Green NPX↔NTD cross triangles mirrored onto PRICE charts at the same timestamps as NTD panel crosses
 #       — with slight vertical offsets only if they would overlap purple markers (timestamps remain identical)
+# (FIXED) Removed closed-market calendar gaps on DAILY charts (no weekend/holiday padding)
 
 import streamlit as st
 import pandas as pd
@@ -321,33 +322,24 @@ else:
 # --- Cache helpers (TTL = 120 seconds) ---
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
-    s = (
-        yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
-        .asfreq("D").fillna(method="ffill")
-    )
-    try:
-        s = s.tz_localize(PACIFIC)
-    except TypeError:
-        s = s.tz_convert(PACIFIC)
+    # Keep native trading-day index (no weekend/holiday padding)
+    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))
+    if df is None or df.empty or 'Close' not in df:
+        return pd.Series(dtype=float)
+    s = df['Close'].dropna()
+    # DO NOT localize daily; keep as returned (tz-naive trading days)
     return s
 
 @st.cache_data(ttl=120)
 def fetch_hist_max(ticker: str) -> pd.Series:
     df = yf.download(ticker, period="max")[['Close']].dropna()
-    s = df['Close'].asfreq("D").fillna(method="ffill")
-    try:
-        s = s.tz_localize(PACIFIC)
-    except TypeError:
-        s = s.tz_convert(PACIFIC)
-    return s
+    # Keep native trading-day index; no resampling/ffill
+    return df['Close']
 
 @st.cache_data(ttl=120)
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
     df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Open','High','Low','Close']].dropna()
-    try:
-        df = df.tz_localize(PACIFIC)
-    except TypeError:
-        df = df.tz_convert(PACIFIC)
+    # Keep native trading-day index; no tz localization here
     return df
 
 @st.cache_data(ttl=120)
@@ -362,11 +354,8 @@ def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
 @st.cache_data(ttl=120)
 def compute_sarimax_forecast(series_like):
     series = _coerce_1d_series(series_like).dropna()
-    if isinstance(series.index, pd.DatetimeIndex):
-        if series.index.tz is None:
-            series.index = series.index.tz_localize(PACIFIC)
-        else:
-            series.index = series.index.tz_convert(PACIFIC)
+    # Preserve the series' timezone/naive state for forecast index
+    tz = series.index.tz if isinstance(series.index, pd.DatetimeIndex) else None
     try:
         model = SARIMAX(series, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
     except np.linalg.LinAlgError:
@@ -375,8 +364,8 @@ def compute_sarimax_forecast(series_like):
             enforce_stationarity=False, enforce_invertibility=False
         ).fit(disp=False)
     fc = model.get_forecast(steps=30)
-    idx = pd.date_range(series.index[-1] + timedelta(days=1),
-                        periods=30, freq="D", tz=PACIFIC)
+    start_idx = series.index[-1] + pd.Timedelta(days=1)
+    idx = pd.date_range(start_idx, periods=30, freq="D", tz=tz)
     return idx, fc.predicted_mean, fc.conf_int()
 
 # ---- Indicators ----
@@ -898,13 +887,11 @@ def overlay_npx_ntd_crosses_on_price(ax, price: pd.Series, npx: pd.Series, ntd: 
         # UP (green ▲)
         if up_mask.any():
             idx_up = up_mask[up_mask].index
-            # align with price index, keep timestamps
             y_vals = []
             x_vals = []
             for t in idx_up:
                 if t in p.index and np.isfinite(p.loc[t]):
                     y = float(p.loc[t])
-                    # if there's a purple at same timestamp, nudge upward
                     if pur_any.loc[t] if t in pur_any.index else False:
                         y = y + y_offset
                     y_vals.append(y); x_vals.append(t)
@@ -919,7 +906,6 @@ def overlay_npx_ntd_crosses_on_price(ax, price: pd.Series, npx: pd.Series, ntd: 
             for t in idx_dn:
                 if t in p.index and np.isfinite(p.loc[t]):
                     y = float(p.loc[t])
-                    # if there's a purple at same timestamp, nudge downward
                     if pur_any.loc[t] if t in pur_any.index else False:
                         y = y - y_offset
                     y_vals.append(y); x_vals.append(t)
@@ -1503,7 +1489,7 @@ with tab1:
             axdw.axhline(-0.5, linestyle="-",  linewidth=1.2, color="black",    label="-0.50")
             axdw.axhline(0.75, linestyle="-",  linewidth=3.0, color="tab:green", label="+0.75")
             axdw.axhline(-0.75, linestyle="-", linewidth=3.0, color="tab:red",   label="-0.75")
-            axdw.set_ylim(-1.1, 1.1); axdw.set_xlabel("Date (PST)"); axdw.legend(loc="lower left", framealpha=0.5)
+            axdw.set_ylim(-1.1, 1.1); axdw.set_xlabel("Date"); axdw.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
         # ----- Hourly -----
@@ -1828,7 +1814,7 @@ with tab4:
         ax.plot(res3m.index, res3m, ":", label="Resistance")
         ax.plot(sup3m.index, sup3m, ":", label="Support")
         ax.plot(df3m.index, trend3m, "--", label="Trend")
-        ax.set_xlabel("Date (PST)")
+        ax.set_xlabel("Date")
         ax.legend()
         st.pyplot(fig)
 
@@ -1851,7 +1837,7 @@ with tab4:
         ax0.plot(res0, ":", label="Resistance")
         ax0.plot(sup0, ":", label="Support")
         ax0.plot(df0.index, trend0, "--", label="Trend")
-        ax0.set_xlabel("Date (PST)")
+        ax0.set_xlabel("Date")
         ax0.legend()
         st.pyplot(fig0)
 
@@ -2004,5 +1990,5 @@ with tab6:
                         transform=ax.transAxes, ha="right", va="bottom",
                         fontsize=11, fontweight="bold",
                         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-            ax.set_xlabel("Date (PST)"); ax.set_ylabel("Price"); ax.legend(loc="lower left", framealpha=0.5)
+            ax.set_xlabel("Date"); ax.set_ylabel("Price"); ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
