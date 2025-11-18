@@ -1,10 +1,11 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
-# (NEW) Normalized Price (NPX) plotted on NTD panels + crossing markers
-# (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
-# (UPDATED) HMA signals: BUY (cross up) and SELL (cross down) with P(up)/P(down) ≥ threshold
-# (NEW) NTD-threshold triangles: green BUY only when NTD ≥ +0.75; red SELL only when NTD ≤ -0.75
-#       NPX↔NTD cross markers and HMA-reversal-on-NTD triangles are gated by these thresholds.
+# (UPDATED) Normalized Price (NPX) plotted on NTD panels + crossing markers (no triangles)
+# (UPDATED) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
+# (UPDATED) HMA signals: BUY (cross up) and SELL (cross down) with P(up)/P(down) ≥ threshold (no triangles)
+# (NEW) Triangles reserved ONLY for NTD zero-cross signals under strong-trend conditions:
+#       - Green triangle: strong UP trend & NTD crosses 0.00 upward
+#       - Red triangle:   strong DOWN trend & NTD crosses 0.00 downward
 
 import streamlit as st
 import pandas as pd
@@ -218,7 +219,12 @@ show_ntd  = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd
 ntd_window= st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
 shade_ntd = st.sidebar.checkbox("Shade NTD (green=up, red=down)", value=True, key="sb_ntd_shade")
 show_npx_ntd   = st.sidebar.checkbox("Overlay normalized price (NPX) on NTD panels", value=True, key="sb_show_npx_ntd")
-mark_npx_cross = st.sidebar.checkbox("Mark NPX↔NTD crosses (▲/▼)", value=True, key="sb_mark_npx_cross")
+mark_npx_cross = st.sidebar.checkbox("Mark NPX↔NTD crosses (dots)", value=True, key="sb_mark_npx_cross")
+
+# Gate for “strong trend” used by NTD zero-cross triangles
+st.sidebar.subheader("Strong-Trend Gate (for NTD Zero-Cross Triangles)")
+strong_r2_gate   = st.sidebar.slider("Required R² (NTD)", 0.00, 1.00, 0.50, 0.05, key="sb_strong_r2")
+strong_slope_min = st.sidebar.slider("Min |NTD slope| (/bar)", 0.0000, 0.0100, 0.0005, 0.0005, key="sb_strong_slope")
 
 st.sidebar.subheader("Normalized Ichimoku (EW panels) + Kijun on price")
 show_ichi = st.sidebar.checkbox("Show Ichimoku Kijun on price", value=True, key="sb_show_ichi")
@@ -568,7 +574,7 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     nbb = pctb * 2.0 - 1.0
     return mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index)
 
-# HMA + crossover helpers  (includes SELL case)
+# HMA + crossover helpers  (markers changed: NOT triangles to reserve triangles for NTD zero-cross)
 def _wma(s: pd.Series, window: int) -> pd.Series:
     s = _coerce_1d_series(s).astype(float)
     if s.empty or window < 1: return pd.Series(index=s.index, dtype=float)
@@ -601,14 +607,15 @@ def detect_last_crossover(price: pd.Series, line: pd.Series):
         return {"time": t_dn, "side": "SELL"}
 
 def annotate_crossover(ax, ts, px, side: str, conf: float):
+    # Use non-triangle markers to reserve triangles for NTD zero-cross signals only
     if side == "BUY":
-        ax.scatter([ts], [px], marker="^", s=90, color="tab:green", zorder=7)
+        ax.scatter([ts], [px], marker="P", s=90, color="tab:green", zorder=7)
         ax.text(ts, px, f"  BUY {int(conf*100)}%", va="bottom", fontsize=9, color="tab:green", fontweight="bold")
     else:
-        ax.scatter([ts], [px], marker="v", s=90, color="tab:red", zorder=7)
+        ax.scatter([ts], [px], marker="X", s=90, color="tab:red", zorder=7)
         ax.text(ts, px, f"  SELL {int(conf*100)}%", va="top", fontsize=9, color="tab:red", fontweight="bold")
 
-# HMA reversal markers on NTD (GATED by NTD thresholds if provided)
+# HMA reversal markers on NTD (markers changed to squares/diamonds; not triangles)
 def _cross_series(price: pd.Series, line: pd.Series):
     p = _coerce_1d_series(price); l = _coerce_1d_series(line)
     ok = p.notna() & l.notna()
@@ -635,17 +642,16 @@ def overlay_hma_reversal_on_ntd(ax, price: pd.Series, hma: pd.Series, lookback: 
                                 period: int = 55, ntd: pd.Series = None, upper_thr: float = 0.75, lower_thr: float = -0.75):
     buy_rev, sell_rev = detect_hma_reversal_masks(price, hma, lookback=lookback)
     idx_up = list(buy_rev[buy_rev].index); idx_dn = list(sell_rev[sell_rev].index)
-    # Gate by NTD thresholds if provided
+    # Optional gating by NTD thresholds (kept but markers are NOT triangles)
     if ntd is not None:
         ntd = _coerce_1d_series(ntd).reindex(hma.index)
         idx_up = [t for t in idx_up if pd.notna(ntd.get(t)) and (float(ntd.get(t)) >= upper_thr)]
         idx_dn = [t for t in idx_dn if pd.notna(ntd.get(t)) and (float(ntd.get(t)) <= lower_thr)]
-    if len(idx_up): ax.scatter(idx_up, [y_up]*len(idx_up), marker="^", s=70, color="tab:green", zorder=8, label=f"BUY: HMA({period}) REV @NTD≥{upper_thr:+.2f}")
-    if len(idx_dn): ax.scatter(idx_dn, [y_dn]*len(idx_dn), marker="v", s=70, color="tab:red",   zorder=8, label=f"SELL: HMA({period}) REV @NTD≤{lower_thr:+.2f}")
+    if len(idx_up): ax.scatter(idx_up, [y_up]*len(idx_up), marker="s", s=70, color="tab:green", zorder=8, label=f"HMA({period}) REV")
+    if len(idx_dn): ax.scatter(idx_dn, [y_dn]*len(idx_dn), marker="D", s=70, color="tab:red",   zorder=8, label=f"HMA({period}) REV")
 
-# NPX ↔ NTD overlay/helpers (GATED by NTD thresholds for triangle markers)
-def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = True,
-                       gate_by_thresholds: bool = True, upper_thr: float = 0.75, lower_thr: float = -0.75):
+# NPX ↔ NTD overlay/helpers (markers changed to dots/x; NOT triangles)
+def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = True):
     npx = _coerce_1d_series(npx); ntd = _coerce_1d_series(ntd)
     idx = ntd.index.union(npx.index); npx = npx.reindex(idx); ntd = ntd.reindex(idx)
     if npx.dropna().empty: return
@@ -653,21 +659,52 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = 
     if mark_crosses and not ntd.dropna().empty:
         up_mask, dn_mask = _cross_series(npx, ntd)
         up_idx = list(up_mask[up_mask].index); dn_idx = list(dn_mask[dn_mask].index)
-        if gate_by_thresholds:
-            up_idx = [t for t in up_idx if pd.notna(ntd.get(t)) and (float(ntd.get(t)) >= upper_thr)]
-            dn_idx = [t for t in dn_idx if pd.notna(ntd.get(t)) and (float(ntd.get(t)) <= lower_thr)]
-        if len(up_idx): ax.scatter(up_idx, ntd.loc[up_idx], marker="^", s=65, color="tab:green", zorder=9, label=f"BUY: Price↑NTD @NTD≥{upper_thr:+.2f}")
-        if len(dn_idx): ax.scatter(dn_idx, ntd.loc[dn_idx], marker="v", s=65, color="tab:red",   zorder=9, label=f"SELL: Price↓NTD @NTD≤{lower_thr:+.2f}")
+        if len(up_idx): ax.scatter(up_idx, ntd.loc[up_idx], marker="o", s=40, color="tab:green", zorder=9, label="Price↑NTD")
+        if len(dn_idx): ax.scatter(dn_idx, ntd.loc[dn_idx], marker="x", s=60, color="tab:red",   zorder=9, label="Price↓NTD")
 
-# NEW: NTD threshold triangles (BUY when NTD crosses up through +0.75; SELL when NTD crosses down through -0.75)
-def overlay_ntd_threshold_tris(ax, ntd: pd.Series, upper_thr: float = 0.75, lower_thr: float = -0.75):
-    s = _coerce_1d_series(ntd).dropna()
-    if s.empty: return
-    cross_up_upper = (s >= upper_thr) & (s.shift(1) < upper_thr)
-    cross_dn_lower = (s <= lower_thr) & (s.shift(1) > lower_thr)
-    idx_up = list(s[cross_up_upper].index); idx_dn = list(s[cross_dn_lower].index)
-    if len(idx_up): ax.scatter(idx_up, s.loc[idx_up], marker="^", s=85, color="tab:green", zorder=10, label=f"BUY: NTD≥{upper_thr:+.2f}")
-    if len(idx_dn): ax.scatter(idx_dn, s.loc[idx_dn], marker="v", s=85, color="tab:red",   zorder=10, label=f"SELL: NTD≤{lower_thr:+.2f}")
+# --- NEW: NTD zero-cross triangles under strong-trend conditions ---
+def _roll_slope(y: pd.Series) -> float:
+    y = pd.Series(y).dropna()
+    if len(y) < 3: return np.nan
+    x = np.arange(len(y), dtype=float)
+    try: m, _ = np.polyfit(x, y.to_numpy(dtype=float), 1)
+    except Exception: return np.nan
+    return float(m)
+
+def _roll_r2(y: pd.Series) -> float:
+    y = pd.Series(y).dropna()
+    if len(y) < 3: return np.nan
+    x = np.arange(len(y), dtype=float)
+    try:
+        m, b = np.polyfit(x, y.to_numpy(dtype=float), 1)
+    except Exception:
+        return np.nan
+    yhat = m*x + b
+    ss_res = float(np.sum((y - yhat)**2))
+    ss_tot = float(np.sum((y - y.mean())**2))
+    return float(1.0 - ss_res/ss_tot) if ss_tot > 0 else np.nan
+
+def overlay_ntd_zero_cross_tris(ax, ntd: pd.Series, lookback: int, r2_gate: float = 0.5, slope_gate: float = 0.0005):
+    s = _coerce_1d_series(ntd)
+    if s.dropna().empty or lookback < 3: return
+    minp = max(5, lookback // 3)
+    slope_roll = s.rolling(lookback, min_periods=minp).apply(_roll_slope, raw=False)
+    r2_roll    = s.rolling(lookback, min_periods=minp).apply(_roll_r2,    raw=False)
+    cross_up0 = (s >= 0.0) & (s.shift(1) < 0.0)
+    cross_dn0 = (s <= 0.0) & (s.shift(1) > 0.0)
+    idx_up = []
+    idx_dn = []
+    for t in s.index:
+        if cross_up0.get(t, False):
+            m = slope_roll.get(t, np.nan); r2 = r2_roll.get(t, np.nan)
+            if np.isfinite(m) and np.isfinite(r2) and (m >= slope_gate) and (r2 >= r2_gate):
+                idx_up.append(t)
+        if cross_dn0.get(t, False):
+            m = slope_roll.get(t, np.nan); r2 = r2_roll.get(t, np.nan)
+            if np.isfinite(m) and np.isfinite(r2) and (m <= -slope_gate) and (r2 >= r2_gate):
+                idx_dn.append(t)
+    if len(idx_up): ax.scatter(idx_up, [0.0]*len(idx_up), marker="^", s=95, color="tab:green", zorder=10, label=f"BUY: NTD 0↑ (R²≥{r2_gate:.2f})")
+    if len(idx_dn): ax.scatter(idx_dn, [0.0]*len(idx_dn), marker="v", s=95, color="tab:red",   zorder=10, label=f"SELL: NTD 0↓ (R²≥{r2_gate:.2f})")
 
 # Sessions
 NY_TZ   = pytz.timezone("America/New_York")
@@ -1046,7 +1083,7 @@ with tab1:
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
 
-            # Probabilistic HMA crossover (Daily) — includes SELL opposite
+            # Probabilistic HMA crossover (Daily) — markers not triangles
             if show_hma and not hma_d_show.dropna().empty:
                 cross_d = detect_last_crossover(df_show, hma_d_show)
                 if cross_d is not None and cross_d["time"] is not None:
@@ -1072,11 +1109,11 @@ with tab1:
                 if not ntd_trend_d.empty:
                     axdw.plot(ntd_trend_d.index, ntd_trend_d.values, "--", linewidth=2,
                               label=f"NTD Trend {slope_lb_daily} ({fmt_slope(ntd_m_d)}/bar)")
-                # NEW: NTD threshold triangles (BUY/SELL)
-                overlay_ntd_threshold_tris(axdw, ntd_d_show, upper_thr=0.75, lower_thr=-0.75)
+                # Triangles ONLY for strong-trend zero-crosses
+                overlay_ntd_zero_cross_tris(axdw, ntd_d_show, lookback=slope_lb_daily,
+                                            r2_gate=strong_r2_gate, slope_gate=strong_slope_min)
             if show_npx_ntd and not npx_d_show.dropna().empty and not ntd_d_show.dropna().empty:
-                overlay_npx_on_ntd(axdw, npx_d_show, ntd_d_show, mark_crosses=mark_npx_cross,
-                                   gate_by_thresholds=True, upper_thr=0.75, lower_thr=-0.75)
+                overlay_npx_on_ntd(axdw, npx_d_show, ntd_d_show, mark_crosses=mark_npx_cross)
             if show_hma_rev_ntd and not hma_d_show.dropna().empty and not df_show.dropna().empty:
                 overlay_hma_reversal_on_ntd(axdw, df_show, hma_d_show, lookback=hma_rev_lb, period=hma_period,
                                             ntd=ntd_d_show, upper_thr=0.75, lower_thr=-0.75)
@@ -1088,6 +1125,7 @@ with tab1:
             axdw.axhline(-0.75, linestyle="-", linewidth=3.0, color="tab:red",   label="-0.75")
             axdw.set_ylim(-1.1, 1.1); axdw.set_xlabel("Date (PST)"); axdw.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
+
         # ----- Hourly (price + NTD panel + momentum + Volume) -----
         if chart in ("Hourly","Both"):
             intraday = st.session_state.intraday
@@ -1219,7 +1257,7 @@ with tab1:
                         pips_txt = _diff_text(sup_val, res_val, sel) if np.isfinite(sup_val) and np.isfinite(res_val) else ""
                         st.error(f"**SELL** @ {fmt_price_val(signal['level'])} — {near_txt} with {conf_tag} • {pips_txt}")
 
-                # Probabilistic HMA crossover (Hourly) — includes SELL opposite
+                # Probabilistic HMA crossover (Hourly) — markers not triangles
                 if show_hma and not hma_h.dropna().empty:
                     cross_h = detect_last_crossover(hc, hma_h)
                     if cross_h is not None and cross_h["time"] is not None:
@@ -1274,11 +1312,11 @@ with tab1:
                     if show_ntd_channel and np.isfinite(res_val) and np.isfinite(sup_val):
                         overlay_inrange_on_ntd(ax2r, hc, sup_h, res_h)
                     ax2r.plot(ntd_h.index, ntd_h, "-", linewidth=1.6, label="NTD")
-                    # NEW: NTD threshold triangles
-                    overlay_ntd_threshold_tris(ax2r, ntd_h, upper_thr=0.75, lower_thr=-0.75)
+                    # Triangles ONLY for strong-trend zero-crosses
+                    overlay_ntd_zero_cross_tris(ax2r, ntd_h, lookback=slope_lb_hourly,
+                                                r2_gate=strong_r2_gate, slope_gate=strong_slope_min)
                     if show_npx_ntd and not npx_h.dropna().empty and not ntd_h.dropna().empty:
-                        overlay_npx_on_ntd(ax2r, npx_h, ntd_h, mark_crosses=mark_npx_cross,
-                                           gate_by_thresholds=True, upper_thr=0.75, lower_thr=-0.75)
+                        overlay_npx_on_ntd(ax2r, npx_h, ntd_h, mark_crosses=mark_npx_cross)
                     if not ntd_trend_h.empty:
                         ax2r.plot(ntd_trend_h.index, ntd_trend_h.values, "--", linewidth=2,
                                   label=f"NTD Trend {slope_lb_hourly} ({fmt_slope(ntd_m_h)}/bar)")
@@ -1362,7 +1400,7 @@ with tab2:
                                                       conv=ichi_conv, base=ichi_base, span_b=ichi_spanb, shift_cloud=False)
                 kijun_d2 = kijun_d2.ffill().bfill()
 
-            bb_mid_d2, bb_up_d2, bb_lo_d2, bb_pctb_d2, bb_nbb_d2 = compute_bbands(df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
+            bb_mid_d2, bb_up_d2, bb_lo_d2 = compute_bbands(df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)[:3]
 
             df_show = subset_by_daily_view(df, daily_view)
             ema30_show = ema30.reindex(df_show.index)
@@ -1401,7 +1439,7 @@ with tab2:
             if len(df_show) > 1: draw_trend_direction_line(ax, df_show, label_prefix="Trend")
             ax.set_ylabel("Price"); ax.legend(loc="lower left", framealpha=0.5)
 
-            # HMA BUY/SELL (Daily)
+            # HMA BUY/SELL (Daily) — markers not triangles
             if show_hma and not hma_d2_show.dropna().empty:
                 cross_d2 = detect_last_crossover(df_show, hma_d2_show)
                 if cross_d2 is not None and cross_d2["time"] is not None:
@@ -1426,10 +1464,10 @@ with tab2:
                 if not ntd_trend_d2.empty:
                     axdw2.plot(ntd_trend_d2.index, ntd_trend_d2.values, "--", linewidth=2,
                                label=f"NTD Trend {slope_lb_daily} ({fmt_slope(ntd_m_d2)}/bar)")
-                overlay_ntd_threshold_tris(axdw2, ntd_d_show, upper_thr=0.75, lower_thr=-0.75)
+                overlay_ntd_zero_cross_tris(axdw2, ntd_d_show, lookback=slope_lb_daily,
+                                            r2_gate=strong_r2_gate, slope_gate=strong_slope_min)
             if show_npx_ntd and not npx_d2_show.dropna().empty and not ntd_d_show.dropna().empty:
-                overlay_npx_on_ntd(axdw2, npx_d2_show, ntd_d_show, mark_crosses=mark_npx_cross,
-                                   gate_by_thresholds=True, upper_thr=0.75, lower_thr=-0.75)
+                overlay_npx_on_ntd(axdw2, npx_d2_show, ntd_d_show, mark_crosses=mark_npx_cross)
             if show_hma_rev_ntd and not hma_d2_show.dropna().empty and not df_show.dropna().empty:
                 overlay_hma_reversal_on_ntd(axdw2, df_show, hma_d2_show, lookback=hma_rev_lb, period=hma_period,
                                             ntd=ntd_d_show, upper_thr=0.75, lower_thr=-0.75)
@@ -1446,7 +1484,7 @@ with tab2:
             if intr is None or intr.empty or "Close" not in intr:
                 st.warning("No intraday data available.")
             else:
-                # Tab 1 already renders intraday with gated NTD markers
+                # Tab 1 renders intraday already
                 pass
 
 # --- Tab 3: Bull vs Bear ---
