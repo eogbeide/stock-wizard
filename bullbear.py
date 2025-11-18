@@ -6,6 +6,13 @@
 #    entries outside the ±0.75 band — but we gate their display by the price trend sign.)
 #
 #   Other indicators (stars for S/R reversals, NPX overlay, etc.) remain unchanged.
+#
+#   NEW (this update):
+#   • regression_with_band(): linear trendline + ±2σ band + R²
+#   • Daily price chart: trendline ±2σ + R²
+#   • Intraday price chart: local slope trendline ±2σ + R²
+#   • Long-Term History: trendline ±2σ + R²
+#   • Metrics price charts: trendline ±2σ + R²
 
 import streamlit as st
 import pandas as pd
@@ -345,6 +352,35 @@ def regression_r2(series_like, lookback: int):
     ss_res = np.sum((y - yhat)**2); ss_tot = np.sum((y - y.mean())**2)
     if ss_tot <= 0: return float("nan")
     return float(1.0 - ss_res/ss_tot)
+
+def regression_with_band(series_like, lookback: int = 0, z: float = 2.0):
+    """
+    Linear regression on last `lookback` bars of `series_like` with:
+      • fitted trendline
+      • symmetric ±z·σ band (σ = std of residuals, z≈2 → ~95% coverage)
+      • R² of the fit
+    Returns (trend, upper, lower, slope, r2).
+    """
+    s = _coerce_1d_series(series_like).dropna()
+    if lookback > 0:
+        s = s.iloc[-lookback:]
+    if s.shape[0] < 3:
+        empty = pd.Series(index=s.index, dtype=float)
+        return empty, empty, empty, float("nan"), float("nan")
+    x = np.arange(len(s), dtype=float)
+    y = s.to_numpy(dtype=float)
+    m, b = np.polyfit(x, y, 1)
+    yhat = m * x + b
+    resid = y - yhat
+    dof = max(len(y) - 2, 1)
+    std = float(np.sqrt(np.sum(resid**2) / dof))
+    ss_res = float(np.sum(resid**2))
+    ss_tot = float(np.sum((y - y.mean())**2))
+    r2 = float("nan") if ss_tot <= 0 else float(1.0 - ss_res / ss_tot)
+    yhat_s = pd.Series(yhat, index=s.index)
+    upper_s = pd.Series(yhat + z * std, index=s.index)
+    lower_s = pd.Series(yhat - z * std, index=s.index)
+    return yhat_s, upper_s, lower_s, float(m), r2
 
 def compute_roc(series_like, n: int = 10) -> pd.Series:
     s = _coerce_1d_series(series_like)
@@ -966,7 +1002,8 @@ with tab1:
             ema30 = df.ewm(span=30).mean()
             res30 = df.rolling(30, min_periods=1).max()
             sup30 = df.rolling(30, min_periods=1).min()
-            yhat_d, m_d = slope_line(df, slope_lb_daily)
+            # NEW: trendline with ±2σ band and R² (Daily)
+            yhat_d, upper_d, lower_d, m_d, r2_d = regression_with_band(df, slope_lb_daily)
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
@@ -986,6 +1023,8 @@ with tab1:
             res30_show  = res30.reindex(df_show.index)
             sup30_show  = sup30.reindex(df_show.index)
             yhat_d_show = yhat_d.reindex(df_show.index) if not yhat_d.empty else yhat_d
+            upper_d_show = upper_d.reindex(df_show.index) if not upper_d.empty else upper_d
+            lower_d_show = lower_d.reindex(df_show.index) if not lower_d.empty else lower_d
             yhat_ema_show = yhat_ema30.reindex(df_show.index) if not yhat_ema30.empty else yhat_ema30
             ntd_d_show  = ntd_d.reindex(df_show.index)
             npx_d_show  = npx_d_full.reindex(df_show.index)
@@ -1052,6 +1091,11 @@ with tab1:
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
                         label=f"Daily Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
+            if not upper_d_show.empty and not lower_d_show.empty:
+                ax.plot(upper_d_show.index, upper_d_show.values, "--", linewidth=1.2,
+                        label="Daily Trend +2σ")
+                ax.plot(lower_d_show.index, lower_d_show.values, "--", linewidth=1.2,
+                        label="Daily Trend -2σ")
             if not yhat_ema_show.empty:
                 ax.plot(yhat_ema_show.index, yhat_ema_show.values, "-", linewidth=2,
                         label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
@@ -1069,6 +1113,13 @@ with tab1:
                 ax.text(df_show.index[-1], r30_last, f"  30R = {fmt_price_val(r30_last)}", va="bottom")
                 ax.text(df_show.index[-1], s30_last, f"  30S = {fmt_price_val(s30_last)}", va="top")
             ax.set_ylabel("Price")
+            # NEW: R² annotation for Daily price trend
+            ax.text(0.50, 0.02,
+                    f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}",
+                    transform=ax.transAxes,
+                    ha="center", va="bottom",
+                    fontsize=9, color="black",
+                    bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
             ax.legend(loc="lower left", framealpha=0.5)
 
             # DAILY INDICATOR PANEL — NTD + NPX + Triangles by Trend + Stars
@@ -1126,7 +1177,8 @@ with tab1:
                 hma_h = compute_hma(hc, period=hma_period)
                 psar_h_df = compute_psar_from_ohlc(intraday, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
                 psar_h_df = psar_h_df.reindex(hc.index)
-                yhat_h, m_h = slope_line(hc, slope_lb_hourly); r2_h = regression_r2(hc, slope_lb_hourly)
+                # NEW: local regression trend with ±2σ bands and R² (Hourly)
+                yhat_h, upper_h, lower_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
 
                 fig2, ax2 = plt.subplots(figsize=(14,4)); plt.subplots_adjust(top=0.85, right=0.93)
                 ax2.plot(hc.index, hc, label="Intraday")
@@ -1183,7 +1235,11 @@ with tab1:
                 if not st_line_intr.dropna().empty:
                     ax2.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
                 if not yhat_h.empty:
-                    ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2, label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
+                    ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
+                             label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
+                if not upper_h.empty and not lower_h.empty:
+                    ax2.plot(upper_h.index, upper_h.values, "--", linewidth=1.2, label="Slope +2σ")
+                    ax2.plot(lower_h.index, lower_h.values, "--", linewidth=1.2, label="Slope -2σ")
 
                 ax2.text(0.01, 0.02, f"Slope: {fmt_slope(slope_h)}/bar", transform=ax2.transAxes, ha="left", va="bottom",
                          fontsize=9, color="black", bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
@@ -1316,7 +1372,8 @@ with tab2:
             ema30 = df.ewm(span=30).mean()
             res30 = df.rolling(30, min_periods=1).max()
             sup30 = df.rolling(30, min_periods=1).min()
-            yhat_d, m_d = slope_line(df, slope_lb_daily)
+            # NEW: regression-based daily trend with band + R² (Enhanced tab)
+            yhat_d, upper_d, lower_d, m_d, r2_d = regression_with_band(df, slope_lb_daily)
 
             ntd_d2 = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
             npx_d2_full = compute_normalized_price(df, window=ntd_window) if show_npx_ntd else pd.Series(index=df.index, dtype=float)
@@ -1334,6 +1391,8 @@ with tab2:
             res30_show = res30.reindex(df_show.index)
             sup30_show = sup30.reindex(df_show.index)
             yhat_d_show = yhat_d.reindex(df_show.index) if not yhat_d.empty else yhat_d
+            upper_d_show = upper_d.reindex(df_show.index) if not upper_d.empty else upper_d
+            lower_d_show = lower_d.reindex(df_show.index) if not lower_d.empty else lower_d
             ntd_d_show = ntd_d2.reindex(df_show.index)
             npx_d2_show = npx_d2_full.reindex(df_show.index)
             kijun_d2_show = kijun_d2.reindex(df_show.index).ffill().bfill()
@@ -1360,8 +1419,18 @@ with tab2:
                 ax.plot(bb_lo_d2_show.index, bb_lo_d2_show.values, ":", linewidth=1.0)
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2, label=f"Daily Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
+            if not upper_d_show.empty and not lower_d_show.empty:
+                ax.plot(upper_d_show.index, upper_d_show.values, "--", linewidth=1.2, label="Daily Trend +2σ")
+                ax.plot(lower_d_show.index, lower_d_show.values, "--", linewidth=1.2, label="Daily Trend -2σ")
             if len(df_show) > 1: draw_trend_direction_line(ax, df_show, label_prefix="Trend")
-            ax.set_ylabel("Price"); ax.legend(loc="lower left", framealpha=0.5)
+            ax.set_ylabel("Price")
+            ax.text(0.50, 0.02,
+                    f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}",
+                    transform=ax.transAxes,
+                    ha="center", va="bottom",
+                    fontsize=9, color="black",
+                    bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+            ax.legend(loc="lower left", framealpha=0.5)
 
             # Indicator panel (Daily)
             axdw2.set_title("Daily Indicator Panel — NTD + NPX + Trend")
@@ -1390,8 +1459,8 @@ with tab2:
             if intr is None or intr.empty or "Close" not in intr:
                 st.warning("No intraday data available.")
             else:
-                # Already rendered in Tab 1
-                pass
+                # Already rendered in Tab 1 intraday; you can optionally add extra logic here.
+                st.info("Intraday view is rendered in Tab 1. (Logic unchanged here.)")
 
 # --- Tab 3: Bull vs Bear ---
 with tab3:
@@ -1427,17 +1496,26 @@ with tab4:
         ma30_3m = df3m.rolling(30, min_periods=1).mean()
         res3m = df3m.rolling(30, min_periods=1).max()
         sup3m = df3m.rolling(30, min_periods=1).min()
-        x3m = np.arange(len(df3m))
-        slope3m, intercept3m = np.polyfit(x3m, df3m.values, 1)
-        trend3m = slope3m * x3m + intercept3m
+        # NEW: 3M trend with band + R²
+        trend3m, up3m, lo3m, m3m, r2_3m = regression_with_band(df3m, lookback=len(df3m))
 
         fig, ax = plt.subplots(figsize=(14,5))
         ax.plot(df3m.index, df3m, label="Close")
         ax.plot(df3m.index, ma30_3m, label="30 MA")
         ax.plot(res3m.index, res3m, ":", label="Resistance")
         ax.plot(sup3m.index, sup3m, ":", label="Support")
-        ax.plot(df3m.index, trend3m, "--", label="Trend")
+        if not trend3m.empty:
+            ax.plot(trend3m.index, trend3m.values, "--", label=f"Trend (m={fmt_slope(m3m)}/bar)")
+        if not up3m.empty and not lo3m.empty:
+            ax.plot(up3m.index, up3m.values, ":", linewidth=1.2, label="Trend +2σ")
+            ax.plot(lo3m.index, lo3m.values, ":", linewidth=1.2, label="Trend -2σ")
         ax.set_xlabel("Date (PST)")
+        ax.text(0.50, 0.02,
+                f"R² (3M): {fmt_r2(r2_3m)}",
+                transform=ax.transAxes,
+                ha="center", va="bottom",
+                fontsize=9, color="black",
+                bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
         ax.legend()
         st.pyplot(fig)
 
@@ -1448,19 +1526,28 @@ with tab4:
         df0['MA30'] = df0['Close'].rolling(30, min_periods=1).mean()
 
         st.subheader("Close + 30-day MA + Trend")
-        x0 = np.arange(len(df0))
-        slope0, intercept0 = np.polyfit(x0, df0['Close'], 1)
-        trend0 = slope0 * x0 + intercept0
-        res0 = df0.rolling(30, min_periods=1).max()
-        sup0 = df0.rolling(30, min_periods=1).min()
+        res0 = df0['Close'].rolling(30, min_periods=1).max()
+        sup0 = df0['Close'].rolling(30, min_periods=1).min()
+        # NEW: full-period trend with band + R²
+        trend0, up0, lo0, m0, r2_0 = regression_with_band(df0['Close'], lookback=len(df0))
 
         fig0, ax0 = plt.subplots(figsize=(14,5))
         ax0.plot(df0.index, df0['Close'], label="Close")
         ax0.plot(df0.index, df0['MA30'], label="30 MA")
-        ax0.plot(res0, ":", label="Resistance")
-        ax0.plot(sup0, ":", label="Support")
-        ax0.plot(df0.index, trend0, "--", label="Trend")
+        ax0.plot(res0.index, res0, ":", label="Resistance")
+        ax0.plot(sup0.index, sup0, ":", label="Support")
+        if not trend0.empty:
+            ax0.plot(trend0.index, trend0.values, "--", label=f"Trend (m={fmt_slope(m0)}/bar)")
+        if not up0.empty and not lo0.empty:
+            ax0.plot(up0.index, up0.values, ":", linewidth=1.2, label="Trend +2σ")
+            ax0.plot(lo0.index, lo0.values, ":", linewidth=1.2, label="Trend -2σ")
         ax0.set_xlabel("Date (PST)")
+        ax0.text(0.50, 0.02,
+                 f"R² ({bb_period}): {fmt_r2(r2_0)}",
+                 transform=ax0.transAxes,
+                 ha="center", va="bottom",
+                 fontsize=9, color="black",
+                 bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
         ax0.legend()
         st.pyplot(fig0)
 
@@ -1571,7 +1658,8 @@ with tab6:
             sup_roll = s.rolling(252, min_periods=1).min()
             res_last = float(res_roll.iloc[-1]) if len(res_roll) else np.nan
             sup_last = float(sup_roll.iloc[-1]) if len(sup_roll) else np.nan
-            yhat_all, m_all = slope_line(s, lookback=len(s))
+            # NEW: long-term trend with ±2σ band + R²
+            yhat_all, upper_all, lower_all, m_all, r2_all = regression_with_band(s, lookback=len(s))
 
             fig, ax = plt.subplots(figsize=(14,5))
             ax.set_title(f"{sym} — Last {years} Years — Price + 252d S/R + Trend")
@@ -1583,11 +1671,16 @@ with tab6:
                 label_on_left(ax, sup_last, f"S {fmt_price_val(sup_last)}", color="tab:green")
             if not yhat_all.empty:
                 ax.plot(yhat_all.index, yhat_all.values, "--", linewidth=2, label=f"Trend (m={fmt_slope(m_all)}/bar)")
-                ax.text(0.01, 0.02, f"Slope: {fmt_slope(m_all)}/bar", transform=ax.transAxes, ha="left", va="bottom",
-                        fontsize=9, color="black", bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+            if not upper_all.empty and not lower_all.empty:
+                ax.plot(upper_all.index, upper_all.values, ":", linewidth=1.4, label="Trend +2σ")
+                ax.plot(lower_all.index, lower_all.values, ":", linewidth=1.4, label="Trend -2σ")
             px_now = _safe_last_float(s)
             if np.isfinite(px_now):
                 ax.text(0.99, 0.02, f"Current price: {fmt_price_val(px_now)}", transform=ax.transAxes, ha="right", va="bottom",
                         fontsize=11, fontweight="bold", bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+            ax.text(0.01, 0.02, f"Slope: {fmt_slope(m_all)}/bar", transform=ax.transAxes, ha="left", va="bottom",
+                    fontsize=9, color="black", bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+            ax.text(0.50, 0.02, f"R² (trend): {fmt_r2(r2_all)}", transform=ax.transAxes, ha="center", va="bottom",
+                    fontsize=9, color="black", bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
             ax.set_xlabel("Date (PST)"); ax.set_ylabel("Price"); ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
