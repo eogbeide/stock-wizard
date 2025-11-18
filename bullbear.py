@@ -14,7 +14,7 @@
 # - Streamlit app with Daily + Intraday views
 # - NTD/NPX overlay, Ichimoku Kijun, BBands, PSAR, HMA, Supertrend, sessions, news, scanners, etc.
 
-import streamlit as std
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
