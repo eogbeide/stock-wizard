@@ -317,6 +317,7 @@ def compute_sarimax_forecast(series_like):
     fc = model.get_forecast(steps=30)
     idx = pd.date_range(series.index[-1] + timedelta(days=1), periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
+
 def fibonacci_levels(series_like):
     s = _coerce_1d_series(series_like).dropna()
     hi = float(s.max()) if not s.empty else np.nan
@@ -634,17 +635,27 @@ def overlay_hma_reversal_on_ntd(ax, price: pd.Series, hma: pd.Series, lookback: 
     if len(idx_up): ax.scatter(idx_up, [y_up]*len(idx_up), marker="^", s=70, color="tab:green", zorder=8, label=f"HMA({period}) ↑ REV")
     if len(idx_dn): ax.scatter(idx_dn, [y_dn]*len(idx_dn), marker="v", s=70, color="tab:red",   zorder=8, label=f"HMA({period}) ↓ REV")
 
-# NPX ↔ NTD overlay/helpers
-def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = True):
+# === NEW: Only show green/red NPX↔NTD triangles when |NTD| > threshold ===
+CROSS_MARKER_THRESHOLD = 0.75  # gate for NPX↔NTD cross triangles on NTD panels
+
+def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = True, thr: float = CROSS_MARKER_THRESHOLD):
+    """
+    Overlay normalized price (NPX) on NTD panel and, if enabled, mark NPX↔NTD crosses.
+    UPDATED: triangles are only drawn when NTD > +thr (green up) or NTD < -thr (red down).
+    """
     npx = _coerce_1d_series(npx); ntd = _coerce_1d_series(ntd)
     idx = ntd.index.union(npx.index); npx = npx.reindex(idx); ntd = ntd.reindex(idx)
     if npx.dropna().empty: return
     ax.plot(npx.index, npx.values, "-", linewidth=1.2, color="tab:gray", alpha=0.9, label="NPX (Norm Price)")
     if mark_crosses and not ntd.dropna().empty:
         up_mask, dn_mask = _cross_series(npx, ntd)
-        up_idx = list(up_mask[up_mask].index); dn_idx = list(dn_mask[dn_mask].index)
-        if len(up_idx): ax.scatter(up_idx, ntd.loc[up_idx], marker="^", s=65, color="tab:green", zorder=9, label="Price↑NTD")
-        if len(dn_idx): ax.scatter(dn_idx, ntd.loc[dn_idx], marker="v", s=65, color="tab:red",   zorder=9, label="Price↓NTD")
+        # Filter by threshold: show only when NTD is outside ±thr
+        up_idx = [t for t, v in ntd.loc[up_mask.index][up_mask].items() if np.isfinite(v) and (v >  thr)]
+        dn_idx = [t for t, v in ntd.loc[dn_mask.index][dn_mask].items() if np.isfinite(v) and (v < -thr)]
+        if len(up_idx):
+            ax.scatter(up_idx, ntd.loc[up_idx], marker="^", s=65, color="tab:green", zorder=9, label=f"Price↑NTD (>{thr:.2f})")
+        if len(dn_idx):
+            ax.scatter(dn_idx, ntd.loc[dn_idx], marker="v", s=65, color="tab:red",   zorder=9, label=f"Price↓NTD (<-{thr:.2f})")
 
 # Sessions
 NY_TZ   = pytz.timezone("America/New_York")
@@ -795,6 +806,7 @@ def bb_divergence_signals(ax, price: pd.Series, bb_upper: pd.Series, bb_lower: p
             st.error(f"**BB Divergence SELL** @ {fmt_price_val(px)} — trend↓ ({fmt_slope(m_price)}), upperBB↑ ({fmt_slope(m_upper)}), Δ(upper−price)↑ ({fmt_slope(m_dist_sell)}), P(down)≥{int(conf_level*100)}%")
     except Exception:
         pass
+
 # ========= Cached last values for scanning =========
 @st.cache_data(ttl=120)
 def last_daily_ntd_value(symbol: str, ntd_win: int):
@@ -1060,6 +1072,7 @@ with tab1:
             axdw.axhline(-0.75, linestyle="-", linewidth=3.0, color="tab:red",   label="-0.75")
             axdw.set_ylim(-1.1, 1.1); axdw.set_xlabel("Date (PST)"); axdw.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
+
         # ----- Hourly (price + NTD panel + momentum + Volume) -----
         if chart in ("Hourly","Both"):
             intraday = st.session_state.intraday
@@ -1418,11 +1431,8 @@ with tab2:
             if intr is None or intr.empty or "Close" not in intr:
                 st.warning("No intraday data available.")
             else:
-                # Reuse the Hourly plotting block from Tab 1, but bind to local variables
-                # to avoid code bloat. Simpler route: call the same code path by
-                # pretending chart=='Hourly'. For clarity, we duplicate the HMA BUY/SELL
-                # logic here is identical to Tab 1 Hourly (already implemented above).
-                pass  # (Intentionally left minimal since Tab 1 Hourly already renders)
+                # Reuse the Hourly plotting from Tab 1 (already renders)
+                pass
 
 # --- Tab 3: Bull vs Bear ---
 with tab3:
