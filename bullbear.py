@@ -6,6 +6,9 @@
 # (NEW) Triangles reserved ONLY for NTD zero-cross signals under strong-trend conditions:
 #       - Green triangle: strong UP trend & NTD crosses 0.00 upward
 #       - Red triangle:   strong DOWN trend & NTD crosses 0.00 downward
+# (NEW) Extreme NTD markers:
+#       - RED ★ (star): show ONLY during a downward NTD trend AND when NTD is on/above +0.75
+#       - GREEN ○ (circle): show ONLY during an upward NTD trend AND when NTD is on/below -0.75
 
 import streamlit as st
 import pandas as pd
@@ -615,7 +618,7 @@ def annotate_crossover(ax, ts, px, side: str, conf: float):
         ax.scatter([ts], [px], marker="X", s=90, color="tab:red", zorder=7)
         ax.text(ts, px, f"  SELL {int(conf*100)}%", va="top", fontsize=9, color="tab:red", fontweight="bold")
 
-# HMA reversal markers on NTD (markers changed to squares/diamonds; not triangles)
+# HMA reversal markers on NTD (markers kept as squares/diamonds; not triangles)
 def _cross_series(price: pd.Series, line: pd.Series):
     p = _coerce_1d_series(price); l = _coerce_1d_series(line)
     ok = p.notna() & l.notna()
@@ -650,7 +653,7 @@ def overlay_hma_reversal_on_ntd(ax, price: pd.Series, hma: pd.Series, lookback: 
     if len(idx_up): ax.scatter(idx_up, [y_up]*len(idx_up), marker="s", s=70, color="tab:green", zorder=8, label=f"HMA({period}) REV")
     if len(idx_dn): ax.scatter(idx_dn, [y_dn]*len(idx_dn), marker="D", s=70, color="tab:red",   zorder=8, label=f"HMA({period}) REV")
 
-# NPX ↔ NTD overlay/helpers (markers changed to dots/x; NOT triangles)
+# NPX ↔ NTD overlay/helpers (markers dots/x; NOT triangles)
 def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = True):
     npx = _coerce_1d_series(npx); ntd = _coerce_1d_series(ntd)
     idx = ntd.index.union(npx.index); npx = npx.reindex(idx); ntd = ntd.reindex(idx)
@@ -705,6 +708,32 @@ def overlay_ntd_zero_cross_tris(ax, ntd: pd.Series, lookback: int, r2_gate: floa
                 idx_dn.append(t)
     if len(idx_up): ax.scatter(idx_up, [0.0]*len(idx_up), marker="^", s=95, color="tab:green", zorder=10, label=f"BUY: NTD 0↑ (R²≥{r2_gate:.2f})")
     if len(idx_dn): ax.scatter(idx_dn, [0.0]*len(idx_dn), marker="v", s=95, color="tab:red",   zorder=10, label=f"SELL: NTD 0↓ (R²≥{r2_gate:.2f})")
+
+# --- NEW: Extreme NTD markers per user rule ---
+def overlay_ntd_extreme_trend_markers(ax, ntd: pd.Series, lookback: int, upper_thr: float = 0.75, lower_thr: float = -0.75):
+    """
+    Place:
+      - RED stars (*) only when local NTD trend is DOWN (slope<0) AND NTD >= upper_thr (+0.75)
+      - GREEN circles (o) only when local NTD trend is UP (slope>0) AND NTD <= lower_thr (-0.75)
+    Markers are drawn at the actual NTD value.
+    """
+    s = _coerce_1d_series(ntd)
+    if s.dropna().empty or lookback < 3: return
+    minp = max(5, lookback // 3)
+    slope_roll = s.rolling(lookback, min_periods=minp).apply(_roll_slope, raw=False).reindex(s.index)
+
+    cond_red  = (s >= upper_thr) & (slope_roll < 0)
+    cond_green= (s <= lower_thr) & (slope_roll > 0)
+
+    idx_red = list(s.index[cond_red.fillna(False)])
+    idx_grn = list(s.index[cond_green.fillna(False)])
+
+    if len(idx_red):
+        ax.scatter(idx_red, s.loc[idx_red], marker="*", s=130, color="tab:red", zorder=11,
+                   label=f"Down-trend @ ≥{upper_thr:+.2f}")
+    if len(idx_grn):
+        ax.scatter(idx_grn, s.loc[idx_grn], marker="o", s=90, color="tab:green", zorder=11,
+                   label=f"Up-trend @ ≤{lower_thr:+.2f}")
 
 # Sessions
 NY_TZ   = pytz.timezone("America/New_York")
@@ -1112,6 +1141,9 @@ with tab1:
                 # Triangles ONLY for strong-trend zero-crosses
                 overlay_ntd_zero_cross_tris(axdw, ntd_d_show, lookback=slope_lb_daily,
                                             r2_gate=strong_r2_gate, slope_gate=strong_slope_min)
+                # --- NEW extreme markers per user rule ---
+                overlay_ntd_extreme_trend_markers(axdw, ntd_d_show, lookback=slope_lb_daily,
+                                                  upper_thr=0.75, lower_thr=-0.75)
             if show_npx_ntd and not npx_d_show.dropna().empty and not ntd_d_show.dropna().empty:
                 overlay_npx_on_ntd(axdw, npx_d_show, ntd_d_show, mark_crosses=mark_npx_cross)
             if show_hma_rev_ntd and not hma_d_show.dropna().empty and not df_show.dropna().empty:
@@ -1315,6 +1347,9 @@ with tab1:
                     # Triangles ONLY for strong-trend zero-crosses
                     overlay_ntd_zero_cross_tris(ax2r, ntd_h, lookback=slope_lb_hourly,
                                                 r2_gate=strong_r2_gate, slope_gate=strong_slope_min)
+                    # --- NEW extreme markers per user rule ---
+                    overlay_ntd_extreme_trend_markers(ax2r, ntd_h, lookback=slope_lb_hourly,
+                                                      upper_thr=0.75, lower_thr=-0.75)
                     if show_npx_ntd and not npx_h.dropna().empty and not ntd_h.dropna().empty:
                         overlay_npx_on_ntd(ax2r, npx_h, ntd_h, mark_crosses=mark_npx_cross)
                     if not ntd_trend_h.empty:
@@ -1466,6 +1501,9 @@ with tab2:
                                label=f"NTD Trend {slope_lb_daily} ({fmt_slope(ntd_m_d2)}/bar)")
                 overlay_ntd_zero_cross_tris(axdw2, ntd_d_show, lookback=slope_lb_daily,
                                             r2_gate=strong_r2_gate, slope_gate=strong_slope_min)
+                # --- NEW extreme markers per user rule ---
+                overlay_ntd_extreme_trend_markers(axdw2, ntd_d_show, lookback=slope_lb_daily,
+                                                  upper_thr=0.75, lower_thr=-0.75)
             if show_npx_ntd and not npx_d2_show.dropna().empty and not ntd_d_show.dropna().empty:
                 overlay_npx_on_ntd(axdw2, npx_d2_show, ntd_d_show, mark_crosses=mark_npx_cross)
             if show_hma_rev_ntd and not hma_d2_show.dropna().empty and not df_show.dropna().empty:
