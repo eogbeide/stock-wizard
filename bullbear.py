@@ -1262,7 +1262,7 @@ with tab2:
                 ax.plot(bb_lo_d2_show.index, bb_lo_d2_show.values, ":", linewidth=1.0)
 
             # ADX badge
-            if show_adx_badge and np.isfinite(adx_last_d)):
+            if show_adx_badge and np.isfinite(adx_last_d):
                 try:
                     di_p_last = float(dip_d.reindex(df_show.index).dropna().iloc[-1])
                     di_m_last = float(dim_d.reindex(df_show.index).dropna().iloc[-1])
