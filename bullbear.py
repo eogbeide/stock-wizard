@@ -13,6 +13,7 @@
 #   • Intraday price chart: local slope trendline ±2σ + R²
 #   • Long-Term History: trendline ±2σ + R²
 #   • Metrics price charts: trendline ±2σ + R²
+#   • NTD Scanner: uses the **triangle event at -0.75 on NTD** (green triangle) to return symbols
 
 import streamlit as st
 import pandas as pd
@@ -674,7 +675,6 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = 
         up_idx = list(up_mask[up_mask].index); dn_idx = list(dn_mask[dn_mask].index)
         if len(up_idx): ax.scatter(up_idx, ntd.loc[up_idx], marker="o", s=40, color="tab:green", zorder=9, label="Price↑NTD")
         if len(dn_idx): ax.scatter(dn_idx, ntd.loc[dn_idx], marker="x", s=60, color="tab:red",   zorder=9, label="Price↓NTD")
-
 # --- NEW: NTD triangles gated by PRICE trend sign ---
 def overlay_ntd_triangles_by_trend(ax, ntd: pd.Series, trend_slope: float, upper: float = 0.75, lower: float = -0.75):
     """
@@ -903,6 +903,66 @@ def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
     except Exception:
         return np.nan, None
 
+# NEW: scanner helpers – use NTD triangle at -0.75 (green triangle in uptrend)
+@st.cache_data(ttl=120)
+def last_daily_minus075_triangle_info(symbol: str, ntd_win: int, slope_lb: int, level: float = -0.75):
+    """
+    Return (has_triangle_on_latest_bar, ntd_value_at_event, timestamp)
+    for a DAILY NTD triangle at the -0.75 band, gated by an uptrend in price.
+    Mirrors the green triangle plotted by overlay_ntd_triangles_by_trend.
+    """
+    try:
+        s = fetch_hist(symbol)
+        ntd = compute_normalized_trend(s, window=ntd_win).dropna()
+        if ntd.empty or len(ntd) < 2:
+            return False, np.nan, None
+        # Price trend slope over the given lookback (same as daily panel)
+        _, _, _, m, _ = regression_with_band(s, lookback=slope_lb)
+        if not np.isfinite(m) or m <= 0.0:
+            # No uptrend ⇒ no green triangle at -0.75
+            return False, np.nan, None
+        cross_out_lo = (ntd <= level) & (ntd.shift(1) > level)
+        if not cross_out_lo.any():
+            return False, np.nan, None
+        t_last = cross_out_lo[cross_out_lo].index[-1]
+        # Only treat as scan signal if it occurred on the most recent NTD bar
+        if t_last != ntd.index[-1]:
+            return False, np.nan, None
+        val_last = float(ntd.loc[t_last]) if t_last in ntd.index else np.nan
+        return True, val_last, t_last
+    except Exception:
+        return False, np.nan, None
+
+@st.cache_data(ttl=120)
+def last_hourly_minus075_triangle_info(symbol: str, ntd_win: int, slope_lb: int,
+                                       period: str = "1d", level: float = -0.75):
+    """
+    Return (has_triangle_on_latest_bar, ntd_value_at_event, timestamp)
+    for an HOURLY NTD triangle at the -0.75 band, gated by an uptrend in price.
+    Used by the Forex scanner; mirrors overlay_ntd_triangles_by_trend.
+    """
+    try:
+        df = fetch_intraday(symbol, period=period)
+        if df is None or df.empty or "Close" not in df:
+            return False, np.nan, None
+        close = df["Close"].ffill()
+        ntd = compute_normalized_trend(close, window=ntd_win).dropna()
+        if ntd.empty or len(ntd) < 2:
+            return False, np.nan, None
+        _, _, _, m, _ = regression_with_band(close, lookback=slope_lb)
+        if not np.isfinite(m) or m <= 0.0:
+            return False, np.nan, None
+        cross_out_lo = (ntd <= level) & (ntd.shift(1) > level)
+        if not cross_out_lo.any():
+            return False, np.nan, None
+        t_last = cross_out_lo[cross_out_lo].index[-1]
+        if t_last != ntd.index[-1]:
+            return False, np.nan, None
+        val_last = float(ntd.loc[t_last]) if t_last in ntd.index else np.nan
+        return True, val_last, t_last
+    except Exception:
+        return False, np.nan, None
+
 def _price_above_kijun_from_df(df: pd.DataFrame, base: int = 26):
     if df is None or df.empty or not {'High','Low','Close'}.issubset(df.columns):
         return False, None, np.nan, np.nan
@@ -959,10 +1019,9 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
-    "NTD -0.5 Scanner",
+    "NTD Triangle Scanner",
     "Long-Term History"
 ])
-
 # --- Tab 1: Original Forecast ---
 with tab1:
     st.header("Original Forecast")
@@ -1558,77 +1617,133 @@ with tab4:
         st.subheader("Bull/Bear Distribution")
         dist = pd.DataFrame({"Type": ["Bull", "Bear"], "Days": [int(df0['Bull'].sum()), int((~df0['Bull']).sum())]}).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
-
-# --- Tab 5: NTD -0.5 Scanner ---
+# --- Tab 5: NTD Triangle Scanner (uses -0.75 band triangles) ---
 with tab5:
-    st.header("NTD -0.5 Scanner")
-    st.caption("Shows symbols with NTD < -0.5 (Daily for Stocks & FX; Hourly for FX). Also lists Price > Kijun(26).")
+    st.header("NTD -0.75 Triangle Scanner")
+    st.caption(
+        "Uses the **green triangle** on the NTD panel at the **-0.75 band** "
+        "(uptrend + first entry below -0.75) as the scan trigger on the latest bar.\n"
+        "Daily scan for all symbols; additional Hourly scan for Forex."
+    )
     period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
-    scan_hour_range = st.selectbox("Hourly lookback for Forex:", ["24h", "48h", "96h"],
-                                   index=["24h","48h","96h"].index(st.session_state.get("hour_range", "24h")),
-                                   key="ntd_scan_hour_range")
+    scan_hour_range = st.selectbox(
+        "Hourly lookback for Forex:", ["24h", "48h", "96h"],
+        index=["24h","48h","96h"].index(st.session_state.get("hour_range", "24h")),
+        key="ntd_scan_hour_range"
+    )
     scan_period = period_map[scan_hour_range]
     c1, c2 = st.columns(2)
-    with c1: thresh = st.slider("NTD threshold", -1.0, 0.0, -0.5, 0.05, key="ntd_thresh")
-    with c2: run = st.button("Scan Universe", key="btn_ntd_scan")
+    with c1:
+        st.write("Click **Scan Universe** to find latest -0.75 triangle signals.")
+    with c2:
+        run = st.button("Scan Universe", key="btn_ntd_scan")
+
     if run:
+        # --- Daily scan: all symbols in current universe ---
         daily_rows = []
         for sym in universe:
-            ntd_val, ts = last_daily_ntd_value(sym, ntd_window)
-            daily_rows.append({"Symbol": sym, "NTD_Daily": ntd_val, "Timestamp": ts})
+            has_tri, ntd_val, ts = last_daily_minus075_triangle_info(
+                sym, ntd_window, slope_lb_daily, level=-0.75
+            )
+            daily_rows.append(
+                {"Symbol": sym, "HasTriangle": has_tri, "NTD@Event": ntd_val, "Timestamp": ts}
+            )
         df_daily = pd.DataFrame(daily_rows)
-        below_daily = df_daily[np.isfinite(df_daily["NTD_Daily"]) & (df_daily["NTD_Daily"] < thresh)].sort_values("NTD_Daily")
+        hits_daily = df_daily[df_daily["HasTriangle"] == True].copy()
+        hits_daily = hits_daily.sort_values("NTD@Event")
+
         c3, c4 = st.columns(2)
         c3.metric("Universe Size", len(universe))
-        c4.metric(f"Daily NTD < {thresh:+.2f}", int(below_daily.shape[0]))
-        st.subheader(f"Daily — NTD < {thresh:+.2f}")
-        if below_daily.empty: st.info(f"No symbols with Daily NTD < {thresh:+.2f}.")
+        c4.metric("Daily -0.75 triangles (latest bar)", int(hits_daily.shape[0]))
+
+        st.subheader("Daily — Symbols with new NTD -0.75 triangle on latest bar")
+        if hits_daily.empty:
+            st.info("No symbols printed a new -0.75 triangle on the latest daily bar.")
         else:
-            show = below_daily.copy()
-            show["NTD_Daily"] = show["NTD_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
-            st.dataframe(show.reset_index(drop=True), use_container_width=True)
+            hits_daily["NTD@Event"] = hits_daily["NTD@Event"].map(
+                lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a"
+            )
+            st.dataframe(
+                hits_daily[["Symbol", "Timestamp", "NTD@Event"]].reset_index(drop=True),
+                use_container_width=True
+            )
 
         st.markdown("---")
         st.subheader(f"Daily — Price > Ichimoku Kijun({ichi_base}) (latest bar)")
         above_rows = []
         for sym in universe:
             above, ts, close_now, kij_now = price_above_kijun_info_daily(sym, base=ichi_base)
-            above_rows.append({"Symbol": sym, "AboveNow": above, "Timestamp": ts, "Close": close_now, "Kijun": kij_now})
-        df_above_daily = pd.DataFrame(above_rows); df_above_daily = df_above_daily[df_above_daily["AboveNow"] == True]
-        if df_above_daily.empty: st.info("No Daily symbols with Price > Kijun on the latest bar.")
+            above_rows.append(
+                {"Symbol": sym, "AboveNow": above, "Timestamp": ts, "Close": close_now, "Kijun": kij_now}
+            )
+        df_above_daily = pd.DataFrame(above_rows)
+        df_above_daily = df_above_daily[df_above_daily["AboveNow"] == True]
+        if df_above_daily.empty:
+            st.info("No Daily symbols with Price > Kijun on the latest bar.")
         else:
             view_above = df_above_daily.copy()
-            view_above["Close"] = view_above["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-            view_above["Kijun"] = view_above["Kijun"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-            st.dataframe(view_above[["Symbol","Timestamp","Close","Kijun"]].reset_index(drop=True), use_container_width=True)
+            view_above["Close"] = view_above["Close"].map(
+                lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a"
+            )
+            view_above["Kijun"] = view_above["Kijun"].map(
+                lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a"
+            )
+            st.dataframe(
+                view_above[["Symbol", "Timestamp", "Close", "Kijun"]].reset_index(drop=True),
+                use_container_width=True
+            )
 
+        # --- Additional Hourly scan only when in Forex mode ---
         if mode == "Forex":
             st.markdown("---")
-            st.subheader(f"Forex Hourly — NTD < {thresh:+.2f}  ({scan_hour_range} lookback)")
+            st.subheader(f"Forex Hourly — Symbols with new NTD -0.75 triangle on latest bar ({scan_hour_range})")
             hourly_rows = []
             for sym in universe:
-                v, ts = last_hourly_ntd_value(sym, ntd_window, period=scan_period)
-                hourly_rows.append({"Symbol": sym, "NTD_Hourly": v, "Timestamp": ts})
+                has_tri_h, ntd_val_h, ts_h = last_hourly_minus075_triangle_info(
+                    sym, ntd_window, slope_lb_hourly, period=scan_period, level=-0.75
+                )
+                hourly_rows.append(
+                    {"Symbol": sym, "HasTriangle": has_tri_h, "NTD@Event": ntd_val_h, "Timestamp": ts_h}
+                )
             df_hour = pd.DataFrame(hourly_rows)
-            below_hour = df_hour[np.isfinite(df_hour["NTD_Hourly"]) & (df_hour["NTD_Hourly"] < thresh)].sort_values("NTD_Hourly")
-            if below_hour.empty: st.info(f"No Forex pairs with Hourly NTD < {thresh:+.2f}.")
+            hits_hour = df_hour[df_hour["HasTriangle"] == True].copy()
+            hits_hour = hits_hour.sort_values("NTD@Event")
+            if hits_hour.empty:
+                st.info("No Forex pairs printed a new -0.75 triangle on the latest hourly bar.")
             else:
-                showh = below_hour.copy()
-                showh["NTD_Hourly"] = showh["NTD_Hourly"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
-                st.dataframe(showh.reset_index(drop=True), use_container_width=True)
+                hits_hour["NTD@Event"] = hits_hour["NTD@Event"].map(
+                    lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a"
+                )
+                st.dataframe(
+                    hits_hour[["Symbol", "Timestamp", "NTD@Event"]].reset_index(drop=True),
+                    use_container_width=True
+                )
 
             st.subheader(f"Forex Hourly — Price > Ichimoku Kijun({ichi_base}) (latest bar, {scan_hour_range})")
             habove_rows = []
             for sym in universe:
-                above_h, ts_h, close_h, kij_h = price_above_kijun_info_hourly(sym, period=scan_period, base=ichi_base)
-                habove_rows.append({"Symbol": sym, "AboveNow": above_h, "Timestamp": ts_h, "Close": close_h, "Kijun": kij_h})
-            df_above_hour = pd.DataFrame(habove_rows); df_above_hour = df_above_hour[df_above_hour["AboveNow"] == True]
-            if df_above_hour.empty: st.info("No Forex pairs with Price > Kijun on the latest bar.")
+                above_h, ts_h, close_h, kij_h = price_above_kijun_info_hourly(
+                    sym, period=scan_period, base=ichi_base
+                )
+                habove_rows.append(
+                    {"Symbol": sym, "AboveNow": above_h, "Timestamp": ts_h, "Close": close_h, "Kijun": kij_h}
+                )
+            df_above_hour = pd.DataFrame(habove_rows)
+            df_above_hour = df_above_hour[df_above_hour["AboveNow"] == True]
+            if df_above_hour.empty:
+                st.info("No Forex pairs with Price > Kijun on the latest bar.")
             else:
                 vch = df_above_hour.copy()
-                vch["Close"] = vch["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-                vch["Kijun"] = vch["Kijun"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-                st.dataframe(vch[["Symbol","Timestamp","Close","Kijun"]].reset_index(drop=True), use_container_width=True)
+                vch["Close"] = vch["Close"].map(
+                    lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a"
+                )
+                vch["Kijun"] = vch["Kijun"].map(
+                    lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a"
+                )
+                st.dataframe(
+                    vch[["Symbol", "Timestamp", "Close", "Kijun"]].reset_index(drop=True),
+                    use_container_width=True
+                )
 
 # --- Tab 6: Long-Term History ---
 with tab6:
