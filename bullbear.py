@@ -6,7 +6,7 @@
 #        - slope < 0 AND price crosses DOWN through HMA near RESIST → SELL
 #   • ±2σ bands around slope are thicker & darker.
 #   • NTD triangles are gated by price trend sign.
-#   • NTD scanner uses same green-dot (Price↑NTD) logic as NTD panel.
+#   • NTD scanner lists symbols whose latest NTD value is below -0.75 (daily; hourly for Forex).
 
 import streamlit as st
 import pandas as pd
@@ -418,7 +418,6 @@ def compute_roc(series_like, n: int = 10) -> pd.Series:
         return pd.Series(index=s.index, dtype=float)
     roc = base.pct_change(n) * 100.0
     return roc.reindex(s.index)
-
 # RSI / Normalized RSI
 def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
@@ -516,6 +515,7 @@ def compute_normalized_price(close: pd.Series, window: int = 60) -> pd.Series:
     sd = s.rolling(window, min_periods=minp).std().replace(0, np.nan)
     z = (s - m) / sd
     return np.tanh(z / 2.0).reindex(s.index)
+
 def shade_ntd_regions(ax, ntd: pd.Series):
     if ntd is None or ntd.empty:
         return
@@ -941,7 +941,6 @@ def overlay_ntd_sr_reversal_stars(ax,
         ax.scatter([t], [ntd0], marker="*", s=170, color="tab:green", zorder=12, label="BUY ★ (Support reversal)")
     if sell_cond:
         ax.scatter([t], [ntd0], marker="*", s=170, color="tab:red",   zorder=12, label="SELL ★ (Resistance reversal)")
-
 # Sessions
 NY_TZ   = pytz.timezone("America/New_York")
 LDN_TZ  = pytz.timezone("Europe/London")
@@ -1262,6 +1261,7 @@ def last_green_dot_hourly(symbol: str, ntd_win: int, period: str = "1d", level: 
         return is_signal, ntd_last, idx_last, npx_last, close_last
     except Exception:
         return False, np.nan, None, np.nan, np.nan
+
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -1276,7 +1276,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
-    "NTD -0.5 Scanner",
+    "NTD -0.75 Scanner",
     "Long-Term History"
 ])
 
@@ -1564,8 +1564,7 @@ with tab1:
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
-                # BUY/SELL instruction now uses slope_sig_h so it aligns with the
-                # same slope used for the local ±2σ band and HMA gating.
+                # BUY/SELL instruction uses slope_sig_h
                 instr_txt = format_trade_instruction(
                     trend_slope=slope_sig_h,
                     buy_val=sup_val,
@@ -1607,7 +1606,7 @@ with tab1:
                     ax2.plot(lower_h.index, lower_h.values, "--", linewidth=2.2,
                              color="black", alpha=0.85, label="Slope -2σ")
 
-                # Show the same "signal slope" in the footer (so it matches the text order)
+                # Show slope used for instruction
                 ax2.text(0.01, 0.02,
                          f"Slope: {fmt_slope(slope_sig_h)}/bar",
                          transform=ax2.transAxes, ha="left", va="bottom",
@@ -1887,6 +1886,7 @@ with tab2:
                 st.warning("No intraday data available.")
             else:
                 st.info("Intraday view is rendered fully in Tab 1 (logic unchanged here).")
+
 # --- Tab 3: Bull vs Bear ---
 with tab3:
     st.header("Bull vs Bear Summary")
@@ -1993,13 +1993,13 @@ with tab4:
                      int((~df0['Bull']).sum())]
         }).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
-
-# --- Tab 5: NTD -0.5 Scanner (Green-Dot scanner using Price↑NTD) ---
+# --- Tab 5: NTD -0.75 Scanner (Latest NTD < -0.75) ---
 with tab5:
-    st.header("NTD Green-Dot Scanner (Price↑NTD)")
+    st.header("NTD -0.75 Scanner (NTD < -0.75)")
     st.caption(
-        "Scans the universe for symbols whose **latest NTD bar** prints a **green dot** on the NTD panel "
-        "(NPX crosses above NTD = Price↑NTD). You can also require that NTD is below a chosen level."
+        "Scans the universe for symbols whose **latest NTD value** is below **-0.75** "
+        "on the Daily NTD line (and on the Hourly NTD line for Forex). "
+        "This highlights symbols in deep negative NTD territory."
     )
 
     period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
@@ -2011,65 +2011,55 @@ with tab5:
     )
     scan_period = period_map[scan_hour_range]
 
-    c1, c2 = st.columns(2)
-    with c1:
-        thresh = st.slider(
-            "NTD filter level (signal NTD must be below this)",
-            -1.0, 1.0, -0.5, 0.05,
-            key="ntd_thresh"
-        )
-    with c2:
-        run = st.button("Scan Universe", key="btn_ntd_scan")
+    # Fixed NTD threshold for this scanner
+    thresh = -0.75
+
+    run = st.button("Scan Universe", key="btn_ntd_scan")
 
     if run:
-        # ---- DAILY: GREEN DOT (Price↑NTD) on latest bar ----
+        # ---- DAILY: latest NTD < -0.75 ----
         daily_rows = []
         for sym in universe:
-            has_sig, ntd_val, ts, npx_val, close_val = last_green_dot_daily(
-                sym, ntd_window, level=thresh
-            )
+            ntd_val, ts = last_daily_ntd_value(sym, ntd_window)
+            try:
+                s_close = fetch_hist(sym)
+                close_val = _safe_last_float(s_close)
+            except Exception:
+                close_val = np.nan
             daily_rows.append({
                 "Symbol": sym,
-                "HasSignal": has_sig,
                 "NTD_Last": ntd_val,
-                "NPX_Last": npx_val,
+                "BelowThresh": (np.isfinite(ntd_val) and ntd_val < thresh),
                 "Close": close_val,
                 "Timestamp": ts
             })
         df_daily = pd.DataFrame(daily_rows)
-        hits_daily = df_daily[df_daily["HasSignal"] == True].copy()
+        hits_daily = df_daily[df_daily["BelowThresh"] == True].copy()
         hits_daily = hits_daily.sort_values("NTD_Last")
 
         c3, c4 = st.columns(2)
         c3.metric("Universe Size", len(universe))
-        c4.metric(f"Daily green-dot signals (NTD < {thresh:+.2f})",
-                  int(hits_daily.shape[0]))
+        c4.metric(f"Daily NTD < {thresh:+.2f}", int(hits_daily.shape[0]))
 
-        st.subheader(
-            f"Daily — 'Price↑NTD' green dot on latest bar (NTD < {thresh:+.2f})"
-        )
+        st.subheader(f"Daily — latest NTD < {thresh:+.2f}")
         if hits_daily.empty:
             st.info(
-                f"No symbols where the latest **daily** NTD bar has a **green dot** (Price↑NTD) "
-                f"with NTD below {thresh:+.2f}."
+                f"No symbols where the latest **daily** NTD value is below {thresh:+.2f}."
             )
         else:
             view = hits_daily.copy()
             view["NTD_Last"] = view["NTD_Last"].map(
                 lambda v: f"{v:+.3f}" if np.isfinite(v) else "n/a"
             )
-            view["NPX_Last"] = view["NPX_Last"].map(
-                lambda v: f"{v:+.3f}" if np.isfinite(v) else "n/a"
-            )
-            view["Close"]    = view["Close"].map(
+            view["Close"] = view["Close"].map(
                 lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a"
             )
             st.dataframe(
-                view[["Symbol","Timestamp","Close","NTD_Last","NPX_Last"]].reset_index(drop=True),
+                view[["Symbol","Timestamp","Close","NTD_Last"]].reset_index(drop=True),
                 use_container_width=True
             )
 
-        # ---- DAILY: PRICE > KIJUN ----
+        # ---- DAILY: PRICE > KIJUN (unchanged helper) ----
         st.markdown("---")
         st.subheader(f"Daily — Price > Ichimoku Kijun({ichi_base}) (latest bar)")
         above_rows = []
@@ -2099,48 +2089,50 @@ with tab5:
                 use_container_width=True
             )
 
-        # ---- FOREX HOURLY: GREEN DOT (Price↑NTD) on latest bar ----
+        # ---- FOREX HOURLY: latest NTD < -0.75 ----
         if mode == "Forex":
             st.markdown("---")
             st.subheader(
-                f"Forex Hourly — 'Price↑NTD' green dot on latest bar "
-                f"({scan_hour_range} lookback, NTD < {thresh:+.2f})"
+                f"Forex Hourly — latest NTD < {thresh:+.2f} "
+                f"({scan_hour_range} lookback)"
             )
             hourly_rows = []
             for sym in universe:
-                has_sig_h, ntd_val_h, ts_h, npx_val_h, close_val_h = last_green_dot_hourly(
-                    sym, ntd_window, period=scan_period, level=thresh
-                )
+                ntd_val_h, ts_h = last_hourly_ntd_value(sym, ntd_window, period=scan_period)
+                try:
+                    intr = fetch_intraday(sym, period=scan_period)
+                    if intr is not None and not intr.empty and "Close" in intr:
+                        close_val_h = _safe_last_float(intr["Close"])
+                    else:
+                        close_val_h = np.nan
+                except Exception:
+                    close_val_h = np.nan
                 hourly_rows.append({
                     "Symbol": sym,
-                    "HasSignal": has_sig_h,
                     "NTD_Last": ntd_val_h,
-                    "NPX_Last": npx_val_h,
+                    "BelowThresh": (np.isfinite(ntd_val_h) and ntd_val_h < thresh),
                     "Close": close_val_h,
                     "Timestamp": ts_h
                 })
             df_hour = pd.DataFrame(hourly_rows)
-            hits_hour = df_hour[df_hour["HasSignal"] == True].copy()
+            hits_hour = df_hour[df_hour["BelowThresh"] == True].copy()
             hits_hour = hits_hour.sort_values("NTD_Last")
 
             if hits_hour.empty:
                 st.info(
-                    f"No Forex pairs where the latest **hourly** NTD bar has a **green dot** (Price↑NTD) "
-                    f"within {scan_hour_range} lookback and NTD below {thresh:+.2f}."
+                    f"No Forex pairs where the latest **hourly** NTD value is below {thresh:+.2f} "
+                    f"within {scan_hour_range} lookback."
                 )
             else:
                 showh = hits_hour.copy()
                 showh["NTD_Last"] = showh["NTD_Last"].map(
                     lambda v: f"{v:+.3f}" if np.isfinite(v) else "n/a"
                 )
-                showh["NPX_Last"] = showh["NPX_Last"].map(
-                    lambda v: f"{v:+.3f}" if np.isfinite(v) else "n/a"
-                )
-                showh["Close"]    = showh["Close"].map(
+                showh["Close"] = showh["Close"].map(
                     lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a"
                 )
                 st.dataframe(
-                    showh[["Symbol","Timestamp","Close","NTD_Last","NPX_Last"]].reset_index(drop=True),
+                    showh[["Symbol","Timestamp","Close","NTD_Last"]].reset_index(drop=True),
                     use_container_width=True
                 )
 
@@ -2234,8 +2226,8 @@ with tab6:
             if not upper_all.empty and not lower_all.empty:
                 ax.plot(upper_all.index, upper_all.values, ":", linewidth=2.0,
                         color="black", alpha=0.85, label="Trend +2σ")
-                ax.plot(lower_all.index, lower_all.values, ":", linewidth=2.0,
-                        color="black", alpha=0.85, label="Trend -2σ")
+            ax.plot(lower_all.index, lower_all.values, ":", linewidth=2.0,
+                    color="black", alpha=0.85, label="Trend -2σ")
             px_now = _safe_last_float(s)
             if np.isfinite(px_now):
                 ax.text(0.99, 0.02,
@@ -2254,8 +2246,7 @@ with tab6:
                     f"R² (trend): {fmt_r2(r2_all)}",
                     transform=ax.transAxes, ha="center", va="bottom",
                     fontsize=9, color="black",
-                    bbox=dict(boxstyle="round,pad=0.25",
-                              fc="white", ec="grey", alpha=0.7))
+                    bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
             ax.set_xlabel("Date (PST)")
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
