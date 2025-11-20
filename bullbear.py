@@ -8,7 +8,7 @@
 #   • NTD triangles are gated by price trend sign.
 #   • NTD scanner uses same green-dot (Price↑NTD) logic as NTD panel.
 
-import streamlit as std
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
