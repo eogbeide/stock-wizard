@@ -2,7 +2,7 @@
 # UPDATED — per request:
 #   • Stock hourly chart now uses the SAME layout and indicators as Forex hourly view:
 #       - Supertrend, PSAR, Bollinger Bands, HMA
-#       - Volume panel with trendline
+#       - Volume panel with trendline (Forex-only; stocks skip this panel per request)
 #       - Momentum (ROC%) panel
 #       - NTD + NPX indicator panel with triangles, stars, in-range shading
 #   • BUY/SELL instruction uses slope direction.
@@ -512,7 +512,6 @@ def compute_roc(series_like, n: int = 10) -> pd.Series:
         return pd.Series(index=s.index, dtype=float)
     roc = base.pct_change(n) * 100.0
     return roc.reindex(s.index)
-
 def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
     if s.empty or period < 2:
@@ -924,6 +923,7 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
                 in_uptrend.iloc[i] = False
 
     return pd.DataFrame({"PSAR": psar, "in_uptrend": in_uptrend})
+
 # ---------- HMA reversal markers on NTD panel ----------
 def detect_hma_reversal_masks(price: pd.Series, hma: pd.Series,
                               lookback: int = 3):
@@ -1462,7 +1462,7 @@ def render_hourly_views(sel: str,
     """
     Single hourly layout used for BOTH stocks and forex:
       • Price + EMA + S/R + Supertrend + PSAR + HMA + Bollinger + slope ±2σ + bounce signal
-      • Volume panel with mid-line & trend
+      • Volume panel with mid-line & trend (Forex-only; stocks skip this panel per request)
       • NTD panel (NTD + NPX + triangles + stars + in-range shading)
       • Momentum (ROC%) panel
       • Forex-only extras: session lines (PST)
@@ -1644,11 +1644,11 @@ def render_hourly_views(sel: str,
     xlim_price = ax2.get_xlim()
     st.pyplot(fig2)
 
-    # ---- Volume panel ----
+    # ---- Volume panel (Forex-only) ----
     vol = _coerce_1d_series(
         intraday.get("Volume", pd.Series(index=hc.index))
     ).reindex(hc.index).astype(float)
-    if _has_volume_to_plot(vol):
+    if is_forex and _has_volume_to_plot(vol):
         v_mid = rolling_midline(vol, window=max(3, int(slope_lb_hourly)))
         v_trend, v_m = slope_line(vol, slope_lb_hourly)
         v_r2 = regression_r2(vol, slope_lb_hourly)
@@ -2084,7 +2084,6 @@ with tab1:
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
-
 # ==================== TAB 2: ENHANCED FORECAST ====================
 with tab2:
     st.header("Enhanced Forecast")
@@ -2292,6 +2291,7 @@ with tab2:
                     hour_range_label=st.session_state.hour_range,
                     is_forex=(mode == "Forex")
                 )
+
 # ==================== TAB 3: Bull vs Bear ====================
 with tab3:
     st.header("Bull vs Bear Summary")
