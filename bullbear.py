@@ -13,7 +13,7 @@
 #   • NTD triangles are gated by price trend sign.
 #   • NTD scanner lists symbols whose latest NTD value is below -0.75 (daily; hourly for Forex).
 
-import streamlit as st
+import streamlit as stb
 import pandas as pd
 import numpy as np
 import yfinance as yf
