@@ -360,6 +360,7 @@ def compute_sarimax_forecast(series_like):
     idx = pd.date_range(series.index[-1] + timedelta(days=1),
                         periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
+
 def fibonacci_levels(series_like):
     s = _coerce_1d_series(series_like).dropna()
     hi = float(s.max()) if not s.empty else np.nan
@@ -511,7 +512,6 @@ def compute_roc(series_like, n: int = 10) -> pd.Series:
         return pd.Series(index=s.index, dtype=float)
     roc = base.pct_change(n) * 100.0
     return roc.reindex(s.index)
-
 def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
     if s.empty or period < 2:
@@ -624,10 +624,6 @@ def shade_ntd_regions(ax, ntd: pd.Series):
     ax.fill_between(ntd.index, 0, neg, alpha=0.12, color="tab:red")
 
 def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "Trend"):
-    """
-    Legacy helper (no longer used for plotting to avoid duplicate green trendline).
-    Kept for potential future use.
-    """
     s = _coerce_1d_series(series_like).dropna()
     if s.shape[0] < 2:
         return np.nan
@@ -709,6 +705,7 @@ def _cross_series(price: pd.Series, line: pd.Series):
     cross_up = above & (~above.shift(1).fillna(False))
     cross_dn = (~above) & (above.shift(1).fillna(False))
     return cross_up.reindex(p.index, fill_value=False), cross_dn.reindex(p.index, fill_value=False)
+
 def find_hma_sr_signal(price: pd.Series,
                        hma: pd.Series,
                        support: pd.Series,
@@ -1102,6 +1099,7 @@ def overlay_ntd_sr_reversal_stars(ax,
         ax.scatter([t], [ntd0],
                    marker="*", s=170, color="tab:red",   zorder=12,
                    label="SELL ★ (Resistance reversal)")
+
 # ---------- Session markers (PST) ----------
 NY_TZ   = pytz.timezone("America/New_York")
 LDN_TZ  = pytz.timezone("Europe/London")
@@ -1436,7 +1434,6 @@ def last_green_dot_hourly(symbol: str, ntd_win: int, period: str = "1d",
         return is_signal, ntd_last, idx_last, npx_last, close_last
     except Exception:
         return False, np.nan, None, np.nan, np.nan
-
 # ---------- Session state init ----------
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -1454,6 +1451,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "NTD -0.75 Scanner",
     "Long-Term History"
 ])
+
 # ---------- SHARED HOURLY RENDERER (Stock & Forex use this) ----------
 def render_hourly_views(sel: str,
                         intraday: pd.DataFrame,
@@ -1477,7 +1475,7 @@ def render_hourly_views(sel: str,
     he = hc.ewm(span=20).mean()
     xh = np.arange(len(hc))
     slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
-    trend_h = slope_h * xh + intercept_h  # numeric fallback only (not plotted)
+    trend_h = slope_h * xh + intercept_h
 
     res_h = hc.rolling(sr_lb_hourly, min_periods=1).max()
     sup_h = hc.rolling(sr_lb_hourly, min_periods=1).min()
@@ -1515,8 +1513,8 @@ def render_hourly_views(sel: str,
 
     ax2.plot(hc.index, hc, label="Intraday")
     ax2.plot(hc.index, he, "--", label="20 EMA")
-    # NOTE: we intentionally DO NOT plot the global green dashed trendline here
-    # to avoid duplication with the regression slope ±2σ band.
+    ax2.plot(hc.index, trend_h, "--",
+             label=f"Trend (m={fmt_slope(slope_h)}/bar)", linewidth=2)
 
     if show_hma and not hma_h.dropna().empty:
         ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6,
@@ -1598,7 +1596,6 @@ def render_hourly_views(sel: str,
         ax2.plot(st_line_intr.index, st_line_intr.values, "-",
                  label=f"Supertrend ({atr_period},{atr_mult})")
 
-    # Regression slope + ±2σ (main trend reference)
     if not yhat_h.empty:
         ax2.plot(yhat_h.index, yhat_h.values, "-",
                  linewidth=2,
@@ -1966,6 +1963,10 @@ with tab1:
                         label=f"EMA30 Slope {slope_lb_daily} "
                               f"({fmt_slope(m_ema30)}/bar)")
 
+            if len(df_show) > 1:
+                draw_trend_direction_line(ax, df_show,
+                                          label_prefix="Trend")
+
             if piv and len(df_show) > 0:
                 x0, x1 = df_show.index[0], df_show.index[-1]
                 for lbl, y in piv.items():
@@ -2083,7 +2084,6 @@ with tab1:
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
-
 # ==================== TAB 2: ENHANCED FORECAST ====================
 with tab2:
     st.header("Enhanced Forecast")
@@ -2211,6 +2211,10 @@ with tab2:
                         bounce_sig_d2["side"]
                     )
 
+            if len(df_show) > 1:
+                draw_trend_direction_line(
+                    ax, df_show, label_prefix="Trend"
+                )
             ax.set_ylabel("Price")
             ax.text(0.50, 0.02,
                     f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}",
@@ -2408,7 +2412,6 @@ with tab4:
                      int((~df0['Bull']).sum())]
         }).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
-
 # ==================== TAB 5: NTD -0.75 Scanner ====================
 with tab5:
     st.header("NTD -0.75 Scanner (NTD < -0.75)")
