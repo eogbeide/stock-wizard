@@ -3,6 +3,7 @@
 #   • Stock hourly chart now uses the SAME layout and indicators as Forex hourly view:
 #       - Supertrend, PSAR, Bollinger Bands, HMA
 #       - Volume panel with trendline (Forex-only; stocks skip this panel per request)
+#       - Momentum (ROC%) panel
 #       - NTD + NPX indicator panel with triangles, stars, in-range shading
 #   • BUY/SELL instruction uses slope direction.
 #   • Chart BUY/SELL markers only trigger when price "bounces" off the ±2σ band:
@@ -12,7 +13,7 @@
 #   • NTD triangles are gated by price trend sign.
 #   • NTD scanner lists symbols whose latest NTD value is below -0.75 (daily; hourly for Forex).
 
-import streamlit as std
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -204,14 +205,17 @@ mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2, key="sb_bb_period")
 daily_view = st.sidebar.selectbox("Daily view range:", ["Historical", "6M", "12M", "24M"],
                                   index=2, key="sb_daily_view")
-# default Fibonacci = selected
-show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=True, key="sb_show_fibs")
+show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=False, key="sb_show_fibs")
 
 slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10, key="sb_slope_lb_daily")
 slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120,  6, key="sb_slope_lb_hourly")
 
 st.sidebar.subheader("Hourly Support/Resistance Window")
 sr_lb_hourly = st.sidebar.slider("Hourly S/R lookback (bars)", 20, 240, 60, 5, key="sb_sr_lb_hourly")
+
+st.sidebar.subheader("Hourly Momentum")
+show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True, key="sb_show_mom_hourly")
+mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, key="sb_mom_lb_hourly")
 
 st.sidebar.subheader("Hourly Indicator Panel")
 show_nrsi   = st.sidebar.checkbox("Show Hourly NTD panel", value=True, key="sb_show_nrsi")
@@ -356,7 +360,6 @@ def compute_sarimax_forecast(series_like):
     idx = pd.date_range(series.index[-1] + timedelta(days=1),
                         periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
-
 def fibonacci_levels(series_like):
     s = _coerce_1d_series(series_like).dropna()
     hi = float(s.max()) if not s.empty else np.nan
@@ -499,7 +502,16 @@ def find_band_bounce_signal(price: pd.Series,
             return None
         t = idx[-1]
         return {"time": t, "price": float(p.loc[t]), "side": "SELL"}
+
 # ---------- Other indicators ----------
+def compute_roc(series_like, n: int = 10) -> pd.Series:
+    s = _coerce_1d_series(series_like)
+    base = s.dropna()
+    if base.empty:
+        return pd.Series(index=s.index, dtype=float)
+    roc = base.pct_change(n) * 100.0
+    return roc.reindex(s.index)
+
 def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
     if s.empty or period < 2:
@@ -697,7 +709,6 @@ def _cross_series(price: pd.Series, line: pd.Series):
     cross_up = above & (~above.shift(1).fillna(False))
     cross_dn = (~above) & (above.shift(1).fillna(False))
     return cross_up.reindex(p.index, fill_value=False), cross_dn.reindex(p.index, fill_value=False)
-
 def find_hma_sr_signal(price: pd.Series,
                        hma: pd.Series,
                        support: pd.Series,
@@ -829,13 +840,13 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10,
     upperband = hl2 + atr_mult * atr
     lowerband = hl2 - atr_mult * atr
 
-    st_line = pd.Series(index=ohlc.index, dtype=float)
+    st = pd.Series(index=ohlc.index, dtype=float)
     in_uptrend = pd.Series(index=ohlc.index, dtype=bool)
 
     for i in range(len(ohlc)):
         if i == 0:
             in_uptrend.iloc[i] = True
-            st_line.iloc[i] = lowerband.iloc[i]
+            st.iloc[i] = lowerband.iloc[i]
             continue
 
         if ohlc['Close'].iloc[i] > upperband.iloc[i-1]:
@@ -849,9 +860,9 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10,
             if (not in_uptrend.iloc[i]) and upperband.iloc[i] > upperband.iloc[i-1]:
                 upperband.iloc[i] = upperband.iloc[i-1]
 
-        st_line.iloc[i] = lowerband.iloc[i] if in_uptrend.iloc[i] else upperband.iloc[i]
+        st.iloc[i] = lowerband.iloc[i] if in_uptrend.iloc[i] else upperband.iloc[i]
 
-    return pd.DataFrame({"ST": st_line, "in_uptrend": in_uptrend})
+    return pd.DataFrame({"ST": st, "in_uptrend": in_uptrend})
 
 def compute_psar_from_ohlc(df: pd.DataFrame,
                            step: float = 0.02,
@@ -1430,8 +1441,7 @@ def last_green_dot_hourly(symbol: str, ntd_win: int, period: str = "1d",
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
     st.session_state.ticker = None
-    # default hourly lookback = 48h
-    st.session_state.hour_range = "48h"
+    st.session_state.hour_range = "24h"
 if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
@@ -1444,7 +1454,6 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "NTD -0.75 Scanner",
     "Long-Term History"
 ])
-
 # ---------- SHARED HOURLY RENDERER (Stock & Forex use this) ----------
 def render_hourly_views(sel: str,
                         intraday: pd.DataFrame,
@@ -1457,6 +1466,7 @@ def render_hourly_views(sel: str,
       • Price + EMA + S/R + Supertrend + PSAR + HMA + Bollinger + slope ±2σ + bounce signal
       • Volume panel with mid-line & trend (Forex-only; stocks skip this panel per request)
       • NTD panel (NTD + NPX + triangles + stars + in-range shading)
+      • Momentum (ROC%) panel
       • Forex-only extras: session lines (PST)
     """
     if intraday is None or intraday.empty or "Close" not in intraday:
@@ -1730,6 +1740,28 @@ def render_hourly_views(sel: str,
         ax2r.legend(loc="lower left", framealpha=0.5)
         ax2r.set_xlabel("Time (PST)")
         st.pyplot(fig2r)
+
+    # ---- Momentum panel (ROC%) ----
+    if show_mom_hourly:
+        roc = compute_roc(hc, n=mom_lb_hourly)
+        res_m = roc.rolling(60, min_periods=1).max()
+        sup_m = roc.rolling(60, min_periods=1).min()
+
+        fig2m, ax2m = plt.subplots(figsize=(14, 2.8))
+        ax2m.set_title(f"Momentum (ROC% over {mom_lb_hourly} bars)")
+        ax2m.plot(roc.index, roc, label=f"ROC%({mom_lb_hourly})")
+        yhat_m, m_m = slope_line(roc, slope_lb_hourly)
+        if not yhat_m.empty:
+            ax2m.plot(yhat_m.index, yhat_m.values, "--", linewidth=2,
+                      label=f"Trend {slope_lb_hourly} ({fmt_slope(m_m)}%/bar)")
+        ax2m.plot(res_m.index, res_m, ":", label="Mom Resistance")
+        ax2m.plot(sup_m.index, sup_m, ":", label="Mom Support")
+        ax2m.axhline(0, linestyle="--", linewidth=1)
+        ax2m.set_xlabel("Time (PST)")
+        ax2m.legend(loc="lower left", framealpha=0.5)
+        ax2m.set_xlim(xlim_price)
+        st.pyplot(fig2m)
+
 # ==================== TAB 1: ORIGINAL FORECAST ====================
 with tab1:
     st.header("Original Forecast")
@@ -1742,7 +1774,7 @@ with tab1:
         "Hourly lookback:",
         ["24h", "48h", "96h"],
         index=["24h","48h","96h"].index(
-            st.session_state.get("hour_range","48h")
+            st.session_state.get("hour_range","24h")
         ),
         key="hour_range_select"
     )
@@ -2068,7 +2100,7 @@ with tab2:
             if np.isfinite(last_price) else np.nan
         p_dn = 1 - p_up if np.isfinite(p_up) else np.nan
         st.caption(
-            f"Intraday lookback: **{st.session_state.get('hour_range','48h')}**"
+            f"Intraday lookback: **{st.session_state.get('hour_range','24h')}**"
         )
 
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
@@ -2376,6 +2408,7 @@ with tab4:
                      int((~df0['Bull']).sum())]
         }).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
+
 # ==================== TAB 5: NTD -0.75 Scanner ====================
 with tab5:
     st.header("NTD -0.75 Scanner (NTD < -0.75)")
@@ -2389,7 +2422,7 @@ with tab5:
         "Hourly lookback for Forex:",
         ["24h", "48h", "96h"],
         index=["24h","48h","96h"].index(
-            st.session_state.get("hour_range", "48h")
+            st.session_state.get("hour_range", "24h")
         ),
         key="ntd_scan_hour_range"
     )
@@ -2647,9 +2680,9 @@ with tab6:
                 ax.plot(upper_all.index, upper_all.values, ":",
                         linewidth=2.0, color="black", alpha=0.85,
                         label="Trend +2σ")
-            ax.plot(lower_all.index, lower_all.values, ":",
-                    linewidth=2.0, color="black", alpha=0.85,
-                    label="Trend -2σ")
+                ax.plot(lower_all.index, lower_all.values, ":",
+                        linewidth=2.0, color="black", alpha=0.85,
+                        label="Trend -2σ")
             px_now = _safe_last_float(s)
             if np.isfinite(px_now):
                 ax.text(
