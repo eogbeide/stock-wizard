@@ -3,12 +3,12 @@
 #   • Stock hourly chart now uses the SAME layout and indicators as Forex hourly view:
 #       - Supertrend, PSAR, Bollinger Bands, HMA
 #       - Volume panel with trendline (Forex-only; stocks skip this panel per request)
+#       - Momentum (ROC%) panel
 #       - NTD + NPX indicator panel with triangles, stars, in-range shading
 #   • BUY/SELL instruction uses slope direction.
-#   • Chart BUY/SELL markers only trigger AFTER a confirmed reversal from Support/Resistance:
-#       - slope > 0: reversal UP from Support (N bars closing higher, moving toward R) → BUY
-#       - slope < 0: reversal DOWN from Resistance (N bars closing lower, moving toward S) → SELL
-#     (±2σ bands around the slope are still drawn for context.)
+#   • Chart BUY/SELL markers only trigger when price "bounces" off the ±2σ band:
+#        - slope > 0 AND price moves from below LOWER band back inside → BUY
+#        - slope < 0 AND price moves from above UPPER band back inside → SELL
 #   • ±2σ bands around slope are thicker & darker.
 #   • NTD triangles are gated by price trend sign.
 #   • NTD scanner lists symbols whose latest NTD value is below -0.75 (daily; hourly for Forex).
@@ -49,8 +49,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-PACIFIC = pytz.timezone("US/Pacific")
+# --- Auto-refresh (PST) ---
 REFRESH_INTERVAL = 120  # seconds
+PACIFIC = pytz.timezone("US/Pacific")
 
 def auto_refresh():
     if 'last_refresh' not in st.session_state:
@@ -204,14 +205,17 @@ mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2, key="sb_bb_period")
 daily_view = st.sidebar.selectbox("Daily view range:", ["Historical", "6M", "12M", "24M"],
                                   index=2, key="sb_daily_view")
-# default Fibonacci = selected
-show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=True, key="sb_show_fibs")
+show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=False, key="sb_show_fibs")
 
 slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10, key="sb_slope_lb_daily")
 slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120,  6, key="sb_slope_lb_hourly")
 
 st.sidebar.subheader("Hourly Support/Resistance Window")
 sr_lb_hourly = st.sidebar.slider("Hourly S/R lookback (bars)", 20, 240, 60, 5, key="sb_sr_lb_hourly")
+
+st.sidebar.subheader("Hourly Momentum")
+show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True, key="sb_show_mom_hourly")
+mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, key="sb_mom_lb_hourly")
 
 st.sidebar.subheader("Hourly Indicator Panel")
 show_nrsi   = st.sidebar.checkbox("Show Hourly NTD panel", value=True, key="sb_show_nrsi")
@@ -356,7 +360,6 @@ def compute_sarimax_forecast(series_like):
     idx = pd.date_range(series.index[-1] + timedelta(days=1),
                         periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
-
 def fibonacci_levels(series_like):
     s = _coerce_1d_series(series_like).dropna()
     hi = float(s.max()) if not s.empty else np.nan
@@ -444,14 +447,21 @@ def regression_with_band(series_like, lookback: int = 0, z: float = 2.0):
     lower_s = pd.Series(yhat - z * std, index=s.index)
     return yhat_s, upper_s, lower_s, float(m), r2
 
-# --- Legacy: bounce helper using ±2σ band (kept for reference) ---
+# --- NEW: bounce helper using ±2σ band ---
 def find_band_bounce_signal(price: pd.Series,
                             upper_band: pd.Series,
                             lower_band: pd.Series,
                             slope_val: float):
     """
-    Legacy helper: detect BUY/SELL signals based on a 'bounce' off the ±2σ band.
-    (No longer used for price-chart markers; S/R reversal logic is preferred.)
+    Detect the most recent BUY/SELL signal based on a 'bounce' off the ±2σ band
+    around the regression slope.
+
+      • slope > 0 (uptrend): last bar where price moved from BELOW the LOWER band
+        back INSIDE the band → BUY.
+      • slope < 0 (downtrend): last bar where price moved from ABOVE the UPPER band
+        back INSIDE the band → SELL.
+
+    Returns dict(time=..., price=..., side='BUY'/'SELL') or None.
     """
     p = _coerce_1d_series(price)
     u = _coerce_1d_series(upper_band).reindex(p.index)
@@ -477,6 +487,7 @@ def find_band_bounce_signal(price: pd.Series,
         return None
 
     if slope > 0:
+        # Uptrend: bounce off LOWER band (from below → inside)
         candidates = inside & below.shift(1, fill_value=False)
         idx = list(candidates[candidates].index)
         if not idx:
@@ -484,6 +495,7 @@ def find_band_bounce_signal(price: pd.Series,
         t = idx[-1]
         return {"time": t, "price": float(p.loc[t]), "side": "BUY"}
     else:
+        # Downtrend: bounce off UPPER band (from above → inside)
         candidates = inside & above.shift(1, fill_value=False)
         idx = list(candidates[candidates].index)
         if not idx:
@@ -492,6 +504,14 @@ def find_band_bounce_signal(price: pd.Series,
         return {"time": t, "price": float(p.loc[t]), "side": "SELL"}
 
 # ---------- Other indicators ----------
+def compute_roc(series_like, n: int = 10) -> pd.Series:
+    s = _coerce_1d_series(series_like)
+    base = s.dropna()
+    if base.empty:
+        return pd.Series(index=s.index, dtype=float)
+    roc = base.pct_change(n) * 100.0
+    return roc.reindex(s.index)
+
 def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
     if s.empty or period < 2:
@@ -619,7 +639,7 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
             label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return m
 
-# HMA + crossover helpers (line only; chart signals now use S/R reversals)
+# HMA + crossover helpers (line only; chart signals from ±2σ bounce)
 def _wma(s: pd.Series, window: int) -> pd.Series:
     s = _coerce_1d_series(s).astype(float)
     if s.empty or window < 1:
@@ -663,7 +683,7 @@ def detect_last_crossover(price: pd.Series, line: pd.Series):
 def annotate_crossover(ax, ts, px, side: str, note: str = ""):
     """
     Draw a simple BUY/SELL marker at (ts, px).
-    Reused now for S/R-based reversal signals.
+    Reused for ±2σ band bounce signals.
     """
     if side == "BUY":
         ax.scatter([ts], [px], marker="P", s=90, color="tab:green", zorder=7)
@@ -689,7 +709,6 @@ def _cross_series(price: pd.Series, line: pd.Series):
     cross_up = above & (~above.shift(1).fillna(False))
     cross_dn = (~above) & (above.shift(1).fillna(False))
     return cross_up.reindex(p.index, fill_value=False), cross_dn.reindex(p.index, fill_value=False)
-
 def find_hma_sr_signal(price: pd.Series,
                        hma: pd.Series,
                        support: pd.Series,
@@ -821,13 +840,13 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10,
     upperband = hl2 + atr_mult * atr
     lowerband = hl2 - atr_mult * atr
 
-    st_line = pd.Series(index=ohlc.index, dtype=float)
+    st = pd.Series(index=ohlc.index, dtype=float)
     in_uptrend = pd.Series(index=ohlc.index, dtype=bool)
 
     for i in range(len(ohlc)):
         if i == 0:
             in_uptrend.iloc[i] = True
-            st_line.iloc[i] = lowerband.iloc[i]
+            st.iloc[i] = lowerband.iloc[i]
             continue
 
         if ohlc['Close'].iloc[i] > upperband.iloc[i-1]:
@@ -841,9 +860,9 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10,
             if (not in_uptrend.iloc[i]) and upperband.iloc[i] > upperband.iloc[i-1]:
                 upperband.iloc[i] = upperband.iloc[i-1]
 
-        st_line.iloc[i] = lowerband.iloc[i] if in_uptrend.iloc[i] else upperband.iloc[i]
+        st.iloc[i] = lowerband.iloc[i] if in_uptrend.iloc[i] else upperband.iloc[i]
 
-    return pd.DataFrame({"ST": st_line, "in_uptrend": in_uptrend})
+    return pd.DataFrame({"ST": st, "in_uptrend": in_uptrend})
 
 def compute_psar_from_ohlc(df: pd.DataFrame,
                            step: float = 0.02,
@@ -873,6 +892,7 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
         prev_psar = psar.iloc[i-1]
         if in_uptrend.iloc[i-1]:
             psar.iloc[i] = prev_psar + af * (ep - prev_psar)
+            # cannot be above prior lows
             psar.iloc[i] = min(psar.iloc[i],
                                float(low.iloc[i-1]),
                                float(low.iloc[i-2]) if i >= 2 else float(low.iloc[i-1]))
@@ -880,6 +900,7 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
                 ep = float(high.iloc[i])
                 af = min(af + step, max_step)
             if low.iloc[i] < psar.iloc[i]:
+                # flip to downtrend
                 in_uptrend.iloc[i] = False
                 psar.iloc[i] = ep
                 ep = float(low.iloc[i])
@@ -888,6 +909,7 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
                 in_uptrend.iloc[i] = True
         else:
             psar.iloc[i] = prev_psar + af * (ep - prev_psar)
+            # cannot be below prior highs
             psar.iloc[i] = max(psar.iloc[i],
                                float(high.iloc[i-1]),
                                float(high.iloc[i-2]) if i >= 2 else float(high.iloc[i-1]))
@@ -895,6 +917,7 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
                 ep = float(low.iloc[i])
                 af = min(af + step, max_step)
             if high.iloc[i] > psar.iloc[i]:
+                # flip to uptrend
                 in_uptrend.iloc[i] = True
                 psar.iloc[i] = ep
                 ep = float(high.iloc[i])
@@ -1079,80 +1102,6 @@ def overlay_ntd_sr_reversal_stars(ax,
         ax.scatter([t], [ntd0],
                    marker="*", s=170, color="tab:red",   zorder=12,
                    label="SELL ★ (Resistance reversal)")
-
-# --- NEW: S/R-based reversal logic for price-chart BUY/SELL markers ---
-def find_sr_reversal_signal(price: pd.Series,
-                            sup: pd.Series,
-                            res: pd.Series,
-                            trend_slope: float,
-                            prox: float = 0.0025,
-                            bars_confirm: int = 2):
-    """
-    Find the most recent BUY/SELL event based on a **confirmed reversal**
-    from Support/Resistance, not just a touch.
-
-      • slope > 0:  price reverses UP from Support (N bars closing higher,
-                    distance to Resistance shrinking) → BUY
-      • slope < 0:  price reverses DOWN from Resistance (N bars closing lower,
-                    distance to Support shrinking) → SELL
-
-    Returns dict(time=..., price=..., side='BUY'/'SELL') or None.
-    """
-    p = _coerce_1d_series(price).dropna()
-    if p.empty:
-        return None
-
-    s_sup = _coerce_1d_series(sup).reindex(p.index).ffill().bfill()
-    s_res = _coerce_1d_series(res).reindex(p.index).ffill().bfill()
-
-    try:
-        slope = float(trend_slope)
-    except Exception:
-        return None
-    if not np.isfinite(slope) or slope == 0.0:
-        return None
-
-    signal = None
-    for i in range(1, len(p)):
-        t = p.index[i]
-        if t not in s_sup.index or t not in s_res.index:
-            continue
-
-        try:
-            c0 = float(p.iloc[i])
-            c1 = float(p.iloc[i-1])
-            S0 = float(s_sup.loc[t])
-            R0 = float(s_res.loc[t])
-        except Exception:
-            continue
-        if not np.all(np.isfinite([c0, c1, S0, R0])):
-            continue
-
-        near_support = c0 <= S0 * (1.0 + prox)
-        near_resist  = c0 >= R0 * (1.0 - prox)
-
-        gap_res_0 = R0 - c0
-        gap_res_1 = R0 - c1
-        toward_res = gap_res_0 < gap_res_1
-
-        gap_sup_0 = c0 - S0
-        gap_sup_1 = c1 - S0
-        toward_sup = gap_sup_0 < gap_sup_1
-
-        sub = p.iloc[:i+1]
-
-        if slope > 0:
-            if not (near_support and toward_res and
-                    _n_consecutive_increasing(sub, bars_confirm)):
-                continue
-            signal = {"time": t, "price": c0, "side": "BUY"}
-        else:
-            if not (near_resist and toward_sup and
-                    _n_consecutive_decreasing(sub, bars_confirm)):
-                continue
-            signal = {"time": t, "price": c0, "side": "SELL"}
-
-    return signal
 # ---------- Session markers (PST) ----------
 NY_TZ   = pytz.timezone("America/New_York")
 LDN_TZ  = pytz.timezone("Europe/London")
@@ -1492,8 +1441,7 @@ def last_green_dot_hourly(symbol: str, ntd_win: int, period: str = "1d",
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
     st.session_state.ticker = None
-    # default hourly lookback = 48h
-    st.session_state.hour_range = "48h"
+    st.session_state.hour_range = "24h"
 if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
@@ -1506,7 +1454,6 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "NTD -0.75 Scanner",
     "Long-Term History"
 ])
-
 # ---------- SHARED HOURLY RENDERER (Stock & Forex use this) ----------
 def render_hourly_views(sel: str,
                         intraday: pd.DataFrame,
@@ -1516,10 +1463,10 @@ def render_hourly_views(sel: str,
                         is_forex: bool):
     """
     Single hourly layout used for BOTH stocks and forex:
-      • Price + EMA + S/R + Supertrend + PSAR + HMA + Bollinger + slope ±2σ
-      • BUY/SELL markers from **confirmed** S/R reversals (not just touches)
-      • Volume panel with trendline (Forex-only; stocks skip this panel per request)
+      • Price + EMA + S/R + Supertrend + PSAR + HMA + Bollinger + slope ±2σ + bounce signal
+      • Volume panel with mid-line & trend (Forex-only; stocks skip this panel per request)
       • NTD panel (NTD + NPX + triangles + stars + in-range shading)
+      • Momentum (ROC%) panel
       • Forex-only extras: session lines (PST)
     """
     if intraday is None or intraday.empty or "Close" not in intraday:
@@ -1568,7 +1515,8 @@ def render_hourly_views(sel: str,
 
     ax2.plot(hc.index, hc, label="Intraday")
     ax2.plot(hc.index, he, "--", label="20 EMA")
-    # (No separate green dashed trendline to avoid duplicating regression slope.)
+    # NOTE: we intentionally DO NOT plot the global green dashed trendline here
+    # to avoid duplication with the regression slope ±2σ band.
 
     if show_hma and not hma_h.dropna().empty:
         ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6,
@@ -1661,23 +1609,11 @@ def render_hourly_views(sel: str,
         ax2.plot(lower_h.index, lower_h.values, "--", linewidth=2.2,
                  color="black", alpha=0.85, label="Slope -2σ")
 
-    # S/R-based BUY/SELL signal (confirmed reversal) on price chart
-    sr_sig_h = find_sr_reversal_signal(
-        price=hc,
-        sup=sup_h,
-        res=res_h,
-        trend_slope=slope_sig_h,
-        prox=sr_prox_pct,
-        bars_confirm=rev_bars_confirm
-    )
-    if sr_sig_h is not None:
-        annotate_crossover(
-            ax2,
-            sr_sig_h["time"],
-            sr_sig_h["price"],
-            sr_sig_h["side"],
-            note="S/R REV"
-        )
+        # Bounce-based BUY/SELL signal off ±2σ band
+        bounce_sig_h = find_band_bounce_signal(hc, upper_h, lower_h, slope_sig_h)
+        if bounce_sig_h is not None:
+            annotate_crossover(ax2, bounce_sig_h["time"],
+                               bounce_sig_h["price"], bounce_sig_h["side"])
 
     ax2.text(0.01, 0.02,
              f"Slope: {fmt_slope(slope_sig_h)}/bar",
@@ -1804,6 +1740,28 @@ def render_hourly_views(sel: str,
         ax2r.legend(loc="lower left", framealpha=0.5)
         ax2r.set_xlabel("Time (PST)")
         st.pyplot(fig2r)
+
+    # ---- Momentum panel (ROC%) ----
+    if show_mom_hourly:
+        roc = compute_roc(hc, n=mom_lb_hourly)
+        res_m = roc.rolling(60, min_periods=1).max()
+        sup_m = roc.rolling(60, min_periods=1).min()
+
+        fig2m, ax2m = plt.subplots(figsize=(14, 2.8))
+        ax2m.set_title(f"Momentum (ROC% over {mom_lb_hourly} bars)")
+        ax2m.plot(roc.index, roc, label=f"ROC%({mom_lb_hourly})")
+        yhat_m, m_m = slope_line(roc, slope_lb_hourly)
+        if not yhat_m.empty:
+            ax2m.plot(yhat_m.index, yhat_m.values, "--", linewidth=2,
+                      label=f"Trend {slope_lb_hourly} ({fmt_slope(m_m)}%/bar)")
+        ax2m.plot(res_m.index, res_m, ":", label="Mom Resistance")
+        ax2m.plot(sup_m.index, sup_m, ":", label="Mom Support")
+        ax2m.axhline(0, linestyle="--", linewidth=1)
+        ax2m.set_xlabel("Time (PST)")
+        ax2m.legend(loc="lower left", framealpha=0.5)
+        ax2m.set_xlim(xlim_price)
+        st.pyplot(fig2m)
+
 # ==================== TAB 1: ORIGINAL FORECAST ====================
 with tab1:
     st.header("Original Forecast")
@@ -1816,7 +1774,7 @@ with tab1:
         "Hourly lookback:",
         ["24h", "48h", "96h"],
         index=["24h","48h","96h"].index(
-            st.session_state.get("hour_range","48h")
+            st.session_state.get("hour_range","24h")
         ),
         key="hour_range_select"
     )
@@ -1892,7 +1850,8 @@ with tab1:
             yhat_d_show = yhat_d.reindex(df_show.index) if not yhat_d.empty else yhat_d
             upper_d_show= upper_d.reindex(df_show.index) if not upper_d.empty else upper_d
             lower_d_show= lower_d.reindex(df_show.index) if not lower_d.empty else lower_d
-            yhat_ema_show = yhat_ema30.reindex(df_show.index) if not yhat_ema30.empty else yhat_ema30
+            yhat_ema_show = yhat_ema30.reindex(df_show.index) \
+                if not yhat_ema30.empty else yhat_ema30
             ntd_d_show  = ntd_d.reindex(df_show.index)
             npx_d_show  = npx_d_full.reindex(df_show.index)
             kijun_d_show = kijun_d.reindex(df_show.index).ffill().bfill()
@@ -1991,23 +1950,15 @@ with tab1:
                         linewidth=2.2, color="black", alpha=0.85,
                         label="Daily Trend -2σ")
 
-            # NEW: S/R-based reversal BUY/SELL marker on DAILY price chart
-            sr_sig_d = find_sr_reversal_signal(
-                price=df_show,
-                sup=sup30_show,
-                res=res30_show,
-                trend_slope=m_d,
-                prox=sr_prox_pct,
-                bars_confirm=rev_bars_confirm
-            )
-            if sr_sig_d is not None:
-                annotate_crossover(
-                    ax,
-                    sr_sig_d["time"],
-                    sr_sig_d["price"],
-                    sr_sig_d["side"],
-                    note="S/R REV"
+                bounce_sig_d = find_band_bounce_signal(
+                    df_show, upper_d_show, lower_d_show, m_d
                 )
+                if bounce_sig_d is not None:
+                    annotate_crossover(
+                        ax, bounce_sig_d["time"],
+                        bounce_sig_d["price"],
+                        bounce_sig_d["side"]
+                    )
 
             if not yhat_ema_show.empty:
                 ax.plot(yhat_ema_show.index, yhat_ema_show.values, "-",
@@ -2149,7 +2100,7 @@ with tab2:
             if np.isfinite(last_price) else np.nan
         p_dn = 1 - p_up if np.isfinite(p_up) else np.nan
         st.caption(
-            f"Intraday lookback: **{st.session_state.get('hour_range','48h')}**"
+            f"Intraday lookback: **{st.session_state.get('hour_range','24h')}**"
         )
 
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
@@ -2186,9 +2137,12 @@ with tab2:
             ema30_show = ema30.reindex(df_show.index)
             res30_show = res30.reindex(df_show.index)
             sup30_show = sup30.reindex(df_show.index)
-            yhat_d_show = yhat_d.reindex(df_show.index) if not yhat_d.empty else yhat_d
-            upper_d_show = upper_d.reindex(df_show.index) if not upper_d.empty else upper_d
-            lower_d_show = lower_d.reindex(df_show.index) if not lower_d.empty else lower_d
+            yhat_d_show = yhat_d.reindex(df_show.index) \
+                if not yhat_d.empty else yhat_d
+            upper_d_show = upper_d.reindex(df_show.index) \
+                if not upper_d.empty else upper_d
+            lower_d_show = lower_d.reindex(df_show.index) \
+                if not lower_d.empty else lower_d
             ntd_d_show = ntd_d2.reindex(df_show.index)
             npx_d2_show = npx_d2_full.reindex(df_show.index)
             kijun_d2_show = kijun_d2.reindex(df_show.index).ffill().bfill()
@@ -2247,23 +2201,15 @@ with tab2:
                         linewidth=2.2, color="black", alpha=0.85,
                         label="Daily Trend -2σ")
 
-            # NEW: S/R-based reversal BUY/SELL marker on Enhanced DAILY price chart
-            sr_sig_d2 = find_sr_reversal_signal(
-                price=df_show,
-                sup=sup30_show,
-                res=res30_show,
-                trend_slope=m_d,
-                prox=sr_prox_pct,
-                bars_confirm=rev_bars_confirm
-            )
-            if sr_sig_d2 is not None:
-                annotate_crossover(
-                    ax,
-                    sr_sig_d2["time"],
-                    sr_sig_d2["price"],
-                    sr_sig_d2["side"],
-                    note="S/R REV"
+                bounce_sig_d2 = find_band_bounce_signal(
+                    df_show, upper_d_show, lower_d_show, m_d
                 )
+                if bounce_sig_d2 is not None:
+                    annotate_crossover(
+                        ax, bounce_sig_d2["time"],
+                        bounce_sig_d2["price"],
+                        bounce_sig_d2["side"]
+                    )
 
             ax.set_ylabel("Price")
             ax.text(0.50, 0.02,
@@ -2341,6 +2287,7 @@ with tab2:
                     hour_range_label=st.session_state.hour_range,
                     is_forex=(mode == "Forex")
                 )
+
 # ==================== TAB 3: Bull vs Bear ====================
 with tab3:
     st.header("Bull vs Bear Summary")
@@ -2461,6 +2408,7 @@ with tab4:
                      int((~df0['Bull']).sum())]
         }).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
+
 # ==================== TAB 5: NTD -0.75 Scanner ====================
 with tab5:
     st.header("NTD -0.75 Scanner (NTD < -0.75)")
@@ -2474,7 +2422,7 @@ with tab5:
         "Hourly lookback for Forex:",
         ["24h", "48h", "96h"],
         index=["24h","48h","96h"].index(
-            st.session_state.get("hour_range", "48h")
+            st.session_state.get("hour_range", "24h")
         ),
         key="ntd_scan_hour_range"
     )
