@@ -11,8 +11,6 @@
 #   • ±2σ bands around slope are thicker & darker.
 #   • NTD triangles are gated by price trend sign.
 #   • NTD scanner lists symbols whose latest NTD value is below -0.75 (daily; hourly for Forex).
-#   • NEW: Intraday charts visually break lines across long gaps (>36h)
-#          so we **exclude closed-market periods** (e.g., weekends) from plots.
 
 import streamlit as st
 import pandas as pd
@@ -295,22 +293,11 @@ else:
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X'
     ]
 
-# ---------- Data fetchers (UPDATED to drop weekend rows on daily data) ----------
+# ---------- Data fetchers ----------
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
-    """
-    Daily closing prices on actual trading days only.
-    We do NOT fabricate weekend bars via asfreq/ffill.
-    """
-    df = yf.download(
-        ticker,
-        start="2018-01-01",
-        end=pd.to_datetime("today")
-    )[['Close']].dropna()
-    if isinstance(df.index, pd.DatetimeIndex):
-        # Drop explicit weekend rows if the provider returns them
-        df = df[df.index.dayofweek < 5]
-    s = df['Close']
+    s = (yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
+         .asfreq("D").fillna(method="ffill"))
     try:
         s = s.tz_localize(PACIFIC)
     except TypeError:
@@ -320,9 +307,7 @@ def fetch_hist(ticker: str) -> pd.Series:
 @st.cache_data(ttl=120)
 def fetch_hist_max(ticker: str) -> pd.Series:
     df = yf.download(ticker, period="max")[['Close']].dropna()
-    if isinstance(df.index, pd.DatetimeIndex):
-        df = df[df.index.dayofweek < 5]
-    s = df['Close']
+    s = df['Close'].asfreq("D").fillna(method="ffill")
     try:
         s = s.tz_localize(PACIFIC)
     except TypeError:
@@ -331,13 +316,9 @@ def fetch_hist_max(ticker: str) -> pd.Series:
 
 @st.cache_data(ttl=120)
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
-    df = yf.download(
-        ticker,
-        start="2018-01-01",
-        end=pd.to_datetime("today")
-    )[['Open','High','Low','Close']].dropna()
-    if isinstance(df.index, pd.DatetimeIndex):
-        df = df[df.index.dayofweek < 5]
+    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[
+        ['Open','High','Low','Close']
+    ].dropna()
     try:
         df = df.tz_localize(PACIFIC)
     except TypeError:
@@ -982,9 +963,8 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series,
     ntd = ntd.reindex(idx)
     if npx.dropna().empty:
         return
-    # Use gap-aware plotting so NPX line doesn't bridge closed-market periods
-    plot_with_gaps(ax, npx, "-", linewidth=1.2,
-                   color="tab:gray", alpha=0.9, label="NPX (Norm Price)")
+    ax.plot(npx.index, npx.values, "-", linewidth=1.2,
+            color="tab:gray", alpha=0.9, label="NPX (Norm Price)")
     if mark_crosses and not ntd.dropna().empty:
         up_mask, dn_mask = _cross_series(npx, ntd)
         up_idx = list(up_mask[up_mask].index)
@@ -1302,45 +1282,6 @@ def _has_volume_to_plot(vol: pd.Series) -> bool:
     return (np.isfinite(vmax) and vmax > 0.0) or \
            (np.isfinite(vmin) and vmin < 0.0)
 
-# --- NEW: gap-aware plot helper to exclude closed-market periods visually ---
-def plot_with_gaps(ax, series_like, *args, max_gap_hours: float = 36.0, **kwargs):
-    """
-    Plot a time series but BREAK the line whenever there is a gap in time
-    larger than `max_gap_hours`.
-
-    This keeps *all* real data points but avoids drawing long horizontal
-    lines across closed-market periods (e.g., Friday → Monday, Forex weekend).
-    """
-    s = _coerce_1d_series(series_like).dropna()
-    if s.empty:
-        return
-    if not isinstance(s.index, pd.DatetimeIndex) or len(s) < 2:
-        ax.plot(s.index, s.values, *args, **kwargs)
-        return
-
-    diffs_hours = s.index.to_series().diff().dt.total_seconds().div(3600.0)
-    first = True
-    start = 0
-    idx_list = list(s.index)
-
-    for i in range(1, len(idx_list)):
-        if diffs_hours.iloc[i] > max_gap_hours:
-            seg = s.iloc[start:i]
-            if not seg.empty:
-                kw = dict(kwargs)
-                if not first and "label" in kw:
-                    kw["label"] = "_nolegend_"
-                ax.plot(seg.index, seg.values, *args, **kw)
-                first = False
-            start = i
-
-    seg = s.iloc[start:]
-    if not seg.empty:
-        kw = dict(kwargs)
-        if not first and "label" in kw:
-            kw["label"] = "_nolegend_"
-        ax.plot(seg.index, seg.values, *args, **kw)
-
 # ========= Cached last values for scanning =========
 @st.cache_data(ttl=120)
 def last_daily_ntd_value(symbol: str, ntd_win: int):
@@ -1517,10 +1458,6 @@ def render_hourly_views(sel: str,
       • Volume panel with mid-line & trend (Forex-only; stocks skip this panel per request)
       • NTD panel (NTD + NPX + triangles + stars + in-range shading)
       • Forex-only extras: session lines (PST)
-
-    UPDATED: all intraday line plots are drawn with `plot_with_gaps`, so we
-             **break** lines across long gaps (>36h) and visually exclude
-             closed-market periods (e.g., weekends).
     """
     if intraday is None or intraday.empty or "Close" not in intraday:
         st.warning("No intraday data available.")
@@ -1566,28 +1503,26 @@ def render_hourly_views(sel: str,
     fig2, ax2 = plt.subplots(figsize=(14, 4))
     plt.subplots_adjust(top=0.85, right=0.93)
 
-    # Use gap-aware plotting for intraday lines
-    plot_with_gaps(ax2, hc, label="Intraday")
-    plot_with_gaps(ax2, he, "--", label="20 EMA")
-    # (No separate green trendline; regression slope ±2σ is the main trend ref.)
+    ax2.plot(hc.index, hc, label="Intraday")
+    ax2.plot(hc.index, he, "--", label="20 EMA")
+    # NOTE: we intentionally DO NOT plot the global green dashed trendline here
+    # to avoid duplication with the regression slope ±2σ band.
 
     if show_hma and not hma_h.dropna().empty:
-        plot_with_gaps(ax2, hma_h, "-", linewidth=1.6,
-                       label=f"HMA({hma_period})")
+        ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6,
+                 label=f"HMA({hma_period})")
 
     if show_ichi and not kijun_h.dropna().empty:
-        plot_with_gaps(ax2, kijun_h, "-",
-                       linewidth=1.8, color="black",
-                       label=f"Ichimoku Kijun ({ichi_base})")
+        ax2.plot(kijun_h.index, kijun_h.values, "-", linewidth=1.8,
+                 color="black", label=f"Ichimoku Kijun ({ichi_base})")
 
     if show_bbands and not bb_up_h.dropna().empty and not bb_lo_h.dropna().empty:
         ax2.fill_between(hc.index, bb_lo_h, bb_up_h, alpha=0.06,
                          label=f"BB (×{bb_mult:.1f})")
-        plot_with_gaps(ax2, bb_mid_h, "-",
-                       linewidth=1.1,
-                       label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
-        plot_with_gaps(ax2, bb_up_h, ":", linewidth=1.0)
-        plot_with_gaps(ax2, bb_lo_h, ":", linewidth=1.0)
+        ax2.plot(bb_mid_h.index, bb_mid_h.values, "-", linewidth=1.1,
+                 label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
+        ax2.plot(bb_up_h.index, bb_up_h.values, ":", linewidth=1.0)
+        ax2.plot(bb_lo_h.index, bb_lo_h.values, ":", linewidth=1.0)
 
     if show_psar and not psar_h_df.dropna().empty:
         up_mask = psar_h_df["in_uptrend"] == True
@@ -1650,19 +1585,19 @@ def render_hourly_views(sel: str,
                            fc="white", ec="grey", alpha=0.7))
 
     if not st_line_intr.empty:
-        plot_with_gaps(ax2, st_line_intr, "-",
-                       label=f"Supertrend ({atr_period},{atr_mult})")
+        ax2.plot(st_line_intr.index, st_line_intr.values, "-",
+                 label=f"Supertrend ({atr_period},{atr_mult})")
 
     # Regression slope + ±2σ (main trend reference)
     if not yhat_h.empty:
-        plot_with_gaps(ax2, yhat_h, "-",
-                       linewidth=2,
-                       label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
+        ax2.plot(yhat_h.index, yhat_h.values, "-",
+                 linewidth=2,
+                 label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
     if not upper_h.empty and not lower_h.empty:
-        plot_with_gaps(ax2, upper_h, "--", linewidth=2.2,
-                       color="black", alpha=0.85, label="Slope +2σ")
-        plot_with_gaps(ax2, lower_h, "--", linewidth=2.2,
-                       color="black", alpha=0.85, label="Slope -2σ")
+        ax2.plot(upper_h.index, upper_h.values, "--", linewidth=2.2,
+                 color="black", alpha=0.85, label="Slope +2σ")
+        ax2.plot(lower_h.index, lower_h.values, "--", linewidth=2.2,
+                 color="black", alpha=0.85, label="Slope -2σ")
 
         # Bounce-based BUY/SELL signal off ±2σ band
         bounce_sig_h = find_band_bounce_signal(hc, upper_h, lower_h, slope_sig_h)
@@ -1717,12 +1652,12 @@ def render_hourly_views(sel: str,
         )
         ax2v.fill_between(vol.index, 0, vol,
                           alpha=0.18, label="Volume", color="tab:blue")
-        plot_with_gaps(ax2v, vol, linewidth=1.0, color="tab:blue")
-        plot_with_gaps(ax2v, v_mid, ":", linewidth=1.6,
-                       label=f"Mid-line ({slope_lb_hourly}-roll)")
+        ax2v.plot(vol.index, vol, linewidth=1.0, color="tab:blue")
+        ax2v.plot(v_mid.index, v_mid, ":", linewidth=1.6,
+                  label=f"Mid-line ({slope_lb_hourly}-roll)")
         if not v_trend.empty:
-            plot_with_gaps(ax2v, v_trend, "--", linewidth=2,
-                           label=f"Trend {slope_lb_hourly} ({fmt_slope(v_m)}/bar)")
+            ax2v.plot(v_trend.index, v_trend.values, "--", linewidth=2,
+                      label=f"Trend {slope_lb_hourly} ({fmt_slope(v_m)}/bar)")
         ax2v.text(0.01, 0.02,
                   f"Slope: {fmt_slope(v_m)}/bar",
                   transform=ax2v.transAxes, ha="left", va="bottom",
@@ -1757,8 +1692,7 @@ def render_hourly_views(sel: str,
         if show_ntd_channel and np.isfinite(res_val) and np.isfinite(sup_val):
             overlay_inrange_on_ntd(ax2r, hc, sup_h, res_h)
 
-        plot_with_gaps(ax2r, ntd_h, "-",
-                       linewidth=1.6, label="NTD")
+        ax2r.plot(ntd_h.index, ntd_h, "-", linewidth=1.6, label="NTD")
         overlay_ntd_triangles_by_trend(ax2r, ntd_h,
                                        trend_slope=m_h,
                                        upper=0.75, lower=-0.75)
@@ -1772,10 +1706,10 @@ def render_hourly_views(sel: str,
             overlay_npx_on_ntd(ax2r, npx_h, ntd_h,
                                mark_crosses=mark_npx_cross)
         if not ntd_trend_h.empty:
-            plot_with_gaps(ax2r, ntd_trend_h, "--",
-                           linewidth=2,
-                           label=f"NTD Trend {slope_lb_hourly} "
-                                 f"({fmt_slope(ntd_m_h)}/bar)")
+            ax2r.plot(ntd_trend_h.index, ntd_trend_h.values, "--",
+                      linewidth=2,
+                      label=f"NTD Trend {slope_lb_hourly} "
+                            f"({fmt_slope(ntd_m_h)}/bar)")
         if show_hma_rev_ntd and not hma_h.dropna().empty \
            and not hc.dropna().empty:
             overlay_hma_reversal_on_ntd(ax2r, hc, hma_h,
