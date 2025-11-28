@@ -12,6 +12,7 @@
 #   • ±2σ bands around slope are thicker & darker.
 #   • NTD triangles are gated by price trend sign.
 #   • NTD scanner lists symbols whose latest NTD value is below -0.75 (daily; hourly for Forex).
+#   • NEW: Slope reversal probability for daily & hourly price charts.
 
 import streamlit as st
 import pandas as pd
@@ -210,6 +211,17 @@ show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=False, key
 slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10, key="sb_slope_lb_daily")
 slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120,  6, key="sb_slope_lb_hourly")
 
+# --- NEW: Slope reversal probability controls ---
+st.sidebar.subheader("Slope Reversal Probability (experimental)")
+rev_hist_lb = st.sidebar.slider(
+    "History window for reversal stats (bars)",
+    30, 720, 240, 30, key="sb_rev_hist_lb"
+)
+rev_horizon = st.sidebar.slider(
+    "Forward horizon for reversal (bars)",
+    3, 60, 15, 1, key="sb_rev_horizon"
+)
+
 st.sidebar.subheader("Hourly Support/Resistance Window")
 sr_lb_hourly = st.sidebar.slider("Hourly S/R lookback (bars)", 20, 240, 60, 5, key="sb_sr_lb_hourly")
 
@@ -296,7 +308,6 @@ else:
         'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','EURCAD=X',
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
     ]
-
 # ---------- Data fetchers ----------
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
@@ -360,6 +371,7 @@ def compute_sarimax_forecast(series_like):
     idx = pd.date_range(series.index[-1] + timedelta(days=1),
                         periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
+
 def fibonacci_levels(series_like):
     s = _coerce_1d_series(series_like).dropna()
     hi = float(s.max()) if not s.empty else np.nan
@@ -446,6 +458,69 @@ def regression_with_band(series_like, lookback: int = 0, z: float = 2.0):
     upper_s = pd.Series(yhat + z * std, index=s.index)
     lower_s = pd.Series(yhat - z * std, index=s.index)
     return yhat_s, upper_s, lower_s, float(m), r2
+
+# --- NEW: empirical slope reversal probability helper ---
+def slope_reversal_probability(series_like,
+                               current_slope: float,
+                               hist_window: int = 240,
+                               slope_window: int = 60,
+                               horizon: int = 15) -> float:
+    """
+    Estimate P(slope reverses sign within `horizon` bars | current slope sign)
+    using recent history.
+
+    Logic (simple empirical model):
+      • Take last `hist_window` bars (if available).
+      • For each bar i in that window:
+          - Estimate local slope sign from change over `slope_window`.
+          - Look `horizon` bars ahead.
+          - Count how often the future move has the *opposite* sign.
+      • Restrict to episodes where local slope sign == current slope sign.
+      • Return (#reversals / #episodes) in [0,1].
+
+    Returns NaN if insufficient history or current slope sign is 0/NaN.
+    """
+    s = _coerce_1d_series(series_like).dropna()
+    n = len(s)
+    if n < slope_window + horizon + 5:
+        return float("nan")
+
+    try:
+        sign_curr = np.sign(float(current_slope))
+    except Exception:
+        return float("nan")
+    if not np.isfinite(sign_curr) or sign_curr == 0.0:
+        return float("nan")
+
+    start = max(slope_window - 1, n - hist_window - horizon)
+    end = n - horizon - 1
+    if end <= start:
+        return float("nan")
+
+    match = 0
+    flips = 0
+    for i in range(start, end + 1):
+        past_start = i - slope_window + 1
+        if past_start < 0:
+            continue
+        past_change = s.iloc[i] - s.iloc[past_start]
+        sign_past = np.sign(past_change)
+        if not np.isfinite(sign_past) or sign_past == 0.0:
+            continue
+        # Only episodes with same sign as *current* slope
+        if sign_past != sign_curr:
+            continue
+        future_change = s.iloc[i + horizon] - s.iloc[i]
+        sign_future = np.sign(future_change)
+        if not np.isfinite(sign_future) or sign_future == 0.0:
+            continue
+        match += 1
+        if sign_future != sign_past:
+            flips += 1
+
+    if match == 0:
+        return float("nan")
+    return float(flips / match)
 
 # --- NEW: bounce helper using ±2σ band ---
 def find_band_bounce_signal(price: pd.Series,
@@ -709,6 +784,7 @@ def _cross_series(price: pd.Series, line: pd.Series):
     cross_up = above & (~above.shift(1).fillna(False))
     cross_dn = (~above) & (above.shift(1).fillna(False))
     return cross_up.reindex(p.index, fill_value=False), cross_dn.reindex(p.index, fill_value=False)
+
 def find_hma_sr_signal(price: pd.Series,
                        hma: pd.Series,
                        support: pd.Series,
@@ -958,7 +1034,6 @@ def overlay_hma_reversal_on_ntd(ax, price: pd.Series, hma: pd.Series,
         ax.scatter(idx_dn, [y_dn]*len(idx_dn),
                    marker="D", s=70, color="tab:red",   zorder=8,
                    label=f"HMA({period}) REV")
-
 # NPX ↔ NTD overlay/helpers (markers dots/x)
 def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series,
                        mark_crosses: bool = True):
@@ -1102,6 +1177,7 @@ def overlay_ntd_sr_reversal_stars(ax,
         ax.scatter([t], [ntd0],
                    marker="*", s=170, color="tab:red",   zorder=12,
                    label="SELL ★ (Resistance reversal)")
+
 # ---------- Session markers (PST) ----------
 NY_TZ   = pytz.timezone("America/New_York")
 LDN_TZ  = pytz.timezone("Europe/London")
@@ -1509,6 +1585,15 @@ def render_hourly_views(sel: str,
     yhat_h, upper_h, lower_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
     slope_sig_h = m_h if np.isfinite(m_h) else slope_h  # slope used for instructions & signals
 
+    # NEW: empirical probability of slope reversal for hourly slope
+    rev_prob_h = slope_reversal_probability(
+        hc,
+        slope_sig_h,
+        hist_window=rev_hist_lb,
+        slope_window=slope_lb_hourly,
+        horizon=rev_horizon,
+    )
+
     # ---- MAIN HOURLY PRICE FIGURE ----
     fig2, ax2 = plt.subplots(figsize=(14, 4))
     plt.subplots_adjust(top=0.85, right=0.93)
@@ -1573,9 +1658,11 @@ def render_hourly_views(sel: str,
         symbol=sel
     )
 
+    rev_txt_h = fmt_pct(rev_prob_h) if np.isfinite(rev_prob_h) else "n/a"
     ax2.set_title(
         f"{sel} Intraday ({hour_range_label})  "
-        f"↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)} — {instr_txt}"
+        f"↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)} — {instr_txt}  "
+        f"[P(slope rev≤{rev_horizon} bars)={rev_txt_h}]"
     )
 
     if np.isfinite(px_val):
@@ -1616,7 +1703,8 @@ def render_hourly_views(sel: str,
                                bounce_sig_h["price"], bounce_sig_h["side"])
 
     ax2.text(0.01, 0.02,
-             f"Slope: {fmt_slope(slope_sig_h)}/bar",
+             f"Slope: {fmt_slope(slope_sig_h)}/bar  |  "
+             f"P(rev≤{rev_horizon} bars): {fmt_pct(rev_prob_h)}",
              transform=ax2.transAxes, ha="left", va="bottom",
              fontsize=9, color="black",
              bbox=dict(boxstyle="round,pad=0.25",
@@ -1822,6 +1910,16 @@ with tab1:
             yhat_d, upper_d, lower_d, m_d, r2_d = regression_with_band(
                 df, slope_lb_daily
             )
+
+            # NEW: daily slope reversal probability (from full daily history)
+            rev_prob_d = slope_reversal_probability(
+                df,
+                m_d,
+                hist_window=rev_hist_lb,
+                slope_window=slope_lb_daily,
+                horizon=rev_horizon,
+            )
+
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
@@ -1879,9 +1977,11 @@ with tab1:
             )
             plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93)
 
+            rev_txt_d = fmt_pct(rev_prob_d) if np.isfinite(rev_prob_d) else "n/a"
             # PRICE CHART (Daily)
             ax.set_title(
-                f"{sel} Daily — {daily_view} — History, 30 EMA, 30 S/R, Slope, Pivots"
+                f"{sel} Daily — {daily_view} — History, 30 EMA, 30 S/R, Slope, Pivots "
+                f"[P(slope rev≤{rev_horizon} bars)={rev_txt_d}]"
             )
             ax.plot(df_show, label="History")
             ax.plot(ema30_show, "--", label="30 EMA")
@@ -2114,6 +2214,15 @@ with tab2:
                 df, slope_lb_daily
             )
 
+            # NEW: daily reversal probability for enhanced view
+            rev_prob_d2 = slope_reversal_probability(
+                df,
+                m_d,
+                hist_window=rev_hist_lb,
+                slope_window=slope_lb_daily,
+                horizon=rev_horizon,
+            )
+
             ntd_d2 = compute_normalized_trend(df, window=ntd_window) \
                 if show_ntd else pd.Series(index=df.index, dtype=float)
             npx_d2_full = compute_normalized_price(df, window=ntd_window) \
@@ -2157,9 +2266,11 @@ with tab2:
                 gridspec_kw={"height_ratios": [3.2, 1.3]}
             )
             plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93)
+            rev_txt_d2 = fmt_pct(rev_prob_d2) if np.isfinite(rev_prob_d2) else "n/a"
             ax.set_title(
                 f"{st.session_state.ticker} Daily — {daily_view} — "
-                f"History, 30 EMA, 30 S/R, Slope"
+                f"History, 30 EMA, 30 S/R, Slope "
+                f"[P(slope rev≤{rev_horizon} bars)={rev_txt_d2}]"
             )
             ax.plot(df_show, label="History")
             ax.plot(ema30_show, "--", label="30 EMA")
@@ -2287,7 +2398,6 @@ with tab2:
                     hour_range_label=st.session_state.hour_range,
                     is_forex=(mode == "Forex")
                 )
-
 # ==================== TAB 3: Bull vs Bear ====================
 with tab3:
     st.header("Bull vs Bear Summary")
@@ -2336,7 +2446,7 @@ with tab4:
 
         fig, ax = plt.subplots(figsize=(14,5))
         ax.plot(df3m.index, df3m, label="Close")
-        ax.plot(df3m.index, ma30_3m, label="30 MA")
+        ax.plot(ma30_3m.index, ma30_3m, label="30 MA")
         ax.plot(res3m.index, res3m, ":", label="Resistance")
         ax.plot(sup3m.index, sup3m, ":", label="Support")
         if not trend3m.empty:
@@ -2680,9 +2790,9 @@ with tab6:
                 ax.plot(upper_all.index, upper_all.values, ":",
                         linewidth=2.0, color="black", alpha=0.85,
                         label="Trend +2σ")
-                ax.plot(lower_all.index, lower_all.values, ":",
-                        linewidth=2.0, color="black", alpha=0.85,
-                        label="Trend -2σ")
+            ax.plot(lower_all.index, lower_all.values, ":",
+                    linewidth=2.0, color="black", alpha=0.85,
+                    label="Trend -2σ")
             px_now = _safe_last_float(s)
             if np.isfinite(px_now):
                 ax.text(
