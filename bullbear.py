@@ -294,7 +294,7 @@ else:
     universe = [
         'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X',
         'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','EURCAD=X',
-        'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
+        'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X'
     ]
 
 # ---------- Data fetchers ----------
@@ -360,7 +360,6 @@ def compute_sarimax_forecast(series_like):
     idx = pd.date_range(series.index[-1] + timedelta(days=1),
                         periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
-
 def fibonacci_levels(series_like):
     s = _coerce_1d_series(series_like).dropna()
     hi = float(s.max()) if not s.empty else np.nan
@@ -626,9 +625,8 @@ def shade_ntd_regions(ax, ntd: pd.Series):
 
 def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "Trend"):
     """
-    Draw a green/red **dashed** trendline through the price series and
-    return its slope. This is the global visual trend reference on the
-    price chart (separate from the ±2σ regression band used for signals).
+    Legacy helper (no longer used for plotting to avoid duplicate green trendline).
+    Kept for potential future use.
     """
     s = _coerce_1d_series(series_like).dropna()
     if s.shape[0] < 2:
@@ -637,7 +635,7 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
     m, b = np.polyfit(x, s.values, 1)
     yhat = m * x + b
     color = "tab:green" if m >= 0 else "tab:red"
-    ax.plot(s.index, yhat, "--", linewidth=2.4, color=color,
+    ax.plot(s.index, yhat, "-", linewidth=2.4, color=color,
             label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return m
 
@@ -711,7 +709,6 @@ def _cross_series(price: pd.Series, line: pd.Series):
     cross_up = above & (~above.shift(1).fillna(False))
     cross_dn = (~above) & (above.shift(1).fillna(False))
     return cross_up.reindex(p.index, fill_value=False), cross_dn.reindex(p.index, fill_value=False)
-
 def find_hma_sr_signal(price: pd.Series,
                        hma: pd.Series,
                        support: pd.Series,
@@ -929,6 +926,7 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
                 in_uptrend.iloc[i] = False
 
     return pd.DataFrame({"PSAR": psar, "in_uptrend": in_uptrend})
+
 # ---------- HMA reversal markers on NTD panel ----------
 def detect_hma_reversal_masks(price: pd.Series, hma: pd.Series,
                               lookback: int = 3):
@@ -1104,7 +1102,6 @@ def overlay_ntd_sr_reversal_stars(ax,
         ax.scatter([t], [ntd0],
                    marker="*", s=170, color="tab:red",   zorder=12,
                    label="SELL ★ (Resistance reversal)")
-
 # ---------- Session markers (PST) ----------
 NY_TZ   = pytz.timezone("America/New_York")
 LDN_TZ  = pytz.timezone("Europe/London")
@@ -1457,7 +1454,6 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "NTD -0.75 Scanner",
     "Long-Term History"
 ])
-
 # ---------- SHARED HOURLY RENDERER (Stock & Forex use this) ----------
 def render_hourly_views(sel: str,
                         intraday: pd.DataFrame,
@@ -1519,8 +1515,8 @@ def render_hourly_views(sel: str,
 
     ax2.plot(hc.index, hc, label="Intraday")
     ax2.plot(hc.index, he, "--", label="20 EMA")
-    # Global green/red dashed trendline through intraday prices (visual only).
-    draw_trend_direction_line(ax2, hc, label_prefix="Global Trend")
+    # NOTE: we intentionally DO NOT plot the global green dashed trendline here
+    # to avoid duplication with the regression slope ±2σ band.
 
     if show_hma and not hma_h.dropna().empty:
         ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6,
@@ -1765,6 +1761,7 @@ def render_hourly_views(sel: str,
         ax2m.legend(loc="lower left", framealpha=0.5)
         ax2m.set_xlim(xlim_price)
         st.pyplot(fig2m)
+
 # ==================== TAB 1: ORIGINAL FORECAST ====================
 with tab1:
     st.header("Original Forecast")
@@ -1887,9 +1884,6 @@ with tab1:
                 f"{sel} Daily — {daily_view} — History, 30 EMA, 30 S/R, Slope, Pivots"
             )
             ax.plot(df_show, label="History")
-            # Global green/red dashed trendline on daily prices
-            draw_trend_direction_line(ax, df_show, label_prefix="Trend")
-
             ax.plot(ema30_show, "--", label="30 EMA")
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
@@ -2048,7 +2042,7 @@ with tab1:
                          color="black", label="0.00")
             axdw.axhline(0.75, linestyle="-",  linewidth=1.0,
                          color="black", label="+0.75")
-            axdw.axhline(-0.75, linestyle="-",  linewidth=1.0,
+            axdw.axhline(-0.75, linestyle="-", linewidth=1.0,
                          color="black", label="-0.75")
             axdw.set_ylim(-1.1, 1.1)
             axdw.set_xlabel("Date (PST)")
@@ -2089,6 +2083,7 @@ with tab1:
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
+
 # ==================== TAB 2: ENHANCED FORECAST ====================
 with tab2:
     st.header("Enhanced Forecast")
@@ -2167,9 +2162,6 @@ with tab2:
                 f"History, 30 EMA, 30 S/R, Slope"
             )
             ax.plot(df_show, label="History")
-            # Global green/red dashed daily trendline
-            draw_trend_direction_line(ax, df_show, label_prefix="Trend")
-
             ax.plot(ema30_show, "--", label="30 EMA")
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
@@ -2273,7 +2265,7 @@ with tab2:
                           color="black", label="0.00")
             axdw2.axhline(0.75, linestyle="-",  linewidth=1.0,
                           color="black", label="+0.75")
-            axdw2.axhline(-0.75, linestyle="-",  linewidth=1.0,
+            axdw2.axhline(-0.75, linestyle="-", linewidth=1.0,
                           color="black", label="-0.75")
             axdw2.set_ylim(-1.1, 1.1)
             axdw2.set_xlabel("Date (PST)")
@@ -2416,6 +2408,7 @@ with tab4:
                      int((~df0['Bull']).sum())]
         }).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
+
 # ==================== TAB 5: NTD -0.75 Scanner ====================
 with tab5:
     st.header("NTD -0.75 Scanner (NTD < -0.75)")
