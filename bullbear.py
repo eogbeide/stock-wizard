@@ -13,6 +13,7 @@
 #   • NTD triangles are gated by price trend sign.
 #   • NTD scanner lists symbols whose latest NTD value is below -0.75 (daily; hourly for Forex).
 #   • NEW: Slope reversal probability for daily & hourly price charts.
+#   • NEW: Supertrend added to Daily price charts (Original & Enhanced views).
 
 import streamlit as st
 import pandas as pd
@@ -237,7 +238,7 @@ st.sidebar.subheader("NTD Channel (Hourly)")
 show_ntd_channel = st.sidebar.checkbox("Highlight when price is between S/R (S↔R) on NTD",
                                        value=True, key="sb_ntd_channel")
 
-st.sidebar.subheader("Hourly Supertrend")
+st.sidebar.subheader("Supertrend (ATR)")
 atr_period = st.sidebar.slider("ATR period", 5, 50, 10, 1, key="sb_atr_period")
 atr_mult   = st.sidebar.slider("ATR multiplier", 1.0, 5.0, 3.0, 0.5, key="sb_atr_mult")
 
@@ -399,7 +400,6 @@ def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
     R1 = 2 * P - L; S1 = 2 * P - H
     R2 = P + (H - L); S2 = P - (H - L)
     return {"P": P, "R1": R1, "S1": S1, "R2": R2, "S2": S2}
-
 # ---------- Regression & ±2σ band ----------
 def slope_line(series_like, lookback: int):
     s = _coerce_1d_series(series_like).dropna()
@@ -1034,6 +1034,7 @@ def overlay_hma_reversal_on_ntd(ax, price: pd.Series, hma: pd.Series,
         ax.scatter(idx_dn, [y_dn]*len(idx_dn),
                    marker="D", s=70, color="tab:red",   zorder=8,
                    label=f"HMA({period}) REV")
+
 # NPX ↔ NTD overlay/helpers (markers dots/x)
 def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series,
                        mark_crosses: bool = True):
@@ -1063,7 +1064,6 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series,
             ax.scatter(dn_idx, ntd.loc[dn_idx],
                        marker="x", s=60, color="tab:red",   zorder=9,
                        label="Price↓NTD")
-
 # --- NTD triangles gated by PRICE trend sign ---
 def overlay_ntd_triangles_by_trend(ax, ntd: pd.Series, trend_slope: float,
                                    upper: float = 0.75, lower: float = -0.75):
@@ -1431,7 +1431,6 @@ def price_above_kijun_info_hourly(symbol: str, period: str = "1d",
         return _price_above_kijun_from_df(df, base=base)
     except Exception:
         return False, None, np.nan, np.nan
-
 # (Legacy) green-dot scanners kept for future use
 @st.cache_data(ttl=120)
 def last_green_dot_daily(symbol: str, ntd_win: int, level: float = None):
@@ -1530,6 +1529,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "NTD -0.75 Scanner",
     "Long-Term History"
 ])
+
 # ---------- SHARED HOURLY RENDERER (Stock & Forex use this) ----------
 def render_hourly_views(sel: str,
                         intraday: pd.DataFrame,
@@ -1941,6 +1941,11 @@ with tab1:
                 df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema
             )
 
+            # NEW: Supertrend on daily OHLC
+            st_d_df = compute_supertrend(
+                df_ohlc, atr_period=atr_period, atr_mult=atr_mult
+            ) if df_ohlc is not None and not df_ohlc.empty else pd.DataFrame()
+
             df_show     = subset_by_daily_view(df, daily_view)
             ema30_show  = ema30.reindex(df_show.index)
             res30_show  = res30.reindex(df_show.index)
@@ -1969,6 +1974,12 @@ with tab1:
                 x0, x1 = df_show.index[0], df_show.index[-1]
                 psar_d_df = psar_d_df.loc[
                     (psar_d_df.index >= x0) & (psar_d_df.index <= x1)
+                ]
+
+            if not st_d_df.empty and len(df_show.index) > 0:
+                x0, x1 = df_show.index[0], df_show.index[-1]
+                st_d_df = st_d_df.loc[
+                    (st_d_df.index >= x0) & (st_d_df.index <= x1)
                 ]
 
             fig, (ax, axdw) = plt.subplots(
@@ -2036,6 +2047,11 @@ with tab1:
                     ax.scatter(psar_d_df.index[dn_mask],
                                psar_d_df["PSAR"][dn_mask],
                                s=15, color="tab:red",   zorder=6)
+
+            if not st_d_df.empty and "ST" in st_d_df.columns:
+                ax.plot(st_d_df.index, st_d_df["ST"],
+                        "-", linewidth=1.5,
+                        label=f"Supertrend ({atr_period},{atr_mult})")
 
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-",
@@ -2242,6 +2258,11 @@ with tab2:
                 use_ema=bb_use_ema
             )[:3]
 
+            # NEW: Supertrend on enhanced daily OHLC
+            st_d2_df = compute_supertrend(
+                df_ohlc, atr_period=atr_period, atr_mult=atr_mult
+            ) if df_ohlc is not None and not df_ohlc.empty else pd.DataFrame()
+
             df_show = subset_by_daily_view(df, daily_view)
             ema30_show = ema30.reindex(df_show.index)
             res30_show = res30.reindex(df_show.index)
@@ -2260,6 +2281,12 @@ with tab2:
             bb_lo_d2_show  = bb_lo_d2.reindex(df_show.index)
             hma_d2_full = compute_hma(df, period=hma_period)
             hma_d2_show = hma_d2_full.reindex(df_show.index)
+
+            if not st_d2_df.empty and len(df_show.index) > 0:
+                x0, x1 = df_show.index[0], df_show.index[-1]
+                st_d2_df = st_d2_df.loc[
+                    (st_d2_df.index >= x0) & (st_d2_df.index <= x1)
+                ]
 
             fig, (ax, axdw2) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
@@ -2298,6 +2325,11 @@ with tab2:
                         linewidth=1.0)
                 ax.plot(bb_lo_d2_show.index, bb_lo_d2_show.values, ":",
                         linewidth=1.0)
+
+            if not st_d2_df.empty and "ST" in st_d2_df.columns:
+                ax.plot(st_d2_df.index, st_d2_df["ST"],
+                        "-", linewidth=1.5,
+                        label=f"Supertrend ({atr_period},{atr_mult})")
 
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-",
