@@ -20,7 +20,7 @@
 #   • NEW: Trendlines colored green (uptrend) / red (downtrend); ±2σ bands remain black.
 #   • NEW: “Trend (m=…/bar)” lines on NTD indicator panels.
 
-import streamlit as std
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
