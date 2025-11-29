@@ -17,6 +17,8 @@
 #   • NEW: Slope reversal probability for daily & hourly price charts.
 #   • NEW: Supertrend added to Daily price charts (Original & Enhanced views).
 #   • NEW: Fixed Parabolic SAR(0.02,0.02,0.02) + McGinley Dynamic(14) overlays on price charts.
+#   • NEW: Trendlines colored green (uptrend) / red (downtrend); ±2σ bands remain black.
+#   • NEW: “Trend (m=…/bar)” lines on NTD indicator panels.
 
 import streamlit as st
 import pandas as pd
@@ -128,6 +130,24 @@ def fmt_r2(r2: float, digits: int = 1) -> str:
         return "n/a"
     return fmt_pct(rv, digits=digits) if np.isfinite(rv) else "n/a"
 
+def slope_to_color(m: float,
+                   pos_color: str = "tab:green",
+                   neg_color: str = "tab:red",
+                   nan_color: str = "tab:gray") -> str:
+    """
+    Map a numeric slope into a matplotlib color:
+      • m >= 0 → pos_color (green)
+      • m < 0  → neg_color (red)
+      • NaN    → nan_color (gray)
+    """
+    try:
+        mv = float(np.squeeze(m))
+    except Exception:
+        return nan_color
+    if not np.isfinite(mv):
+        return nan_color
+    return pos_color if mv >= 0.0 else neg_color
+
 # FX helpers
 def pip_size_for_symbol(symbol: str):
     s = str(symbol).upper()
@@ -166,7 +186,7 @@ def format_trade_instruction(trend_slope: float,
     entry_buy = float(buy_val) if _finite(buy_val) else float(close_val)
     exit_sell = float(sell_val) if _finite(sell_val) else float(close_val)
 
-    uptrend = False
+    uptrend = False    # noqa: F841
     try:
         uptrend = float(trend_slope) >= 0.0
     except Exception:
@@ -1720,11 +1740,13 @@ def render_hourly_views(sel: str,
         ax2.plot(st_line_intr.index, st_line_intr.values, "-",
                  label=f"Supertrend ({atr_period},{atr_mult})")
 
-    # Regression slope + ±2σ (main trend reference)
+    # Regression slope + ±2σ (main trend reference) — colored green/red
     if not yhat_h.empty:
+        col_trend_h = slope_to_color(m_h)
         ax2.plot(yhat_h.index, yhat_h.values, "-",
                  linewidth=2,
-                 label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
+                 color=col_trend_h,
+                 label=f"Trend (m={fmt_slope(m_h)}/bar)")
     if not upper_h.empty and not lower_h.empty:
         ax2.plot(upper_h.index, upper_h.values, "--", linewidth=2.2,
                  color="black", alpha=0.85, label="Slope +2σ")
@@ -1774,7 +1796,7 @@ def render_hourly_views(sel: str,
     vol = _coerce_1d_series(
         intraday.get("Volume", pd.Series(index=hc.index))
     ).reindex(hc.index).astype(float)
-    if is_forex and _has_volume_to_plot(vol):
+    if is_forex && _has_volume_to_plot(vol):
         v_mid = rolling_midline(vol, window=max(3, int(slope_lb_hourly)))
         v_trend, v_m = slope_line(vol, slope_lb_hourly)
         v_r2 = regression_r2(vol, slope_lb_hourly)
@@ -1839,10 +1861,11 @@ def render_hourly_views(sel: str,
             overlay_npx_on_ntd(ax2r, npx_h, ntd_h,
                                mark_crosses=mark_npx_cross)
         if not ntd_trend_h.empty:
+            col_ntd_trend_h = slope_to_color(ntd_m_h)
             ax2r.plot(ntd_trend_h.index, ntd_trend_h.values, "--",
                       linewidth=2,
-                      label=f"NTD Trend {slope_lb_hourly} "
-                            f"({fmt_slope(ntd_m_h)}/bar)")
+                      color=col_ntd_trend_h,
+                      label=f"Trend (m={fmt_slope(ntd_m_h)}/bar)")
         if show_hma_rev_ntd and not hma_h.dropna().empty \
            and not hc.dropna().empty:
             overlay_hma_reversal_on_ntd(ax2r, hc, hma_h,
@@ -2041,8 +2064,8 @@ with tab1:
             rev_txt_d = fmt_pct(rev_prob_d) if np.isfinite(rev_prob_d) else "n/a"
             # PRICE CHART (Daily)
             ax.set_title(
-                f"{sel} Daily — {daily_view} — History, 30 EMA, 30 S/R, Slope, Pivots "
-                f"[P(slope rev≤{rev_horizon} bars)={rev_txt_d}]"
+                f"{sel} Daily — {daily_view} — History, 30 EMA, 30 S/R, "
+                f"Trend, Pivots [P(slope rev≤{rev_horizon} bars)={rev_txt_d}]"
             )
             ax.plot(df_show, label="History")
             ax.plot(ema30_show, "--", label="30 EMA")
@@ -2123,11 +2146,13 @@ with tab1:
                         "-", linewidth=1.5,
                         label=f"Supertrend ({atr_period},{atr_mult})")
 
+            # Daily regression trendline — green/red; ±2σ black
             if not yhat_d_show.empty:
+                col_trend_d = slope_to_color(m_d)
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-",
                         linewidth=2,
-                        label=f"Daily Slope {slope_lb_daily} "
-                              f"({fmt_slope(m_d)}/bar)")
+                        color=col_trend_d,
+                        label=f"Trend (m={fmt_slope(m_d)}/bar)")
             if not upper_d_show.empty and not lower_d_show.empty:
                 ax.plot(upper_d_show.index, upper_d_show.values, "--",
                         linewidth=2.2, color="black", alpha=0.85,
@@ -2193,10 +2218,11 @@ with tab1:
                     ntd_d_show, slope_lb_daily
                 )
                 if not ntd_trend_d.empty:
+                    col_ntd_trend_d = slope_to_color(ntd_m_d)
                     axdw.plot(ntd_trend_d.index, ntd_trend_d.values,
                               "--", linewidth=2,
-                              label=f"NTD Trend {slope_lb_daily} "
-                                    f"({fmt_slope(ntd_m_d)}/bar)")
+                              color=col_ntd_trend_d,
+                              label=f"Trend (m={fmt_slope(ntd_m_d)}/bar)")
 
                 overlay_ntd_triangles_by_trend(
                     axdw, ntd_d_show, trend_slope=m_d,
@@ -2269,7 +2295,7 @@ with tab1:
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
-# PART 4/5 — Tab 2 (Enhanced Forecast) + Tab 3 & Tab 4 (unchanged logic but with McGinley/SAR on Enhanced Daily)
+# PART 4/5 — Tab 2 (Enhanced Forecast) + Tab 3 & Tab 4 (metrics) with colored trendlines
 
 # ==================== TAB 2: ENHANCED FORECAST ====================
 with tab2:
@@ -2391,7 +2417,7 @@ with tab2:
             rev_txt_d2 = fmt_pct(rev_prob_d2) if np.isfinite(rev_prob_d2) else "n/a"
             ax.set_title(
                 f"{st.session_state.ticker} Daily — {daily_view} — "
-                f"History, 30 EMA, 30 S/R, Slope "
+                f"History, 30 EMA, 30 S/R, Trend "
                 f"[P(slope rev≤{rev_horizon} bars)={rev_txt_d2}]"
             )
             ax.plot(df_show, label="History")
@@ -2459,11 +2485,13 @@ with tab2:
                         "-", linewidth=1.5,
                         label=f"Supertrend ({atr_period},{atr_mult})")
 
+            # Enhanced daily regression trendline — green/red
             if not yhat_d_show.empty:
+                col_trend_d2 = slope_to_color(m_d)
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-",
                         linewidth=2,
-                        label=f"Daily Slope {slope_lb_daily} "
-                              f"({fmt_slope(m_d)}/bar)")
+                        color=col_trend_d2,
+                        label=f"Trend (m={fmt_slope(m_d)}/bar)")
             if not upper_d_show.empty and not lower_d_show.empty:
                 ax.plot(upper_d_show.index, upper_d_show.values, "--",
                         linewidth=2.2, color="black", alpha=0.85,
@@ -2503,11 +2531,12 @@ with tab2:
                     ntd_d_show, slope_lb_daily
                 )
                 if not ntd_trend_d2.empty:
+                    col_ntd_trend_d2 = slope_to_color(ntd_m_d2)
                     axdw2.plot(ntd_trend_d2.index,
                                ntd_trend_d2.values, "--",
                                linewidth=2,
-                               label=f"NTD Trend {slope_lb_daily} "
-                                     f"({fmt_slope(ntd_m_d2)}/bar)")
+                               color=col_ntd_trend_d2,
+                               label=f"Trend (m={fmt_slope(ntd_m_d2)}/bar)")
                 overlay_ntd_triangles_by_trend(
                     axdw2, ntd_d_show, trend_slope=m_d,
                     upper=0.75, lower=-0.75
@@ -2611,7 +2640,9 @@ with tab4:
         ax.plot(res3m.index, res3m, ":", label="Resistance")
         ax.plot(sup3m.index, sup3m, ":", label="Support")
         if not trend3m.empty:
+            col_tr3m = slope_to_color(m3m)
             ax.plot(trend3m.index, trend3m.values, "--",
+                    color=col_tr3m,
                     label=f"Trend (m={fmt_slope(m3m)}/bar)")
         if not up3m.empty and not lo3m.empty:
             ax.plot(up3m.index, up3m.values, ":", linewidth=2.0,
@@ -2650,7 +2681,9 @@ with tab4:
         ax0.plot(res0.index, res0, ":", label="Resistance")
         ax0.plot(sup0.index, sup0, ":", label="Support")
         if not trend0.empty:
+            col_tr0 = slope_to_color(m0)
             ax0.plot(trend0.index, trend0.values, "--",
+                     color=col_tr0,
                      label=f"Trend (m={fmt_slope(m0)}/bar)")
         if not up0.empty and not lo0.empty:
             ax0.plot(up0.index, up0.values, ":", linewidth=2.0,
@@ -2679,7 +2712,7 @@ with tab4:
                      int((~df0['Bull']).sum())]
         }).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
-# PART 5/5 — Tab 5 (Scanner) + Tab 6 (Long-Term History)
+# PART 5/5 — Tab 5 (Scanner) + Tab 6 (Long-Term History) with colored trendline
 
 # ==================== TAB 5: NTD -0.75 Scanner ====================
 with tab5:
@@ -2945,16 +2978,18 @@ with tab6:
                     color="tab:green"
                 )
             if not yhat_all.empty:
+                col_tr_all = slope_to_color(m_all)
                 ax.plot(yhat_all.index, yhat_all.values, "--",
                         linewidth=2,
+                        color=col_tr_all,
                         label=f"Trend (m={fmt_slope(m_all)}/bar)")
             if not upper_all.empty and not lower_all.empty:
                 ax.plot(upper_all.index, upper_all.values, ":",
                         linewidth=2.0, color="black", alpha=0.85,
                         label="Trend +2σ")
-            ax.plot(lower_all.index, lower_all.values, ":",
-                    linewidth=2.0, color="black", alpha=0.85,
-                    label="Trend -2σ")
+                ax.plot(lower_all.index, lower_all.values, ":",
+                        linewidth=2.0, color="black", alpha=0.85,
+                        label="Trend -2σ")
             px_now = _safe_last_float(s)
             if np.isfinite(px_now):
                 ax.text(
