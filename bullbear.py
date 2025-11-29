@@ -13,7 +13,7 @@
 #   • NTD triangles are gated by price trend sign.
 #   • NTD scanner lists symbols whose latest NTD value is below -0.75 (daily; hourly for Forex).
 #   • NEW: Slope reversal probability for daily & hourly price charts.
-#   • NEW: Normalized SMA & MACD overlays on price charts (Daily & Hourly, Tabs 1 & 2)
+#   • NEW: Normalized SMA + Normalized MACD overlays on PRICE charts (daily & hourly).
 
 import streamlit as st
 import pandas as pd
@@ -270,21 +270,6 @@ bb_win        = st.sidebar.slider("BB window", 5, 120, 20, 1, key="sb_bb_win")
 bb_mult       = st.sidebar.slider("BB multiplier (σ)", 1.0, 4.0, 2.0, 0.1, key="sb_bb_mult")
 bb_use_ema    = st.sidebar.checkbox("Use EMA midline (vs SMA)", value=False, key="sb_bb_ema")
 
-# --- NEW: Normalized SMA & MACD on price charts ---
-st.sidebar.subheader("Normalized SMA & MACD (Price Charts)")
-show_nsma_price = st.sidebar.checkbox(
-    "Show normalized SMA on price", value=True, key="sb_show_nsma_price"
-)
-show_nmacd_price = st.sidebar.checkbox(
-    "Show normalized MACD on price", value=True, key="sb_show_nmacd_price"
-)
-nsma_window = st.sidebar.slider(
-    "nSMA window (bars)", 5, 120, 20, 1, key="sb_nsma_window"
-)
-nmacd_norm_win = st.sidebar.slider(
-    "Norm window for nSMA/nMACD", 30, 720, 240, 30, key="sb_nmacd_norm_win"
-)
-
 st.sidebar.subheader("Probabilistic HMA Crossover (Price Charts)")
 show_hma    = st.sidebar.checkbox("Show HMA crossover signal", value=True, key="sb_hma_show")
 hma_period  = st.sidebar.slider("HMA period", 5, 120, 55, 1, key="sb_hma_period")
@@ -297,6 +282,15 @@ hma_rev_lb       = st.sidebar.slider("HMA reversal slope lookback (bars)", 2, 10
 
 st.sidebar.subheader("Reversal Stars (on NTD panel)")
 rev_bars_confirm = st.sidebar.slider("Consecutive bars to confirm reversal", 1, 4, 2, 1, key="sb_rev_bars")
+
+# --- NEW: Normalized SMA & MACD overlays (for price charts) ---
+st.sidebar.subheader("Normalized SMA & MACD (Price Overlays)")
+nsma_win = st.sidebar.slider("SMA window (bars)", 5, 120, 30, 1, key="sb_nsma_win")
+nsma_norm_win = st.sidebar.slider("SMA norm window (bars)", 30, 720, 240, 10, key="sb_nsma_norm")
+nmacd_fast = st.sidebar.slider("MACD fast EMA", 5, 24, 12, 1, key="sb_nmacd_fast")
+nmacd_slow = st.sidebar.slider("MACD slow EMA", 10, 52, 26, 1, key="sb_nmacd_slow")
+nmacd_signal = st.sidebar.slider("MACD signal EMA", 5, 24, 9, 1, key="sb_nmacd_signal")
+nmacd_norm_win = st.sidebar.slider("MACD norm window (bars)", 60, 720, 240, 10, key="sb_nmacd_norm")
 
 # Forex-only extras
 if mode == "Forex":
@@ -623,6 +617,12 @@ def compute_nrsi(close: pd.Series, period: int = 14) -> pd.Series:
 
 def compute_nmacd(close: pd.Series, fast: int = 12, slow: int = 26,
                   signal: int = 9, norm_win: int = 240):
+    """
+    Normalized MACD:
+      • Standard MACD (EMA fast - EMA slow)
+      • Normalize MACD & signal with rolling mean/std over `norm_win`
+      • Compress with tanh into [-1,1].
+    """
     s = _coerce_1d_series(close).astype(float)
     if s.empty:
         return (pd.Series(index=s.index, dtype=float),)*3
@@ -645,6 +645,28 @@ def compute_nmacd(close: pd.Series, fast: int = 12, slow: int = 26,
     return (nmacd.reindex(s.index),
             nsignal.reindex(s.index),
             nhist.reindex(s.index))
+
+# --- NEW: Normalized SMA helper (returns raw SMA + normalized SMA) ---
+def compute_nsma(close: pd.Series, window: int = 30, norm_win: int = 240):
+    """
+    Normalized SMA:
+      • Compute SMA over `window`
+      • Normalize SMA using rolling mean/std over `norm_win`
+      • Compress with tanh into [-1,1].
+    """
+    s = _coerce_1d_series(close).astype(float)
+    idx = s.index
+    if s.empty or window < 2:
+        empty = pd.Series(index=idx, dtype=float)
+        return empty, empty
+    minp_sma = max(2, window // 3)
+    sma = s.rolling(window, min_periods=minp_sma).mean()
+    minp_norm = max(10, norm_win // 10)
+    mean = sma.rolling(norm_win, min_periods=minp_norm).mean()
+    std = sma.rolling(norm_win, min_periods=minp_norm).std().replace(0, np.nan)
+    z = (sma - mean) / std
+    nsma = np.tanh(z / 2.0)
+    return sma.reindex(idx), nsma.reindex(idx)
 
 def compute_nvol(volume: pd.Series, norm_win: int = 240) -> pd.Series:
     v = _coerce_1d_series(volume).astype(float)
@@ -673,29 +695,6 @@ def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26,
     std  = ppo.rolling(int(norm_win), min_periods=minp).std().replace(0, np.nan)
     z = (ppo - mean) / std
     return np.tanh(z / 2.0).reindex(s.index)
-
-# --- NEW: Normalized SMA helper (for price chart overlays) ---
-def compute_normalized_sma(close: pd.Series,
-                           sma_window: int = 20,
-                           norm_win: int = 240) -> pd.Series:
-    """
-    Normalized SMA for use on price charts.
-
-    Steps:
-      • Compute SMA(close, sma_window).
-      • Compute rolling z-score of that SMA over `norm_win`.
-      • Squash to [-1,1] via tanh.
-    """
-    s = _coerce_1d_series(close).astype(float)
-    if s.empty or sma_window < 1 or norm_win < 2:
-        return pd.Series(index=s.index, dtype=float)
-    sma = s.rolling(int(sma_window), min_periods=max(2, sma_window // 2)).mean()
-    minp = max(10, int(norm_win) // 10)
-    mean = sma.rolling(int(norm_win), min_periods=minp).mean()
-    std  = sma.rolling(int(norm_win), min_periods=minp).std().replace(0, np.nan)
-    z = (sma - mean) / std
-    nsma = np.tanh(z / 2.0)
-    return nsma.reindex(s.index)
 
 def compute_normalized_trend(close: pd.Series, window: int = 60) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
@@ -753,6 +752,52 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
     ax.plot(s.index, yhat, "-", linewidth=2.4, color=color,
             label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return m
+
+# --- NEW: Overlay normalized SMA & MACD inside PRICE panel (scaled into a band) ---
+def overlay_normed_oscillators_on_price(ax,
+                                        price: pd.Series,
+                                        nsma: pd.Series = None,
+                                        nmacd: pd.Series = None,
+                                        label_suffix: str = " (norm)"):
+    """
+    Take normalized SMA / MACD in [-1,1] and scale them into a small band
+    within the existing PRICE axis so they live visually inside the price area.
+
+    We don't change the axis type; we simply map [-1,1] into a band just below
+    the main price action and add legends.
+    """
+    p = _coerce_1d_series(price).dropna()
+    if p.empty:
+        return
+    idx = p.index
+    lines = []
+    if nsma is not None:
+        s_nsma = _coerce_1d_series(nsma).reindex(idx)
+        if not s_nsma.dropna().empty:
+            lines.append(("NSMA", s_nsma.clip(-1.0, 1.0)))
+    if nmacd is not None:
+        s_nmacd = _coerce_1d_series(nmacd).reindex(idx)
+        if not s_nmacd.dropna().empty:
+            lines.append(("NMACD", s_nmacd.clip(-1.0, 1.0)))
+    if not lines:
+        return
+
+    pmin = float(p.min())
+    pmax = float(p.max())
+    if not (np.isfinite(pmin) and np.isfinite(pmax)) or pmax <= pmin:
+        return
+
+    # Reserve a small vertical band beneath the current price range.
+    band_height = (pmax - pmin) * 0.18
+    band_bottom = pmin - band_height * 0.15
+    usable_height = band_height * 0.6  # keep some padding
+
+    n_lines = len(lines)
+    for i, (name, series) in enumerate(lines):
+        offset = (i / max(1, n_lines)) * (usable_height * 0.4)
+        scaled = band_bottom + offset + (series + 1.0) / 2.0 * usable_height
+        ax.plot(series.index, scaled, "-", linewidth=1.2,
+                label=f"{name}{label_suffix}")
 
 # HMA + crossover helpers (line only; chart signals from ±2σ bounce)
 def _wma(s: pd.Series, window: int) -> pd.Series:
@@ -1586,7 +1631,7 @@ def render_hourly_views(sel: str,
       • NTD panel (NTD + NPX + triangles + stars + in-range shading)
       • Momentum (ROC%) panel
       • Forex-only extras: session lines (PST)
-      • NEW: normalized SMA & MACD overlays on the price chart (twin y-axis, [-1,1])
+      • NEW: Normalized SMA & MACD overlaid inside price chart band.
     """
     if intraday is None or intraday.empty or "Close" not in intraday:
         st.warning("No intraday data available.")
@@ -1600,18 +1645,6 @@ def render_hourly_views(sel: str,
 
     res_h = hc.rolling(sr_lb_hourly, min_periods=1).max()
     sup_h = hc.rolling(sr_lb_hourly, min_periods=1).min()
-
-    # Normalized SMA & MACD (for overlay on price axis via twin y)
-    nsma_h = compute_normalized_sma(
-        hc, sma_window=nsma_window, norm_win=nmacd_norm_win
-    ) if show_nsma_price else pd.Series(index=hc.index, dtype=float)
-    if show_nmacd_price:
-        nmacd_h, _, _ = compute_nmacd(
-            hc, fast=12, slow=26, signal=9, norm_win=nmacd_norm_win
-        )
-        nmacd_h = nmacd_h.reindex(hc.index)
-    else:
-        nmacd_h = pd.Series(index=hc.index, dtype=float)
 
     # Supertrend & PSAR
     st_intraday = compute_supertrend(intraday, atr_period=atr_period, atr_mult=atr_mult)
@@ -1636,6 +1669,16 @@ def render_hourly_views(sel: str,
         if show_psar else pd.DataFrame()
     psar_h_df = psar_h_df.reindex(hc.index)
 
+    # NEW: NSMA & NMACD (hourly)
+    sma_h, nsma_h = compute_nsma(hc, window=nsma_win, norm_win=nsma_norm_win)
+    nmacd_h, nmacd_sig_h, nmacd_hist_h = compute_nmacd(
+        hc,
+        fast=nmacd_fast,
+        slow=nmacd_slow,
+        signal=nmacd_signal,
+        norm_win=nmacd_norm_win
+    )
+
     # Local regression trend with ±2σ bands and R² (Hourly)
     yhat_h, upper_h, lower_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
     slope_sig_h = m_h if np.isfinite(m_h) else slope_h  # slope used for instructions & signals
@@ -1657,6 +1700,11 @@ def render_hourly_views(sel: str,
     ax2.plot(hc.index, he, "--", label="20 EMA")
     # NOTE: we intentionally DO NOT plot the global green dashed trendline here
     # to avoid duplication with the regression slope ±2σ band.
+
+    # Raw SMA line on price chart
+    if not sma_h.dropna().empty:
+        ax2.plot(sma_h.index, sma_h.values, "-.", linewidth=1.3,
+                 label=f"SMA({nsma_win})")
 
     if show_hma and not hma_h.dropna().empty:
         ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6,
@@ -1757,6 +1805,15 @@ def render_hourly_views(sel: str,
             annotate_crossover(ax2, bounce_sig_h["time"],
                                bounce_sig_h["price"], bounce_sig_h["side"])
 
+    # NEW: overlay normalized SMA & MACD into a band on the price chart
+    overlay_normed_oscillators_on_price(
+        ax2,
+        hc,
+        nsma=nsma_h,
+        nmacd=nmacd_h,
+        label_suffix=" (hourly)"
+    )
+
     ax2.text(0.01, 0.02,
              f"Slope: {fmt_slope(slope_sig_h)}/bar  |  "
              f"P(rev≤{rev_horizon} bars): {fmt_pct(rev_prob_h)}",
@@ -1786,26 +1843,7 @@ def render_hourly_views(sel: str,
             ax2.text(hc.index[-1], y, f" {lbl}", va="center")
 
     ax2.set_xlabel("Time (PST)")
-
-    # --- Overlay normalized SMA & MACD on twin y-axis ([-1,1]) ---
-    handles, labels = ax2.get_legend_handles_labels()
-    if (show_nsma_price and not nsma_h.dropna().empty) or \
-       (show_nmacd_price and not nmacd_h.dropna().empty):
-        ax2b = ax2.twinx()
-        ax2b.set_ylim(-1.1, 1.1)
-        ax2b.axhline(0.0, linestyle="--", linewidth=0.8, alpha=0.6)
-        if show_nsma_price and not nsma_h.dropna().empty:
-            ln_nsma, = ax2b.plot(nsma_h.index, nsma_h.values,
-                                 linewidth=1.0, label=f"nSMA({nsma_window})")
-            handles.append(ln_nsma)
-            labels.append(ln_nsma.get_label())
-        if show_nmacd_price and not nmacd_h.dropna().empty:
-            ln_nmacd, = ax2b.plot(nmacd_h.index, nmacd_h.values,
-                                  linewidth=1.0, label="nMACD")
-            handles.append(ln_nmacd)
-            labels.append(ln_nmacd.get_label())
-    ax2.legend(handles, labels, loc="lower left", framealpha=0.5)
-
+    ax2.legend(loc="lower left", framealpha=0.5)
     xlim_price = ax2.get_xlim()
     st.pyplot(fig2)
 
@@ -2015,15 +2053,15 @@ with tab1:
                 df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema
             )
 
-            # Normalized SMA & MACD for daily price overlay
-            nsma_d_full = compute_normalized_sma(
-                df, sma_window=nsma_window, norm_win=nmacd_norm_win
-            ) if show_nsma_price else pd.Series(index=df.index, dtype=float)
-            nmacd_d_full = pd.Series(index=df.index, dtype=float)
-            if show_nmacd_price:
-                nmacd_d_full, _, _ = compute_nmacd(
-                    df, fast=12, slow=26, signal=9, norm_win=nmacd_norm_win
-                )
+            # NEW: NSMA & NMACD (daily)
+            sma_d, nsma_d = compute_nsma(df, window=nsma_win, norm_win=nsma_norm_win)
+            nmacd_d, nmacd_sig_d, nmacd_hist_d = compute_nmacd(
+                df,
+                fast=nmacd_fast,
+                slow=nmacd_slow,
+                signal=nmacd_signal,
+                norm_win=nmacd_norm_win
+            )
 
             df_show     = subset_by_daily_view(df, daily_view)
             ema30_show  = ema30.reindex(df_show.index)
@@ -2043,8 +2081,9 @@ with tab1:
             bb_pctb_d_show= bb_pctb_d.reindex(df_show.index)
             bb_nbb_d_show = bb_nbb_d.reindex(df_show.index)
 
-            nsma_d_show = nsma_d_full.reindex(df_show.index)
-            nmacd_d_show = nmacd_d_full.reindex(df_show.index)
+            sma_d_show = sma_d.reindex(df_show.index)
+            nsma_d_show = nsma_d.reindex(df_show.index)
+            nmacd_d_show = nmacd_d.reindex(df_show.index)
 
             hma_d_full = compute_hma(df, period=hma_period)
             hma_d_show = hma_d_full.reindex(df_show.index)
@@ -2074,6 +2113,10 @@ with tab1:
             ax.plot(ema30_show, "--", label="30 EMA")
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
+
+            if not sma_d_show.dropna().empty:
+                ax.plot(sma_d_show.index, sma_d_show.values, "-.",
+                        linewidth=1.3, label=f"SMA({nsma_win})")
 
             if show_hma and not hma_d_show.dropna().empty:
                 ax.plot(hma_d_show.index, hma_d_show.values, "-",
@@ -2173,6 +2216,15 @@ with tab1:
                         va="top")
             ax.set_ylabel("Price")
 
+            # NEW: overlay normalized SMA & MACD into price band (daily)
+            overlay_normed_oscillators_on_price(
+                ax,
+                df_show,
+                nsma=nsma_d_show,
+                nmacd=nmacd_d_show,
+                label_suffix=" (daily)"
+            )
+
             ax.text(0.50, 0.02,
                     f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}",
                     transform=ax.transAxes,
@@ -2180,29 +2232,7 @@ with tab1:
                     fontsize=9, color="black",
                     bbox=dict(boxstyle="round,pad=0.25",
                               fc="white", ec="grey", alpha=0.7))
-
-            # --- Overlay normalized SMA & MACD on twin y-axis ([-1,1]) ---
-            handles_d, labels_d = ax.get_legend_handles_labels()
-            if (show_nsma_price and not nsma_d_show.dropna().empty) or \
-               (show_nmacd_price and not nmacd_d_show.dropna().empty):
-                axb = ax.twinx()
-                axb.set_ylim(-1.1, 1.1)
-                axb.axhline(0.0, linestyle="--", linewidth=0.8, alpha=0.6)
-                if show_nsma_price and not nsma_d_show.dropna().empty:
-                    ln_nsma_d, = axb.plot(
-                        nsma_d_show.index, nsma_d_show.values,
-                        linewidth=1.0, label=f"nSMA({nsma_window})"
-                    )
-                    handles_d.append(ln_nsma_d)
-                    labels_d.append(ln_nsma_d.get_label())
-                if show_nmacd_price and not nmacd_d_show.dropna().empty:
-                    ln_nmacd_d, = axb.plot(
-                        nmacd_d_show.index, nmacd_d_show.values,
-                        linewidth=1.0, label="nMACD"
-                    )
-                    handles_d.append(ln_nmacd_d)
-                    labels_d.append(ln_nmacd_d.get_label())
-            ax.legend(handles_d, labels_d, loc="lower left", framealpha=0.5)
+            ax.legend(loc="lower left", framealpha=0.5)
 
             # DAILY NTD PANEL
             axdw.set_title("Daily Indicator Panel — NTD + NPX + Trend")
@@ -2351,15 +2381,15 @@ with tab2:
                 use_ema=bb_use_ema
             )[:3]
 
-            # Normalized SMA & MACD for enhanced daily price overlay
-            nsma_d2_full = compute_normalized_sma(
-                df, sma_window=nsma_window, norm_win=nmacd_norm_win
-            ) if show_nsma_price else pd.Series(index=df.index, dtype=float)
-            nmacd_d2_full = pd.Series(index=df.index, dtype=float)
-            if show_nmacd_price:
-                nmacd_d2_full, _, _ = compute_nmacd(
-                    df, fast=12, slow=26, signal=9, norm_win=nmacd_norm_win
-                )
+            # NEW: NSMA & NMACD (enhanced daily)
+            sma_d2, nsma_d2 = compute_nsma(df, window=nsma_win, norm_win=nsma_norm_win)
+            nmacd_d2, nmacd_sig_d2, nmacd_hist_d2 = compute_nmacd(
+                df,
+                fast=nmacd_fast,
+                slow=nmacd_slow,
+                signal=nmacd_signal,
+                norm_win=nmacd_norm_win
+            )
 
             df_show = subset_by_daily_view(df, daily_view)
             ema30_show = ema30.reindex(df_show.index)
@@ -2377,11 +2407,13 @@ with tab2:
             bb_mid_d2_show = bb_mid_d2.reindex(df_show.index)
             bb_up_d2_show  = bb_up_d2.reindex(df_show.index)
             bb_lo_d2_show  = bb_lo_d2.reindex(df_show.index)
+
+            sma_d2_show = sma_d2.reindex(df_show.index)
+            nsma_d2_show = nsma_d2.reindex(df_show.index)
+            nmacd_d2_show = nmacd_d2.reindex(df_show.index)
+
             hma_d2_full = compute_hma(df, period=hma_period)
             hma_d2_show = hma_d2_full.reindex(df_show.index)
-
-            nsma_d2_show = nsma_d2_full.reindex(df_show.index)
-            nmacd_d2_show = nmacd_d2_full.reindex(df_show.index)
 
             fig, (ax, axdw2) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
@@ -2398,6 +2430,10 @@ with tab2:
             ax.plot(ema30_show, "--", label="30 EMA")
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
+
+            if not sma_d2_show.dropna().empty:
+                ax.plot(sma_d2_show.index, sma_d2_show.values, "-.",
+                        linewidth=1.3, label=f"SMA({nsma_win})")
 
             if show_hma and not hma_d2_show.dropna().empty:
                 ax.plot(hma_d2_show.index, hma_d2_show.values, "-",
@@ -2445,6 +2481,16 @@ with tab2:
                     )
 
             ax.set_ylabel("Price")
+
+            # NEW: overlay normalized SMA & MACD on enhanced daily price chart
+            overlay_normed_oscillators_on_price(
+                ax,
+                df_show,
+                nsma=nsma_d2_show,
+                nmacd=nmacd_d2_show,
+                label_suffix=" (daily)"
+            )
+
             ax.text(0.50, 0.02,
                     f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}",
                     transform=ax.transAxes,
@@ -2452,29 +2498,7 @@ with tab2:
                     fontsize=9, color="black",
                     bbox=dict(boxstyle="round,pad=0.25",
                               fc="white", ec="grey", alpha=0.7))
-
-            # --- Overlay normalized SMA & MACD on twin y-axis ([-1,1]) ---
-            handles2, labels2 = ax.get_legend_handles_labels()
-            if (show_nsma_price and not nsma_d2_show.dropna().empty) or \
-               (show_nmacd_price and not nmacd_d2_show.dropna().empty):
-                axb2 = ax.twinx()
-                axb2.set_ylim(-1.1, 1.1)
-                axb2.axhline(0.0, linestyle="--", linewidth=0.8, alpha=0.6)
-                if show_nsma_price and not nsma_d2_show.dropna().empty:
-                    ln_nsma_d2, = axb2.plot(
-                        nsma_d2_show.index, nsma_d2_show.values,
-                        linewidth=1.0, label=f"nSMA({nsma_window})"
-                    )
-                    handles2.append(ln_nsma_d2)
-                    labels2.append(ln_nsma_d2.get_label())
-                if show_nmacd_price and not nmacd_d2_show.dropna().empty:
-                    ln_nmacd_d2, = axb2.plot(
-                        nmacd_d2_show.index, nmacd_d2_show.values,
-                        linewidth=1.0, label="nMACD"
-                    )
-                    handles2.append(ln_nmacd_d2)
-                    labels2.append(ln_nmacd_d2.get_label())
-            ax.legend(handles2, labels2, loc="lower left", framealpha=0.5)
+            ax.legend(loc="lower left", framealpha=0.5)
 
             axdw2.set_title("Daily Indicator Panel — NTD + NPX + Trend")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
