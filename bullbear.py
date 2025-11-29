@@ -1,3 +1,5 @@
+# PART 1/5 — imports, config, helpers, indicators (incl. McGinley), scanners
+
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # UPDATED — per request:
 #   • Stock hourly chart now uses the SAME layout and indicators as Forex hourly view:
@@ -14,6 +16,7 @@
 #   • NTD scanner lists symbols whose latest NTD value is below -0.75 (daily; hourly for Forex).
 #   • NEW: Slope reversal probability for daily & hourly price charts.
 #   • NEW: Supertrend added to Daily price charts (Original & Enhanced views).
+#   • NEW: Fixed Parabolic SAR(0.02,0.02,0.02) + McGinley Dynamic(14) overlays on price charts.
 
 import streamlit as st
 import pandas as pd
@@ -309,6 +312,7 @@ else:
         'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','EURCAD=X',
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
     ]
+
 # ---------- Data fetchers ----------
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
@@ -400,6 +404,7 @@ def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
     R1 = 2 * P - L; S1 = 2 * P - H
     R2 = P + (H - L); S2 = P - (H - L)
     return {"P": P, "R1": R1, "S1": S1, "R2": R2, "S2": S2}
+
 # ---------- Regression & ±2σ band ----------
 def slope_line(series_like, lookback: int):
     s = _coerce_1d_series(series_like).dropna()
@@ -468,17 +473,6 @@ def slope_reversal_probability(series_like,
     """
     Estimate P(slope reverses sign within `horizon` bars | current slope sign)
     using recent history.
-
-    Logic (simple empirical model):
-      • Take last `hist_window` bars (if available).
-      • For each bar i in that window:
-          - Estimate local slope sign from change over `slope_window`.
-          - Look `horizon` bars ahead.
-          - Count how often the future move has the *opposite* sign.
-      • Restrict to episodes where local slope sign == current slope sign.
-      • Return (#reversals / #episodes) in [0,1].
-
-    Returns NaN if insufficient history or current slope sign is 0/NaN.
     """
     s = _coerce_1d_series(series_like).dropna()
     n = len(s)
@@ -507,7 +501,6 @@ def slope_reversal_probability(series_like,
         sign_past = np.sign(past_change)
         if not np.isfinite(sign_past) or sign_past == 0.0:
             continue
-        # Only episodes with same sign as *current* slope
         if sign_past != sign_curr:
             continue
         future_change = s.iloc[i + horizon] - s.iloc[i]
@@ -528,15 +521,7 @@ def find_band_bounce_signal(price: pd.Series,
                             lower_band: pd.Series,
                             slope_val: float):
     """
-    Detect the most recent BUY/SELL signal based on a 'bounce' off the ±2σ band
-    around the regression slope.
-
-      • slope > 0 (uptrend): last bar where price moved from BELOW the LOWER band
-        back INSIDE the band → BUY.
-      • slope < 0 (downtrend): last bar where price moved from ABOVE the UPPER band
-        back INSIDE the band → SELL.
-
-    Returns dict(time=..., price=..., side='BUY'/'SELL') or None.
+    Detect the most recent BUY/SELL signal based on a 'bounce' off the ±2σ band.
     """
     p = _coerce_1d_series(price)
     u = _coerce_1d_series(upper_band).reindex(p.index)
@@ -562,7 +547,6 @@ def find_band_bounce_signal(price: pd.Series,
         return None
 
     if slope > 0:
-        # Uptrend: bounce off LOWER band (from below → inside)
         candidates = inside & below.shift(1, fill_value=False)
         idx = list(candidates[candidates].index)
         if not idx:
@@ -570,7 +554,6 @@ def find_band_bounce_signal(price: pd.Series,
         t = idx[-1]
         return {"time": t, "price": float(p.loc[t]), "side": "BUY"}
     else:
-        # Downtrend: bounce off UPPER band (from above → inside)
         candidates = inside & above.shift(1, fill_value=False)
         idx = list(candidates[candidates].index)
         if not idx:
@@ -688,6 +671,44 @@ def compute_normalized_price(close: pd.Series, window: int = 60) -> pd.Series:
     sd = s.rolling(window, min_periods=minp).std().replace(0, np.nan)
     z = (s - m) / sd
     return np.tanh(z / 2.0).reindex(s.index)
+
+def compute_mcginley(close: pd.Series, length: int = 14) -> pd.Series:
+    """
+    McGinley Dynamic (length N):
+
+        MD_t = MD_(t-1) + (Price_t - MD_(t-1)) /
+                            (N * (Price_t / MD_(t-1))^4)
+
+    This behaves like an adaptive moving average that speeds up in fast
+    markets and slows down in choppy conditions.
+    """
+    s = _coerce_1d_series(close).astype(float)
+    if s.empty:
+        return pd.Series(index=s.index, dtype=float)
+
+    md = pd.Series(index=s.index, dtype=float)
+    N = max(1, int(length))
+
+    first_valid = s.first_valid_index()
+    if first_valid is None:
+        return md
+
+    md.loc[first_valid] = s.loc[first_valid]
+    prev_val = md.loc[first_valid]
+    idx = list(s.index)
+    start_pos = idx.index(first_valid)
+
+    for pos in range(start_pos + 1, len(idx)):
+        t = idx[pos]
+        px = s.loc[t]
+        if not (np.isfinite(px) and np.isfinite(prev_val)) or prev_val == 0:
+            md.loc[t] = prev_val
+            continue
+        ratio = px / prev_val
+        md.loc[t] = prev_val + (px - prev_val) / (N * (ratio ** 4))
+        prev_val = md.loc[t]
+
+    return md.reindex(s.index)
 
 def shade_ntd_regions(ax, ntd: pd.Series):
     if ntd is None or ntd.empty:
@@ -958,7 +979,6 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
     psar = pd.Series(index=idx, dtype=float)
     in_uptrend = pd.Series(index=idx, dtype=bool)
 
-    # initialize
     in_uptrend.iloc[0] = True
     psar.iloc[0] = float(low.iloc[0])
     ep = float(high.iloc[0])   # extreme point
@@ -968,7 +988,6 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
         prev_psar = psar.iloc[i-1]
         if in_uptrend.iloc[i-1]:
             psar.iloc[i] = prev_psar + af * (ep - prev_psar)
-            # cannot be above prior lows
             psar.iloc[i] = min(psar.iloc[i],
                                float(low.iloc[i-1]),
                                float(low.iloc[i-2]) if i >= 2 else float(low.iloc[i-1]))
@@ -976,7 +995,6 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
                 ep = float(high.iloc[i])
                 af = min(af + step, max_step)
             if low.iloc[i] < psar.iloc[i]:
-                # flip to downtrend
                 in_uptrend.iloc[i] = False
                 psar.iloc[i] = ep
                 ep = float(low.iloc[i])
@@ -985,7 +1003,6 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
                 in_uptrend.iloc[i] = True
         else:
             psar.iloc[i] = prev_psar + af * (ep - prev_psar)
-            # cannot be below prior highs
             psar.iloc[i] = max(psar.iloc[i],
                                float(high.iloc[i-1]),
                                float(high.iloc[i-2]) if i >= 2 else float(high.iloc[i-1]))
@@ -993,7 +1010,6 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
                 ep = float(low.iloc[i])
                 af = min(af + step, max_step)
             if high.iloc[i] > psar.iloc[i]:
-                # flip to uptrend
                 in_uptrend.iloc[i] = True
                 psar.iloc[i] = ep
                 ep = float(high.iloc[i])
@@ -1064,17 +1080,12 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series,
             ax.scatter(dn_idx, ntd.loc[dn_idx],
                        marker="x", s=60, color="tab:red",   zorder=9,
                        label="Price↓NTD")
+
 # --- NTD triangles gated by PRICE trend sign ---
 def overlay_ntd_triangles_by_trend(ax, ntd: pd.Series, trend_slope: float,
                                    upper: float = 0.75, lower: float = -0.75):
     """
-    Show triangles on NTD panel, but:
-      • GREEN triangles only if price trend slope > 0
-      • RED triangles   only if price trend slope < 0
-
-    Triangle events:
-      • Cross 0 upward (green) / downward (red) — plotted at y=0
-      • First entry outside band: above +0.75 (red), below -0.75 (green)
+    Show triangles on NTD panel, but gate by price trend sign.
     """
     s = _coerce_1d_series(ntd).dropna()
     if s.empty or not np.isfinite(trend_slope):
@@ -1431,6 +1442,7 @@ def price_above_kijun_info_hourly(symbol: str, period: str = "1d",
         return _price_above_kijun_from_df(df, base=base)
     except Exception:
         return False, None, np.nan, np.nan
+
 # (Legacy) green-dot scanners kept for future use
 @st.cache_data(ttl=120)
 def last_green_dot_daily(symbol: str, ntd_win: int, level: float = None):
@@ -1511,6 +1523,7 @@ def last_green_dot_hourly(symbol: str, ntd_win: int, period: str = "1d",
         return is_signal, ntd_last, idx_last, npx_last, close_last
     except Exception:
         return False, np.nan, None, np.nan, np.nan
+# PART 2/5 — session state, tabs, shared hourly renderer (with SAR 0.02/0.02/0.02 + McGinley 14)
 
 # ---------- Session state init ----------
 if 'run_all' not in st.session_state:
@@ -1539,7 +1552,7 @@ def render_hourly_views(sel: str,
                         is_forex: bool):
     """
     Single hourly layout used for BOTH stocks and forex:
-      • Price + EMA + S/R + Supertrend + PSAR + HMA + Bollinger + slope ±2σ + bounce signal
+      • Price + EMA + McGinley(14) + S/R + Supertrend + PSAR + HMA + Bollinger + slope ±2σ + bounce signal
       • Volume panel with mid-line & trend (Forex-only; stocks skip this panel per request)
       • NTD panel (NTD + NPX + triangles + stars + in-range shading)
       • Momentum (ROC%) panel
@@ -1551,6 +1564,7 @@ def render_hourly_views(sel: str,
 
     hc = intraday["Close"].ffill()
     he = hc.ewm(span=20).mean()
+    mcg_h = compute_mcginley(hc, length=14)
     xh = np.arange(len(hc))
     slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
     trend_h = slope_h * xh + intercept_h  # numeric fallback only (not plotted)
@@ -1600,8 +1614,11 @@ def render_hourly_views(sel: str,
 
     ax2.plot(hc.index, hc, label="Intraday")
     ax2.plot(hc.index, he, "--", label="20 EMA")
-    # NOTE: we intentionally DO NOT plot the global green dashed trendline here
-    # to avoid duplication with the regression slope ±2σ band.
+
+    # NEW: McGinley Dynamic(14)
+    if not mcg_h.dropna().empty:
+        ax2.plot(mcg_h.index, mcg_h.values, "-", linewidth=1.4,
+                 label="McGinley(14)")
 
     if show_hma and not hma_h.dropna().empty:
         ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6,
@@ -1629,6 +1646,24 @@ def render_hourly_views(sel: str,
         if dn_mask.any():
             ax2.scatter(psar_h_df.index[dn_mask], psar_h_df["PSAR"][dn_mask],
                         s=15, color="tab:red",   zorder=6)
+
+    # NEW: Fixed SAR(0.02,0.02,0.02) overlay
+    if show_psar:
+        psar_002 = compute_psar_from_ohlc(intraday, step=0.02, max_step=0.02)
+        psar_002 = psar_002.reindex(hc.index)
+        if not psar_002.dropna().empty:
+            up002 = psar_002["in_uptrend"] == True
+            dn002 = ~up002
+            if up002.any():
+                ax2.scatter(psar_002.index[up002],
+                            psar_002["PSAR"][up002],
+                            s=12, color="tab:purple", alpha=0.8,
+                            zorder=6, label="SAR(0.02,0.02,0.02)")
+            if dn002.any():
+                ax2.scatter(psar_002.index[dn002],
+                            psar_002["PSAR"][dn002],
+                            s=12, color="tab:purple", alpha=0.8,
+                            zorder=6)
 
     res_val = sup_val = px_val = np.nan
     try:
@@ -1849,6 +1884,7 @@ def render_hourly_views(sel: str,
         ax2m.legend(loc="lower left", framealpha=0.5)
         ax2m.set_xlim(xlim_price)
         st.pyplot(fig2m)
+# PART 3/5 — Tab 1 (Original Forecast) with McGinley & SAR(0.02,0.02,0.02) on Daily
 
 # ==================== TAB 1: ORIGINAL FORECAST ====================
 with tab1:
@@ -1928,6 +1964,9 @@ with tab1:
             npx_d_full = compute_normalized_price(df, window=ntd_window) \
                 if show_npx_ntd else pd.Series(index=df.index, dtype=float)
 
+            # NEW: McGinley(14) on Daily
+            mcg_d_full = compute_mcginley(df, length=14)
+
             kijun_d = pd.Series(index=df.index, dtype=float)
             if df_ohlc is not None and not df_ohlc.empty and show_ichi:
                 _, kijun_d, _, _, _ = ichimoku_lines(
@@ -1967,20 +2006,31 @@ with tab1:
             hma_d_full = compute_hma(df, period=hma_period)
             hma_d_show = hma_d_full.reindex(df_show.index)
 
+            mcg_d_show = mcg_d_full.reindex(df_show.index)
+
             psar_d_df = compute_psar_from_ohlc(
                 df_ohlc, step=psar_step, max_step=psar_max
             ) if show_psar else pd.DataFrame()
-            if not psar_d_df.empty and len(df_show.index) > 0:
-                x0, x1 = df_show.index[0], df_show.index[-1]
-                psar_d_df = psar_d_df.loc[
-                    (psar_d_df.index >= x0) & (psar_d_df.index <= x1)
-                ]
+
+            psar002_d_df = compute_psar_from_ohlc(
+                df_ohlc, step=0.02, max_step=0.02
+            ) if show_psar else pd.DataFrame()
 
             if not st_d_df.empty and len(df_show.index) > 0:
                 x0, x1 = df_show.index[0], df_show.index[-1]
                 st_d_df = st_d_df.loc[
                     (st_d_df.index >= x0) & (st_d_df.index <= x1)
                 ]
+            if len(df_show.index) > 0:
+                x0, x1 = df_show.index[0], df_show.index[-1]
+                if not psar_d_df.empty:
+                    psar_d_df = psar_d_df.loc[
+                        (psar_d_df.index >= x0) & (psar_d_df.index <= x1)
+                    ]
+                if not psar002_d_df.empty:
+                    psar002_d_df = psar002_d_df.loc[
+                        (psar002_d_df.index >= x0) & (psar002_d_df.index <= x1)
+                    ]
 
             fig, (ax, axdw) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
@@ -1998,6 +2048,11 @@ with tab1:
             ax.plot(ema30_show, "--", label="30 EMA")
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
+
+            # NEW: McGinley(14) on Daily price
+            if not mcg_d_show.dropna().empty:
+                ax.plot(mcg_d_show.index, mcg_d_show.values, "-",
+                        linewidth=1.4, label="McGinley(14)")
 
             if show_hma and not hma_d_show.dropna().empty:
                 ax.plot(hma_d_show.index, hma_d_show.values, "-",
@@ -2047,6 +2102,21 @@ with tab1:
                     ax.scatter(psar_d_df.index[dn_mask],
                                psar_d_df["PSAR"][dn_mask],
                                s=15, color="tab:red",   zorder=6)
+
+            # NEW: Fixed SAR(0.02,0.02,0.02) on Daily
+            if show_psar and not psar002_d_df.empty:
+                up002 = psar002_d_df["in_uptrend"] == True
+                dn002 = ~up002
+                if up002.any():
+                    ax.scatter(psar002_d_df.index[up002],
+                               psar002_d_df["PSAR"][up002],
+                               s=12, color="tab:purple", alpha=0.8,
+                               zorder=6, label="SAR(0.02,0.02,0.02)")
+                if dn002.any():
+                    ax.scatter(psar002_d_df.index[dn002],
+                               psar002_d_df["PSAR"][dn002],
+                               s=12, color="tab:purple", alpha=0.8,
+                               zorder=6)
 
             if not st_d_df.empty and "ST" in st_d_df.columns:
                 ax.plot(st_d_df.index, st_d_df["ST"],
@@ -2199,6 +2269,7 @@ with tab1:
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
+# PART 4/5 — Tab 2 (Enhanced Forecast) + Tab 3 & Tab 4 (unchanged logic but with McGinley/SAR on Enhanced Daily)
 
 # ==================== TAB 2: ENHANCED FORECAST ====================
 with tab2:
@@ -2244,6 +2315,9 @@ with tab2:
             npx_d2_full = compute_normalized_price(df, window=ntd_window) \
                 if show_npx_ntd else pd.Series(index=df.index, dtype=float)
 
+            # NEW: McGinley Dynamic(14) for Enhanced Daily
+            mcg_d2_full = compute_mcginley(df, length=14)
+
             kijun_d2 = pd.Series(index=df.index, dtype=float)
             if df_ohlc is not None and not df_ohlc.empty and show_ichi:
                 _, kijun_d2, _, _, _ = ichimoku_lines(
@@ -2263,6 +2337,15 @@ with tab2:
                 df_ohlc, atr_period=atr_period, atr_mult=atr_mult
             ) if df_ohlc is not None and not df_ohlc.empty else pd.DataFrame()
 
+            # NEW: PSAR overlays (slider-based + fixed 0.02,0.02,0.02) on Enhanced Daily
+            psar_d2_df = compute_psar_from_ohlc(
+                df_ohlc, step=psar_step, max_step=psar_max
+            ) if show_psar else pd.DataFrame()
+
+            psar002_d2_df = compute_psar_from_ohlc(
+                df_ohlc, step=0.02, max_step=0.02
+            ) if show_psar else pd.DataFrame()
+
             df_show = subset_by_daily_view(df, daily_view)
             ema30_show = ema30.reindex(df_show.index)
             res30_show = res30.reindex(df_show.index)
@@ -2281,12 +2364,24 @@ with tab2:
             bb_lo_d2_show  = bb_lo_d2.reindex(df_show.index)
             hma_d2_full = compute_hma(df, period=hma_period)
             hma_d2_show = hma_d2_full.reindex(df_show.index)
+            mcg_d2_show = mcg_d2_full.reindex(df_show.index)
 
             if not st_d2_df.empty and len(df_show.index) > 0:
                 x0, x1 = df_show.index[0], df_show.index[-1]
                 st_d2_df = st_d2_df.loc[
                     (st_d2_df.index >= x0) & (st_d2_df.index <= x1)
                 ]
+
+            if len(df_show.index) > 0:
+                x0, x1 = df_show.index[0], df_show.index[-1]
+                if not psar_d2_df.empty:
+                    psar_d2_df = psar_d2_df.loc[
+                        (psar_d2_df.index >= x0) & (psar_d2_df.index <= x1)
+                    ]
+                if not psar002_d2_df.empty:
+                    psar002_d2_df = psar002_d2_df.loc[
+                        (psar002_d2_df.index >= x0) & (psar002_d2_df.index <= x1)
+                    ]
 
             fig, (ax, axdw2) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
@@ -2303,6 +2398,11 @@ with tab2:
             ax.plot(ema30_show, "--", label="30 EMA")
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
+
+            # NEW: McGinley(14) on Enhanced Daily
+            if not mcg_d2_show.dropna().empty:
+                ax.plot(mcg_d2_show.index, mcg_d2_show.values, "-",
+                        linewidth=1.4, label="McGinley(14)")
 
             if show_hma and not hma_d2_show.dropna().empty:
                 ax.plot(hma_d2_show.index, hma_d2_show.values, "-",
@@ -2325,6 +2425,34 @@ with tab2:
                         linewidth=1.0)
                 ax.plot(bb_lo_d2_show.index, bb_lo_d2_show.values, ":",
                         linewidth=1.0)
+
+            # PSAR overlays on Enhanced Daily
+            if show_psar and not psar_d2_df.empty:
+                up_mask = psar_d2_df["in_uptrend"] == True
+                dn_mask = ~up_mask
+                if up_mask.any():
+                    ax.scatter(psar_d2_df.index[up_mask],
+                               psar_d2_df["PSAR"][up_mask],
+                               s=15, color="tab:green", zorder=6,
+                               label=f"PSAR (step={psar_step:.02f}, max={psar_max:.02f})")
+                if dn_mask.any():
+                    ax.scatter(psar_d2_df.index[dn_mask],
+                               psar_d2_df["PSAR"][dn_mask],
+                               s=15, color="tab:red", zorder=6)
+
+            if show_psar and not psar002_d2_df.empty:
+                up002 = psar002_d2_df["in_uptrend"] == True
+                dn002 = ~up002
+                if up002.any():
+                    ax.scatter(psar002_d2_df.index[up002],
+                               psar002_d2_df["PSAR"][up002],
+                               s=12, color="tab:purple", alpha=0.8,
+                               zorder=6, label="SAR(0.02,0.02,0.02)")
+                if dn002.any():
+                    ax.scatter(psar002_d2_df.index[dn002],
+                               psar002_d2_df["PSAR"][dn002],
+                               s=12, color="tab:purple", alpha=0.8,
+                               zorder=6)
 
             if not st_d2_df.empty and "ST" in st_d2_df.columns:
                 ax.plot(st_d2_df.index, st_d2_df["ST"],
@@ -2430,6 +2558,7 @@ with tab2:
                     hour_range_label=st.session_state.hour_range,
                     is_forex=(mode == "Forex")
                 )
+
 # ==================== TAB 3: Bull vs Bear ====================
 with tab3:
     st.header("Bull vs Bear Summary")
@@ -2550,6 +2679,7 @@ with tab4:
                      int((~df0['Bull']).sum())]
         }).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
+# PART 5/5 — Tab 5 (Scanner) + Tab 6 (Long-Term History)
 
 # ==================== TAB 5: NTD -0.75 Scanner ====================
 with tab5:
