@@ -1,3 +1,5 @@
+# PART 1/5 — imports, config, helpers, indicators, scanners
+
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # UPDATED — per request:
 #   • Stock hourly chart now uses the SAME layout and indicators as Forex hourly view:
@@ -13,6 +15,7 @@
 #   • NTD triangles are gated by price trend sign.
 #   • NTD scanner lists symbols whose latest NTD value is below -0.75 (daily; hourly for Forex).
 #   • NEW: Slope reversal probability for daily & hourly price charts.
+#   • Green dashed global trendline restored on daily & hourly price charts.
 
 import streamlit as st
 import pandas as pd
@@ -308,6 +311,7 @@ else:
         'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','EURCAD=X',
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
     ]
+
 # ---------- Data fetchers ----------
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
@@ -700,8 +704,8 @@ def shade_ntd_regions(ax, ntd: pd.Series):
 
 def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "Trend"):
     """
-    Legacy helper (no longer used for plotting to avoid duplicate green trendline).
-    Kept for potential future use.
+    Draw a global direction trendline (dashed) across the given series,
+    colored green for uptrend and red for downtrend.
     """
     s = _coerce_1d_series(series_like).dropna()
     if s.shape[0] < 2:
@@ -710,7 +714,7 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
     m, b = np.polyfit(x, s.values, 1)
     yhat = m * x + b
     color = "tab:green" if m >= 0 else "tab:red"
-    ax.plot(s.index, yhat, "-", linewidth=2.4, color=color,
+    ax.plot(s.index, yhat, "--", linewidth=2.4, color=color,
             label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return m
 
@@ -916,13 +920,13 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10,
     upperband = hl2 + atr_mult * atr
     lowerband = hl2 - atr_mult * atr
 
-    st = pd.Series(index=ohlc.index, dtype=float)
+    st_line = pd.Series(index=ohlc.index, dtype=float)
     in_uptrend = pd.Series(index=ohlc.index, dtype=bool)
 
     for i in range(len(ohlc)):
         if i == 0:
             in_uptrend.iloc[i] = True
-            st.iloc[i] = lowerband.iloc[i]
+            st_line.iloc[i] = lowerband.iloc[i]
             continue
 
         if ohlc['Close'].iloc[i] > upperband.iloc[i-1]:
@@ -936,9 +940,9 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10,
             if (not in_uptrend.iloc[i]) and upperband.iloc[i] > upperband.iloc[i-1]:
                 upperband.iloc[i] = upperband.iloc[i-1]
 
-        st.iloc[i] = lowerband.iloc[i] if in_uptrend.iloc[i] else upperband.iloc[i]
+        st_line.iloc[i] = lowerband.iloc[i] if in_uptrend.iloc[i] else upperband.iloc[i]
 
-    return pd.DataFrame({"ST": st, "in_uptrend": in_uptrend})
+    return pd.DataFrame({"ST": st_line, "in_uptrend": in_uptrend})
 
 def compute_psar_from_ohlc(df: pd.DataFrame,
                            step: float = 0.02,
@@ -1034,6 +1038,7 @@ def overlay_hma_reversal_on_ntd(ax, price: pd.Series, hma: pd.Series,
         ax.scatter(idx_dn, [y_dn]*len(idx_dn),
                    marker="D", s=70, color="tab:red",   zorder=8,
                    label=f"HMA({period}) REV")
+
 # NPX ↔ NTD overlay/helpers (markers dots/x)
 def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series,
                        mark_crosses: bool = True):
@@ -1530,6 +1535,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "NTD -0.75 Scanner",
     "Long-Term History"
 ])
+
 # ---------- SHARED HOURLY RENDERER (Stock & Forex use this) ----------
 def render_hourly_views(sel: str,
                         intraday: pd.DataFrame,
@@ -1600,8 +1606,9 @@ def render_hourly_views(sel: str,
 
     ax2.plot(hc.index, hc, label="Intraday")
     ax2.plot(hc.index, he, "--", label="20 EMA")
-    # NOTE: we intentionally DO NOT plot the global green dashed trendline here
-    # to avoid duplication with the regression slope ±2σ band.
+
+    # Global dashed trendline across the full intraday window (matches screenshot)
+    draw_trend_direction_line(ax2, hc, label_prefix="Trend (global)")
 
     if show_hma and not hma_h.dropna().empty:
         ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6,
@@ -1849,6 +1856,7 @@ def render_hourly_views(sel: str,
         ax2m.legend(loc="lower left", framealpha=0.5)
         ax2m.set_xlim(xlim_price)
         st.pyplot(fig2m)
+# PART 2/5 — Tab 1: Original Forecast (daily + hourly)
 
 # ==================== TAB 1: ORIGINAL FORECAST ====================
 with tab1:
@@ -1987,6 +1995,9 @@ with tab1:
             ax.plot(ema30_show, "--", label="30 EMA")
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
+
+            # Global dashed trendline across shown daily window
+            draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
 
             if show_hma and not hma_d_show.dropna().empty:
                 ax.plot(hma_d_show.index, hma_d_show.values, "-",
@@ -2142,7 +2153,7 @@ with tab1:
                          color="black", label="0.00")
             axdw.axhline(0.75, linestyle="-",  linewidth=1.0,
                          color="black", label="+0.75")
-            axdw.axhline(-0.75, linestyle="-", linewidth=1.0,
+            axdw.axhline(-0.75, linestyle="-",  linewidth=1.0,
                          color="black", label="-0.75")
             axdw.set_ylim(-1.1, 1.1)
             axdw.set_xlabel("Date (PST)")
@@ -2183,6 +2194,7 @@ with tab1:
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
+# PART 3/5 — Tab 2 (Enhanced Forecast) & Tab 3 (Bull vs Bear)
 
 # ==================== TAB 2: ENHANCED FORECAST ====================
 with tab2:
@@ -2276,6 +2288,9 @@ with tab2:
             ax.plot(ema30_show, "--", label="30 EMA")
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
+
+            # Global dashed trendline across shown daily window
+            draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
 
             if show_hma and not hma_d2_show.dropna().empty:
                 ax.plot(hma_d2_show.index, hma_d2_show.values, "-",
@@ -2376,7 +2391,7 @@ with tab2:
                           color="black", label="0.00")
             axdw2.axhline(0.75, linestyle="-",  linewidth=1.0,
                           color="black", label="+0.75")
-            axdw2.axhline(-0.75, linestyle="-", linewidth=1.0,
+            axdw2.axhline(-0.75, linestyle="-",  linewidth=1.0,
                           color="black", label="-0.75")
             axdw2.set_ylim(-1.1, 1.1)
             axdw2.set_xlabel("Date (PST)")
@@ -2398,6 +2413,7 @@ with tab2:
                     hour_range_label=st.session_state.hour_range,
                     is_forex=(mode == "Forex")
                 )
+
 # ==================== TAB 3: Bull vs Bear ====================
 with tab3:
     st.header("Bull vs Bear Summary")
@@ -2419,6 +2435,7 @@ with tab3:
         c3.metric("Bear Days", bear,
                   f"{bear/total*100:.1f}%")
         c4.metric("Lookback", bb_period)
+# PART 4/5 — Tab 4 (Metrics) & Tab 5 (NTD -0.75 Scanner)
 
 # ==================== TAB 4: Metrics ====================
 with tab4:
@@ -2715,6 +2732,7 @@ with tab5:
                     .reset_index(drop=True),
                     use_container_width=True
                 )
+# PART 5/5 — Tab 6 (Long-Term History)
 
 # ==================== TAB 6: Long-Term History ====================
 with tab6:
@@ -2790,9 +2808,9 @@ with tab6:
                 ax.plot(upper_all.index, upper_all.values, ":",
                         linewidth=2.0, color="black", alpha=0.85,
                         label="Trend +2σ")
-            ax.plot(lower_all.index, lower_all.values, ":",
-                    linewidth=2.0, color="black", alpha=0.85,
-                    label="Trend -2σ")
+                ax.plot(lower_all.index, lower_all.values, ":",
+                        linewidth=2.0, color="black", alpha=0.85,
+                        label="Trend -2σ")
             px_now = _safe_last_float(s)
             if np.isfinite(px_now):
                 ax.text(
