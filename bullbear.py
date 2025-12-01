@@ -1,5 +1,3 @@
-# PART 1/5 — imports, config, helpers, indicators, scanners
-
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # UPDATED — per request:
 #   • Stock hourly chart now uses the SAME layout and indicators as Forex hourly view:
@@ -16,6 +14,8 @@
 #   • NTD scanner lists symbols whose latest NTD value is below -0.75 (daily; hourly for Forex).
 #   • NEW: Slope reversal probability for daily & hourly price charts.
 #   • Green dashed global trendline restored on daily & hourly price charts.
+#   • NEW (this update): Daily chart now uses configurable S/R (rolling highs/lows) like hourly,
+#                        with horizontal lines at the latest Support & Resistance.
 
 import streamlit as st
 import pandas as pd
@@ -224,6 +224,10 @@ rev_horizon = st.sidebar.slider(
     "Forward horizon for reversal (bars)",
     3, 60, 15, 1, key="sb_rev_horizon"
 )
+
+# --- NEW: Daily/Hourly S/R windows ---
+st.sidebar.subheader("Daily Support/Resistance Window")
+sr_lb_daily = st.sidebar.slider("Daily S/R lookback (bars)", 20, 252, 60, 5, key="sb_sr_lb_daily")
 
 st.sidebar.subheader("Hourly Support/Resistance Window")
 sr_lb_hourly = st.sidebar.slider("Hourly S/R lookback (bars)", 20, 240, 60, 5, key="sb_sr_lb_hourly")
@@ -1535,7 +1539,6 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "NTD -0.75 Scanner",
     "Long-Term History"
 ])
-
 # ---------- SHARED HOURLY RENDERER (Stock & Forex use this) ----------
 def render_hourly_views(sel: str,
                         intraday: pd.DataFrame,
@@ -1856,7 +1859,6 @@ def render_hourly_views(sel: str,
         ax2m.legend(loc="lower left", framealpha=0.5)
         ax2m.set_xlim(xlim_price)
         st.pyplot(fig2m)
-# PART 2/5 — Tab 1: Original Forecast (daily + hourly)
 
 # ==================== TAB 1: ORIGINAL FORECAST ====================
 with tab1:
@@ -1912,8 +1914,10 @@ with tab1:
         # ----- DAILY (price + NTD panel) -----
         if chart in ("Daily","Both"):
             ema30 = df.ewm(span=30).mean()
-            res30 = df.rolling(30, min_periods=1).max()
-            sup30 = df.rolling(30, min_periods=1).min()
+
+            # NEW: Daily S/R computed like hourly, with configurable window
+            res_d = df.rolling(sr_lb_daily, min_periods=1).max()
+            sup_d = df.rolling(sr_lb_daily, min_periods=1).min()
 
             yhat_d, upper_d, lower_d, m_d, r2_d = regression_with_band(
                 df, slope_lb_daily
@@ -1951,8 +1955,8 @@ with tab1:
 
             df_show     = subset_by_daily_view(df, daily_view)
             ema30_show  = ema30.reindex(df_show.index)
-            res30_show  = res30.reindex(df_show.index)
-            sup30_show  = sup30.reindex(df_show.index)
+            res_d_show  = res_d.reindex(df_show.index)
+            sup_d_show  = sup_d.reindex(df_show.index)
             yhat_d_show = yhat_d.reindex(df_show.index) if not yhat_d.empty else yhat_d
             upper_d_show= upper_d.reindex(df_show.index) if not upper_d.empty else upper_d
             lower_d_show= lower_d.reindex(df_show.index) if not lower_d.empty else lower_d
@@ -1988,13 +1992,11 @@ with tab1:
             rev_txt_d = fmt_pct(rev_prob_d) if np.isfinite(rev_prob_d) else "n/a"
             # PRICE CHART (Daily)
             ax.set_title(
-                f"{sel} Daily — {daily_view} — History, 30 EMA, 30 S/R, Slope, Pivots "
+                f"{sel} Daily — {daily_view} — History, 30 EMA, S/R (w={sr_lb_daily}), Slope, Pivots "
                 f"[P(slope rev≤{rev_horizon} bars)={rev_txt_d}]"
             )
             ax.plot(df_show, label="History")
             ax.plot(ema30_show, "--", label="30 EMA")
-            ax.plot(res30_show, ":", label="30 Resistance")
-            ax.plot(sup30_show, ":", label="30 Support")
 
             # Global dashed trendline across shown daily window
             draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
@@ -2048,6 +2050,23 @@ with tab1:
                                psar_d_df["PSAR"][dn_mask],
                                s=15, color="tab:red",   zorder=6)
 
+            # NEW: Horizontal S/R at latest values (like hourly)
+            res_val_d = sup_val_d = np.nan
+            try:
+                res_val_d = float(res_d_show.iloc[-1])
+                sup_val_d = float(sup_d_show.iloc[-1])
+            except Exception:
+                pass
+            if np.isfinite(res_val_d) and np.isfinite(sup_val_d):
+                ax.hlines(res_val_d, xmin=df_show.index[0], xmax=df_show.index[-1],
+                          colors="tab:red",   linestyles="-", linewidth=1.6,
+                          label=f"Resistance (w={sr_lb_daily})")
+                ax.hlines(sup_val_d, xmin=df_show.index[0], xmax=df_show.index[-1],
+                          colors="tab:green", linestyles="-", linewidth=1.6,
+                          label=f"Support (w={sr_lb_daily})")
+                label_on_left(ax, res_val_d, f"R {fmt_price_val(res_val_d)}", color="tab:red")
+                label_on_left(ax, sup_val_d, f"S {fmt_price_val(sup_val_d)}", color="tab:green")
+
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-",
                         linewidth=2,
@@ -2086,15 +2105,6 @@ with tab1:
                     ax.text(x1, y, f" {lbl} = {fmt_price_val(y)}",
                             va="center")
 
-            if len(res30_show) and len(sup30_show):
-                r30_last = float(res30_show.iloc[-1])
-                s30_last = float(sup30_show.iloc[-1])
-                ax.text(df_show.index[-1], r30_last,
-                        f"  30R = {fmt_price_val(r30_last)}",
-                        va="bottom")
-                ax.text(df_show.index[-1], s30_last,
-                        f"  30S = {fmt_price_val(s30_last)}",
-                        va="top")
             ax.set_ylabel("Price")
 
             ax.text(0.50, 0.02,
@@ -2107,7 +2117,7 @@ with tab1:
             ax.legend(loc="lower left", framealpha=0.5)
 
             # DAILY NTD PANEL
-            axdw.set_title("Daily Indicator Panel — NTD + NPX + Trend")
+            axdw.set_title(f"Daily Indicator Panel — NTD + NPX + Trend (S/R w={sr_lb_daily})")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw, ntd_d_show)
             if show_ntd and not ntd_d_show.dropna().empty:
@@ -2127,9 +2137,10 @@ with tab1:
                     axdw, ntd_d_show, trend_slope=m_d,
                     upper=0.75, lower=-0.75
                 )
+                # Use NEW daily S/R series here
                 overlay_ntd_sr_reversal_stars(
-                    axdw, price=df_show, sup=sup30_show,
-                    res=res30_show, trend_slope=m_d,
+                    axdw, price=df_show, sup=sup_d_show,
+                    res=res_d_show, trend_slope=m_d,
                     ntd=ntd_d_show, prox=sr_prox_pct,
                     bars_confirm=rev_bars_confirm
                 )
@@ -2194,8 +2205,6 @@ with tab1:
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
-# PART 3/5 — Tab 2 (Enhanced Forecast) & Tab 3 (Bull vs Bear)
-
 # ==================== TAB 2: ENHANCED FORECAST ====================
 with tab2:
     st.header("Enhanced Forecast")
@@ -2220,8 +2229,11 @@ with tab2:
         # ENHANCED DAILY
         if view in ("Daily","Both"):
             ema30 = df.ewm(span=30).mean()
-            res30 = df.rolling(30, min_periods=1).max()
-            sup30 = df.rolling(30, min_periods=1).min()
+
+            # NEW: Daily S/R (same logic and slider as Tab 1)
+            res_d2 = df.rolling(sr_lb_daily, min_periods=1).max()
+            sup_d2 = df.rolling(sr_lb_daily, min_periods=1).min()
+
             yhat_d, upper_d, lower_d, m_d, r2_d = regression_with_band(
                 df, slope_lb_daily
             )
@@ -2256,8 +2268,8 @@ with tab2:
 
             df_show = subset_by_daily_view(df, daily_view)
             ema30_show = ema30.reindex(df_show.index)
-            res30_show = res30.reindex(df_show.index)
-            sup30_show = sup30.reindex(df_show.index)
+            res_d2_show = res_d2.reindex(df_show.index)
+            sup_d2_show = sup_d2.reindex(df_show.index)
             yhat_d_show = yhat_d.reindex(df_show.index) \
                 if not yhat_d.empty else yhat_d
             upper_d_show = upper_d.reindex(df_show.index) \
@@ -2281,13 +2293,11 @@ with tab2:
             rev_txt_d2 = fmt_pct(rev_prob_d2) if np.isfinite(rev_prob_d2) else "n/a"
             ax.set_title(
                 f"{st.session_state.ticker} Daily — {daily_view} — "
-                f"History, 30 EMA, 30 S/R, Slope "
+                f"History, 30 EMA, S/R (w={sr_lb_daily}), Slope "
                 f"[P(slope rev≤{rev_horizon} bars)={rev_txt_d2}]"
             )
             ax.plot(df_show, label="History")
             ax.plot(ema30_show, "--", label="30 EMA")
-            ax.plot(res30_show, ":", label="30 Resistance")
-            ax.plot(sup30_show, ":", label="30 Support")
 
             # Global dashed trendline across shown daily window
             draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
@@ -2313,6 +2323,23 @@ with tab2:
                         linewidth=1.0)
                 ax.plot(bb_lo_d2_show.index, bb_lo_d2_show.values, ":",
                         linewidth=1.0)
+
+            # NEW: Horizontal S/R at latest values (like hourly)
+            res_val_d2 = sup_val_d2 = np.nan
+            try:
+                res_val_d2 = float(res_d2_show.iloc[-1])
+                sup_val_d2 = float(sup_d2_show.iloc[-1])
+            except Exception:
+                pass
+            if np.isfinite(res_val_d2) and np.isfinite(sup_val_d2):
+                ax.hlines(res_val_d2, xmin=df_show.index[0], xmax=df_show.index[-1],
+                          colors="tab:red",   linestyles="-", linewidth=1.6,
+                          label=f"Resistance (w={sr_lb_daily})")
+                ax.hlines(sup_val_d2, xmin=df_show.index[0], xmax=df_show.index[-1],
+                          colors="tab:green", linestyles="-", linewidth=1.6,
+                          label=f"Support (w={sr_lb_daily})")
+                label_on_left(ax, res_val_d2, f"R {fmt_price_val(res_val_d2)}", color="tab:red")
+                label_on_left(ax, sup_val_d2, f"S {fmt_price_val(sup_val_d2)}", color="tab:green")
 
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-",
@@ -2347,7 +2374,7 @@ with tab2:
                               fc="white", ec="grey", alpha=0.7))
             ax.legend(loc="lower left", framealpha=0.5)
 
-            axdw2.set_title("Daily Indicator Panel — NTD + NPX + Trend")
+            axdw2.set_title(f"Daily Indicator Panel — NTD + NPX + Trend (S/R w={sr_lb_daily})")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw2, ntd_d_show)
             if show_ntd and not ntd_d_show.dropna().empty:
@@ -2367,9 +2394,10 @@ with tab2:
                     axdw2, ntd_d_show, trend_slope=m_d,
                     upper=0.75, lower=-0.75
                 )
+                # Use NEW daily S/R series here
                 overlay_ntd_sr_reversal_stars(
-                    axdw2, price=df_show, sup=sup30_show,
-                    res=res30_show, trend_slope=m_d,
+                    axdw2, price=df_show, sup=sup_d2_show,
+                    res=res_d2_show, trend_slope=m_d,
                     ntd=ntd_d_show, prox=sr_prox_pct,
                     bars_confirm=rev_bars_confirm
                 )
@@ -2435,8 +2463,6 @@ with tab3:
         c3.metric("Bear Days", bear,
                   f"{bear/total*100:.1f}%")
         c4.metric("Lookback", bb_period)
-# PART 4/5 — Tab 4 (Metrics) & Tab 5 (NTD -0.75 Scanner)
-
 # ==================== TAB 4: Metrics ====================
 with tab4:
     st.header("Detailed Metrics")
@@ -2732,8 +2758,6 @@ with tab5:
                     .reset_index(drop=True),
                     use_container_width=True
                 )
-# PART 5/5 — Tab 6 (Long-Term History)
-
 # ==================== TAB 6: Long-Term History ====================
 with tab6:
     st.header("Long-Term History — Price with S/R & Trend")
