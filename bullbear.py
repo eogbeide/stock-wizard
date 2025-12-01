@@ -17,7 +17,7 @@
 #   • Green dashed global trendline restored on daily & hourly price charts.
 #   • NEW: Market-hours compression for STOCK hourly charts (remove closed-session gaps).
 
-import streamlit as st
+import streamlit as stV
 import pandas as pd
 import numpy as np
 import yfinance as yf
