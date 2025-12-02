@@ -1932,7 +1932,6 @@ with tab1:
             ax.set_title(
                 f"{sel} Daily — {daily_view} — ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)} — {instr_txt_d}  "
                 f"[P(slope rev≤{rev_horizon} bars)={rev_txt_d}]  "
-                f"History, 30 EMA, S/R (w={sr_lb_daily}), Slope, Pivots"
             )
             ax.plot(df_show, label="History")
             ax.plot(ema30_show, "--", label="30 EMA")
