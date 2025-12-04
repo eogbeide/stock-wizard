@@ -1,14 +1,6 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
-# UPDATED — per request:
-#   • Signals are shown ONLY when local slope (lookback regression) aligns with the global trend (window fit).
-#   • Top-of-chart instruction shows:
-#       - Uptrend → "BUY & TAKE PROFIT" (Buy @ Support → Take Profit @ Resistance)
-#       - Downtrend → "SELL & TAKE PROFIT" (Sell @ Resistance → Take Profit @ Support)
-#       - Mixed slopes → "MIXED — wait for alignment"
-#   • Price chart area shows BUY/SELL markers (not excluded):
-#       - Band-bounce marker (±2σ) — gated by alignment
-#       - HMA + S/R proximity marker — gated by alignment
-#   • Existing panels & indicators preserved.
+# UPDATED — fixes NameError by adding compute_bbands() and keeps BUY/SELL markers in price chart.
+# Signals are gated by local-vs-global slope alignment, and the top badge shows BUY/SELL & TAKE PROFIT.
 
 import streamlit as st
 import pandas as pd
@@ -168,6 +160,7 @@ def slopes_aligned(local_slope: float, global_slope: float) -> bool:
     except Exception:
         return False
     return np.isfinite(s1) and np.isfinite(s2) and (s1 != 0.0) and (s1 == s2)
+
 # ---------- Sidebar configuration ----------
 st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
@@ -405,6 +398,36 @@ def regression_with_band(series_like, lookback: int = 0, z: float = 2.0):
     upper_s = pd.Series(yhat + z * std, index=s.index)
     lower_s = pd.Series(yhat - z * std, index=s.index)
     return yhat_s, upper_s, lower_s, float(m), r2
+
+# --- NEW: Bollinger Bands helper (SMA/EMA midline) ---
+def compute_bbands(price: pd.Series, window: int = 20, mult: float = 2.0, use_ema: bool = False):
+    """
+    Returns:
+      mid, upper, lower, pct_b, nbb
+      where:
+        pct_b = (price - lower) / (upper - lower)  in [0,1] (nan-safe)
+        nbb   = (price - mid) / (mult * std)       ~ position vs band (≈[-1, +1] inside)
+    """
+    p = _coerce_1d_series(price).astype(float)
+    if p.empty or window < 1:
+        idx = p.index
+        empty = pd.Series(index=idx, dtype=float)
+        return empty, empty, empty, empty, empty
+
+    if use_ema:
+        mid = p.ewm(span=int(window), adjust=False).mean()
+    else:
+        mid = p.rolling(int(window), min_periods=1).mean()
+
+    std = p.rolling(int(window), min_periods=1).std().replace(0, np.nan)
+    upper = mid + mult * std
+    lower = mid - mult * std
+
+    rng = (upper - lower).replace(0, np.nan)
+    pct_b = (p - lower) / rng
+    nbb = (p - mid) / (mult * std.replace(0, np.nan))
+
+    return mid.reindex(p.index), upper.reindex(p.index), lower.reindex(p.index), pct_b.reindex(p.index), nbb.reindex(p.index)
 
 # --- NEW: empirical slope reversal probability helper ---
 def slope_reversal_probability(series_like, current_slope: float, hist_window: int = 240,
@@ -851,7 +874,8 @@ def compute_psar_from_ohlc(df: pd.DataFrame, step: float = 0.02, max_step: float
             else:
                 in_uptrend.iloc[i] = False
     return pd.DataFrame({"PSAR": psar, "in_uptrend": in_uptrend})
-# ---------- HMA reversal markers on NTD panel ----------
+
+# ---------- HMA reversal on NTD panel ----------
 def detect_hma_reversal_masks(price: pd.Series, hma: pd.Series, lookback: int = 3):
     h = _coerce_1d_series(hma)
     slope = h.diff().rolling(lookback, min_periods=1).mean()
@@ -1295,6 +1319,7 @@ def format_trade_instruction(trend_slope: float,
 
     text += f" • {_diff_text(leg_a_val, leg_b_val, symbol)}"
     return text
+
 # ---------- Session state init ----------
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -1448,7 +1473,7 @@ def render_hourly_views(sel: str,
         ax2.plot(upper_h.index, upper_h.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Slope +2σ")
         ax2.plot(lower_h.index, lower_h.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Slope -2σ")
 
-        # --- UPDATED: price chart markers (not excluded) — band-bounce + HMA/SR, alignment-gated
+        # price chart markers — band-bounce (alignment-gated)
         bounce_sig_h = find_band_bounce_signal(hc, upper_h, lower_h, local_slope_h, global_slope=m_global_h, require_align=True)
         if bounce_sig_h is not None:
             annotate_crossover(ax2, bounce_sig_h["time"], bounce_sig_h["price"], bounce_sig_h["side"], note="(±2σ bounce)")
@@ -1691,12 +1716,12 @@ with tab1:
             if not upper_d_show.empty and not lower_d_show.empty:
                 ax.plot(upper_d_show.index, upper_d_show.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Daily Trend +2σ")
                 ax.plot(lower_d_show.index, lower_d_show.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Daily Trend -2σ")
-                # --- Price markers (not excluded) — band-bounce
+                # price markers — band-bounce
                 bounce_sig_d = find_band_bounce_signal(df_show, upper_d_show, lower_d_show, m_local_d, global_slope=m_global_d, require_align=True)
                 if bounce_sig_d is not None:
                     annotate_crossover(ax, bounce_sig_d["time"], bounce_sig_d["price"], bounce_sig_d["side"], note="(±2σ bounce)")
 
-            # --- Price markers — HMA + S/R
+            # price markers — HMA + S/R
             hma_sr_sig_d = find_hma_sr_signal(df_show, hma_d_show, sup_d_show, res_d_show, m_local_d, sr_prox_pct, global_slope=m_global_d, require_align=True)
             if hma_sr_sig_d is not None:
                 annotate_crossover(ax, hma_sr_sig_d["time"], hma_sr_sig_d["price"], hma_sr_sig_d["side"], note="(HMA+S/R)")
@@ -1779,12 +1804,13 @@ with tab1:
                 st.dataframe(show_cols[["time","publisher","title","link"]].reset_index(drop=True),
                              use_container_width=True)
 
-        # Forecast table
+        # Forecast table (future dates)
         st.write(pd.DataFrame({
             "Forecast": st.session_state.fc_vals,
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
+
 # ==================== TAB 2: ENHANCED FORECAST ====================
 with tab2:
     st.header("Enhanced Forecast")
@@ -1933,6 +1959,7 @@ with tab2:
                 st.info("Using the same intraday layout as Tab 1.")
                 render_hourly_views(sel=st.session_state.ticker, intraday=intr, p_up=p_up, p_dn=p_dn,
                                     hour_range_label=st.session_state.hour_range, is_forex=(mode == "Forex"))
+
 # ==================== TAB 3: Bull vs Bear ====================
 with tab3:
     st.header("Bull vs Bear Summary")
@@ -2155,7 +2182,7 @@ with tab6:
             sup_roll = s.rolling(252, min_periods=1).min()
             res_last = float(res_roll.iloc[-1]) if len(res_roll) else np.nan
             sup_last = float(sup_roll.iloc[-1]) if len(sup_roll) else np.nan
-            yhat_all, upper_all, lower_all, m_all, r2_all = regression_with_band(s, lookback=len(s))
+            yhat_all, up_all, lo_all, m_all, r2_all = regression_with_band(s, lookback=len(s))
 
             fig, ax = plt.subplots(figsize=(14,5))
             ax.set_title(f"{sym} — Last {years} Years — Price + 252d S/R + Trend")
@@ -2167,9 +2194,9 @@ with tab6:
                 label_on_left(ax, sup_last, f"S {fmt_price_val(sup_last)}", color="tab:green")
             if not yhat_all.empty:
                 ax.plot(yhat_all.index, yhat_all.values, "--", linewidth=2, label=f"Trend (m={fmt_slope(m_all)}/bar)")
-            if not upper_all.empty and not lower_all.empty:
-                ax.plot(upper_all.index, upper_all.values, ":", linewidth=2.0, color="black", alpha=0.85, label="Trend +2σ")
-                ax.plot(lower_all.index, lower_all.values, ":", linewidth=2.0, color="black", alpha=0.85, label="Trend -2σ")
+            if not up_all.empty and not lo_all.empty:
+                ax.plot(up_all.index, up_all.values, ":", linewidth=2.0, color="black", alpha=0.85, label="Trend +2σ")
+                ax.plot(lo_all.index, lo_all.values, ":", linewidth=2.0, color="black", alpha=0.85, label="Trend -2σ")
             px_now = _safe_last_float(s)
             if np.isfinite(px_now):
                 ax.text(0.99, 0.02, f"Current price: {fmt_price_val(px_now)}",
