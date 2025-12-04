@@ -1,23 +1,11 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # UPDATED — per request:
-#   • Stock hourly chart now uses the SAME layout and indicators as Forex hourly view:
-#       - Supertrend, PSAR, Bollinger Bands, HMA
-#       - Volume panel with trendline (Forex-only; stocks skip this panel per request)
-#       - Momentum (ROC%) panel
-#       - NTD + NPX indicator panel with triangles, stars, in-range shading
-#   • BUY/SELL instruction uses slope direction.
-#   • Chart BUY/SELL markers only trigger when price "bounces" off the ±2σ band:
-#        - slope > 0 AND price moves from below LOWER band back inside → BUY
-#        - slope < 0 AND price moves from above UPPER band back inside → SELL
-#   • ±2σ bands around slope are thicker & darker.
-#   • NTD triangles are gated by price trend sign.
-#   • NTD scanner lists symbols whose latest NTD value is below -0.75 (daily; hourly for Forex).
-#   • NEW: Slope reversal probability for daily & hourly price charts.
-#   • Green dashed global trendline restored on daily & hourly price charts.
-#   • NEW (prev update): Daily chart uses configurable S/R (rolling highs/lows) like hourly,
-#                        with horizontal lines at the latest Support & Resistance.
-#   • NEW (this update): Daily chart TITLE now shows the same BUY/SELL instruction as Hourly,
-#                        derived from slope sign + latest S/R + current price.
+#   • Stock hourly chart uses SAME layout & indicators as Forex hourly.
+#   • Slope reversal probability on Daily & Hourly price charts.
+#   • ±2σ slope band with bounce-based BUY/SELL.
+#   • Green dashed global trendline on Daily & Hourly.
+#   • Daily & Hourly titles show BUY/SELL instruction.
+#   • NEW: Trend Conflict Bias (global vs local trend) with bias display.
 
 import streamlit as st
 import pandas as pd
@@ -317,6 +305,7 @@ else:
         'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','EURCAD=X',
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
     ]
+
 # ---------- Data fetchers ----------
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
@@ -519,6 +508,64 @@ def slope_reversal_probability(series_like,
         return float("nan")
     return float(flips / match)
 
+# --- NEW: Trend Conflict Bias helper ---
+def trend_conflict_bias(global_slope: float,
+                        local_slope: float,
+                        global_r2: float,
+                        local_r2: float,
+                        rev_prob: float):
+    """
+    Compare 'global' vs 'local' trend when their slopes disagree.
+
+    Returns (p_global, p_local, conflict_flag):
+
+      • p_global, p_local ∈ [0,1], sum to 1 (soft weights/“probabilities”).
+      • conflict_flag: True if slope signs differ (actual conflict).
+    """
+    try:
+        g = float(global_slope)
+        l = float(local_slope)
+    except Exception:
+        return float("nan"), float("nan"), False
+
+    if not (np.isfinite(g) and np.isfinite(l)):
+        return float("nan"), float("nan"), False
+
+    sg = np.sign(g)
+    sl = np.sign(l)
+    if sg == 0 or sl == 0:
+        return float("nan"), float("nan"), False
+
+    # Clamp stats
+    try:
+        r2g = float(global_r2)
+    except Exception:
+        r2g = np.nan
+    try:
+        r2l = float(local_r2)
+    except Exception:
+        r2l = np.nan
+
+    r2g = max(r2g, 0.0) if np.isfinite(r2g) else 0.0
+    r2l = max(r2l, 0.0) if np.isfinite(r2l) else 0.0
+
+    try:
+        rp = float(rev_prob)
+    except Exception:
+        rp = np.nan
+    rp = min(max(rp, 0.0), 1.0) if np.isfinite(rp) else 0.5
+
+    # Strength: slope magnitude × quality, with local penalized by reversal risk
+    strength_global = abs(g) * (0.5 + 0.5 * r2g)
+    strength_local  = abs(l) * (0.5 + 0.5 * r2l) * (1.0 - 0.5 * rp)
+
+    tot = strength_global + strength_local
+    if tot <= 0:
+        return float("nan"), float("nan"), sg != sl
+
+    p_global = strength_global / tot
+    p_local  = strength_local / tot
+    return float(p_global), float(p_local), bool(sg != sl)
 # --- NEW: bounce helper using ±2σ band ---
 def find_band_bounce_signal(price: pd.Series,
                             upper_band: pd.Series,
@@ -964,6 +1011,7 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
                 in_uptrend.iloc[i] = False
 
     return pd.DataFrame({"PSAR": psar, "in_uptrend": in_uptrend})
+
 # ---------- HMA reversal markers on NTD panel ----------
 def detect_hma_reversal_masks(price: pd.Series, hma: pd.Series,
                               lookback: int = 3):
@@ -1474,7 +1522,6 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "NTD -0.75 Scanner",
     "Long-Term History"
 ])
-
 # ---------- SHARED HOURLY RENDERER (Stock & Forex use this) ----------
 def render_hourly_views(sel: str,
                         intraday: pd.DataFrame,
@@ -1536,7 +1583,16 @@ def render_hourly_views(sel: str,
 
     ax2.plot(hc.index, hc, label="Intraday")
     ax2.plot(hc.index, he, "--", label="20 EMA")
-    draw_trend_direction_line(ax2, hc, label_prefix="Trend (global)")
+    m_global_h = draw_trend_direction_line(ax2, hc, label_prefix="Trend (global)")
+
+    r2_global_h = regression_r2(hc, lookback=len(hc))
+    p_glob_h, p_loc_h, conflict_h = trend_conflict_bias(
+        global_slope=m_global_h,
+        local_slope=m_h,
+        global_r2=r2_global_h,
+        local_r2=r2_h,
+        rev_prob=rev_prob_h,
+    )
 
     if show_hma and not hma_h.dropna().empty:
         ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6,
@@ -1594,10 +1650,19 @@ def render_hourly_views(sel: str,
     )
 
     rev_txt_h = fmt_pct(rev_prob_h) if np.isfinite(rev_prob_h) else "n/a"
+
+    bias_str_h = ""
+    if np.isfinite(p_glob_h) and np.isfinite(p_loc_h) and conflict_h:
+        dominant_h = "GLOBAL" if p_glob_h >= p_loc_h else "LOCAL"
+        bias_str_h = (
+            f"  |  Trend conflict → bias to {dominant_h} "
+            f"(G={fmt_pct(p_glob_h)}, L={fmt_pct(p_loc_h)})"
+        )
+
     ax2.set_title(
         f"{sel} Intraday ({hour_range_label})  "
         f"↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)} — {instr_txt}  "
-        f"[P(slope rev≤{rev_horizon} bars)={rev_txt_h}]"
+        f"[P(slope rev≤{rev_horizon} bars)={rev_txt_h}]{bias_str_h}"
     )
 
     if np.isfinite(px_val):
@@ -1635,9 +1700,14 @@ def render_hourly_views(sel: str,
             annotate_crossover(ax2, bounce_sig_h["time"],
                                bounce_sig_h["price"], bounce_sig_h["side"])
 
+    bias_short_h = ""
+    if np.isfinite(p_glob_h) and np.isfinite(p_loc_h) and conflict_h:
+        dom = "GLOBAL" if p_glob_h >= p_loc_h else "LOCAL"
+        bias_short_h = f"  |  Bias → {dom}"
+
     ax2.text(0.01, 0.02,
              f"Slope: {fmt_slope(slope_sig_h)}/bar  |  "
-             f"P(rev≤{rev_horizon} bars): {fmt_pct(rev_prob_h)}",
+             f"P(rev≤{rev_horizon} bars): {fmt_pct(rev_prob_h)}{bias_short_h}",
              transform=ax2.transAxes, ha="left", va="bottom",
              fontsize=9, color="black",
              bbox=dict(boxstyle="round,pad=0.25",
@@ -1781,6 +1851,7 @@ def render_hourly_views(sel: str,
         ax2m.legend(loc="lower left", framealpha=0.5)
         ax2m.set_xlim(xlim_price)
         st.pyplot(fig2m)
+
 # ==================== TAB 1: ORIGINAL FORECAST ====================
 with tab1:
     st.header("Original Forecast")
@@ -1928,15 +1999,32 @@ with tab1:
             plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93)
 
             rev_txt_d = fmt_pct(rev_prob_d) if np.isfinite(rev_prob_d) else "n/a"
-            # PRICE CHART (Daily)
-            ax.set_title(
-                f"{sel} Daily — {daily_view} — ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)} — {instr_txt_d}  "
-                f"[P(slope rev≤{rev_horizon} bars)={rev_txt_d}]  "
-            )
+            r2_global_d = regression_r2(df_show, lookback=len(df_show)) if df_show is not None and len(df_show) else float("nan")
+
             ax.plot(df_show, label="History")
             ax.plot(ema30_show, "--", label="30 EMA")
+            m_global_d = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
 
-            draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
+            p_glob_d, p_loc_d, conflict_d = trend_conflict_bias(
+                global_slope=m_global_d,
+                local_slope=m_d,
+                global_r2=r2_global_d,
+                local_r2=r2_d,
+                rev_prob=rev_prob_d,
+            )
+
+            bias_str_d = ""
+            if np.isfinite(p_glob_d) and np.isfinite(p_loc_d) and conflict_d:
+                dominant_d = "GLOBAL" if p_glob_d >= p_loc_d else "LOCAL"
+                bias_str_d = (
+                    f"  |  Trend conflict → bias to {dominant_d} "
+                    f"(G={fmt_pct(p_glob_d)}, L={fmt_pct(p_loc_d)})"
+                )
+
+            ax.set_title(
+                f"{sel} Daily — {daily_view} — ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)} — {instr_txt_d}  "
+                f"[P(slope rev≤{rev_horizon} bars)={rev_txt_d}]{bias_str_d}"
+            )
 
             if show_hma and not hma_d_show.dropna().empty:
                 ax.plot(hma_d_show.index, hma_d_show.values, "-",
@@ -2038,8 +2126,13 @@ with tab1:
 
             ax.set_ylabel("Price")
 
+            bias_short_d = ""
+            if np.isfinite(p_glob_d) and np.isfinite(p_loc_d) and conflict_d:
+                dom = "GLOBAL" if p_glob_d >= p_loc_d else "LOCAL"
+                bias_short_d = f"  |  Bias → {dom}"
+
             ax.text(0.50, 0.02,
-                    f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}",
+                    f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}{bias_short_d}",
                     transform=ax.transAxes,
                     ha="center", va="bottom",
                     fontsize=9, color="black",
@@ -2213,7 +2306,7 @@ with tab2:
             hma_d2_full = compute_hma(df, period=hma_period)
             hma_d2_show = hma_d2_full.reindex(df_show.index)
 
-            # === NEW: Daily BUY/SELL instruction for Enhanced tab title ===
+            # === NEW: Daily BUY/SELL instruction + Trend Conflict Bias for Enhanced tab ===
             px_val_d2 = _safe_last_float(df_show)
             try:
                 res_val_d2 = float(res_d2_show.iloc[-1])
@@ -2231,22 +2324,42 @@ with tab2:
                 symbol=st.session_state.ticker
             )
 
+            r2_global_d2 = regression_r2(df_show, lookback=len(df_show)) if df_show is not None and len(df_show) else float("nan")
+
             fig, (ax, axdw2) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
                 gridspec_kw={"height_ratios": [3.2, 1.3]}
             )
             plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93)
             rev_txt_d2 = fmt_pct(rev_prob_d2) if np.isfinite(rev_prob_d2) else "n/a"
-            ax.set_title(
-                f"{st.session_state.ticker} Daily — {daily_view} — "
-                f"↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)} — {instr_txt_d2}  "
-                f"[P(slope rev≤{rev_horizon} bars)={rev_txt_d2}]  "
-                f"History, 30 EMA, S/R (w={sr_lb_daily}), Slope"
-            )
+
             ax.plot(df_show, label="History")
             ax.plot(ema30_show, "--", label="30 EMA")
 
-            draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
+            m_global_d2 = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
+
+            p_glob_d2, p_loc_d2, conflict_d2 = trend_conflict_bias(
+                global_slope=m_global_d2,
+                local_slope=m_d,
+                global_r2=r2_global_d2,
+                local_r2=r2_d,
+                rev_prob=rev_prob_d2,
+            )
+
+            bias_str_d2 = ""
+            if np.isfinite(p_glob_d2) and np.isfinite(p_loc_d2) and conflict_d2:
+                dominant_d2 = "GLOBAL" if p_glob_d2 >= p_loc_d2 else "LOCAL"
+                bias_str_d2 = (
+                    f"  |  Trend conflict → bias to {dominant_d2} "
+                    f"(G={fmt_pct(p_glob_d2)}, L={fmt_pct(p_loc_d2)})"
+                )
+
+            ax.set_title(
+                f"{st.session_state.ticker} Daily — {daily_view} — "
+                f"↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)} — {instr_txt_d2}  "
+                f"[P(slope rev≤{rev_horizon} bars)={rev_txt_d2}]{bias_str_d2}  "
+                f"History, 30 EMA, S/R (w={sr_lb_daily}), Slope"
+            )
 
             if show_hma and not hma_d2_show.dropna().empty:
                 ax.plot(hma_d2_show.index, hma_d2_show.values, "-",
@@ -2304,8 +2417,14 @@ with tab2:
                     )
 
             ax.set_ylabel("Price")
+
+            bias_short_d2 = ""
+            if np.isfinite(p_glob_d2) and np.isfinite(p_loc_d2) and conflict_d2:
+                dom = "GLOBAL" if p_glob_d2 >= p_loc_d2 else "LOCAL"
+                bias_short_d2 = f"  |  Bias → {dom}"
+
             ax.text(0.50, 0.02,
-                    f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}",
+                    f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}{bias_short_d2}",
                     transform=ax.transAxes,
                     ha="center", va="bottom",
                     fontsize=9, color="black",
@@ -2500,7 +2619,6 @@ with tab4:
                      int((~df0['Bull']).sum())]
         }).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
-
 # ==================== TAB 5: NTD -0.75 Scanner ====================
 with tab5:
     st.header("NTD -0.75 Scanner (NTD < -0.75)")
