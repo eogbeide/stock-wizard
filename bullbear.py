@@ -1,23 +1,14 @@
-# bullbear.py — Stocks/Forex Dashboard + Forecasts
+# ============================================
+# Part 1/5 — bullbear.py — Imports, Config, UI
+# ============================================
+
 # UPDATED — per request:
-#   • Stock hourly chart now uses the SAME layout and indicators as Forex hourly view:
-#       - Supertrend, PSAR, Bollinger Bands, HMA
-#       - Volume panel with trendline (Forex-only; stocks skip this panel per request)
-#       - Momentum (ROC%) panel
-#       - NTD + NPX indicator panel with triangles, stars, in-range shading
-#   • BUY/SELL instruction uses slope direction.
-#   • Chart BUY/SELL markers only trigger when price "bounces" off the ±2σ band:
-#        - slope > 0 AND price moves from below LOWER band back inside → BUY
-#        - slope < 0 AND price moves from above UPPER band back inside → SELL
-#   • ±2σ bands around slope are thicker & darker.
-#   • NTD triangles are gated by price trend sign.
-#   • NTD scanner lists symbols whose latest NTD value is below -0.75 (daily; hourly for Forex).
-#   • NEW: Slope reversal probability for daily & hourly price charts.
-#   • Green dashed global trendline restored on daily & hourly price charts.
-#   • NEW (prev update): Daily chart uses configurable S/R (rolling highs/lows) like hourly,
-#                        with horizontal lines at the latest Support & Resistance.
-#   • NEW (this update): Daily chart TITLE now shows the same BUY/SELL instruction as Hourly,
-#                        derived from slope sign + latest S/R + current price.
+#   • Buy/Sell markers now REQUIRE local slope sign to ALIGN with global trend sign.
+#   • Title instruction aligns with gating:
+#       - Uptrend ⇒ "BUY → TAKE PROFIT"
+#       - Downtrend ⇒ "SELL → TAKE PROFIT"
+#       - Misaligned ⇒ "WAIT — local vs global trend misaligned"
+#   • Existing bounce logic (re-entering inside ±2σ) preserved, but now alignment-gated.
 
 import streamlit as st
 import pandas as pd
@@ -147,16 +138,23 @@ def _diff_text(a: float, b: float, symbol: str) -> str:
         return f"{diff/ps:.1f} pips"
     return f"Δ {diff:.3f}"
 
-def format_trade_instruction(trend_slope: float,
-                             buy_val: float,
-                             sell_val: float,
-                             close_val: float,
-                             symbol: str) -> str:
-    """
-    BUY/SELL text uses the SIGN of `trend_slope`:
+# =====================================
+# Part 2/5 — Signals, Slopes & Bands
+# =====================================
 
-      • slope > 0  →  BUY first, then SELL, then pips
-      • slope < 0  →  SELL first, then BUY, then pips
+def format_trade_instruction(
+    trend_slope: float,
+    buy_val: float,
+    sell_val: float,
+    close_val: float,
+    symbol: str,
+    global_trend_slope: float = None
+) -> str:
+    """
+    Gate instruction by local vs global slope alignment.
+    Uptrend  ⇒ "BUY → TAKE PROFIT" (Support → Resistance).
+    Downtrend⇒ "SELL → TAKE PROFIT" (Resistance → Support).
+    Misaligned/invalid ⇒ "WAIT".
     """
     def _finite(x):
         try:
@@ -167,21 +165,30 @@ def format_trade_instruction(trend_slope: float,
     entry_buy = float(buy_val) if _finite(buy_val) else float(close_val)
     exit_sell = float(sell_val) if _finite(sell_val) else float(close_val)
 
-    uptrend = False
     try:
-        uptrend = float(trend_slope) >= 0.0
+        s_local = np.sign(float(trend_slope))
     except Exception:
-        pass
+        s_local = 0.0
+    try:
+        s_global = np.sign(float(global_trend_slope)) if global_trend_slope is not None else s_local
+    except Exception:
+        s_global = 0.0
 
-    if uptrend:
-        leg_a_val, leg_b_val = entry_buy, exit_sell
-        text = f"▲ BUY @{fmt_price_val(leg_a_val)} → ▼ SELL @{fmt_price_val(leg_b_val)}"
-    else:
-        leg_a_val, leg_b_val = exit_sell, entry_buy
-        text = f"▼ SELL @{fmt_price_val(leg_a_val)} → ▲ BUY @{fmt_price_val(leg_b_val)}"
+    aligned = (s_local != 0.0) and (s_global != 0.0) and (s_local == s_global)
 
-    text += f" • {_diff_text(leg_a_val, leg_b_val, symbol)}"
+    if not aligned:
+        return "⏸ WAIT — local vs global trend misaligned"
+
+    if s_local > 0:
+        text = f"▲ BUY @{fmt_price_val(entry_buy)} → 🎯 TAKE PROFIT @{fmt_price_val(exit_sell)}"
+        text += f" • {_diff_text(entry_buy, exit_sell, symbol)}"
+        return text
+
+    # s_local < 0
+    text = f"▼ SELL @{fmt_price_val(exit_sell)} → 🎯 TAKE PROFIT @{fmt_price_val(entry_buy)}"
+    text += f" • {_diff_text(exit_sell, entry_buy, symbol)}"
     return text
+
 
 def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
     trans = blended_transform_factory(ax.transAxes, ax.transData)
@@ -317,7 +324,11 @@ else:
         'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','EURCAD=X',
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
     ]
-# ---------- Data fetchers ----------
+
+# =========================================
+# Part 3/5 — Data Fetch, Indicators, Slopes
+# =========================================
+
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
     s = (yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
@@ -444,7 +455,6 @@ def regression_with_band(series_like, lookback: int = 0, z: float = 2.0):
       • fitted trendline
       • symmetric ±z·σ band (σ = std of residuals)
       • R² of the fit
-
     Returns (trend, upper, lower, slope, r2).
     """
     s = _coerce_1d_series(series_like).dropna()
@@ -519,13 +529,15 @@ def slope_reversal_probability(series_like,
         return float("nan")
     return float(flips / match)
 
-# --- NEW: bounce helper using ±2σ band ---
+# --- UPDATED: bounce helper uses alignment with global trend ---
 def find_band_bounce_signal(price: pd.Series,
                             upper_band: pd.Series,
                             lower_band: pd.Series,
-                            slope_val: float):
+                            slope_val_local: float,
+                            slope_val_global: float = None):
     """
     Detect the most recent BUY/SELL signal based on a 'bounce' off the ±2σ band.
+    Only returns a signal if local slope sign matches global trend sign.
     """
     p = _coerce_1d_series(price)
     u = _coerce_1d_series(upper_band).reindex(p.index)
@@ -544,13 +556,19 @@ def find_band_bounce_signal(price: pd.Series,
     above  = p > u
 
     try:
-        slope = float(slope_val)
+        s_local = np.sign(float(slope_val_local))
     except Exception:
-        slope = np.nan
-    if not np.isfinite(slope) or slope == 0.0:
+        s_local = 0.0
+    try:
+        s_global = np.sign(float(slope_val_global)) if slope_val_global is not None else s_local
+    except Exception:
+        s_global = 0.0
+
+    aligned = (s_local != 0.0) and (s_global != 0.0) and (s_local == s_global)
+    if not aligned:
         return None
 
-    if slope > 0:
+    if s_local > 0:
         candidates = inside & below.shift(1, fill_value=False)
         idx = list(candidates[candidates].index)
         if not idx:
@@ -764,12 +782,14 @@ def _cross_series(price: pd.Series, line: pd.Series):
     cross_dn = (~above) & (above.shift(1).fillna(False))
     return cross_up.reindex(p.index, fill_value=False), cross_dn.reindex(p.index, fill_value=False)
 
+# --- (Optional) HMA SR signal; gated by alignment if used ---
 def find_hma_sr_signal(price: pd.Series,
                        hma: pd.Series,
                        support: pd.Series,
                        resistance: pd.Series,
                        slope_val: float,
-                       prox: float):
+                       prox: float,
+                       global_slope: float = None):
     p = _coerce_1d_series(price)
     h = _coerce_1d_series(hma).reindex(p.index)
     sup = _coerce_1d_series(support).reindex(p.index)
@@ -780,13 +800,17 @@ def find_hma_sr_signal(price: pd.Series,
     cross_up, cross_dn = _cross_series(p, h)
 
     try:
-        slope = float(slope_val)
+        s_local = np.sign(float(slope_val))
     except Exception:
-        slope = np.nan
-    if not np.isfinite(slope) or slope == 0:
+        s_local = 0.0
+    try:
+        s_global = np.sign(float(global_slope)) if global_slope is not None else s_local
+    except Exception:
+        s_global = 0.0
+    if not (s_local != 0.0 and s_global != 0.0 and s_local == s_global):
         return None
 
-    if slope > 0:
+    if s_local > 0:
         idx_events = list(cross_up[cross_up].index)
         if not idx_events:
             return None
@@ -964,6 +988,7 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
                 in_uptrend.iloc[i] = False
 
     return pd.DataFrame({"PSAR": psar, "in_uptrend": in_uptrend})
+
 # ---------- HMA reversal markers on NTD panel ----------
 def detect_hma_reversal_masks(price: pd.Series, hma: pd.Series,
                               lookback: int = 3):
@@ -1376,7 +1401,6 @@ def price_above_kijun_info_hourly(symbol: str, period: str = "1d",
     except Exception:
         return False, None, np.nan, np.nan
 
-# (Legacy) green-dot scanners kept for future use
 @st.cache_data(ttl=120)
 def last_green_dot_daily(symbol: str, ntd_win: int, level: float = None):
     try:
@@ -1475,7 +1499,10 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Long-Term History"
 ])
 
-# ---------- SHARED HOURLY RENDERER (Stock & Forex use this) ----------
+# ==========================================
+# Part 4/5 — Hourly Renderer (with alignment)
+# ==========================================
+
 def render_hourly_views(sel: str,
                         intraday: pd.DataFrame,
                         p_up: float,
@@ -1493,7 +1520,7 @@ def render_hourly_views(sel: str,
     he = hc.ewm(span=20).mean()
     xh = np.arange(len(hc))
     slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
-    trend_h = slope_h * xh + intercept_h  # numeric fallback only (not plotted)
+    trend_h = slope_h * xh + intercept_h  # numeric fallback only
 
     res_h = hc.rolling(sr_lb_hourly, min_periods=1).max()
     sup_h = hc.rolling(sr_lb_hourly, min_periods=1).min()
@@ -1536,7 +1563,7 @@ def render_hourly_views(sel: str,
 
     ax2.plot(hc.index, hc, label="Intraday")
     ax2.plot(hc.index, he, "--", label="20 EMA")
-    draw_trend_direction_line(ax2, hc, label_prefix="Trend (global)")
+    m_global_h = draw_trend_direction_line(ax2, hc, label_prefix="Trend (global)")  # capture global slope
 
     if show_hma and not hma_h.dropna().empty:
         ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6,
@@ -1590,7 +1617,8 @@ def render_hourly_views(sel: str,
         buy_val=sup_val,
         sell_val=res_val,
         close_val=px_val,
-        symbol=sel
+        symbol=sel,
+        global_trend_slope=m_global_h
     )
 
     rev_txt_h = fmt_pct(rev_prob_h) if np.isfinite(rev_prob_h) else "n/a"
@@ -1630,7 +1658,9 @@ def render_hourly_views(sel: str,
         ax2.plot(lower_h.index, lower_h.values, "--", linewidth=2.2,
                  color="black", alpha=0.85, label="Slope -2σ")
 
-        bounce_sig_h = find_band_bounce_signal(hc, upper_h, lower_h, slope_sig_h)
+        bounce_sig_h = find_band_bounce_signal(
+            hc, upper_h, lower_h, slope_sig_h, m_global_h
+        )
         if bounce_sig_h is not None:
             annotate_crossover(ax2, bounce_sig_h["time"],
                                bounce_sig_h["price"], bounce_sig_h["side"])
@@ -1781,6 +1811,11 @@ def render_hourly_views(sel: str,
         ax2m.legend(loc="lower left", framealpha=0.5)
         ax2m.set_xlim(xlim_price)
         st.pyplot(fig2m)
+
+# ==========================================
+# Part 5/5 — Tabs (Daily/Enhanced/Scanner/Etc.)
+# ==========================================
+
 # ==================== TAB 1: ORIGINAL FORECAST ====================
 with tab1:
     st.header("Original Forecast")
@@ -1903,7 +1938,7 @@ with tab1:
                     (psar_d_df.index >= x0) & (psar_d_df.index <= x1)
                 ]
 
-            # === NEW (this update): Build Daily BUY/SELL instruction for title ===
+            # === UPDATED: Build Daily instruction with alignment ===
             px_val_d = _safe_last_float(df_show)
             try:
                 res_val_d = float(res_d_show.iloc[-1])
@@ -1913,19 +1948,23 @@ with tab1:
                 sup_val_d = float(sup_d_show.iloc[-1])
             except Exception:
                 sup_val_d = np.nan
-            instr_txt_d = format_trade_instruction(
-                trend_slope=m_d,
-                buy_val=sup_val_d,
-                sell_val=res_val_d,
-                close_val=px_val_d,
-                symbol=sel
-            )
 
             fig, (ax, axdw) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
                 gridspec_kw={"height_ratios": [3.2, 1.3]}
             )
             plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93)
+
+            m_global_d = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
+
+            instr_txt_d = format_trade_instruction(
+                trend_slope=m_d,
+                buy_val=sup_val_d,
+                sell_val=res_val_d,
+                close_val=px_val_d,
+                symbol=sel,
+                global_trend_slope=m_global_d
+            )
 
             rev_txt_d = fmt_pct(rev_prob_d) if np.isfinite(rev_prob_d) else "n/a"
             # PRICE CHART (Daily)
@@ -1935,8 +1974,6 @@ with tab1:
             )
             ax.plot(df_show, label="History")
             ax.plot(ema30_show, "--", label="30 EMA")
-
-            draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
 
             if show_hma and not hma_d_show.dropna().empty:
                 ax.plot(hma_d_show.index, hma_d_show.values, "-",
@@ -2012,7 +2049,7 @@ with tab1:
                         label="Daily Trend -2σ")
 
                 bounce_sig_d = find_band_bounce_signal(
-                    df_show, upper_d_show, lower_d_show, m_d
+                    df_show, upper_d_show, lower_d_show, m_d, m_global_d
                 )
                 if bounce_sig_d is not None:
                     annotate_crossover(
@@ -2135,6 +2172,7 @@ with tab1:
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
+
 # ==================== TAB 2: ENHANCED FORECAST ====================
 with tab2:
     st.header("Enhanced Forecast")
@@ -2213,7 +2251,6 @@ with tab2:
             hma_d2_full = compute_hma(df, period=hma_period)
             hma_d2_show = hma_d2_full.reindex(df_show.index)
 
-            # === NEW: Daily BUY/SELL instruction for Enhanced tab title ===
             px_val_d2 = _safe_last_float(df_show)
             try:
                 res_val_d2 = float(res_d2_show.iloc[-1])
@@ -2223,19 +2260,23 @@ with tab2:
                 sup_val_d2 = float(sup_d2_show.iloc[-1])
             except Exception:
                 sup_val_d2 = np.nan
-            instr_txt_d2 = format_trade_instruction(
-                trend_slope=m_d,
-                buy_val=sup_val_d2,
-                sell_val=res_val_d2,
-                close_val=px_val_d2,
-                symbol=st.session_state.ticker
-            )
 
             fig, (ax, axdw2) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
                 gridspec_kw={"height_ratios": [3.2, 1.3]}
             )
             plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93)
+            m_global_d2 = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
+
+            instr_txt_d2 = format_trade_instruction(
+                trend_slope=m_d,
+                buy_val=sup_val_d2,
+                sell_val=res_val_d2,
+                close_val=px_val_d2,
+                symbol=st.session_state.ticker,
+                global_trend_slope=m_global_d2
+            )
+
             rev_txt_d2 = fmt_pct(rev_prob_d2) if np.isfinite(rev_prob_d2) else "n/a"
             ax.set_title(
                 f"{st.session_state.ticker} Daily — {daily_view} — "
@@ -2245,8 +2286,6 @@ with tab2:
             )
             ax.plot(df_show, label="History")
             ax.plot(ema30_show, "--", label="30 EMA")
-
-            draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
 
             if show_hma and not hma_d2_show.dropna().empty:
                 ax.plot(hma_d2_show.index, hma_d2_show.values, "-",
@@ -2294,7 +2333,7 @@ with tab2:
                         label="Daily Trend -2σ")
 
                 bounce_sig_d2 = find_band_bounce_signal(
-                    df_show, upper_d_show, lower_d_show, m_d
+                    df_show, upper_d_show, lower_d_show, m_d, m_global_d2
                 )
                 if bounce_sig_d2 is not None:
                     annotate_crossover(
