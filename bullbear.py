@@ -18,6 +18,8 @@
 #                        with horizontal lines at the latest Support & Resistance.
 #   • NEW (this update): Daily chart TITLE now shows the same BUY/SELL instruction as Hourly,
 #                        derived from slope sign + latest S/R + current price.
+#   • NEW (this update): STRONG BUY/SELL markers when price crosses the slope line
+#                        in the direction of the current slope (see helpers below).
 
 import streamlit as st
 import pandas as pd
@@ -518,7 +520,6 @@ def slope_reversal_probability(series_like,
     if match == 0:
         return float("nan")
     return float(flips / match)
-
 # --- NEW: bounce helper using ±2σ band ---
 def find_band_bounce_signal(price: pd.Series,
                             upper_band: pd.Series,
@@ -996,6 +997,58 @@ def overlay_hma_reversal_on_ntd(ax, price: pd.Series, hma: pd.Series,
                    marker="D", s=70, color="tab:red",   zorder=8,
                    label=f"HMA({period}) REV")
 
+# ---------- NEW: STRONG slope-cross helpers ----------
+def find_strong_slope_cross_signal(price: pd.Series,
+                                   trend_line: pd.Series,
+                                   slope_val: float):
+    """
+    Strong signal when price crosses the slope line IN THE DIRECTION of slope:
+      • slope > 0 and price crosses ABOVE trend → STRONG BUY
+      • slope < 0 and price crosses BELOW trend → STRONG SELL
+    Returns dict with {time, price, side} for the MOST RECENT match.
+    """
+    p = _coerce_1d_series(price)
+    t = _coerce_1d_series(trend_line).reindex(p.index)
+    ok = p.notna() & t.notna()
+    if ok.sum() < 2:
+        return None
+    p = p[ok]
+    t = t.reindex(p.index)
+    cross_up, cross_dn = _cross_series(p, t)
+
+    try:
+        slope = float(slope_val)
+    except Exception:
+        slope = np.nan
+    if not np.isfinite(slope) or slope == 0.0:
+        return None
+
+    if slope > 0:
+        idx = list(cross_up[cross_up].index)
+        if not idx:
+            return None
+        ts = idx[-1]
+        return {"time": ts, "price": float(p.loc[ts]), "side": "STRONG BUY"}
+    else:
+        idx = list(cross_dn[cross_dn].index)
+        if not idx:
+            return None
+        ts = idx[-1]
+        return {"time": ts, "price": float(p.loc[ts]), "side": "STRONG SELL"}
+
+def annotate_strong_signal(ax, ts, px, side: str):
+    """
+    Plot a big star + label for STRONG BUY/SELL.
+    """
+    if side.upper().endswith("BUY"):
+        ax.scatter([ts], [px], marker="*", s=220, color="tab:green", zorder=9)
+        ax.text(ts, px, "  STRONG BUY", va="bottom", fontsize=11,
+                color="tab:green", fontweight="bold")
+    else:
+        ax.scatter([ts], [px], marker="*", s=220, color="tab:red", zorder=9)
+        ax.text(ts, px, "  STRONG SELL", va="top", fontsize=11,
+                color="tab:red", fontweight="bold")
+
 # NPX ↔ NTD overlay/helpers
 def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series,
                        mark_crosses: bool = True):
@@ -1415,7 +1468,6 @@ def last_green_dot_daily(symbol: str, ntd_win: int, level: float = None):
         return is_signal, ntd_last, idx_last, npx_last, close_last
     except Exception:
         return False, np.nan, None, np.nan, np.nan
-
 @st.cache_data(ttl=120)
 def last_green_dot_hourly(symbol: str, ntd_win: int, period: str = "1d",
                           level: float = None):
@@ -1620,10 +1672,18 @@ def render_hourly_views(sel: str,
         ax2.plot(st_line_intr.index, st_line_intr.values, "-",
                  label=f"Supertrend ({atr_period},{atr_mult})")
 
+    # --- Slope line and ±2σ band ---
     if not yhat_h.empty:
         ax2.plot(yhat_h.index, yhat_h.values, "-",
                  linewidth=2,
                  label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
+
+        # NEW: STRONG BUY/SELL marker on slope-direction crosses
+        strong_sig_h = find_strong_slope_cross_signal(hc, yhat_h, slope_sig_h)
+        if strong_sig_h is not None:
+            annotate_strong_signal(ax2, strong_sig_h["time"],
+                                   strong_sig_h["price"], strong_sig_h["side"])
+
     if not upper_h.empty and not lower_h.empty:
         ax2.plot(upper_h.index, upper_h.values, "--", linewidth=2.2,
                  color="black", alpha=0.85, label="Slope +2σ")
@@ -1705,7 +1765,6 @@ def render_hourly_views(sel: str,
         ax2v.set_xlabel("Time (PST)")
         ax2v.legend(loc="lower left", framealpha=0.5)
         st.pyplot(fig2v)
-
     # ---- Hourly Indicator Panel — NTD + NPX + Triangles + Stars ----
     if show_nrsi:
         ntd_h = compute_normalized_trend(hc, window=ntd_window)
@@ -1781,6 +1840,7 @@ def render_hourly_views(sel: str,
         ax2m.legend(loc="lower left", framealpha=0.5)
         ax2m.set_xlim(xlim_price)
         st.pyplot(fig2m)
+
 # ==================== TAB 1: ORIGINAL FORECAST ====================
 with tab1:
     st.header("Original Forecast")
@@ -2003,6 +2063,13 @@ with tab1:
                         linewidth=2,
                         label=f"Daily Slope {slope_lb_daily} "
                               f"({fmt_slope(m_d)}/bar)")
+
+                # NEW: STRONG BUY/SELL marker on slope-direction crosses (Daily)
+                strong_sig_d = find_strong_slope_cross_signal(df_show, yhat_d_show, m_d)
+                if strong_sig_d is not None:
+                    annotate_strong_signal(ax, strong_sig_d["time"],
+                                           strong_sig_d["price"], strong_sig_d["side"])
+
             if not upper_d_show.empty and not lower_d_show.empty:
                 ax.plot(upper_d_show.index, upper_d_show.values, "--",
                         linewidth=2.2, color="black", alpha=0.85,
@@ -2135,6 +2202,7 @@ with tab1:
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
+
 # ==================== TAB 2: ENHANCED FORECAST ====================
 with tab2:
     st.header("Enhanced Forecast")
@@ -2285,6 +2353,13 @@ with tab2:
                         linewidth=2,
                         label=f"Daily Slope {slope_lb_daily} "
                               f"({fmt_slope(m_d)}/bar)")
+
+                # NEW: STRONG BUY/SELL marker on slope-direction crosses (Enhanced Daily)
+                strong_sig_d2 = find_strong_slope_cross_signal(df_show, yhat_d_show, m_d)
+                if strong_sig_d2 is not None:
+                    annotate_strong_signal(ax, strong_sig_d2["time"],
+                                           strong_sig_d2["price"], strong_sig_d2["side"])
+
             if not upper_d_show.empty and not lower_d_show.empty:
                 ax.plot(upper_d_show.index, upper_d_show.values, "--",
                         linewidth=2.2, color="black", alpha=0.85,
