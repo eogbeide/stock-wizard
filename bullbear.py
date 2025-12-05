@@ -1,29 +1,12 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # UPDATED — per request:
-#   • Stock hourly chart now uses the SAME layout and indicators as Forex hourly view:
-#       - Supertrend, PSAR, Bollinger Bands, HMA
-#       - Volume panel with trendline (Forex-only; stocks skip this panel per request)
-#       - Momentum (ROC%) panel
-#       - NTD + NPX indicator panel with triangles, stars, in-range shading
-#   • BUY/SELL instruction uses slope direction.
-#   • Chart BUY/SELL markers only trigger when price "bounces" off the ±2σ band:
-#        - slope > 0 AND price moves from below LOWER band back inside → BUY
-#        - slope < 0 AND price moves from above UPPER band back inside → SELL
-#   • ±2σ bands around slope are thicker & darker.
-#   • NTD triangles are gated by price trend sign.
-#   • NTD scanner lists symbols whose latest NTD value is below -0.75 (daily; hourly for Forex).
-#   • NEW: Slope reversal probability for daily & hourly price charts.
-#   • Green dashed global trendline restored on daily & hourly price charts.
-#   • NEW (prev update): Daily chart uses configurable S/R (rolling highs/lows) like hourly,
-#                        with horizontal lines at the latest Support & Resistance.
-#   • NEW (this update): Daily chart TITLE now shows the same BUY/SELL instruction as Hourly,
-#                        derived from slope sign + latest S/R + current price.
-#   • NEW (this update): STRONG BUY/SELL markers when price crosses the slope line
-#                        in the direction of the current slope (see helpers below).
-#   • NEW (this update): "Take Profit" markers added on the price chart:
-#        - Upward slope: after BUY/STRONG BUY → Take Profit at RESISTANCE
-#        - Downward slope: after SELL/STRONG SELL → Take Profit at SUPPORT
-#   • FIXED: Robust fallback prevents NameError for _has_volume_to_plot in hourly view.
+#   • Momentum (ROC%) panel and controls REMOVED.
+#   • UI polish: softer cards, spacing, refined typography, cleaner sidebar.
+#   • Fibonacci (hourly) now ON by default.
+#   • (Kept) Fix: robust fallback prevents NameError for _has_volume_to_plot.
+#   • (Kept) "Take Profit" spelled out on chart markers.
+#   • (Kept) Intraday & Daily indicators (Supertrend, PSAR, BB, HMA, NTD/NPX),
+#            slope ±2σ, bounce and strong-cross signals, S/R lines, etc.
 
 import streamlit as st
 import pandas as pd
@@ -44,19 +27,75 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- Minimal CSS for cleaner UI + mobile ---
+# --- Polished CSS (cards, spacing, refined tabs/sidebar) ---
 st.markdown("""
 <style>
+  /* Hide Streamlit chrome */
   #MainMenu, header, footer {visibility: hidden;}
+
+  /* App background & container width */
+  .stApp { 
+    background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+  }
+  .block-container { 
+    padding-top: 1.2rem;
+    padding-bottom: 2rem;
+    max-width: 1400px;
+  }
+
+  /* Soft card look for elements that follow headings */
+  .bb-card {
+    background: #ffffff;
+    border-radius: 16px;
+    box-shadow: 0 6px 22px rgba(2,16,28,.06);
+    border: 1px solid rgba(2,16,28,.06);
+    padding: 14px 18px;
+    margin: 8px 0 18px 0;
+  }
+
+  /* Headings */
+  h1, h2, h3 { font-weight: 700; letter-spacing: .2px; }
+  h1 { font-size: 1.6rem; }
+  h2 { font-size: 1.25rem; margin-top: .25rem; }
+
+  /* Sidebar polish */
+  section[data-testid="stSidebar"] {
+    background: linear-gradient(180deg, #0ea5e9 0%, #22d3ee 100%);
+    color: white;
+  }
+  section[data-testid="stSidebar"] * { color: white !important; }
+  section[data-testid="stSidebar"] .stSlider > div > div > div[role="slider"] {
+    background: white !important;
+  }
+  section[data-testid="stSidebar"] .stSlider [data-baseweb="slider"] div[role="slider"]::after {
+    background: #0ea5e9 !important;
+  }
+  section[data-testid="stSidebar"] .stCheckbox span {
+    font-weight: 600;
+  }
+
+  /* Tabs */
+  [data-baseweb="tab-list"] {
+    gap: 4px;
+  }
+  [data-baseweb="tab"] {
+    border-radius: 999px !important;
+    background: rgba(2,16,28,.06);
+    font-weight: 600;
+  }
+  [aria-selected="true"][data-baseweb="tab"] {
+    background: #0ea5e9 !important;
+    color: white !important;
+  }
+
+  /* Labels on charts */
+  .chart-label {
+    font-weight: 700;
+  }
+
+  /* Mobile tweaks */
   @media (max-width: 600px) {
-    .css-18e3th9 {
-      transform: none !important;
-      visibility: visible !important;
-      width: 100% !important;
-      position: relative !important;
-      margin-bottom: 1rem;
-    }
-    .css-1v3fvcr { margin-left: 0 !important; }
+    .block-container { padding: 0.6rem; }
   }
 </style>
 """, unsafe_allow_html=True)
@@ -79,11 +118,13 @@ auto_refresh()
 elapsed = time.time() - st.session_state.last_refresh
 remaining = max(0, int(REFRESH_INTERVAL - elapsed))
 pst_dt = datetime.fromtimestamp(st.session_state.last_refresh, tz=PACIFIC)
-st.sidebar.markdown(
-    f"**Auto-refresh:** every {REFRESH_INTERVAL//60} min  \n"
-    f"**Last refresh:** {pst_dt.strftime('%Y-%m-%d %H:%M:%S')} PST  \n"
-    f"**Next in:** ~{remaining}s"
-)
+with st.sidebar:
+    st.markdown("### Auto-refresh")
+    st.markdown(
+        f"**Every:** {REFRESH_INTERVAL//60} min  \n"
+        f"**Last:** {pst_dt.strftime('%Y-%m-%d %H:%M:%S')} PST  \n"
+        f"**Next in:** ~{remaining}s"
+    )
 
 # ---------- Core helpers ----------
 def _coerce_1d_series(obj) -> pd.Series:
@@ -210,14 +251,14 @@ def subset_by_daily_view(obj, view_label: str):
     else:
         start = end - pd.Timedelta(days=days_map.get(view_label, 365))
     return obj.loc[(idx >= start) & (idx <= end)]
-
 # ---------- Sidebar configuration ----------
 st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2, key="sb_bb_period")
 daily_view = st.sidebar.selectbox("Daily view range:", ["Historical", "6M", "12M", "24M"],
                                   index=2, key="sb_daily_view")
-show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=False, key="sb_show_fibs")
+# Fibonacci ON by default now
+show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=True, key="sb_show_fibs")
 
 slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10, key="sb_slope_lb_daily")
 slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120,  6, key="sb_slope_lb_hourly")
@@ -240,9 +281,7 @@ sr_lb_daily = st.sidebar.slider("Daily S/R lookback (bars)", 20, 252, 60, 5, key
 st.sidebar.subheader("Hourly Support/Resistance Window")
 sr_lb_hourly = st.sidebar.slider("Hourly S/R lookback (bars)", 20, 240, 60, 5, key="sb_sr_lb_hourly")
 
-st.sidebar.subheader("Hourly Momentum")
-show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True, key="sb_show_mom_hourly")
-mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, key="sb_mom_lb_hourly")
+# (REMOVED) Hourly Momentum controls
 
 st.sidebar.subheader("Hourly Indicator Panel")
 show_nrsi   = st.sidebar.checkbox("Show Hourly NTD panel", value=True, key="sb_show_nrsi")
@@ -525,7 +564,6 @@ def slope_reversal_probability(series_like,
     if match == 0:
         return float("nan")
     return float(flips / match)
-
 # --- NEW: bounce helper using ±2σ band ---
 def find_band_bounce_signal(price: pd.Series,
                             upper_band: pd.Series,
@@ -571,15 +609,8 @@ def find_band_bounce_signal(price: pd.Series,
             return None
         t = idx[-1]
         return {"time": t, "price": float(p.loc[t]), "side": "SELL"}
-# ---------- Other indicators ----------
-def compute_roc(series_like, n: int = 10) -> pd.Series:
-    s = _coerce_1d_series(series_like)
-    base = s.dropna()
-    if base.empty:
-        return pd.Series(index=s.index, dtype=float)
-    roc = base.pct_change(n) * 100.0
-    return roc.reindex(s.index)
 
+# ---------- Other indicators ----------
 def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
     if s.empty or period < 2:
@@ -1013,7 +1044,7 @@ def find_strong_slope_cross_signal(price: pd.Series,
     ok = p.notna() & t.notna()
     if ok.sum() < 2:
         return None
-    p = p[ok]; t = t.reindex(p.index)
+    p = p[ok]; t = t[ok]
     cross_up, cross_dn = _cross_series(p, t)
 
     try:
@@ -1063,7 +1094,6 @@ def annotate_take_profit(ax, ts, y_level: float, side: str):
                 color="tab:purple", fontweight="bold")
     except Exception:
         pass
-
 # NPX ↔ NTD overlay/helpers
 def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series,
                        mark_crosses: bool = True):
@@ -1380,6 +1410,7 @@ def _has_volume_to_plot(vol: pd.Series) -> bool:
     vmin = float(np.nanmin(arr))
     return (np.isfinite(vmax) and vmax > 0.0) or \
            (np.isfinite(vmin) and vmin < 0.0)
+
 # ========= Cached last values for scanning =========
 @st.cache_data(ttl=120)
 def last_daily_ntd_value(symbol: str, ntd_win: int):
@@ -1533,15 +1564,18 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "Original Forecast",
-    "Enhanced Forecast",
-    "Bull vs Bear",
-    "Metrics",
-    "NTD -0.75 Scanner",
-    "Long-Term History"
-])
-
+wrap = st.container()
+with wrap:
+    st.markdown('<div class="bb-card">', unsafe_allow_html=True)
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "Original Forecast",
+        "Enhanced Forecast",
+        "Bull vs Bear",
+        "Metrics",
+        "NTD -0.75 Scanner",
+        "Long-Term History"
+    ])
+    st.markdown('</div>', unsafe_allow_html=True)
 # ---------- SHARED HOURLY RENDERER (Stock & Forex use this) ----------
 def render_hourly_views(sel: str,
                         intraday: pd.DataFrame,
@@ -1757,7 +1791,7 @@ def render_hourly_views(sel: str,
         intraday.get("Volume", pd.Series(index=hc.index))
     ).reindex(hc.index).astype(float)
 
-    # NameError-safe guard (prevents crash if helper not yet in globals on rerun)
+    # NameError-safe guard
     try:
         volume_ok = _has_volume_to_plot(vol)
     except NameError:
@@ -1853,26 +1887,6 @@ def render_hourly_views(sel: str,
         ax2r.set_xlabel("Time (PST)")
         st.pyplot(fig2r)
 
-    # ---- Momentum panel (ROC%) ----
-    if show_mom_hourly:
-        roc = compute_roc(hc, n=mom_lb_hourly)
-        res_m = roc.rolling(60, min_periods=1).max()
-        sup_m = roc.rolling(60, min_periods=1).min()
-
-        fig2m, ax2m = plt.subplots(figsize=(14, 2.8))
-        ax2m.set_title(f"Momentum (ROC% over {mom_lb_hourly} bars)")
-        ax2m.plot(roc.index, roc, label=f"ROC%({mom_lb_hourly})")
-        yhat_m, m_m = slope_line(roc, slope_lb_hourly)
-        if not yhat_m.empty:
-            ax2m.plot(yhat_m.index, yhat_m.values, "--", linewidth=2,
-                      label=f"Trend {slope_lb_hourly} ({fmt_slope(m_m)}%/bar)")
-        ax2m.plot(res_m.index, res_m, ":", label="Mom Resistance")
-        ax2m.plot(sup_m.index, sup_m, ":", label="Mom Support")
-        ax2m.axhline(0, linestyle="--", linewidth=1)
-        ax2m.set_xlabel("Time (PST)")
-        ax2m.legend(loc="lower left", framealpha=0.5)
-        ax2m.set_xlim(xlim_price)
-        st.pyplot(fig2m)
 # ==================== TAB 1: ORIGINAL FORECAST ====================
 with tab1:
     st.header("Original Forecast")
@@ -2243,6 +2257,7 @@ with tab1:
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
+
 # ==================== TAB 2: ENHANCED FORECAST ====================
 with tab2:
     st.header("Enhanced Forecast")
@@ -2518,12 +2533,10 @@ with tab3:
         bear = int((~df3['Bull']).sum())
         total = bull + bear
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Days", total)
-        c2.metric("Bull Days", bull,
-                  f"{bull/total*100:.1f}%")
-        c3.metric("Bear Days", bear,
-                  f"{bear/total*100:.1f}%")
-        c4.metric("Lookback", bb_period)
+        with c1: st.metric("Total Days", total)
+        with c2: st.metric("Bull Days", bull, f"{bull/total*100:.1f}%")
+        with c3: st.metric("Bear Days", bear, f"{bear/total*100:.1f}%")
+        with c4: st.metric("Lookback", bb_period)
 
 # ==================== TAB 4: Metrics ====================
 with tab4:
