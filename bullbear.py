@@ -38,6 +38,16 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# --- Global Matplotlib readability tweaks ---
+plt.rcParams.update({
+    "axes.titlesize": 12,
+    "axes.labelsize": 10,
+    "xtick.labelsize": 9,
+    "ytick.labelsize": 9,
+    "legend.fontsize": 9,
+    "figure.titlesize": 12,
+})
+
 # --- Auto-refresh (PST) ---
 REFRESH_INTERVAL = 120  # seconds
 PACIFIC = pytz.timezone("US/Pacific")
@@ -139,6 +149,25 @@ def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: i
         bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.6),
         zorder=6
     )
+
+# NEW: label on right helper (for BUY/SELL/TP callouts)
+def label_on_right(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
+    trans = blended_transform_factory(ax.transAxes, ax.transData)
+    ax.text(
+        0.99, y_val, text, transform=trans,
+        ha="right", va="center", color=color, fontsize=fontsize,
+        fontweight="bold",
+        bbox=dict(boxstyle="round,pad=0.24", fc="white", ec="grey", alpha=0.85),
+        zorder=7
+    )
+
+# NEW: small readability helper for every axes
+def apply_readable_style(ax):
+    try:
+        ax.grid(True, linestyle="--", alpha=0.25, linewidth=0.8)
+        ax.set_facecolor("white")
+    except Exception:
+        pass
 
 def subset_by_daily_view(obj, view_label: str):
     if obj is None or len(obj.index) == 0:
@@ -269,7 +298,6 @@ else:
         'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','EURCAD=X',
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
     ]
-
 # ---------- Data fetchers ----------
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
@@ -992,7 +1020,6 @@ def overlay_ntd_sr_reversal_stars(ax, price: pd.Series, sup: pd.Series, res: pd.
         ax.scatter([t], [ntd0], marker="*", s=170, color="tab:green", zorder=12, label="BUY ★ (Support reversal)")
     if sell_cond:
         ax.scatter([t], [ntd0], marker="*", s=170, color="tab:red",   zorder=12, label="SELL ★ (Resistance reversal)")
-
 # ---------- Session markers (PST) ----------
 NY_TZ   = pytz.timezone("America/New_York")
 LDN_TZ  = pytz.timezone("Europe/London")
@@ -1153,6 +1180,7 @@ def _has_volume_to_plot(vol: pd.Series) -> bool:
     arr = s.to_numpy(dtype=float)
     vmax = float(np.nanmax(arr)); vmin = float(np.nanmin(arr))
     return (np.isfinite(vmax) and vmax > 0.0) or (np.isfinite(vmin) and vmin < 0.0)
+
 # ========= Cached last values for scanning =========
 @st.cache_data(ttl=120)
 def last_daily_ntd_value(symbol: str, ntd_win: int):
@@ -1310,6 +1338,22 @@ def format_trade_instruction(trend_slope: float,
     text += f" • {_diff_text(leg_a_val, leg_b_val, symbol)}"
     return text
 
+# NEW: draw BUY/SELL + TAKE PROFIT callouts directly on price chart
+def annotate_trade_plan_on_price(ax, trend_slope: float, support_val: float, resistance_val: float):
+    if not (np.isfinite(support_val) and np.isfinite(resistance_val)):
+        return
+    uptrend = False
+    try:
+        uptrend = float(trend_slope) >= 0.0
+    except Exception:
+        pass
+    if uptrend:
+        label_on_right(ax, support_val, f"▲ BUY @{fmt_price_val(support_val)}", color="tab:green", fontsize=9)
+        label_on_right(ax, resistance_val, f"🎯 TAKE PROFIT @{fmt_price_val(resistance_val)}", color="tab:blue", fontsize=9)
+    else:
+        label_on_right(ax, resistance_val, f"▼ SELL @{fmt_price_val(resistance_val)}", color="tab:red", fontsize=9)
+        label_on_right(ax, support_val, f"🎯 TAKE PROFIT @{fmt_price_val(support_val)}", color="tab:blue", fontsize=9)
+
 # ---------- Session state init ----------
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -1371,9 +1415,10 @@ def render_hourly_views(sel: str,
     # Figure
     fig2, ax2 = plt.subplots(figsize=(14, 4))
     plt.subplots_adjust(top=0.85, right=0.93)
+    apply_readable_style(ax2)
 
-    ax2.plot(hc.index, hc, label="Intraday")
-    ax2.plot(hc.index, he, "--", label="20 EMA")
+    ax2.plot(hc.index, hc, label="Intraday", linewidth=1.4)
+    ax2.plot(hc.index, he, "--", label="20 EMA", linewidth=1.2)
     m_global_h = draw_trend_direction_line(ax2, hc, label_prefix="Trend (global)")
     if not np.isfinite(m_global_h):
         m_global_h = slope_h
@@ -1413,6 +1458,8 @@ def render_hourly_views(sel: str,
         ax2.hlines(sup_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
         label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
         label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
+        # NEW: explicit trade-plan callouts on the price chart
+        annotate_trade_plan_on_price(ax2, m_global_h, sup_val, res_val)
 
     # Instruction text (alignment-aware)
     if align_ok_h:
@@ -1495,7 +1542,7 @@ def render_hourly_views(sel: str,
             ax2.text(hc.index[-1], y, f" {lbl}", va="center")
 
     ax2.set_xlabel("Time (PST)")
-    ax2.legend(loc="lower left", framealpha=0.5)
+    ax2.legend(loc="lower left", framealpha=0.5, ncol=3)
     xlim_price = ax2.get_xlim()
     st.pyplot(fig2)
 
@@ -1506,6 +1553,7 @@ def render_hourly_views(sel: str,
         v_trend, v_m = slope_line(vol, slope_lb_hourly)
         v_r2 = regression_r2(vol, slope_lb_hourly)
         fig2v, ax2v = plt.subplots(figsize=(14, 2.8))
+        apply_readable_style(ax2v)
         ax2v.set_title(f"Volume (Hourly) — Mid-line & Trend  |  Slope={fmt_slope(v_m)}/bar")
         ax2v.fill_between(vol.index, 0, vol, alpha=0.18, label="Volume", color="tab:blue")
         ax2v.plot(vol.index, vol, linewidth=1.0, color="tab:blue")
@@ -1528,6 +1576,7 @@ def render_hourly_views(sel: str,
         npx_h = compute_normalized_price(hc, window=ntd_window) if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
 
         fig2r, ax2r = plt.subplots(figsize=(14, 2.8))
+        apply_readable_style(ax2r)
         ax2r.set_title(f"Hourly Indicator Panel — NTD + NPX + Trend (win={ntd_window})")
         if shade_ntd and not ntd_h.dropna().empty:
             shade_ntd_regions(ax2r, ntd_h)
@@ -1645,9 +1694,10 @@ with tab1:
 
             fig, (ax, axdw) = plt.subplots(2, 1, sharex=True, figsize=(14, 8), gridspec_kw={"height_ratios": [3.2, 1.3]})
             plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93)
+            apply_readable_style(ax); apply_readable_style(axdw)
 
-            ax.plot(df_show, label="History")
-            ax.plot(ema30_show, "--", label="30 EMA")
+            ax.plot(df_show, label="History", linewidth=1.4)
+            ax.plot(ema30_show, "--", label="30 EMA", linewidth=1.2)
             m_global_d = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
             align_ok_d = slopes_aligned(m_local_d, m_global_d)
 
@@ -1674,12 +1724,14 @@ with tab1:
                 except Exception:
                     pass
 
-            # S/R lines
+            # S/R lines + explicit trade plan callouts
             if np.isfinite(res_val_d) and np.isfinite(sup_val_d):
                 ax.hlines(res_val_d, xmin=df_show.index[0], xmax=df_show.index[-1], colors="tab:red",   linestyles="-", linewidth=1.6, label=f"Resistance (w={sr_lb_daily})")
                 ax.hlines(sup_val_d, xmin=df_show.index[0], xmax=df_show.index[-1], colors="tab:green", linestyles="-", linewidth=1.6, label=f"Support (w={sr_lb_daily})")
                 label_on_left(ax, res_val_d, f"R {fmt_price_val(res_val_d)}", color="tab:red")
                 label_on_left(ax, sup_val_d, f"S {fmt_price_val(sup_val_d)}", color="tab:green")
+                # NEW: explicit "BUY/SELL" + "TAKE PROFIT" on the price chart
+                annotate_trade_plan_on_price(ax, m_global_d, sup_val_d, res_val_d)
 
             # Daily slope bands
             if not yhat_d_show.empty:
@@ -1730,7 +1782,7 @@ with tab1:
                     transform=ax.transAxes, ha="center", va="bottom",
                     fontsize=9, color="black",
                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-            ax.legend(loc="lower left", framealpha=0.5)
+            ax.legend(loc="lower left", framealpha=0.5, ncol=3)
 
             # DAILY NTD PANEL
             axdw.set_title(f"Daily Indicator Panel — NTD + NPX + Trend (S/R w={sr_lb_daily})")
@@ -1782,6 +1834,7 @@ with tab1:
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
+
 # ==================== TAB 2: ENHANCED FORECAST ====================
 with tab2:
     st.header("Enhanced Forecast")
@@ -1840,8 +1893,10 @@ with tab2:
 
             fig, (ax, axdw2) = plt.subplots(2, 1, sharex=True, figsize=(14, 8), gridspec_kw={"height_ratios": [3.2, 1.3]})
             plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93)
-            ax.plot(df_show, label="History")
-            ax.plot(ema30_show, "--", label="30 EMA")
+            apply_readable_style(ax); apply_readable_style(axdw2)
+
+            ax.plot(df_show, label="History", linewidth=1.4)
+            ax.plot(ema30_show, "--", label="30 EMA", linewidth=1.2)
             m_global_d2 = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
             align_ok_d2 = slopes_aligned(m_local_d, m_global_d2)
 
@@ -1862,6 +1917,8 @@ with tab2:
                 ax.hlines(sup_val_d2, xmin=df_show.index[0], xmax=df_show.index[-1], colors="tab:green", linestyles="-", linewidth=1.6, label=f"Support (w={sr_lb_daily})")
                 label_on_left(ax, res_val_d2, f"R {fmt_price_val(res_val_d2)}", color="tab:red")
                 label_on_left(ax, sup_val_d2, f"S {fmt_price_val(sup_val_d2)}", color="tab:green")
+                # NEW: explicit callouts
+                annotate_trade_plan_on_price(ax, m_global_d2, sup_val_d2, res_val_d2)
 
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
@@ -1895,9 +1952,10 @@ with tab2:
                     transform=ax.transAxes, ha="center", va="bottom",
                     fontsize=9, color="black",
                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-            ax.legend(loc="lower left", framealpha=0.5)
+            ax.legend(loc="lower left", framealpha=0.5, ncol=3)
 
             axdw2.set_title(f"Daily Indicator Panel — NTD + NPX + Trend (S/R w={sr_lb_daily})")
+            apply_readable_style(axdw2)
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw2, ntd_d_show)
             if show_ntd and not ntd_d_show.dropna().empty:
@@ -1928,8 +1986,9 @@ with tab2:
                 st.warning("No intraday data available.")
             else:
                 st.info("Using the same intraday layout as Tab 1.")
-                render_hourly_views(sel=st.session_state.ticker, intraday=intr, p_up=p_up, p_dn=p_dn,
-                                    hour_range_label=st.session_state.hour_range, is_forex=(mode == "Forex"))
+                render_hourly_views(sel=st.session_state.ticker, intr=p_up, p_dn=p_dn,
+                                    intraday=intr, hour_range_label=st.session_state.hour_range,
+                                    is_forex=(mode == "Forex"))
 
 # ==================== TAB 3: Bull vs Bear ====================
 with tab3:
@@ -1970,6 +2029,7 @@ with tab4:
         trend3m, up3m, lo3m, m3m, r2_3m = regression_with_band(df3m, lookback=len(df3m))
 
         fig, ax = plt.subplots(figsize=(14,5))
+        apply_readable_style(ax)
         ax.plot(df3m.index, df3m, label="Close")
         ax.plot(ma30_3m.index, ma30_3m, label="30 MA")
         ax.plot(res3m.index, res3m, ":", label="Resistance")
@@ -1996,6 +2056,7 @@ with tab4:
         trend0, up0, lo0, m0, r2_0 = regression_with_band(df0['Close'], lookback=len(df0))
 
         fig0, ax0 = plt.subplots(figsize=(14,5))
+        apply_readable_style(ax0)
         ax0.plot(df0.index, df0['Close'], label="Close")
         ax0.plot(df0.index, df0['MA30'], label="30 MA")
         ax0.plot(res0.index, res0, ":", label="Resistance")
@@ -2156,6 +2217,7 @@ with tab6:
             yhat_all, up_all, lo_all, m_all, r2_all = regression_with_band(s, lookback=len(s))
 
             fig, ax = plt.subplots(figsize=(14,5))
+            apply_readable_style(ax)
             ax.set_title(f"{sym} — Last {years} Years — Price + 252d S/R + Trend")
             ax.plot(s.index, s.values, label="Close")
             if np.isfinite(res_last) and np.isfinite(sup_last):
