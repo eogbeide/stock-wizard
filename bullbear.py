@@ -1,6 +1,6 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
-# UPDATED — fixes NameError by adding compute_bbands() and keeps BUY/SELL markers in price chart.
-# Signals are gated by local-vs-global slope alignment, and the top badge shows BUY/SELL & TAKE PROFIT.
+# UPDATED — removes Momentum chart/UI; keeps BUY/SELL markers in the price chart area.
+# Also includes the compute_bbands() fix for earlier NameError.
 
 import streamlit as st
 import pandas as pd
@@ -21,7 +21,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- Minimal CSS for cleaner UI + mobile ---
+# --- Minimal CSS ---
 st.markdown("""
 <style>
   #MainMenu, header, footer {visibility: hidden;}
@@ -152,7 +152,7 @@ def subset_by_daily_view(obj, view_label: str):
         start = end - pd.Timedelta(days=days_map.get(view_label, 365))
     return obj.loc[(idx >= start) & (idx <= end)]
 
-# --- NEW: slope alignment helper ---
+# --- slope alignment helper ---
 def slopes_aligned(local_slope: float, global_slope: float) -> bool:
     try:
         s1 = np.sign(float(local_slope))
@@ -172,43 +172,42 @@ show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=False, key
 slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10, key="sb_slope_lb_daily")
 slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120,  6, key="sb_slope_lb_hourly")
 
-# --- NEW: Slope reversal probability controls ---
+# Slope reversal probability controls
 st.sidebar.subheader("Slope Reversal Probability (experimental)")
 rev_hist_lb = st.sidebar.slider("History window for reversal stats (bars)", 30, 720, 240, 30, key="sb_rev_hist_lb")
 rev_horizon = st.sidebar.slider("Forward horizon for reversal (bars)", 3, 60, 15, 1, key="sb_rev_horizon")
 
-# --- NEW: Daily/Hourly S/R windows ---
+# Daily/Hourly S/R windows
 st.sidebar.subheader("Daily Support/Resistance Window")
 sr_lb_daily = st.sidebar.slider("Daily S/R lookback (bars)", 20, 252, 60, 5, key="sb_sr_lb_daily")
-
 st.sidebar.subheader("Hourly Support/Resistance Window")
 sr_lb_hourly = st.sidebar.slider("Hourly S/R lookback (bars)", 20, 240, 60, 5, key="sb_sr_lb_hourly")
 
-st.sidebar.subheader("Hourly Momentum")
-show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True, key="sb_show_mom_hourly")
-mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, key="sb_mom_lb_hourly")
-
+# Hourly Indicator Panel (NTD)
 st.sidebar.subheader("Hourly Indicator Panel")
 show_nrsi   = st.sidebar.checkbox("Show Hourly NTD panel", value=True, key="sb_show_nrsi")
-nrsi_period = st.sidebar.slider("RSI period (unused)", 5, 60, 14, 1, key="sb_nrsi_period")
 
 st.sidebar.subheader("NTD Channel (Hourly)")
 show_ntd_channel = st.sidebar.checkbox("Highlight when price is between S/R (S↔R) on NTD",
                                        value=True, key="sb_ntd_channel")
 
+# Hourly Supertrend
 st.sidebar.subheader("Hourly Supertrend")
 atr_period = st.sidebar.slider("ATR period", 5, 50, 10, 1, key="sb_atr_period")
 atr_mult   = st.sidebar.slider("ATR multiplier", 1.0, 5.0, 3.0, 0.5, key="sb_atr_mult")
 
+# Parabolic SAR
 st.sidebar.subheader("Parabolic SAR")
 show_psar = st.sidebar.checkbox("Show Parabolic SAR", value=True, key="sb_psar_show")
 psar_step = st.sidebar.slider("PSAR acceleration step", 0.01, 0.20, 0.02, 0.01, key="sb_psar_step")
 psar_max  = st.sidebar.slider("PSAR max acceleration", 0.10, 1.00, 0.20, 0.10, key="sb_psar_max")
 
+# Signal Logic
 st.sidebar.subheader("Signal Logic")
 signal_threshold = st.sidebar.slider("S/R proximity signal threshold", 0.50, 0.99, 0.90, 0.01, key="sb_sig_thr")
 sr_prox_pct = st.sidebar.slider("S/R proximity (%)", 0.05, 1.00, 0.25, 0.05, key="sb_sr_prox") / 100.0
 
+# NTD (Daily/Hourly)
 st.sidebar.subheader("NTD (Daily/Hourly)")
 show_ntd  = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd")
 ntd_window= st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
@@ -216,27 +215,32 @@ shade_ntd = st.sidebar.checkbox("Shade NTD (green=up, red=down)", value=True, ke
 show_npx_ntd   = st.sidebar.checkbox("Overlay normalized price (NPX) on NTD", value=True, key="sb_show_npx_ntd")
 mark_npx_cross = st.sidebar.checkbox("Mark NPX↔NTD crosses (dots)", value=True, key="sb_mark_npx_cross")
 
+# Ichimoku
 st.sidebar.subheader("Normalized Ichimoku (Kijun on price)")
 show_ichi = st.sidebar.checkbox("Show Ichimoku Kijun on price", value=True, key="sb_show_ichi")
 ichi_conv = st.sidebar.slider("Conversion (Tenkan)", 5, 20, 9, 1, key="sb_ichi_conv")
 ichi_base = st.sidebar.slider("Base (Kijun)", 20, 40, 26, 1, key="sb_ichi_base")
 ichi_spanb= st.sidebar.slider("Span B", 40, 80, 52, 1, key="sb_ichi_spanb")
 
+# Bollinger Bands
 st.sidebar.subheader("Bollinger Bands (Price Charts)")
 show_bbands   = st.sidebar.checkbox("Show Bollinger Bands", value=True, key="sb_show_bbands")
 bb_win        = st.sidebar.slider("BB window", 5, 120, 20, 1, key="sb_bb_win")
 bb_mult       = st.sidebar.slider("BB multiplier (σ)", 1.0, 4.0, 2.0, 0.1, key="sb_bb_mult")
 bb_use_ema    = st.sidebar.checkbox("Use EMA midline (vs SMA)", value=False, key="sb_bb_ema")
 
+# Probabilistic HMA Crossover
 st.sidebar.subheader("Probabilistic HMA Crossover (Price Charts)")
 show_hma    = st.sidebar.checkbox("Show HMA crossover signal", value=True, key="sb_hma_show")
 hma_period  = st.sidebar.slider("HMA period", 5, 120, 55, 1, key="sb_hma_period")
 hma_conf    = st.sidebar.slider("Crossover confidence (unused label-only)", 0.50, 0.99, 0.95, 0.01, key="sb_hma_conf")
 
+# HMA(55) Reversal on NTD
 st.sidebar.subheader("HMA(55) Reversal on NTD")
 show_hma_rev_ntd = st.sidebar.checkbox("Mark HMA cross + slope reversal on NTD", value=True, key="sb_hma_rev_ntd")
 hma_rev_lb       = st.sidebar.slider("HMA reversal slope lookback (bars)", 2, 10, 3, 1, key="sb_hma_rev_lb")
 
+# Reversal Stars (on NTD panel)
 st.sidebar.subheader("Reversal Stars (on NTD panel)")
 rev_bars_confirm = st.sidebar.slider("Consecutive bars to confirm reversal", 1, 4, 2, 1, key="sb_rev_bars")
 
@@ -399,14 +403,14 @@ def regression_with_band(series_like, lookback: int = 0, z: float = 2.0):
     lower_s = pd.Series(yhat - z * std, index=s.index)
     return yhat_s, upper_s, lower_s, float(m), r2
 
-# --- NEW: Bollinger Bands helper (SMA/EMA midline) ---
+# --- Bollinger Bands helper (SMA/EMA midline) ---
 def compute_bbands(price: pd.Series, window: int = 20, mult: float = 2.0, use_ema: bool = False):
     """
     Returns:
       mid, upper, lower, pct_b, nbb
       where:
         pct_b = (price - lower) / (upper - lower)  in [0,1] (nan-safe)
-        nbb   = (price - mid) / (mult * std)       ~ position vs band (≈[-1, +1] inside)
+        nbb   = (price - mid) / (mult * std)
     """
     p = _coerce_1d_series(price).astype(float)
     if p.empty or window < 1:
@@ -429,7 +433,7 @@ def compute_bbands(price: pd.Series, window: int = 20, mult: float = 2.0, use_em
 
     return mid.reindex(p.index), upper.reindex(p.index), lower.reindex(p.index), pct_b.reindex(p.index), nbb.reindex(p.index)
 
-# --- NEW: empirical slope reversal probability helper ---
+# --- empirical slope reversal probability helper ---
 def slope_reversal_probability(series_like, current_slope: float, hist_window: int = 240,
                                slope_window: int = 60, horizon: int = 15) -> float:
     s = _coerce_1d_series(series_like).dropna()
@@ -468,7 +472,7 @@ def slope_reversal_probability(series_like, current_slope: float, hist_window: i
         return float("nan")
     return float(flips / match)
 
-# --- UPDATED: bounce helper using ±2σ band with alignment gating ---
+# --- bounce helper using ±2σ band with alignment gating ---
 def find_band_bounce_signal(price: pd.Series,
                             upper_band: pd.Series,
                             lower_band: pd.Series,
@@ -517,16 +521,7 @@ def find_band_bounce_signal(price: pd.Series,
             return None
         t = idx[-1]
         return {"time": t, "price": float(p.loc[t]), "side": "SELL"}
-
 # ---------- Other indicators ----------
-def compute_roc(series_like, n: int = 10) -> pd.Series:
-    s = _coerce_1d_series(series_like)
-    base = s.dropna()
-    if base.empty:
-        return pd.Series(index=s.index, dtype=float)
-    roc = base.pct_change(n) * 100.0
-    return roc.reindex(s.index)
-
 def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
     if s.empty or period < 2:
@@ -712,7 +707,7 @@ def _cross_series(price: pd.Series, line: pd.Series):
     cross_dn = (~above) & (above.shift(1).fillna(False))
     return cross_up.reindex(p.index, fill_value=False), cross_dn.reindex(p.index, fill_value=False)
 
-# --- UPDATED: HMA + S/R signal, now alignment-aware ---
+# HMA + S/R signal (alignment-aware)
 def find_hma_sr_signal(price: pd.Series,
                        hma: pd.Series,
                        support: pd.Series,
@@ -920,7 +915,7 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = 
         if len(dn_idx):
             ax.scatter(dn_idx, ntd.loc[dn_idx], marker="x", s=60, color="tab:red",   zorder=9, label="Price↓NTD")
 
-# --- NTD triangles gated by PRICE trend sign ---
+# NTD triangles gated by PRICE trend sign
 def overlay_ntd_triangles_by_trend(ax, ntd: pd.Series, trend_slope: float,
                                    upper: float = 0.75, lower: float = -0.75):
     s = _coerce_1d_series(ntd).dropna()
@@ -946,7 +941,7 @@ def overlay_ntd_triangles_by_trend(ax, ntd: pd.Series, trend_slope: float,
         if idx_hi:
             ax.scatter(idx_hi, s.loc[idx_hi], marker="v", s=85, color="tab:red", zorder=10, label="NTD > +0.75")
 
-# --- Reversal Stars on NTD ---
+# Reversal Stars on NTD
 def _n_consecutive_increasing(series: pd.Series, n: int = 2) -> bool:
     s = _coerce_1d_series(series).dropna()
     if len(s) < n+1:
@@ -1158,7 +1153,6 @@ def _has_volume_to_plot(vol: pd.Series) -> bool:
     arr = s.to_numpy(dtype=float)
     vmax = float(np.nanmax(arr)); vmin = float(np.nanmin(arr))
     return (np.isfinite(vmax) and vmax > 0.0) or (np.isfinite(vmin) and vmin < 0.0)
-
 # ========= Cached last values for scanning =========
 @st.cache_data(ttl=120)
 def last_daily_ntd_value(symbol: str, ntd_win: int):
@@ -1216,7 +1210,7 @@ def price_above_kijun_info_hourly(symbol: str, period: str = "1d", base: int = 2
     except Exception:
         return False, None, np.nan, np.nan
 
-# (legacy) green-dot scanners
+# Green-dot legacy scanners kept for compatibility
 @st.cache_data(ttl=120)
 def last_green_dot_daily(symbol: str, ntd_win: int, level: float = None):
     try:
@@ -1276,17 +1270,13 @@ def last_green_dot_hourly(symbol: str, ntd_win: int, period: str = "1d", level: 
     except Exception:
         return False, np.nan, None, np.nan, np.nan
 
-# --- UPDATED: Instruction text uses TAKE PROFIT and respects trend direction ---
+# Instruction text uses TAKE PROFIT and respects trend direction
 def format_trade_instruction(trend_slope: float,
                              buy_val: float,
                              sell_val: float,
                              close_val: float,
                              symbol: str,
                              use_take_profit: bool = True) -> str:
-    """
-    Uptrend  → BUY @Support → TAKE PROFIT @Resistance
-    Downtrend→ SELL @Resistance → TAKE PROFIT @Support
-    """
     def _finite(x):
         try:
             return np.isfinite(float(x))
@@ -1337,7 +1327,6 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "NTD -0.75 Scanner",
     "Long-Term History"
 ])
-
 # ---------- SHARED HOURLY RENDERER (Stock & Forex use this) ----------
 def render_hourly_views(sel: str,
                         intraday: pd.DataFrame,
@@ -1353,7 +1342,7 @@ def render_hourly_views(sel: str,
     he = hc.ewm(span=20).mean()
     xh = np.arange(len(hc))
     slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
-    _ = slope_h * xh + intercept_h  # unused numeric fallback
+    _ = slope_h * xh + intercept_h  # fallback numeric
 
     res_h = hc.rolling(sr_lb_hourly, min_periods=1).max()
     sup_h = hc.rolling(sr_lb_hourly, min_periods=1).min()
@@ -1563,23 +1552,6 @@ def render_hourly_views(sel: str,
         ax2r.set_ylim(-1.1, 1.1); ax2r.set_xlim(xlim_price)
         ax2r.legend(loc="lower left", framealpha=0.5); ax2r.set_xlabel("Time (PST)")
         st.pyplot(fig2r)
-
-    # ---- Momentum panel (ROC%) ----
-    if show_mom_hourly:
-        roc = compute_roc(hc, n=mom_lb_hourly)
-        res_m = roc.rolling(60, min_periods=1).max()
-        sup_m = roc.rolling(60, min_periods=1).min()
-        fig2m, ax2m = plt.subplots(figsize=(14, 2.8))
-        ax2m.set_title(f"Momentum (ROC% over {mom_lb_hourly} bars)")
-        ax2m.plot(roc.index, roc, label=f"ROC%({mom_lb_hourly})")
-        yhat_m, m_m = slope_line(roc, slope_lb_hourly)
-        if not yhat_m.empty:
-            ax2m.plot(yhat_m.index, yhat_m.values, "--", linewidth=2, label=f"Trend {slope_lb_hourly} ({fmt_slope(m_m)}%/bar)")
-        ax2m.plot(res_m.index, res_m, ":", label="Mom Resistance")
-        ax2m.plot(sup_m.index, sup_m, ":", label="Mom Support")
-        ax2m.axhline(0, linestyle="--", linewidth=1)
-        ax2m.set_xlabel("Time (PST)"); ax2m.legend(loc="lower left", framealpha=0.5)
-        ax2m.set_xlim(xlim_price); st.pyplot(fig2m)
 
 # ==================== TAB 1: ORIGINAL FORECAST ====================
 with tab1:
@@ -1810,7 +1782,6 @@ with tab1:
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
-
 # ==================== TAB 2: ENHANCED FORECAST ====================
 with tab2:
     st.header("Enhanced Forecast")
