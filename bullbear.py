@@ -2,7 +2,7 @@
 # UPDATED — fixes NameError by adding compute_bbands() and keeps BUY/SELL markers in price chart.
 # Signals are gated by local-vs-global slope alignment, and the top badge shows BUY/SELL & TAKE PROFIT.
 
-import streamlit as st
+import streamlit as stv
 import pandas as pd
 import numpy as np
 import yfinance as yf
