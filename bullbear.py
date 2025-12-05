@@ -1,6 +1,6 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # UPDATED — composite BUY/SELL (HMA55 + S/R + ±2σ bounce + slope alignment + direction)
-# Also keeps BUY/SELL/TAKE PROFIT markers in the price chart area and fixes previous syntax error.
+# Includes TAKE PROFIT markers on price chart and fixes MultiIndex Close() ValueError.
 
 import streamlit as st
 import pandas as pd
@@ -153,6 +153,17 @@ def slopes_aligned(local_slope: float, global_slope: float) -> bool:
         return False
     return np.isfinite(s1) and np.isfinite(s2) and (s1 != 0.0) and (s1 == s2)
 
+# ---------- FIX for yfinance MultiIndex 'Close' ----------
+def ensure_close_series(close_like) -> pd.Series:
+    """
+    Accepts either a Series or a DataFrame (e.g., yfinance MultiIndex 'Close').
+    Returns a 1-D float Series usable for pct_change, etc.
+    """
+    s = close_like
+    if isinstance(s, pd.DataFrame):
+        s = s.iloc[:, 0] if s.shape[1] else pd.Series(index=s.index, dtype=float)
+    return pd.to_numeric(s, errors="coerce")
+
 # ---------- Data fetchers ----------
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
@@ -167,7 +178,7 @@ def fetch_hist(ticker: str) -> pd.Series:
 @st.cache_data(ttl=120)
 def fetch_hist_max(ticker: str) -> pd.Series:
     df = yf.download(ticker, period="max")[['Close']].dropna()
-    s = df['Close'].asfreq("D").fillna(method="ffill")
+    s = ensure_close_series(df['Close']).asfreq("D").fillna(method="ffill")
     try:
         s = s.tz_localize(PACIFIC)
     except TypeError:
@@ -288,10 +299,6 @@ def regression_with_band(series_like, lookback: int = 0, z: float = 2.0):
 
 # --- Bollinger Bands helper (SMA/EMA midline) ---
 def compute_bbands(price: pd.Series, window: int = 20, mult: float = 2.0, use_ema: bool = False):
-    """
-    Returns:
-      mid, upper, lower, pct_b, nbb
-    """
     p = _coerce_1d_series(price).astype(float)
     if p.empty or window < 1:
         idx = p.index
@@ -624,7 +631,7 @@ def draw_news_markers(ax, times, ymin, ymax, label="News"):
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
 
-# ---------- Composite entry logic (HMA55 + S/R + ±2σ bounce + slope alignment + direction) ----------
+# ---------- Composite entry logic ----------
 def _going_up_down(price: pd.Series):
     p = _coerce_1d_series(price)
     dp = p.diff()
@@ -642,8 +649,8 @@ def find_composite_signal(price: pd.Series,
                           lookback: int = 60):
     """
     Returns dict {'time','price','side','tp'} if an entry exists within last `lookback` bars.
-    BUY needs: bounce from below into band, cross above HMA, near Support, slopes aligned up, price rising.
-    SELL needs: bounce from above into band, cross below HMA, near Resistance, slopes aligned down, price falling.
+    BUY: bounce from below (into ±2σ), cross above HMA, near Support, slopes aligned up, price rising.
+    SELL: bounce from above, cross below HMA, near Resistance, slopes aligned down, price falling.
     """
     p = _coerce_1d_series(price)
     h = _coerce_1d_series(hma).reindex(p.index)
@@ -655,35 +662,27 @@ def find_composite_signal(price: pd.Series,
     if p.dropna().shape[0] < 5:
         return None
 
-    # Working window
+    # Window
     p = p.dropna()
     idx = p.index[-lookback:] if len(p) > lookback else p.index
     p = p.reindex(idx); h = h.reindex(idx); u = u.reindex(idx); l = l.reindex(idx); sup = sup.reindex(idx); res = res.reindex(idx)
 
-    # Bounce detection (previous bar outside, now back inside)
     inside = (p <= u) & (p >= l)
     below  = p < l
     above  = p > u
     bounce_up = inside & below.shift(1, fill_value=False)
     bounce_dn = inside & above.shift(1, fill_value=False)
 
-    # HMA cross
     cross_up, cross_dn = _cross_series(p, h)
-
-    # Near S/R now
     near_sup = p <= (sup * (1.0 + prox))
     near_res = p >= (res * (1.0 - prox))
-
-    # Direction of price on the bar
     up_now, dn_now = _going_up_down(p)
 
-    # Alignment
     if not slopes_aligned(local_slope, global_slope):
         return None
     uptrend = float(local_slope) > 0
     downtrend = float(local_slope) < 0
 
-    # Allow bounce to be at t or t-1 (i.e., “right after”)
     bounce_up_now_or_prev = bounce_up | bounce_up.shift(1, fill_value=False)
     bounce_dn_now_or_prev = bounce_dn | bounce_dn.shift(1, fill_value=False)
 
@@ -706,7 +705,6 @@ def find_composite_signal(price: pd.Series,
 
 # ---------- Annotations ----------
 def annotate_crossover(ax, ts, px, side: str, note: str = ""):
-    # FIXED: removed invalid 'fontsize= ninth := 9' typo.
     if side == "BUY":
         ax.scatter([ts], [px], marker="P", s=90, color="tab:green", zorder=7)
         label = "BUY" if not note else f"BUY {note}"
@@ -844,7 +842,7 @@ ichi_conv = st.sidebar.slider("Conversion (Tenkan)", 5, 20, 9, 1, key="sb_ichi_c
 ichi_base = st.sidebar.slider("Base (Kijun)", 20, 40, 26, 1, key="sb_ichi_base")
 ichi_spanb= st.sidebar.slider("Span B", 40, 80, 52, 1, key="sb_ichi_spanb")
 
-# Bollinger Bands
+# Bollinger Bands (for other panels if needed)
 st.sidebar.subheader("Bollinger Bands (Price Charts)")
 show_bbands   = st.sidebar.checkbox("Show Bollinger Bands", value=True, key="sb_show_bbands")
 bb_win        = st.sidebar.slider("BB window", 5, 120, 20, 1, key="sb_bb_win")
@@ -892,7 +890,6 @@ else:
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
     ]
 
-# ========= Cached last values for scanning & helpers =========
 def rolling_midline(series_like: pd.Series, window: int) -> pd.Series:
     s = _coerce_1d_series(series_like).astype(float)
     if s.empty:
@@ -956,14 +953,11 @@ def render_hourly_views(sel: str,
         )
         kijun_h = kijun_h.reindex(hc.index).ffill().bfill()
 
-    # Bands: regression ±2σ for bounce logic
     yhat_h, upper_h, lower_h, m_local_h, r2_h = regression_with_band(hc, slope_lb_hourly)
     local_slope_h = m_local_h if np.isfinite(m_local_h) else slope_h
-    m_global_h = local_slope_h  # fallback
-    # Global trend line (over the shown range)
+
     fig2, ax2 = plt.subplots(figsize=(14, 4))
     plt.subplots_adjust(top=0.85, right=0.93)
-
     ax2.plot(hc.index, hc, label="Intraday", linewidth=1.4)
     ax2.plot(hc.index, he, "--", label="20 EMA", linewidth=1.2)
     m_global_h = draw_trend_direction_line(ax2, hc, label_prefix="Trend (global)")
@@ -1007,7 +1001,7 @@ def render_hourly_views(sel: str,
         ax2.plot(upper_h.index, upper_h.values, "--", linewidth=2.0, color="black", alpha=0.85, label="Slope +2σ")
         ax2.plot(lower_h.index, lower_h.values, "--", linewidth=2.0, color="black", alpha=0.85, label="Slope -2σ")
 
-    # Composite entry + TP (this replaces the older separate bounce/HMA+SR markers)
+    # Composite entry + TP
     comp = find_composite_signal(hc, hma_h, upper_h, lower_h, sup_h, res_h,
                                  local_slope=local_slope_h, global_slope=m_global_h, prox=sr_prox_pct, lookback=90)
     if comp is not None:
@@ -1071,7 +1065,6 @@ def render_hourly_views(sel: str,
                       label=f"NTD Trend {slope_lb_hourly} ({fmt_slope(ntd_m_h)}/bar)")
 
         if show_npx_ntd and not npx_h.dropna().empty and not ntd_h.dropna().empty:
-            # simple overlay, no extra markers to keep panel clean
             ax2r.plot(npx_h.index, npx_h.values, "-", linewidth=1.2, color="tab:gray", alpha=0.9, label="NPX (Norm Price)")
 
         for yv, lab, lw, col in [(0.0,"0.00",1.0,"black"), (0.75,"+0.75",1.0,"black"), (-0.75,"-0.75",1.0,"black")]:
@@ -1121,13 +1114,11 @@ with tab1:
             res_d = df.rolling(sr_lb_daily, min_periods=1).max()
             sup_d = df.rolling(sr_lb_daily, min_periods=1).min()
 
-            # Regression ±2σ (trend & bounce bands)
             yhat_d, upper_d, lower_d, m_local_d, r2_d = regression_with_band(df, slope_lb_daily)
             rev_prob_d = slope_reversal_probability(df, m_local_d, hist_window=rev_hist_lb,
                                                     slope_window=slope_lb_daily, horizon=rev_horizon)
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
 
-            # Indicator overlays
             ntd_d = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
             npx_d_full = compute_normalized_price(df, window=ntd_window) if show_npx_ntd else pd.Series(index=df.index, dtype=float)
 
@@ -1137,7 +1128,6 @@ with tab1:
                                                      conv=ichi_conv, base=ichi_base, span_b=ichi_spanb, shift_cloud=False)
                 kijun_d = kijun_d.ffill().bfill()
 
-            # View subset
             df_show = subset_by_daily_view(df, daily_view)
             ema30_show  = ema30.reindex(df_show.index)
             res_d_show  = res_d.reindex(df_show.index)
@@ -1150,18 +1140,15 @@ with tab1:
             npx_d_show  = npx_d_full.reindex(df_show.index)
             kijun_d_show = kijun_d.reindex(df_show.index).ffill().bfill()
 
-            # HMA for entries
             hma_d_full = compute_hma(df, period=hma_period)
             hma_d_show = hma_d_full.reindex(df_show.index)
 
-            # Values
             px_val_d = _safe_last_float(df_show)
             try: res_val_d = float(res_d_show.iloc[-1])
             except Exception: res_val_d = np.nan
             try: sup_val_d = float(sup_d_show.iloc[-1])
             except Exception: sup_val_d = np.nan
 
-            # Figure
             fig, (ax, axdw) = plt.subplots(2, 1, sharex=True, figsize=(14, 8), gridspec_kw={"height_ratios": [3.2, 1.3]})
             plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93)
 
@@ -1176,14 +1163,12 @@ with tab1:
                 ax.plot(kijun_d_show.index, kijun_d_show.values, "-", linewidth=1.6, color="black",
                         label=f"Ichimoku Kijun ({ichi_base})")
 
-            # S/R
             if np.isfinite(res_val_d) and np.isfinite(sup_val_d):
                 ax.hlines(res_val_d, xmin=df_show.index[0], xmax=df_show.index[-1], colors="tab:red",   linestyles="-", linewidth=1.6, label=f"Resistance (w={sr_lb_daily})")
                 ax.hlines(sup_val_d, xmin=df_show.index[0], xmax=df_show.index[-1], colors="tab:green", linestyles="-", linewidth=1.6, label=f"Support (w={sr_lb_daily})")
                 label_on_left(ax, res_val_d, f"R {fmt_price_val(res_val_d)}", color="tab:red")
                 label_on_left(ax, sup_val_d, f"S {fmt_price_val(sup_val_d)}", color="tab:green")
 
-            # ±2σ bands
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
                         label=f"Daily Slope {slope_lb_daily} ({fmt_slope(m_local_d)}/bar)")
@@ -1198,7 +1183,6 @@ with tab1:
                 annotate_crossover(ax, comp_d["time"], comp_d["price"], comp_d["side"], note="(HMA55+S/R+±2σ)")
                 annotate_take_profit(ax, comp_d["time"], comp_d.get("tp", np.nan))
 
-            # Title & badges
             rev_txt_d = fmt_pct(rev_prob_d) if np.isfinite(rev_prob_d) else "n/a"
             ax.set_title(
                 f"{sel} Daily — {daily_view} — ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}  [P(slope rev≤{rev_horizon})={rev_txt_d}]"
@@ -1271,7 +1255,6 @@ with tab2:
         st.info("Run Tab 1 first.")
     else:
         df     = st.session_state.df_hist
-        df_ohlc = st.session_state.df_ohlc
         idx, vals, ci = (st.session_state.fc_idx, st.session_state.fc_vals, st.session_state.fc_ci)
         last_price = _safe_last_float(df)
         p_up = np.mean(vals.to_numpy() > last_price) if np.isfinite(last_price) else np.nan
@@ -1279,15 +1262,8 @@ with tab2:
         st.caption(f"Intraday lookback: **{st.session_state.get('hour_range','24h')}**")
         view = st.radio("View:", ["Daily","Intraday","Both"], key="enh_view")
 
-        # ENHANCED DAILY
         if view in ("Daily","Both"):
-            # Reuse Tab 1 Daily rendering for consistency, including composite markers
-            st.info("Using Daily rendering from Tab 1 with composite entry + TAKE PROFIT.")
-            # Directly show Tab1's daily again by toggling:
-            # (A simple way is to call the same logic; to keep this snippet short, we rely on Tab 1.)
-            pass
-
-        # ENHANCED INTRADAY
+            st.info("Daily rendering uses the same composite-entry layout as Tab 1.")
         if view in ("Intraday","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -1296,13 +1272,15 @@ with tab2:
                 render_hourly_views(sel=st.session_state.ticker, intraday=intr, p_up=p_up, p_dn=p_dn,
                                     hour_range_label=st.session_state.hour_range, is_forex=(mode == "Forex"))
 
-# ==================== TAB 3: Bull vs Bear ====================
+# ==================== TAB 3: Bull vs Bear (FIXED for MultiIndex Close) ====================
 with tab3:
     st.header("Bull vs Bear Summary")
     if not st.session_state.run_all:
         st.info("Run Tab 1 first.")
     else:
-        df3 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
+        raw3 = yf.download(st.session_state.ticker, period=bb_period)
+        close3 = ensure_close_series(raw3['Close']).dropna()
+        df3 = pd.DataFrame({"Close": close3}).copy()
         df3['PctChange'] = df3['Close'].pct_change()
         df3['Bull'] = df3['PctChange'] > 0
         bull = int(df3['Bull'].sum())
@@ -1314,7 +1292,7 @@ with tab3:
         c3.metric("Bear Days", bear, f"{bear/total*100:.1f}%")
         c4.metric("Lookback", bb_period)
 
-# ==================== TAB 4: Metrics ====================
+# ==================== TAB 4: Metrics (FIXED for MultiIndex Close) ====================
 with tab4:
     st.header("Detailed Metrics")
     if not st.session_state.run_all:
@@ -1350,7 +1328,9 @@ with tab4:
         ax.legend(); st.pyplot(fig)
 
         st.markdown("---")
-        df0 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
+        raw0 = yf.download(st.session_state.ticker, period=bb_period)
+        close0 = ensure_close_series(raw0['Close']).dropna()
+        df0 = pd.DataFrame({"Close": close0}).copy()
         df0['PctChange'] = df0['Close'].pct_change()
         df0['Bull'] = df0['PctChange'] > 0
         df0['MA30'] = df0['Close'].rolling(30, min_periods=1).mean()
