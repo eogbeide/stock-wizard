@@ -19,8 +19,9 @@
 #                        with horizontal lines at the latest Support & Resistance.
 #   • NEW (this update): Daily chart TITLE now shows the same BUY/SELL instruction as Hourly,
 #                        derived from slope sign + latest S/R + current price.
-#   • UPDATED (this request): STRONG BUY/SELL only after price comes from S/R
-#                             and then crosses the slope line in the slope direction.
+#   • UPDATED (previous request): STRONG signals triggered only after price comes from S/R
+#                                 and then crosses the slope line in the slope direction.
+#   • UPDATED (this request): **Strong BUY removed**. Strong SELL remains with the same rules.
 #   • UPDATED (this request): Fibonacci shown by default on Hourly.
 #   • UPDATED (this request): Removed Momentum (ROC%) panel and its controls.
 #   • FIXED: Robust fallback prevents NameError for _has_volume_to_plot in hourly view.
@@ -474,6 +475,9 @@ def regression_with_band(series_like, lookback: int = 0, z: float = 2.0):
     upper_s = pd.Series(yhat + z * std, index=s.index)
     lower_s = pd.Series(yhat - z * std, index=s.index)
     return yhat_s, upper_s, lower_s, float(m), r2
+# =========================================
+# PART 2/5 (helpers continued)
+# =========================================
 
 # --- NEW: empirical slope reversal probability helper ---
 def slope_reversal_probability(series_like,
@@ -571,9 +575,6 @@ def find_band_bounce_signal(price: pd.Series,
             return None
         t = idx[-1]
         return {"time": t, "price": float(p.loc[t]), "side": "SELL"}
-# =========================================
-# PART 2/5 (helpers continued)
-# =========================================
 
 # ---------- Other indicators (Momentum REMOVED per request) ----------
 def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
@@ -994,7 +995,7 @@ def overlay_hma_reversal_on_ntd(ax, price: pd.Series, hma: pd.Series,
                    marker="D", s=70, color="tab:red",   zorder=8,
                    label=f"HMA({period}) REV")
 
-# ---------- UPDATED: Contextual STRONG signal helper ----------
+# ---------- UPDATED: Contextual STRONG signal helper (Strong BUY removed) ----------
 def find_contextual_strong_signal(price: pd.Series,
                                   trend_line: pd.Series,
                                   slope_val: float,
@@ -1003,15 +1004,13 @@ def find_contextual_strong_signal(price: pd.Series,
                                   prox: float = 0.0025,
                                   lookback: int = 10):
     """
-    STRONG BUY/SELL only when:
-      • slope > 0  AND  price crosses ABOVE the slope line
-        AND within the last `lookback` bars BEFORE the cross,
-        price was near SUPPORT (<= S * (1 + prox)).
+    Strong SELL only when:
       • slope < 0  AND  price crosses BELOW the slope line
         AND within the last `lookback` bars BEFORE the cross,
         price was near RESISTANCE (>= R * (1 - prox)).
 
-    Returns {time, price, side} for the most-recent qualifying cross.
+    Strong BUY has been removed per request and will never be returned.
+    Returns {time, price, side} or None.
     """
     p = _coerce_1d_series(price)
     t = _coerce_1d_series(trend_line).reindex(p.index)
@@ -1032,52 +1031,34 @@ def find_contextual_strong_signal(price: pd.Series,
     if not np.isfinite(slope) or slope == 0.0:
         return None
 
+    # Strong BUY removed: do nothing when slope > 0
     if slope > 0:
-        idx = list(cross_up[cross_up].index)
-        if not idx:
-            return None
-        ts = idx[-1]
-        # Check recent proximity to support BEFORE ts
-        loc = p.index.get_loc(ts)
-        start = max(0, loc - lookback)
-        if loc == 0:
-            return None
-        pre_slice = p.iloc[start:loc]  # exclude ts
-        sup_slice = sup.iloc[start:loc].reindex(pre_slice.index)
-        if pre_slice.empty:
-            return None
-        near_support = (pre_slice <= sup_slice * (1.0 + prox)).any()
-        if not near_support:
-            return None
-        return {"time": ts, "price": float(p.loc[ts]), "side": "STRONG BUY"}
-    else:
-        idx = list(cross_dn[cross_dn].index)
-        if not idx:
-            return None
-        ts = idx[-1]
-        # Check recent proximity to resistance BEFORE ts
-        loc = p.index.get_loc(ts)
-        start = max(0, loc - lookback)
-        if loc == 0:
-            return None
-        pre_slice = p.iloc[start:loc]
-        res_slice = res.iloc[start:loc].reindex(pre_slice.index)
-        if pre_slice.empty:
-            return None
-        near_resistance = (pre_slice >= res_slice * (1.0 - prox)).any()
-        if not near_resistance:
-            return None
-        return {"time": ts, "price": float(p.loc[ts]), "side": "STRONG SELL"}
+        return None
+
+    # Strong SELL branch (unchanged)
+    idx = list(cross_dn[cross_dn].index)
+    if not idx:
+        return None
+    ts = idx[-1]
+    loc = p.index.get_loc(ts)
+    start = max(0, loc - lookback)
+    if loc == 0:
+        return None
+    pre_slice = p.iloc[start:loc]
+    res_slice = res.iloc[start:loc].reindex(pre_slice.index)
+    if pre_slice.empty:
+        return None
+    near_resistance = (pre_slice >= res_slice * (1.0 - prox)).any()
+    if not near_resistance:
+        return None
+    return {"time": ts, "price": float(p.loc[ts]), "side": "STRONG SELL"}
 
 def annotate_strong_signal(ax, ts, px, side: str):
     """
-    Plot a big star + label for STRONG BUY/SELL.
+    Plot a big star + label for STRONG SELL (BUY removed).
     """
-    if side.upper().endswith("BUY"):
-        ax.scatter([ts], [px], marker="*", s=220, color="tab:green", zorder=9)
-        ax.text(ts, px, "  STRONG BUY", va="bottom", fontsize=11,
-                color="tab:green", fontweight="bold")
-    else:
+    # Only SELL remains; guard just in case
+    if str(side).upper().endswith("SELL"):
         ax.scatter([ts], [px], marker="*", s=220, color="tab:red", zorder=9)
         ax.text(ts, px, "  STRONG SELL", va="top", fontsize=11,
                 color="tab:red", fontweight="bold")
@@ -1733,17 +1714,15 @@ def render_hourly_views(sel: str,
                  linewidth=2,
                  label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
-        # UPDATED: STRONG signal requires "coming from S/R" before crossing the slope
+        # Strong SELL only (Strong BUY removed)
         strong_sig_h = find_contextual_strong_signal(
             hc, yhat_h, slope_sig_h, support=sup_h, resistance=res_h, prox=sr_prox_pct, lookback=10
         )
-        if strong_sig_h is not None:
+        if strong_sig_h is not None and str(strong_sig_h["side"]).upper().endswith("SELL"):
             annotate_strong_signal(ax2, strong_sig_h["time"],
                                    strong_sig_h["price"], strong_sig_h["side"])
-            # TAKE PROFIT: Uptrend→Resistance, Downtrend→Support
-            if slope_sig_h > 0 and str(strong_sig_h["side"]).upper().endswith("BUY") and np.isfinite(res_val):
-                annotate_take_profit(ax2, strong_sig_h["time"], res_val, side="BUY")
-            if slope_sig_h < 0 and str(strong_sig_h["side"]).upper().endswith("SELL") and np.isfinite(sup_val):
+            # TAKE PROFIT for downtrend → Support
+            if slope_sig_h < 0 and np.isfinite(sup_val):
                 annotate_take_profit(ax2, strong_sig_h["time"], sup_val, side="SELL")
 
     if not upper_h.empty and not lower_h.empty:
@@ -2119,17 +2098,15 @@ with tab1:
                         label=f"Daily Slope {slope_lb_daily} "
                               f"({fmt_slope(m_d)}/bar)")
 
-                # UPDATED: STRONG BUY/SELL + Take Profit (requires coming from S/R)
+                # Strong SELL only (BUY removed)
                 strong_sig_d = find_contextual_strong_signal(
                     df_show, yhat_d_show, m_d, support=sup_d_show, resistance=res_d_show,
                     prox=sr_prox_pct, lookback=10
                 )
-                if strong_sig_d is not None:
+                if strong_sig_d is not None and str(strong_sig_d["side"]).upper().endswith("SELL"):
                     annotate_strong_signal(ax, strong_sig_d["time"],
                                            strong_sig_d["price"], strong_sig_d["side"])
-                    if m_d > 0 and str(strong_sig_d["side"]).upper().endswith("BUY") and np.isfinite(res_val_d):
-                        annotate_take_profit(ax, strong_sig_d["time"], res_val_d, side="BUY")
-                    if m_d < 0 and str(strong_sig_d["side"]).upper().endswith("SELL") and np.isfinite(sup_val_d):
+                    if m_d < 0 and np.isfinite(sup_val_d):
                         annotate_take_profit(ax, strong_sig_d["time"], sup_val_d, side="SELL")
 
             if not upper_d_show.empty and not lower_d_show.empty:
@@ -2422,17 +2399,15 @@ with tab2:
                         label=f"Daily Slope {slope_lb_daily} "
                               f"({fmt_slope(m_d)}/bar)")
 
-                # UPDATED: STRONG BUY/SELL + Take Profit (requires coming from S/R)
+                # Strong SELL only (BUY removed)
                 strong_sig_d2 = find_contextual_strong_signal(
                     df_show, yhat_d_show, m_d, support=sup_d2_show, resistance=res_d2_show,
                     prox=sr_prox_pct, lookback=10
                 )
-                if strong_sig_d2 is not None:
+                if strong_sig_d2 is not None and str(strong_sig_d2["side"]).upper().endswith("SELL"):
                     annotate_strong_signal(ax, strong_sig_d2["time"],
                                            strong_sig_d2["price"], strong_sig_d2["side"])
-                    if m_d > 0 and str(strong_sig_d2["side"]).upper().endswith("BUY") and np.isfinite(res_val_d2):
-                        annotate_take_profit(ax, strong_sig_d2["time"], res_val_d2, side="BUY")
-                    if m_d < 0 and str(strong_sig_d2["side"]).upper().endswith("SELL") and np.isfinite(sup_val_d2):
+                    if m_d < 0 and np.isfinite(sup_val_d2):
                         annotate_take_profit(ax, strong_sig_d2["time"], sup_val_d2, side="SELL")
 
             if not upper_d_show.empty and not lower_d_show.empty:
