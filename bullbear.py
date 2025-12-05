@@ -20,6 +20,9 @@
 #                        derived from slope sign + latest S/R + current price.
 #   • NEW (this update): STRONG BUY/SELL markers when price crosses the slope line
 #                        in the direction of the current slope (see helpers below).
+#   • NEW (this update): TAKE PROFIT markers:
+#        - Uptrend: after BUY or STRONG BUY → plot “TP” at Resistance line
+#        - Downtrend: after SELL or STRONG SELL → plot “TP” at Support line
 
 import streamlit as st
 import pandas as pd
@@ -206,7 +209,6 @@ def subset_by_daily_view(obj, view_label: str):
     else:
         start = end - pd.Timedelta(days=days_map.get(view_label, 365))
     return obj.loc[(idx >= start) & (idx <= end)]
-
 # ---------- Sidebar configuration ----------
 st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
@@ -319,6 +321,7 @@ else:
         'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','EURCAD=X',
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
     ]
+
 # ---------- Data fetchers ----------
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
@@ -520,6 +523,7 @@ def slope_reversal_probability(series_like,
     if match == 0:
         return float("nan")
     return float(flips / match)
+
 # --- NEW: bounce helper using ±2σ band ---
 def find_band_bounce_signal(price: pd.Series,
                             upper_band: pd.Series,
@@ -565,7 +569,6 @@ def find_band_bounce_signal(price: pd.Series,
             return None
         t = idx[-1]
         return {"time": t, "price": float(p.loc[t]), "side": "SELL"}
-
 # ---------- Other indicators ----------
 def compute_roc(series_like, n: int = 10) -> pd.Series:
     s = _coerce_1d_series(series_like)
@@ -965,6 +968,7 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
                 in_uptrend.iloc[i] = False
 
     return pd.DataFrame({"PSAR": psar, "in_uptrend": in_uptrend})
+
 # ---------- HMA reversal markers on NTD panel ----------
 def detect_hma_reversal_masks(price: pd.Series, hma: pd.Series,
                               lookback: int = 3):
@@ -1049,7 +1053,51 @@ def annotate_strong_signal(ax, ts, px, side: str):
         ax.text(ts, px, "  STRONG SELL", va="top", fontsize=11,
                 color="tab:red", fontweight="bold")
 
-# NPX ↔ NTD overlay/helpers
+# ---------- NEW: TAKE PROFIT helpers ----------
+def annotate_take_profit(ax, ts, y_val: float, level_name: str = "Resistance"):
+    """
+    Drop a purple 'TP' marker at a target level (Resistance/Support),
+    with a small legend stub added once.
+    """
+    if not hasattr(ax, "_tp_legend_added"):
+        ax.plot([], [], marker="$TP$", linestyle="None", markersize=10,
+                color="tab:purple", label="Take Profit")
+        ax._tp_legend_added = True
+    try:
+        ax.scatter([ts], [y_val], marker="$TP$", s=140, color="tab:purple", zorder=10)
+    except Exception:
+        ax.scatter([ts], [y_val], marker="D", s=90, color="tab:purple", zorder=10)
+    short = "R" if level_name.lower().startswith("res") else "S"
+    ax.text(ts, y_val, f"  TP @{short}", va="center", fontsize=9,
+            color="tab:purple", fontweight="bold")
+
+def add_take_profit_after_signal(ax,
+                                 signal: dict,
+                                 slope_val: float,
+                                 res_line_val: float,
+                                 sup_line_val: float):
+    """
+    After a BUY/STRONG BUY in uptrend → TP at Resistance.
+    After a SELL/STRONG SELL in downtrend → TP at Support.
+    """
+    if signal is None or not isinstance(signal, dict):
+        return
+    try:
+        slope_ok = np.isfinite(float(slope_val))
+    except Exception:
+        slope_ok = False
+    if not slope_ok:
+        return
+    side = str(signal.get("side", "")).upper()
+    ts = signal.get("time", None)
+    if ts is None:
+        return
+    if slope_val > 0 and ("BUY" in side) and np.isfinite(res_line_val):
+        annotate_take_profit(ax, ts, float(res_line_val), "Resistance")
+    if slope_val < 0 and ("SELL" in side) and np.isfinite(sup_line_val):
+        annotate_take_profit(ax, ts, float(sup_line_val), "Support")
+
+# NPX ↔ NTD overlay/helpers  (unchanged)
 def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series,
                        mark_crosses: bool = True):
     npx = _coerce_1d_series(npx)
@@ -1263,109 +1311,6 @@ def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
     now_utc = pd.Timestamp.now(tz="UTC")
     d1 = (now_utc - pd.Timedelta(days=window_days)).tz_convert(PACIFIC)
     return df[df["time"] >= d1].sort_values("time")
-
-def draw_news_markers(ax, times, ymin, ymax, label="News"):
-    for t in times:
-        try:
-            ax.axvline(t, color="tab:red", alpha=0.18, linewidth=1)
-        except Exception:
-            pass
-    ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
-
-# ---------- Channel-in-range helpers for NTD panel ----------
-def channel_state_series(price: pd.Series, sup: pd.Series,
-                         res: pd.Series, eps: float = 0.0) -> pd.Series:
-    p = _coerce_1d_series(price)
-    s_sup = _coerce_1d_series(sup).reindex(p.index)
-    s_res = _coerce_1d_series(res).reindex(p.index)
-    state = pd.Series(index=p.index, dtype=float)
-    ok = p.notna() & s_sup.notna() & s_res.notna()
-    if ok.any():
-        below = p < (s_sup - eps)
-        above = p > (s_res + eps)
-        between = ~(below | above)
-        state[ok & below]   = -1
-        state[ok & between] = 0
-        state[ok & above]   = 1
-    return state
-
-def _true_spans(mask: pd.Series):
-    spans = []
-    if mask is None or mask.empty:
-        return spans
-    s = mask.fillna(False).astype(bool)
-    start = None
-    prev_t = None
-    for t, val in s.items():
-        if val and start is None:
-            start = t
-        if not val and start is not None:
-            if prev_t is not None:
-                spans.append((start, prev_t))
-            start = None
-        prev_t = t
-    if start is not None and prev_t is not None:
-        spans.append((start, prev_t))
-    return spans
-
-def overlay_inrange_on_ntd(ax, price: pd.Series,
-                           sup: pd.Series, res: pd.Series):
-    state = channel_state_series(price, sup, res)
-    in_mask = (state == 0)
-    for a, b in _true_spans(in_mask):
-        try:
-            ax.axvspan(a, b, color="gold", alpha=0.15, zorder=1)
-        except Exception:
-            pass
-    ax.plot([], [], linewidth=8, color="gold", alpha=0.20,
-            label="In Range (S↔R)")
-    enter_from_below = (state.shift(1) == -1) & (state == 0)
-    enter_from_above = (state.shift(1) ==  1) & (state == 0)
-    if enter_from_below.any():
-        ax.scatter(price.index[enter_from_below],
-                   [0.92]*int(enter_from_below.sum()),
-                   marker="^", s=60, color="tab:green", zorder=7,
-                   label="Enter from S")
-    if enter_from_above.any():
-        ax.scatter(price.index[enter_from_above],
-                   [0.92]*int(enter_from_above.sum()),
-                   marker="v", s=60, color="tab:orange", zorder=7,
-                   label="Enter from R")
-    lbl = None
-    col = "black"
-    last = state.dropna().iloc[-1] if state.dropna().shape[0] else np.nan
-    if np.isfinite(last):
-        if last == 0:
-            lbl, col = "IN RANGE (S↔R)", "black"
-        elif last > 0:
-            lbl, col = "Above R", "tab:orange"
-        else:
-            lbl, col = "Below S", "tab:red"
-        ax.text(0.99, 0.94, lbl, transform=ax.transAxes,
-                ha="right", va="top", fontsize=9, color=col,
-                bbox=dict(boxstyle="round,pad=0.25",
-                          fc="white", ec=col, alpha=0.85))
-    return last
-
-def rolling_midline(series_like: pd.Series, window: int) -> pd.Series:
-    s = _coerce_1d_series(series_like).astype(float)
-    if s.empty:
-        return pd.Series(index=s.index, dtype=float)
-    roll = s.rolling(window, min_periods=1)
-    mid = (roll.max() + roll.min()) / 2.0
-    return mid.reindex(s.index)
-
-def _has_volume_to_plot(vol: pd.Series) -> bool:
-    s = _coerce_1d_series(vol).astype(float) \
-                               .replace([np.inf, -np.inf], np.nan).dropna()
-    if s.shape[0] < 2:
-        return False
-    arr = s.to_numpy(dtype=float)
-    vmax = float(np.nanmax(arr))
-    vmin = float(np.nanmin(arr))
-    return (np.isfinite(vmax) and vmax > 0.0) or \
-           (np.isfinite(vmin) and vmin < 0.0)
-
 # ========= Cached last values for scanning =========
 @st.cache_data(ttl=120)
 def last_daily_ntd_value(symbol: str, ntd_win: int):
@@ -1468,6 +1413,7 @@ def last_green_dot_daily(symbol: str, ntd_win: int, level: float = None):
         return is_signal, ntd_last, idx_last, npx_last, close_last
     except Exception:
         return False, np.nan, None, np.nan, np.nan
+
 @st.cache_data(ttl=120)
 def last_green_dot_hourly(symbol: str, ntd_win: int, period: str = "1d",
                           level: float = None):
@@ -1678,11 +1624,13 @@ def render_hourly_views(sel: str,
                  linewidth=2,
                  label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
-        # NEW: STRONG BUY/SELL marker on slope-direction crosses
+        # STRONG BUY/SELL marker + TP on slope-direction crosses
         strong_sig_h = find_strong_slope_cross_signal(hc, yhat_h, slope_sig_h)
         if strong_sig_h is not None:
             annotate_strong_signal(ax2, strong_sig_h["time"],
                                    strong_sig_h["price"], strong_sig_h["side"])
+            # NEW: Take Profit marker after STRONG signal
+            add_take_profit_after_signal(ax2, strong_sig_h, slope_sig_h, res_val, sup_val)
 
     if not upper_h.empty and not lower_h.empty:
         ax2.plot(upper_h.index, upper_h.values, "--", linewidth=2.2,
@@ -1694,6 +1642,8 @@ def render_hourly_views(sel: str,
         if bounce_sig_h is not None:
             annotate_crossover(ax2, bounce_sig_h["time"],
                                bounce_sig_h["price"], bounce_sig_h["side"])
+            # NEW: Take Profit marker after BUY/SELL bounce signal
+            add_take_profit_after_signal(ax2, bounce_sig_h, slope_sig_h, res_val, sup_val)
 
     ax2.text(0.01, 0.02,
              f"Slope: {fmt_slope(slope_sig_h)}/bar  |  "
@@ -1765,6 +1715,7 @@ def render_hourly_views(sel: str,
         ax2v.set_xlabel("Time (PST)")
         ax2v.legend(loc="lower left", framealpha=0.5)
         st.pyplot(fig2v)
+
     # ---- Hourly Indicator Panel — NTD + NPX + Triangles + Stars ----
     if show_nrsi:
         ntd_h = compute_normalized_trend(hc, window=ntd_window)
@@ -1891,7 +1842,6 @@ with tab1:
         fx_news = pd.DataFrame()
         if mode == "Forex" and show_fx_news:
             fx_news = fetch_yf_news(sel, window_days=news_window_days)
-
         # ----- DAILY (price + NTD panel) -----
         if chart in ("Daily","Both"):
             ema30 = df.ewm(span=30).mean()
@@ -1963,7 +1913,7 @@ with tab1:
                     (psar_d_df.index >= x0) & (psar_d_df.index <= x1)
                 ]
 
-            # === NEW (this update): Build Daily BUY/SELL instruction for title ===
+            # === Daily BUY/SELL instruction for title ===
             px_val_d = _safe_last_float(df_show)
             try:
                 res_val_d = float(res_d_show.iloc[-1])
@@ -2064,11 +2014,12 @@ with tab1:
                         label=f"Daily Slope {slope_lb_daily} "
                               f"({fmt_slope(m_d)}/bar)")
 
-                # NEW: STRONG BUY/SELL marker on slope-direction crosses (Daily)
+                # STRONG BUY/SELL marker (Daily) + TP
                 strong_sig_d = find_strong_slope_cross_signal(df_show, yhat_d_show, m_d)
                 if strong_sig_d is not None:
                     annotate_strong_signal(ax, strong_sig_d["time"],
                                            strong_sig_d["price"], strong_sig_d["side"])
+                    add_take_profit_after_signal(ax, strong_sig_d, m_d, res_val_d, sup_val_d)
 
             if not upper_d_show.empty and not lower_d_show.empty:
                 ax.plot(upper_d_show.index, upper_d_show.values, "--",
@@ -2087,6 +2038,8 @@ with tab1:
                         bounce_sig_d["price"],
                         bounce_sig_d["side"]
                     )
+                    # NEW: Take Profit marker after bounce signal
+                    add_take_profit_after_signal(ax, bounce_sig_d, m_d, res_val_d, sup_val_d)
 
             if not yhat_ema_show.empty:
                 ax.plot(yhat_ema_show.index, yhat_ema_show.values, "-",
@@ -2281,7 +2234,7 @@ with tab2:
             hma_d2_full = compute_hma(df, period=hma_period)
             hma_d2_show = hma_d2_full.reindex(df_show.index)
 
-            # === NEW: Daily BUY/SELL instruction for Enhanced tab title ===
+            # Daily BUY/SELL instruction for Enhanced title
             px_val_d2 = _safe_last_float(df_show)
             try:
                 res_val_d2 = float(res_d2_show.iloc[-1])
@@ -2354,11 +2307,12 @@ with tab2:
                         label=f"Daily Slope {slope_lb_daily} "
                               f"({fmt_slope(m_d)}/bar)")
 
-                # NEW: STRONG BUY/SELL marker on slope-direction crosses (Enhanced Daily)
+                # STRONG BUY/SELL marker (Enhanced Daily) + TP
                 strong_sig_d2 = find_strong_slope_cross_signal(df_show, yhat_d_show, m_d)
                 if strong_sig_d2 is not None:
                     annotate_strong_signal(ax, strong_sig_d2["time"],
                                            strong_sig_d2["price"], strong_sig_d2["side"])
+                    add_take_profit_after_signal(ax, strong_sig_d2, m_d, res_val_d2, sup_val_d2)
 
             if not upper_d_show.empty and not lower_d_show.empty:
                 ax.plot(upper_d_show.index, upper_d_show.values, "--",
@@ -2377,6 +2331,8 @@ with tab2:
                         bounce_sig_d2["price"],
                         bounce_sig_d2["side"]
                     )
+                    # NEW: Take Profit marker after bounce signal
+                    add_take_profit_after_signal(ax, bounce_sig_d2, m_d, res_val_d2, sup_val_d2)
 
             ax.set_ylabel("Price")
             ax.text(0.50, 0.02,
