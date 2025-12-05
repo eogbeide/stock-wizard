@@ -2,7 +2,7 @@
 # UPDATED — removes Momentum chart/UI; keeps BUY/SELL markers in the price chart area.
 # Also includes the compute_bbands() fix for earlier NameError.
 
-import streamlit as st
+import streamlit as stv
 import pandas as pd
 import numpy as np
 import yfinance as yf
