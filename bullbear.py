@@ -1,9 +1,10 @@
+# =========================================
+# PART 1/5
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # UPDATED — per request:
 #   • Stock hourly chart now uses the SAME layout and indicators as Forex hourly view:
 #       - Supertrend, PSAR, Bollinger Bands, HMA
 #       - Volume panel with trendline (Forex-only; stocks skip this panel per request)
-#       - Momentum (ROC%) panel
 #       - NTD + NPX indicator panel with triangles, stars, in-range shading
 #   • BUY/SELL instruction uses slope direction.
 #   • Chart BUY/SELL markers only trigger when price "bounces" off the ±2σ band:
@@ -18,12 +19,12 @@
 #                        with horizontal lines at the latest Support & Resistance.
 #   • NEW (this update): Daily chart TITLE now shows the same BUY/SELL instruction as Hourly,
 #                        derived from slope sign + latest S/R + current price.
-#   • NEW (this update): STRONG BUY/SELL markers when price crosses the slope line
-#                        in the direction of the current slope (see helpers below).
-#   • NEW (this update): "Take Profit" markers added on the price chart:
-#        - Upward slope: after BUY/STRONG BUY → Take Profit at RESISTANCE
-#        - Downward slope: after SELL/STRONG SELL → Take Profit at SUPPORT
+#   • UPDATED (this request): STRONG BUY/SELL only after price comes from S/R
+#                             and then crosses the slope line in the slope direction.
+#   • UPDATED (this request): Fibonacci shown by default on Hourly.
+#   • UPDATED (this request): Removed Momentum (ROC%) panel and its controls.
 #   • FIXED: Robust fallback prevents NameError for _has_volume_to_plot in hourly view.
+# =========================================
 
 import streamlit as st
 import pandas as pd
@@ -217,7 +218,8 @@ mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2, key="sb_bb_period")
 daily_view = st.sidebar.selectbox("Daily view range:", ["Historical", "6M", "12M", "24M"],
                                   index=2, key="sb_daily_view")
-show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=False, key="sb_show_fibs")
+# UPDATED: Fibonacci default True
+show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=True, key="sb_show_fibs")
 
 slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10, key="sb_slope_lb_daily")
 slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120,  6, key="sb_slope_lb_hourly")
@@ -240,9 +242,7 @@ sr_lb_daily = st.sidebar.slider("Daily S/R lookback (bars)", 20, 252, 60, 5, key
 st.sidebar.subheader("Hourly Support/Resistance Window")
 sr_lb_hourly = st.sidebar.slider("Hourly S/R lookback (bars)", 20, 240, 60, 5, key="sb_sr_lb_hourly")
 
-st.sidebar.subheader("Hourly Momentum")
-show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True, key="sb_show_mom_hourly")
-mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, key="sb_mom_lb_hourly")
+# (REMOVED) Hourly Momentum controls — per request
 
 st.sidebar.subheader("Hourly Indicator Panel")
 show_nrsi   = st.sidebar.checkbox("Show Hourly NTD panel", value=True, key="sb_show_nrsi")
@@ -571,15 +571,11 @@ def find_band_bounce_signal(price: pd.Series,
             return None
         t = idx[-1]
         return {"time": t, "price": float(p.loc[t]), "side": "SELL"}
-# ---------- Other indicators ----------
-def compute_roc(series_like, n: int = 10) -> pd.Series:
-    s = _coerce_1d_series(series_like)
-    base = s.dropna()
-    if base.empty:
-        return pd.Series(index=s.index, dtype=float)
-    roc = base.pct_change(n) * 100.0
-    return roc.reindex(s.index)
+# =========================================
+# PART 2/5 (helpers continued)
+# =========================================
 
+# ---------- Other indicators (Momentum REMOVED per request) ----------
 def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
     if s.empty or period < 2:
@@ -998,22 +994,35 @@ def overlay_hma_reversal_on_ntd(ax, price: pd.Series, hma: pd.Series,
                    marker="D", s=70, color="tab:red",   zorder=8,
                    label=f"HMA({period}) REV")
 
-# ---------- NEW: STRONG slope-cross helpers ----------
-def find_strong_slope_cross_signal(price: pd.Series,
-                                   trend_line: pd.Series,
-                                   slope_val: float):
+# ---------- UPDATED: Contextual STRONG signal helper ----------
+def find_contextual_strong_signal(price: pd.Series,
+                                  trend_line: pd.Series,
+                                  slope_val: float,
+                                  support: pd.Series,
+                                  resistance: pd.Series,
+                                  prox: float = 0.0025,
+                                  lookback: int = 10):
     """
-    Strong signal when price crosses the slope line IN THE DIRECTION of slope:
-      • slope > 0 and price crosses ABOVE trend → STRONG BUY
-      • slope < 0 and price crosses BELOW trend → STRONG SELL
-    Returns dict with {time, price, side} for the MOST RECENT match.
+    STRONG BUY/SELL only when:
+      • slope > 0  AND  price crosses ABOVE the slope line
+        AND within the last `lookback` bars BEFORE the cross,
+        price was near SUPPORT (<= S * (1 + prox)).
+      • slope < 0  AND  price crosses BELOW the slope line
+        AND within the last `lookback` bars BEFORE the cross,
+        price was near RESISTANCE (>= R * (1 - prox)).
+
+    Returns {time, price, side} for the most-recent qualifying cross.
     """
     p = _coerce_1d_series(price)
     t = _coerce_1d_series(trend_line).reindex(p.index)
+    sup = _coerce_1d_series(support).reindex(p.index).ffill().bfill()
+    res = _coerce_1d_series(resistance).reindex(p.index).ffill().bfill()
+
     ok = p.notna() & t.notna()
     if ok.sum() < 2:
         return None
-    p = p[ok]; t = t.reindex(p.index)
+    p = p[ok]; t = t.reindex(p.index); sup = sup.reindex(p.index); res = res.reindex(p.index)
+
     cross_up, cross_dn = _cross_series(p, t)
 
     try:
@@ -1028,12 +1037,36 @@ def find_strong_slope_cross_signal(price: pd.Series,
         if not idx:
             return None
         ts = idx[-1]
+        # Check recent proximity to support BEFORE ts
+        loc = p.index.get_loc(ts)
+        start = max(0, loc - lookback)
+        if loc == 0:
+            return None
+        pre_slice = p.iloc[start:loc]  # exclude ts
+        sup_slice = sup.iloc[start:loc].reindex(pre_slice.index)
+        if pre_slice.empty:
+            return None
+        near_support = (pre_slice <= sup_slice * (1.0 + prox)).any()
+        if not near_support:
+            return None
         return {"time": ts, "price": float(p.loc[ts]), "side": "STRONG BUY"}
     else:
         idx = list(cross_dn[cross_dn].index)
         if not idx:
             return None
         ts = idx[-1]
+        # Check recent proximity to resistance BEFORE ts
+        loc = p.index.get_loc(ts)
+        start = max(0, loc - lookback)
+        if loc == 0:
+            return None
+        pre_slice = p.iloc[start:loc]
+        res_slice = res.iloc[start:loc].reindex(pre_slice.index)
+        if pre_slice.empty:
+            return None
+        near_resistance = (pre_slice >= res_slice * (1.0 - prox)).any()
+        if not near_resistance:
+            return None
         return {"time": ts, "price": float(p.loc[ts]), "side": "STRONG SELL"}
 
 def annotate_strong_signal(ax, ts, px, side: str):
@@ -1126,6 +1159,9 @@ def overlay_ntd_triangles_by_trend(ax, ntd: pd.Series, trend_slope: float,
             ax.scatter(idx_hi, s.loc[idx_hi],
                        marker="v", s=85, color="tab:red", zorder=10,
                        label="NTD > +0.75")
+# =========================================
+# PART 3/5 (sessions, news, scanners, tabs init)
+# =========================================
 
 # --- Reversal Stars on NTD ---
 def _n_consecutive_increasing(series: pd.Series, n: int = 2) -> bool:
@@ -1380,6 +1416,7 @@ def _has_volume_to_plot(vol: pd.Series) -> bool:
     vmin = float(np.nanmin(arr))
     return (np.isfinite(vmax) and vmax > 0.0) or \
            (np.isfinite(vmin) and vmin < 0.0)
+
 # ========= Cached last values for scanning =========
 @st.cache_data(ttl=120)
 def last_daily_ntd_value(symbol: str, ntd_win: int):
@@ -1541,6 +1578,9 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "NTD -0.75 Scanner",
     "Long-Term History"
 ])
+# =========================================
+# PART 4/5 (hourly renderer + Tab 1)
+# =========================================
 
 # ---------- SHARED HOURLY RENDERER (Stock & Forex use this) ----------
 def render_hourly_views(sel: str,
@@ -1693,8 +1733,10 @@ def render_hourly_views(sel: str,
                  linewidth=2,
                  label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
-        # STRONG BUY/SELL marker + Take Profit at R/S
-        strong_sig_h = find_strong_slope_cross_signal(hc, yhat_h, slope_sig_h)
+        # UPDATED: STRONG signal requires "coming from S/R" before crossing the slope
+        strong_sig_h = find_contextual_strong_signal(
+            hc, yhat_h, slope_sig_h, support=sup_h, resistance=res_h, prox=sr_prox_pct, lookback=10
+        )
         if strong_sig_h is not None:
             annotate_strong_signal(ax2, strong_sig_h["time"],
                                    strong_sig_h["price"], strong_sig_h["side"])
@@ -1739,6 +1781,7 @@ def render_hourly_views(sel: str,
         sess = compute_session_lines(hc.index)
         draw_session_lines(ax2, sess)
 
+    # UPDATED: Fibonacci is ON by default (hourly only)
     if show_fibs and not hc.empty:
         fibs_h = fibonacci_levels(hc)
         for lbl, y in fibs_h.items():
@@ -1757,7 +1800,7 @@ def render_hourly_views(sel: str,
         intraday.get("Volume", pd.Series(index=hc.index))
     ).reindex(hc.index).astype(float)
 
-    # NameError-safe guard (prevents crash if helper not yet in globals on rerun)
+    # NameError-safe guard
     try:
         volume_ok = _has_volume_to_plot(vol)
     except NameError:
@@ -1853,26 +1896,6 @@ def render_hourly_views(sel: str,
         ax2r.set_xlabel("Time (PST)")
         st.pyplot(fig2r)
 
-    # ---- Momentum panel (ROC%) ----
-    if show_mom_hourly:
-        roc = compute_roc(hc, n=mom_lb_hourly)
-        res_m = roc.rolling(60, min_periods=1).max()
-        sup_m = roc.rolling(60, min_periods=1).min()
-
-        fig2m, ax2m = plt.subplots(figsize=(14, 2.8))
-        ax2m.set_title(f"Momentum (ROC% over {mom_lb_hourly} bars)")
-        ax2m.plot(roc.index, roc, label=f"ROC%({mom_lb_hourly})")
-        yhat_m, m_m = slope_line(roc, slope_lb_hourly)
-        if not yhat_m.empty:
-            ax2m.plot(yhat_m.index, yhat_m.values, "--", linewidth=2,
-                      label=f"Trend {slope_lb_hourly} ({fmt_slope(m_m)}%/bar)")
-        ax2m.plot(res_m.index, res_m, ":", label="Mom Resistance")
-        ax2m.plot(sup_m.index, sup_m, ":", label="Mom Support")
-        ax2m.axhline(0, linestyle="--", linewidth=1)
-        ax2m.set_xlabel("Time (PST)")
-        ax2m.legend(loc="lower left", framealpha=0.5)
-        ax2m.set_xlim(xlim_price)
-        st.pyplot(fig2m)
 # ==================== TAB 1: ORIGINAL FORECAST ====================
 with tab1:
     st.header("Original Forecast")
@@ -2096,8 +2119,11 @@ with tab1:
                         label=f"Daily Slope {slope_lb_daily} "
                               f"({fmt_slope(m_d)}/bar)")
 
-                # STRONG BUY/SELL + Take Profit
-                strong_sig_d = find_strong_slope_cross_signal(df_show, yhat_d_show, m_d)
+                # UPDATED: STRONG BUY/SELL + Take Profit (requires coming from S/R)
+                strong_sig_d = find_contextual_strong_signal(
+                    df_show, yhat_d_show, m_d, support=sup_d_show, resistance=res_d_show,
+                    prox=sr_prox_pct, lookback=10
+                )
                 if strong_sig_d is not None:
                     annotate_strong_signal(ax, strong_sig_d["time"],
                                            strong_sig_d["price"], strong_sig_d["side"])
@@ -2228,9 +2254,7 @@ with tab1:
                 st.write("No recent news available.")
             else:
                 show_cols = fx_news.copy()
-                show_cols["time"] = show_cols["time"].dt.strftime(
-                    "%Y-%m-%d %H:%M"
-                )
+                show_cols["time"] = show_cols["time"].dt.strftime("%Y-%m-%d %H:%M")
                 st.dataframe(
                     show_cols[["time","publisher","title","link"]]
                     .reset_index(drop=True),
@@ -2243,6 +2267,10 @@ with tab1:
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
+# =========================================
+# PART 5/5 (Tabs 2–6)
+# =========================================
+
 # ==================== TAB 2: ENHANCED FORECAST ====================
 with tab2:
     st.header("Enhanced Forecast")
@@ -2394,8 +2422,11 @@ with tab2:
                         label=f"Daily Slope {slope_lb_daily} "
                               f"({fmt_slope(m_d)}/bar)")
 
-                # STRONG BUY/SELL + Take Profit (Enhanced)
-                strong_sig_d2 = find_strong_slope_cross_signal(df_show, yhat_d_show, m_d)
+                # UPDATED: STRONG BUY/SELL + Take Profit (requires coming from S/R)
+                strong_sig_d2 = find_contextual_strong_signal(
+                    df_show, yhat_d_show, m_d, support=sup_d2_show, resistance=res_d2_show,
+                    prox=sr_prox_pct, lookback=10
+                )
                 if strong_sig_d2 is not None:
                     annotate_strong_signal(ax, strong_sig_d2["time"],
                                            strong_sig_d2["price"], strong_sig_d2["side"])
