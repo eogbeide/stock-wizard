@@ -7,22 +7,27 @@
 #       - Volume panel with trendline (Forex-only; stocks skip this panel)
 #       - NTD + NPX indicator panel with triangles, stars, in-range shading
 #   • BUY/SELL instruction uses slope direction.
-#   • Chart BUY/SELL markers only trigger when price "bounces" off the ±2σ band:
-#        - slope > 0 AND price moves from below LOWER band back inside → BUY
-#        - slope < 0 AND price moves from above UPPER band back inside → SELL
-#   • ±2σ bands around slope are thicker & darker.
+#   • NEW (this request): BUY only when
+#         - Uptrend (green global slope line > 0),
+#         - Price crosses ABOVE HMA(55) NEAR SUPPORT,
+#         - And price is moving TOWARD RESISTANCE (take profit).
+#       SELL only when
+#         - Downtrend (red global slope line < 0),
+#         - Price crosses BELOW HMA(55) NEAR RESISTANCE,
+#         - And price is moving TOWARD SUPPORT (take profit).
+#   • Signals on charts now use HMA(55)+S/R gating above; prior BB “bounce” trigger removed.
+#   • ±2σ bands around slope remain visual-only (thicker & darker) — no signals.
 #   • NTD triangles are gated by price trend sign.
 #   • NTD scanner lists symbols whose latest NTD value is below -0.75 (daily; hourly for Forex).
-#   • NEW: Slope reversal probability for daily & hourly price charts.
+#   • Slope reversal probability for daily & hourly price charts.
 #   • Green dashed global trendline on daily & hourly price charts.
 #   • Daily chart uses configurable S/R (rolling highs/lows) like hourly,
 #     with horizontal lines at the latest Support & Resistance.
 #   • Daily chart TITLE shows the same BUY/SELL instruction as Hourly,
 #     derived from slope sign + latest S/R + current price.
-#   • UPDATED (this request): Removed STRONG BUY/SELL markers entirely.
-#                             Keep only regular BUY/SELL + Take Profit.
-#   • UPDATED: Fibonacci shown by default on Hourly.
-#   • UPDATED: Removed Momentum (ROC%) panel and its controls.
+#   • STRONG BUY/SELL markers removed. Keep only BUY/SELL + Take Profit.
+#   • Fibonacci shown by default on Hourly.
+#   • Removed Momentum (ROC%) panel and its controls.
 #   • FIXED: Robust fallback prevents NameError for _has_volume_to_plot in hourly view.
 # =========================================
 
@@ -526,37 +531,28 @@ def slope_reversal_probability(series_like,
         return float("nan")
     return float(flips / match)
 
-# --- NEW: bounce helper using ±2σ band ---
+# --- (DEPRECATED/UNUSED) BB “bounce” helper kept for reference ---
 def find_band_bounce_signal(price: pd.Series,
                             upper_band: pd.Series,
                             lower_band: pd.Series,
                             slope_val: float):
-    """
-    Detect the most recent BUY/SELL signal based on a 'bounce' off the ±2σ band.
-    """
+    # No longer used to trigger signals (replaced by HMA(55)+S/R gating)
     p = _coerce_1d_series(price)
     u = _coerce_1d_series(upper_band).reindex(p.index)
     l = _coerce_1d_series(lower_band).reindex(p.index)
-
     mask = p.notna() & u.notna() & l.notna()
     if mask.sum() < 2:
         return None
-
-    p = p[mask]
-    u = u.reindex(p.index)
-    l = l.reindex(p.index)
-
+    p = p[mask]; u = u.reindex(p.index); l = l.reindex(p.index)
     inside = (p <= u) & (p >= l)
     below  = p < l
     above  = p > u
-
     try:
         slope = float(slope_val)
     except Exception:
         slope = np.nan
     if not np.isfinite(slope) or slope == 0.0:
         return None
-
     if slope > 0:
         candidates = inside & below.shift(1, fill_value=False)
         idx = list(candidates[candidates].index)
@@ -764,12 +760,25 @@ def _cross_series(price: pd.Series, line: pd.Series):
     cross_dn = (~above) & (above.shift(1).fillna(False))
     return cross_up.reindex(p.index, fill_value=False), cross_dn.reindex(p.index, fill_value=False)
 
+# === UPDATED CORE: HMA(55)+S/R gated signal with "toward target" requirement ===
 def find_hma_sr_signal(price: pd.Series,
                        hma: pd.Series,
                        support: pd.Series,
                        resistance: pd.Series,
                        slope_val: float,
                        prox: float):
+    """
+    BUY:
+      • slope_val > 0 (uptrend/green line)
+      • price crosses ABOVE HMA
+      • price near SUPPORT at cross (<= S*(1+prox))
+      • price moving TOWARD RESISTANCE vs previous bar
+    SELL:
+      • slope_val < 0 (downtrend/red line)
+      • price crosses BELOW HMA
+      • price near RESISTANCE at cross (>= R*(1-prox))
+      • price moving TOWARD SUPPORT vs previous bar
+    """
     p = _coerce_1d_series(price)
     h = _coerce_1d_series(hma).reindex(p.index)
     sup = _coerce_1d_series(support).reindex(p.index)
@@ -778,13 +787,34 @@ def find_hma_sr_signal(price: pd.Series,
         return None
 
     cross_up, cross_dn = _cross_series(p, h)
-
     try:
         slope = float(slope_val)
     except Exception:
         slope = np.nan
     if not np.isfinite(slope) or slope == 0:
         return None
+
+    def _toward_res(i_now: int) -> bool:
+        if i_now < 1 or i_now >= len(p):
+            return False
+        t = p.index[i_now]
+        t_prev = p.index[i_now-1]
+        R = float(res.loc[t]) if pd.notna(res.loc[t]) else np.nan
+        if not np.isfinite(R):
+            return False
+        c0 = float(p.loc[t]); c1 = float(p.loc[t_prev])
+        return (R - c0) < (R - c1)
+
+    def _toward_sup(i_now: int) -> bool:
+        if i_now < 1 or i_now >= len(p):
+            return False
+        t = p.index[i_now]
+        t_prev = p.index[i_now-1]
+        S = float(sup.loc[t]) if pd.notna(sup.loc[t]) else np.nan
+        if not np.isfinite(S):
+            return False
+        c0 = float(p.loc[t]); c1 = float(p.loc[t_prev])
+        return (c0 - S) < (c1 - S)
 
     if slope > 0:
         idx_events = list(cross_up[cross_up].index)
@@ -793,11 +823,13 @@ def find_hma_sr_signal(price: pd.Series,
         for t in reversed(idx_events):
             if t not in p.index:
                 continue
+            i = p.index.get_loc(t)
             px = float(p.loc[t])
             S = sup.loc[t] if t in sup.index else np.nan
             if not np.isfinite(S):
                 continue
-            if px <= S * (1.0 + prox):
+            near_support = px <= S * (1.0 + prox)
+            if near_support and _toward_res(i):
                 return {"time": t, "price": px, "side": "BUY"}
     else:
         idx_events = list(cross_dn[cross_dn].index)
@@ -806,11 +838,13 @@ def find_hma_sr_signal(price: pd.Series,
         for t in reversed(idx_events):
             if t not in p.index:
                 continue
+            i = p.index.get_loc(t)
             px = float(p.loc[t])
             R = res.loc[t] if t in res.index else np.nan
             if not np.isfinite(R):
                 continue
-            if px >= R * (1.0 - prox):
+            near_res = px >= R * (1.0 - prox)
+            if near_res and _toward_sup(i):
                 return {"time": t, "price": px, "side": "SELL"}
     return None
 
@@ -1642,7 +1676,7 @@ def render_hourly_views(sel: str,
         ax2.plot(st_line_intr.index, st_line_intr.values, "-",
                  label=f"Supertrend ({atr_period},{atr_mult})")
 
-    # --- Slope line and ±2σ band (NO strong markers) ---
+    # --- Slope line and ±2σ band (visual only now) ---
     if not yhat_h.empty:
         ax2.plot(yhat_h.index, yhat_h.values, "-",
                  linewidth=2,
@@ -1654,15 +1688,17 @@ def render_hourly_views(sel: str,
         ax2.plot(lower_h.index, lower_h.values, "--", linewidth=2.2,
                  color="black", alpha=0.85, label="Slope -2σ")
 
-        bounce_sig_h = find_band_bounce_signal(hc, upper_h, lower_h, slope_sig_h)
-        if bounce_sig_h is not None:
-            annotate_crossover(ax2, bounce_sig_h["time"],
-                               bounce_sig_h["price"], bounce_sig_h["side"])
-            # TAKE PROFIT after BUY/SELL per slope direction
-            if slope_sig_h > 0 and bounce_sig_h["side"] == "BUY" and np.isfinite(res_val):
-                annotate_take_profit(ax2, bounce_sig_h["time"], res_val, side="BUY")
-            if slope_sig_h < 0 and bounce_sig_h["side"] == "SELL" and np.isfinite(sup_val):
-                annotate_take_profit(ax2, bounce_sig_h["time"], sup_val, side="SELL")
+    # === UPDATED: Use only HMA(55)+S/R GATED SIGNALS ===
+    sig_h = find_hma_sr_signal(
+        price=hc, hma=hma_h, support=sup_h, resistance=res_h,
+        slope_val=slope_sig_h, prox=sr_prox_pct
+    )
+    if sig_h is not None:
+        annotate_crossover(ax2, sig_h["time"], sig_h["price"], sig_h["side"])
+        if sig_h["side"] == "BUY" and np.isfinite(res_val):
+            annotate_take_profit(ax2, sig_h["time"], res_val, side="BUY")
+        if sig_h["side"] == "SELL" and np.isfinite(sup_val):
+            annotate_take_profit(ax2, sig_h["time"], sup_val, side="SELL")
 
     ax2.text(0.01, 0.02,
              f"Slope: {fmt_slope(slope_sig_h)}/bar  |  "
@@ -1718,8 +1754,8 @@ def render_hourly_views(sel: str,
             f"Volume (Hourly) — Mid-line & Trend  |  Slope={fmt_slope(v_m)}/bar"
         )
         ax2v.fill_between(vol.index, 0, vol,
-                          alpha=0.18, label="Volume", color="tab:blue")
-        ax2v.plot(vol.index, vol, linewidth=1.0, color="tab:blue")
+                          alpha=0.18, label="Volume")
+        ax2v.plot(vol.index, vol, linewidth=1.0)
         ax2v.plot(v_mid.index, v_mid, ":", linewidth=1.6,
                   label=f"Mid-line ({slope_lb_hourly}-roll)")
         if not v_trend.empty:
@@ -2029,20 +2065,18 @@ with tab1:
                         linewidth=2.2, color="black", alpha=0.85,
                         label="Daily Trend -2σ")
 
-                bounce_sig_d = find_band_bounce_signal(
-                    df_show, upper_d_show, lower_d_show, m_d
-                )
-                if bounce_sig_d is not None:
-                    annotate_crossover(
-                        ax, bounce_sig_d["time"],
-                        bounce_sig_d["price"],
-                        bounce_sig_d["side"]
-                    )
-                    # TAKE PROFIT after bounce signal
-                    if m_d > 0 and bounce_sig_d["side"] == "BUY" and np.isfinite(res_val_d):
-                        annotate_take_profit(ax, bounce_sig_d["time"], res_val_d, side="BUY")
-                    if m_d < 0 and bounce_sig_d["side"] == "SELL" and np.isfinite(sup_val_d):
-                        annotate_take_profit(ax, bounce_sig_d["time"], sup_val_d, side="SELL")
+            # === UPDATED: Use only HMA(55)+S/R GATED SIGNALS (Daily) ===
+            sig_d = find_hma_sr_signal(
+                price=df_show, hma=hma_d_show,
+                support=sup_d_show, resistance=res_d_show,
+                slope_val=m_d, prox=sr_prox_pct
+            )
+            if sig_d is not None:
+                annotate_crossover(ax, sig_d["time"], sig_d["price"], sig_d["side"])
+                if sig_d["side"] == "BUY" and np.isfinite(res_val_d):
+                    annotate_take_profit(ax, sig_d["time"], res_val_d, side="BUY")
+                if sig_d["side"] == "SELL" and np.isfinite(sup_val_d):
+                    annotate_take_profit(ax, sig_d["time"], sup_val_d, side="SELL")
 
             if not yhat_ema_show.empty:
                 ax.plot(yhat_ema_show.index, yhat_ema_show.values, "-",
@@ -2319,19 +2353,18 @@ with tab2:
                         linewidth=2.2, color="black", alpha=0.85,
                         label="Daily Trend -2σ")
 
-                bounce_sig_d2 = find_band_bounce_signal(
-                    df_show, upper_d_show, lower_d_show, m_d
-                )
-                if bounce_sig_d2 is not None:
-                    annotate_crossover(
-                        ax, bounce_sig_d2["time"],
-                        bounce_sig_d2["price"],
-                        bounce_sig_d2["side"]
-                    )
-                    if m_d > 0 and bounce_sig_d2["side"] == "BUY" and np.isfinite(res_val_d2):
-                        annotate_take_profit(ax, bounce_sig_d2["time"], res_val_d2, side="BUY")
-                    if m_d < 0 and bounce_sig_d2["side"] == "SELL" and np.isfinite(sup_val_d2):
-                        annotate_take_profit(ax, bounce_sig_d2["time"], sup_val_d2, side="SELL")
+            # === UPDATED: Use only HMA(55)+S/R GATED SIGNALS (Daily) ===
+            sig_d2 = find_hma_sr_signal(
+                price=df_show, hma=hma_d2_show,
+                support=sup_d2_show, resistance=res_d2_show,
+                slope_val=m_d, prox=sr_prox_pct
+            )
+            if sig_d2 is not None:
+                annotate_crossover(ax, sig_d2["time"], sig_d2["price"], sig_d2["side"])
+                if sig_d2["side"] == "BUY" and np.isfinite(res_val_d2):
+                    annotate_take_profit(ax, sig_d2["time"], res_val_d2, side="BUY")
+                if sig_d2["side"] == "SELL" and np.isfinite(sup_val_d2):
+                    annotate_take_profit(ax, sig_d2["time"], sup_val_d2, side="SELL")
 
             ax.set_ylabel("Price")
             ax.text(0.50, 0.02,
@@ -2800,11 +2833,9 @@ with tab6:
                         label=f"Trend (m={fmt_slope(m_all)}/bar)")
             if not upper_all.empty and not lower_all.empty:
                 ax.plot(upper_all.index, upper_all.values, ":",
-                        linewidth=2.0, color="black", alpha=0.85,
-                        label="Trend +2σ")
+                        linewidth=2.0, label="Trend +2σ")
                 ax.plot(lower_all.index, lower_all.values, ":",
-                        linewidth=2.0, color="black", alpha=0.85,
-                        label="Trend -2σ")
+                        linewidth=2.0, label="Trend -2σ")
             px_now = _safe_last_float(s)
             if np.isfinite(px_now):
                 ax.text(
