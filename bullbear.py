@@ -3,7 +3,7 @@
 # Keeps composite entry logic (HMA55 + S/R + ±2σ bounce + slope alignment + direction)
 # Includes MultiIndex Close() fix to avoid ValueError in metrics sections.
 
-import streamlit as stc
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
