@@ -9,7 +9,7 @@
 #         - Downtrend: red
 #   • Everything else unchanged (S/R, bands, stars, etc.).
 
-import streamlit as st
+import streamlit as stc
 import pandas as pd
 import numpy as np
 import yfinance as yf
