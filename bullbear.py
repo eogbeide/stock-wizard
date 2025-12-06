@@ -1890,4 +1890,379 @@ with tab2:
             axdw2.axhline(0.75, linestyle="-",  linewidth=1.0, color="black", label="+0.75")
             axdw2.axhline(-0.75, linestyle="-",  linewidth=1.0, color="black", label="-0.75")
             axdw2.set_ylim(-1.1, 1.1)
-            ax
+            axdw2.set_xlabel("Date (PST)")
+            axdw2.legend(loc="lower left", framealpha=0.5)
+            st.pyplot(fig)
+
+        if view in ("Intraday","Both"):
+            intr = st.session_state.intraday
+            if intr is None or intr.empty or "Close" not in intr:
+                st.warning("No intraday data available.")
+            else:
+                st.info("Intraday view is rendered fully in Tab 1 (logic unchanged here).")
+
+# --- Tab 3: Bull vs Bear ---
+with tab3:
+    st.header("Bull vs Bear Summary")
+    if not st.session_state.run_all:
+        st.info("Run Tab 1 first.")
+    else:
+        df3 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
+        df3['PctChange'] = df3['Close'].pct_change()
+        df3['Bull'] = df3['PctChange'] > 0
+        bull = int(df3['Bull'].sum())
+        bear = int((~df3['Bull']).sum())
+        total = bull + bear
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("Total Days", total)
+        c2.metric("Bull Days", bull, f"{bull/total*100:.1f}%")
+        c3.metric("Bear Days", bear, f"{bear/total*100:.1f}%")
+        c4.metric("Lookback", bb_period)
+
+# --- Tab 4: Metrics ---
+with tab4:
+    st.header("Detailed Metrics")
+    if not st.session_state.run_all:
+        st.info("Run Tab 1 first.")
+    else:
+        df_hist = fetch_hist(st.session_state.ticker)
+        last_price = _safe_last_float(df_hist)
+        idx, vals, ci = compute_sarimax_forecast(df_hist)
+        p_up = np.mean(vals.to_numpy() > last_price) if np.isfinite(last_price) else np.nan
+        p_dn = 1 - p_up if np.isfinite(p_up) else np.nan
+
+        st.subheader(f"Last 3 Months  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
+        cutoff = df_hist.index.max() - pd.Timedelta(days=90)
+        df3m = df_hist[df_hist.index >= cutoff]
+        ma30_3m = df3m.rolling(30, min_periods=1).mean()
+        res3m = df3m.rolling(30, min_periods=1).max()
+        sup3m = df3m.rolling(30, min_periods=1).min()
+        trend3m, up3m, lo3m, m3m, r2_3m = regression_with_band(df3m, lookback=len(df3m))
+
+        fig, ax = plt.subplots(figsize=(14,5))
+        ax.plot(df3m.index, df3m, label="Close")
+        ax.plot(df3m.index, ma30_3m, label="30 MA")
+        ax.plot(res3m.index, res3m, ":", label="Resistance")
+        ax.plot(sup3m.index, sup3m, ":", label="Support")
+        if not trend3m.empty:
+            ax.plot(trend3m.index, trend3m.values, "--",
+                    label=f"Trend (m={fmt_slope(m3m)}/bar)")
+        if not up3m.empty and not lo3m.empty:
+            ax.plot(up3m.index, up3m.values, ":", linewidth=2.0,
+                     color="black", alpha=0.85, label="Trend +2σ")
+            ax.plot(lo3m.index, lo3m.values, ":", linewidth=2.0,
+                     color="black", alpha=0.85, label="Trend -2σ")
+        ax.set_xlabel("Date (PST)")
+        ax.text(0.50, 0.02,
+                f"R² (3M): {fmt_r2(r2_3m)}",
+                transform=ax.transAxes,
+                ha="center", va="bottom",
+                fontsize=9, color="black",
+                bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+        ax.legend()
+        st.pyplot(fig)
+
+        st.markdown("---")
+        df0 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
+        df0['PctChange'] = df0['Close'].pct_change()
+        df0['Bull'] = df0['PctChange'] > 0
+        df0['MA30'] = df0['Close'].rolling(30, min_periods=1).mean()
+
+        st.subheader("Close + 30-day MA + Trend")
+        res0 = df0['Close'].rolling(30, min_periods=1).max()
+        sup0 = df0['Close'].rolling(30, min_periods=1).min()
+        trend0, up0, lo0, m0, r2_0 = regression_with_band(df0['Close'], lookback=len(df0))
+
+        fig0, ax0 = plt.subplots(figsize=(14,5))
+        ax0.plot(df0.index, df0['Close'], label="Close")
+        ax0.plot(df0.index, df0['MA30'], label="30 MA")
+        ax0.plot(res0.index, res0, ":", label="Resistance")
+        ax0.plot(sup0.index, sup0, ":", label="Support")
+        if not trend0.empty:
+            ax0.plot(trend0.index, trend0.values, "--",
+                     label=f"Trend (m={fmt_slope(m0)}/bar)")
+        if not up0.empty and not lo0.empty:
+            ax0.plot(up0.index, up0.values, ":", linewidth=2.0,
+                     color="black", alpha=0.85, label="Trend +2σ")
+            ax0.plot(lo0.index, lo0.values, ":", linewidth=2.0,
+                     color="black", alpha=0.85, label="Trend -2σ")
+        ax0.set_xlabel("Date (PST)")
+        ax0.text(0.50, 0.02,
+                 f"R² ({bb_period}): {fmt_r2(r2_0)}",
+                 transform=ax0.transAxes,
+                 ha="center", va="bottom",
+                 fontsize=9, color="black",
+                 bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+        ax0.legend()
+        st.pyplot(fig0)
+
+        st.markdown("---")
+        st.subheader("Daily % Change")
+        st.line_chart(df0['PctChange'], use_container_width=True)
+
+        st.subheader("Bull/Bear Distribution")
+        dist = pd.DataFrame({
+            "Type": ["Bull", "Bear"],
+            "Days": [int(df0['Bull'].sum()),
+                     int((~df0['Bull']).sum())]
+        }).set_index("Type")
+        st.bar_chart(dist, use_container_width=True)
+
+# --- Tab 5: NTD -0.75 Scanner (Latest NTD < -0.75) ---
+with tab5:
+    st.header("NTD -0.75 Scanner (NTD < -0.75)")
+    st.caption(
+        "Scans the universe for symbols whose **latest NTD value** is below **-0.75** "
+        "on the Daily NTD line (and on the Hourly NTD line for Forex). "
+        "This highlights symbols in deep negative NTD territory."
+    )
+
+    period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
+    scan_hour_range = st.selectbox(
+        "Hourly lookback for Forex:",
+        ["24h", "48h", "96h"],
+        index=["24h","48h","96h"].index(st.session_state.get("hour_range", "24h")),
+        key="ntd_scan_hour_range"
+    )
+    scan_period = period_map[scan_hour_range]
+
+    # Fixed NTD threshold for this scanner
+    thresh = -0.75
+
+    run = st.button("Scan Universe", key="btn_ntd_scan")
+
+    if run:
+        # ---- DAILY: latest NTD < -0.75 ----
+        daily_rows = []
+        for sym in universe:
+            ntd_val, ts = last_daily_ntd_value(sym, ntd_window)
+            try:
+                s_close = fetch_hist(sym)
+                close_val = _safe_last_float(s_close)
+            except Exception:
+                close_val = np.nan
+            daily_rows.append({
+                "Symbol": sym,
+                "NTD_Last": ntd_val,
+                "BelowThresh": (np.isfinite(ntd_val) and ntd_val < thresh),
+                "Close": close_val,
+                "Timestamp": ts
+            })
+        df_daily = pd.DataFrame(daily_rows)
+        hits_daily = df_daily[df_daily["BelowThresh"] == True].copy()
+        hits_daily = hits_daily.sort_values("NTD_Last")
+
+        c3, c4 = st.columns(2)
+        c3.metric("Universe Size", len(universe))
+        c4.metric(f"Daily NTD < {thresh:+.2f}", int(hits_daily.shape[0]))
+
+        st.subheader(f"Daily — latest NTD < {thresh:+.2f}")
+        if hits_daily.empty:
+            st.info(
+                f"No symbols where the latest **daily** NTD value is below {thresh:+.2f}."
+            )
+        else:
+            view = hits_daily.copy()
+            view["NTD_Last"] = view["NTD_Last"].map(
+                lambda v: f"{v:+.3f}" if np.isfinite(v) else "n/a"
+            )
+            view["Close"] = view["Close"].map(
+                lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a"
+            )
+            st.dataframe(
+                view[["Symbol","Timestamp","Close","NTD_Last"]].reset_index(drop=True),
+                use_container_width=True
+            )
+
+        # ---- DAILY: PRICE > KIJUN ----
+        st.markdown("---")
+        st.subheader(f"Daily — Price > Ichimoku Kijun({ichi_base}) (latest bar)")
+        above_rows = []
+        for sym in universe:
+            above, ts, close_now, kij_now = price_above_kijun_info_daily(sym, base=ichi_base)
+            above_rows.append({
+                "Symbol": sym,
+                "AboveNow": above,
+                "Timestamp": ts,
+                "Close": close_now,
+                "Kijun": kij_now
+            })
+        df_above_daily = pd.DataFrame(above_rows)
+        df_above_daily = df_above_daily[df_above_daily["AboveNow"] == True]
+        if df_above_daily.empty:
+            st.info("No Daily symbols with Price > Kijun on the latest bar.")
+        else:
+            view_above = df_above_daily.copy()
+            view_above["Close"] = view_above["Close"].map(
+                lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a"
+            )
+            view_above["Kijun"] = view_above["Kijun"].map(
+                lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a"
+            )
+            st.dataframe(
+                view_above[["Symbol","Timestamp","Close","Kijun"]].reset_index(drop=True),
+                use_container_width=True
+            )
+
+        # ---- FOREX HOURLY: latest NTD < -0.75 ----
+        if mode == "Forex":
+            st.markdown("---")
+            st.subheader(
+                f"Forex Hourly — latest NTD < {thresh:+.2f} "
+                f"({scan_hour_range} lookback)"
+            )
+            hourly_rows = []
+            for sym in universe:
+                ntd_val_h, ts_h = last_hourly_ntd_value(sym, ntd_window, period=scan_period)
+                try:
+                    intr = fetch_intraday(sym, period=scan_period)
+                    if intr is not None and not intr.empty and "Close" in intr:
+                        close_val_h = _safe_last_float(intr["Close"])
+                    else:
+                        close_val_h = np.nan
+                except Exception:
+                    close_val_h = np.nan
+                hourly_rows.append({
+                    "Symbol": sym,
+                    "NTD_Last": ntd_val_h,
+                    "BelowThresh": (np.isfinite(ntd_val_h) and ntd_val_h < thresh),
+                    "Close": close_val_h,
+                    "Timestamp": ts_h
+                })
+            df_hour = pd.DataFrame(hourly_rows)
+            hits_hour = df_hour[df_hour["BelowThresh"] == True].copy()
+            hits_hour = hits_hour.sort_values("NTD_Last")
+
+            if hits_hour.empty:
+                st.info(
+                    f"No Forex pairs where the latest **hourly** NTD value is below {thresh:+.2f} "
+                    f"within {scan_hour_range} lookback."
+                )
+            else:
+                showh = hits_hour.copy()
+                showh["NTD_Last"] = showh["NTD_Last"].map(
+                    lambda v: f"{v:+.3f}" if np.isfinite(v) else "n/a"
+                )
+                showh["Close"] = showh["Close"].map(
+                    lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a"
+                )
+                st.dataframe(
+                    showh[["Symbol","Timestamp","Close","NTD_Last"]].reset_index(drop=True),
+                    use_container_width=True
+                )
+
+            # ---- FOREX HOURLY: PRICE > KIJUN ----
+            st.subheader(
+                f"Forex Hourly — Price > Ichimoku Kijun({ichi_base}) (latest bar, {scan_hour_range})"
+            )
+            habove_rows = []
+            for sym in universe:
+                above_h, ts_h, close_h, kij_h = price_above_kijun_info_hourly(
+                    sym, period=scan_period, base=ichi_base
+                )
+                habove_rows.append({
+                    "Symbol": sym,
+                    "AboveNow": above_h,
+                    "Timestamp": ts_h,
+                    "Close": close_h,
+                    "Kijun": kij_h
+                })
+            df_above_hour = pd.DataFrame(habove_rows)
+            df_above_hour = df_above_hour[df_above_hour["AboveNow"] == True]
+            if df_above_hour.empty:
+                st.info("No Forex pairs with Price > Kijun on the latest bar.")
+            else:
+                vch = df_above_hour.copy()
+                vch["Close"] = vch["Close"].map(
+                    lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a"
+                )
+                vch["Kijun"] = vch["Kijun"].map(
+                    lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a"
+                )
+                st.dataframe(
+                    vch[["Symbol","Timestamp","Close","Kijun"]].reset_index(drop=True),
+                    use_container_width=True
+                )
+
+# --- Tab 6: Long-Term History ---
+with tab6:
+    st.header("Long-Term History — Price with S/R & Trend")
+    default_idx = 0
+    if st.session_state.get("ticker") in universe:
+        default_idx = universe.index(st.session_state["ticker"])
+    sym = st.selectbox("Ticker:", universe, index=default_idx, key="hist_long_ticker")
+    c1, c2, c3, c4 = st.columns(4)
+    if c1.button("5Y", key="btn_5y"):
+        st.session_state.hist_years = 5
+    if c2.button("10Y", key="btn_10y"):
+        st.session_state.hist_years = 10
+    if c3.button("15Y", key="btn_15y"):
+        st.session_state.hist_years = 15
+    if c4.button("20Y", key="btn_20y"):
+        st.session_state.hist_years = 20
+
+    years = int(st.session_state.hist_years)
+    st.caption(
+        "Showing last **{years} years**. Support/Resistance = rolling **252-day** extremes; "
+        "trendline fits the shown window."
+    )
+
+    s_full = fetch_hist_max(sym)
+    if s_full is None or s_full.empty:
+        st.warning("No historical data available.")
+    else:
+        end_ts = s_full.index.max()
+        start_ts = end_ts - pd.DateOffset(years=years)
+        s = s_full[s_full.index >= start_ts]
+        if s.empty:
+            st.warning(f"No data in the last {years} years for {sym}.")
+        else:
+            res_roll = s.rolling(252, min_periods=1).max()
+            sup_roll = s.rolling(252, min_periods=1).min()
+            res_last = float(res_roll.iloc[-1]) if len(res_roll) else np.nan
+            sup_last = float(sup_roll.iloc[-1]) if len(sup_roll) else np.nan
+            yhat_all, upper_all, lower_all, m_all, r2_all = regression_with_band(s, lookback=len(s))
+
+            fig, ax = plt.subplots(figsize=(14,5))
+            ax.set_title(f"{sym} — Last {years} Years — Price + 252d S/R + Trend")
+            ax.plot(s.index, s.values, label="Close")
+            if np.isfinite(res_last) and np.isfinite(sup_last):
+                ax.hlines(res_last, xmin=s.index[0], xmax=s.index[-1],
+                          colors="tab:red",   linestyles="-", linewidth=1.6,
+                          label="Resistance (252d)")
+                ax.hlines(sup_last, xmin=s.index[0], xmax=s.index[-1],
+                          colors="tab:green", linestyles="-", linewidth=1.6,
+                          label="Support (252d)")
+                label_on_left(ax, res_last, f"R {fmt_price_val(res_last)}", color="tab:red")
+                label_on_left(ax, sup_last, f"S {fmt_price_val(sup_last)}", color="tab:green")
+            if not yhat_all.empty:
+                ax.plot(yhat_all.index, yhat_all.values, "--",
+                        linewidth=2, label=f"Trend (m={fmt_slope(m_all)}/bar)")
+            if not upper_all.empty and not lower_all.empty:
+                ax.plot(upper_all.index, upper_all.values, ":", linewidth=2.0,
+                        color="black", alpha=0.85, label="Trend +2σ")
+            ax.plot(lower_all.index, lower_all.values, ":", linewidth=2.0,
+                    color="black", alpha=0.85, label="Trend -2σ")
+            px_now = _safe_last_float(s)
+            if np.isfinite(px_now):
+                ax.text(0.99, 0.02,
+                        f"Current price: {fmt_price_val(px_now)}",
+                        transform=ax.transAxes, ha="right", va="bottom",
+                        fontsize=11, fontweight="bold",
+                        bbox=dict(boxstyle="round,pad=0.25",
+                                  fc="white", ec="grey", alpha=0.7))
+            ax.text(0.01, 0.02,
+                    f"Slope: {fmt_slope(m_all)}/bar",
+                    transform=ax.transAxes, ha="left", va="bottom",
+                    fontsize=9, color="black",
+                    bbox=dict(boxstyle="round,pad=0.25",
+                              fc="white", ec="grey", alpha=0.7))
+            ax.text(0.50, 0.02,
+                    f"R² (trend): {fmt_r2(r2_all)}",
+                    transform=ax.transAxes, ha="center", va="bottom",
+                    fontsize=9, color="black",
+                    bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+            ax.set_xlabel("Date (PST)")
+            ax.set_ylabel("Price")
+            ax.legend(loc="lower left", framealpha=0.5)
+            st.pyplot(fig)
