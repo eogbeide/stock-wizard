@@ -273,7 +273,7 @@ else:
     universe = [
         'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X',
         'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','EURCAD=X',
-        'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X'
+        'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
     ]
 
 # Cache TTL = 120s
