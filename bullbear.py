@@ -6,7 +6,7 @@
 #         - Downtrend (Daily slope < 0): "SELL @Resistance → BUY @Support • pips"
 #   • Everything else unchanged from prior version (S/R, bands, stars, etc.).
 
-import streamlit as st
+import streamlit as stv
 import pandas as pd
 import numpy as np
 import yfinance as yf
