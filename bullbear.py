@@ -6,7 +6,7 @@
 #       - If trend is DOWN (slope < 0): draw SELL on price when NTD crosses ↓ 0.0 on NTD panel.
 #   • Intraday dashed trend color still tied to GLOBAL (Daily) slope.
 
-import streamlit as st
+import streamlit as stx
 import pandas as pd
 import numpy as np
 import yfinance as yf
