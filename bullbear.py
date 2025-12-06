@@ -1,13 +1,11 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # UPDATED — per request:
-#   • BUY/SELL instruction at the top of the intraday chart keys off the
+#   • BUY/SELL instruction at the top of the intraday chart now keys off the
 #     GLOBAL (Daily) slope sign:
 #         - Uptrend (Daily slope > 0): "BUY @Support → SELL @Resistance • pips"
 #         - Downtrend (Daily slope < 0): "SELL @Resistance → BUY @Support • pips"
-#   • Intraday *trend line color* now keys off GLOBAL (Daily) slope:
-#         - Uptrend: green
-#         - Downtrend: red
-#   • Everything else unchanged (S/R, bands, stars, etc.).
+#   • Intraday dashed Trend line color now keys off the GLOBAL (Daily) slope sign:
+#         - Uptrend: green   • Downtrend: red
 
 import streamlit as st
 import pandas as pd
@@ -147,18 +145,18 @@ def format_trade_instruction(trend_slope: float,
     entry_buy = float(buy_val) if _finite(buy_val) else float(close_val)
     exit_sell = float(sell_val) if _finite(sell_val) else float(close_val)
 
-    uptrend = False
+    # treat only strictly-positive as uptrend; anything else (<=0) behaves as down/neutral
     try:
-        uptrend = float(trend_slope) >= 0.0
+        uptrend = float(trend_slope) > 0.0
     except Exception:
-        pass
+        uptrend = False
 
     if uptrend:
         # Uptrend → BUY then SELL
         leg_a_val, leg_b_val = entry_buy, exit_sell
         text = f"▲ BUY @{fmt_price_val(leg_a_val)} → ▼ SELL @{fmt_price_val(leg_b_val)}"
     else:
-        # Downtrend → SELL then BUY (and show pips)
+        # Downtrend/neutral → SELL then BUY   (requested behavior)
         leg_a_val, leg_b_val = exit_sell, entry_buy
         text = f"▼ SELL @{fmt_price_val(leg_a_val)} → ▲ BUY @{fmt_price_val(leg_b_val)}"
 
@@ -183,6 +181,7 @@ def subset_by_daily_view(obj, view_label: str):
     else:
         start = end - pd.Timedelta(days=days_map.get(view_label, 365))
     return obj.loc[(idx >= start) & (idx <= end)]
+
 # --- Sidebar config ---
 st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
@@ -275,7 +274,6 @@ else:
         'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','EURCAD=X',
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
     ]
-
 # Cache TTL = 120s
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
@@ -515,7 +513,6 @@ def compute_normalized_price(close: pd.Series, window: int = 60) -> pd.Series:
     sd = s.rolling(window, min_periods=minp).std().replace(0, np.nan)
     z = (s - m) / sd
     return np.tanh(z / 2.0).reindex(s.index)
-
 def shade_ntd_regions(ax, ntd: pd.Series):
     if ntd is None or ntd.empty:
         return
@@ -535,6 +532,7 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
     color = "tab:green" if m >= 0 else "tab:red"
     ax.plot(s.index, yhat, "-", linewidth=2.4, color=color, label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return m
+
 # Supertrend
 def _true_range(df: pd.DataFrame):
     hl = (df["High"] - df["Low"]).abs()
@@ -665,7 +663,7 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     nbb = pctb * 2.0 - 1.0
     return mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index)
 
-# HMA + helpers
+# HMA + crossover helpers — (unchanged for signals on price; S/R reversal used instead)
 def _wma(s: pd.Series, window: int) -> pd.Series:
     s = _coerce_1d_series(s).astype(float)
     if s.empty or window < 1:
@@ -684,7 +682,6 @@ def compute_hma(close: pd.Series, period: int = 55) -> pd.Series:
     diff = 2 * wma_half - wma_full
     hma = _wma(diff, sqrtp)
     return hma.reindex(s.index)
-
 def detect_last_crossover(price: pd.Series, line: pd.Series):
     p = _coerce_1d_series(price)
     l = _coerce_1d_series(line)
@@ -781,7 +778,7 @@ def find_hma_sr_signal(price: pd.Series,
                 return {"time": t, "price": px, "side": "SELL"}
     return None
 
-# HMA reversal markers on NTD panel
+# HMA reversal markers on NTD panel (unchanged)
 def detect_hma_reversal_masks(price: pd.Series, hma: pd.Series, lookback: int = 3):
     h = _coerce_1d_series(hma)
     slope = h.diff().rolling(lookback, min_periods=1).mean()
@@ -805,7 +802,7 @@ def overlay_hma_reversal_on_ntd(ax, price: pd.Series, hma: pd.Series, lookback: 
     if len(idx_dn):
         ax.scatter(idx_dn, [y_dn]*len(idx_dn), marker="D", s=70, color="tab:red",   zorder=8, label=f"HMA({period}) REV")
 
-# NPX ↔ NTD overlay/helpers
+# NPX ↔ NTD overlay/helpers (markers dots/x)
 def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = True):
     npx = _coerce_1d_series(npx)
     ntd = _coerce_1d_series(ntd)
@@ -824,7 +821,7 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = 
         if len(dn_idx):
             ax.scatter(dn_idx, ntd.loc[dn_idx], marker="x", s=60, color="tab:red",   zorder=9, label="Price↓NTD")
 
-# NTD triangles gated by PRICE trend sign
+# --- NEW: NTD triangles gated by PRICE trend sign ---
 def overlay_ntd_triangles_by_trend(ax, ntd: pd.Series, trend_slope: float, upper: float = 0.75, lower: float = -0.75):
     s = _coerce_1d_series(ntd).dropna()
     if s.empty or not np.isfinite(trend_slope):
@@ -853,7 +850,7 @@ def overlay_ntd_triangles_by_trend(ax, ntd: pd.Series, trend_slope: float, upper
         if idx_hi:
             ax.scatter(idx_hi, s.loc[idx_hi], marker="v", s=85, color="tab:red", zorder=10, label="NTD > +0.75")
 
-# Reversal Stars on NTD
+# --- Reversal Stars on NTD ---
 def _n_consecutive_increasing(series: pd.Series, n: int = 2) -> bool:
     s = _coerce_1d_series(series).dropna()
     if len(s) < n+1:
@@ -914,7 +911,7 @@ def overlay_ntd_sr_reversal_stars(ax,
     if sell_cond:
         ax.scatter([t], [ntd0], marker="*", s=170, color="tab:red",   zorder=12, label="SELL ★ (Resistance reversal)")
 
-# Price chart S/R reversal signal
+# --- NEW: S/R reversal signal for PRICE CHART (used for BUY/SELL markers) ---
 def last_sr_reversal_signal(price: pd.Series,
                             sup: pd.Series,
                             res: pd.Series,
@@ -959,7 +956,7 @@ def last_sr_reversal_signal(price: pd.Series,
         return {"time": t, "price": c0, "side": "SELL"}
     return None
 
-# Channel/in-range helpers for NTD panel
+# Channel-in-range helpers for NTD panel
 def channel_state_series(price: pd.Series, sup: pd.Series, res: pd.Series, eps: float = 0.0) -> pd.Series:
     p = _coerce_1d_series(price)
     s_sup = _coerce_1d_series(sup).reindex(p.index)
@@ -1039,7 +1036,7 @@ def last_daily_ntd_value(symbol: str, ntd_win: int):
         return np.nan, None
 
 @st.cache_data(ttl=120)
-def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d", level: float = None):
+def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
     try:
         df = fetch_intraday(symbol, period=period)
         if df is None or df.empty or "Close" not in df:
@@ -1100,6 +1097,72 @@ def _has_volume_to_plot(vol: pd.Series) -> bool:
     vmax = float(np.nanmax(arr))
     vmin = float(np.nanmin(arr))
     return (np.isfinite(vmax) and vmax > 0.0) or (np.isfinite(vmin) and vmin < 0.0)
+
+# --- NEW: helpers for green-dot (Price↑NTD) scanner ---
+@st.cache_data(ttl=120)
+def last_green_dot_daily(symbol: str, ntd_win: int, level: float = None):
+    try:
+        s = fetch_hist(symbol)
+        if s is None or s.empty:
+            return False, np.nan, None, np.nan, np.nan
+        ntd = compute_normalized_trend(s, window=ntd_win).dropna()
+        if ntd.empty or len(ntd) < 2:
+            return False, np.nan, None, np.nan, np.nan
+        npx = compute_normalized_price(s, window=ntd_win).reindex(ntd.index)
+        df = pd.DataFrame({"ntd": ntd, "npx": npx}).dropna()
+        if df.shape[0] < 2:
+            return False, np.nan, None, np.nan, np.nan
+        above = df["npx"] > df["ntd"]
+        above_now = bool(above.iloc[-1])
+        above_prev = bool(above.iloc[-2])
+        is_signal = (not above_prev) and above_now
+        ntd_last = float(df["ntd"].iloc[-1])
+        npx_last = float(df["npx"].iloc[-1])
+        idx_last = df.index[-1]
+        s_aligned = _coerce_1d_series(s).reindex(df.index)
+        try:
+            close_last = float(s_aligned.iloc[-1])
+        except Exception:
+            close_last = _safe_last_float(s)
+        if level is not None and np.isfinite(ntd_last):
+            if not (ntd_last < level):
+                is_signal = False
+        return is_signal, ntd_last, idx_last, npx_last, close_last
+    except Exception:
+        return False, np.nan, None, np.nan, np.nan
+
+@st.cache_data(ttl=120)
+def last_green_dot_hourly(symbol: str, ntd_win: int, period: str = "1d", level: float = None):
+    try:
+        df = fetch_intraday(symbol, period=period)
+        if df is None or df.empty or "Close" not in df:
+            return False, np.nan, None, np.nan, np.nan
+        s = df["Close"].ffill()
+        ntd = compute_normalized_trend(s, window=ntd_win).dropna()
+        if ntd.empty or len(ntd) < 2:
+            return False, np.nan, None, np.nan, np.nan
+        npx = compute_normalized_price(s, window=ntd_win).reindex(ntd.index)
+        df2 = pd.DataFrame({"ntd": ntd, "npx": npx}).dropna()
+        if df2.shape[0] < 2:
+            return False, np.nan, None, np.nan, np.nan
+        above = df2["npx"] > df2["ntd"]
+        above_now = bool(above.iloc[-1])
+        above_prev = bool(above.iloc[-2])
+        is_signal = (not above_prev) and above_now
+        ntd_last = float(df2["ntd"].iloc[-1])
+        npx_last = float(df2["npx"].iloc[-1])
+        idx_last = df2.index[-1]
+        s_aligned = s.reindex(df2.index)
+        try:
+            close_last = float(s_aligned.iloc[-1])
+        except Exception:
+            close_last = _safe_last_float(s)
+        if level is not None and np.isfinite(ntd_last):
+            if not (ntd_last < level):
+                is_signal = False
+        return is_signal, ntd_last, idx_last, npx_last, close_last
+    except Exception:
+        return False, np.nan, None, np.nan, np.nan
 
 # --- Sessions & News ---
 NY_TZ   = pytz.timezone("America/New_York")
@@ -1183,7 +1246,6 @@ def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
     now_utc = pd.Timestamp.now(tz="UTC")
     d1 = (now_utc - pd.Timedelta(days=window_days)).tz_convert(PACIFIC)
     return df[df["time"] >= d1].sort_values("time")
-
 def draw_news_markers(ax, times, ymin, ymax, label="News"):
     for t in times:
         try:
@@ -1209,6 +1271,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "NTD -0.75 Scanner",
     "Long-Term History"
 ])
+
 # --- Tab 1: Original Forecast ---
 with tab1:
     st.header("Original Forecast")
@@ -1439,22 +1502,20 @@ with tab1:
                 yhat_h, upper_h, lower_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
                 slope_sig_h = m_h if np.isfinite(m_h) else slope_h
 
-                # >>> GLOBAL (DAILY) SLOPE for instruction + color <<<
+                # >>> GLOBAL (DAILY) SLOPE drives both instruction AND intraday trend color <<<
                 try:
                     df_global = st.session_state.df_hist
                     _, _, _, m_global, _ = regression_with_band(df_global, slope_lb_daily)
                 except Exception:
                     m_global = slope_sig_h  # safe fallback
 
-                # Color the intraday trend lines by GLOBAL (Daily) trend
-                trend_color = "tab:red" if (np.isfinite(m_global) and m_global < 0) else "tab:green"
-
                 fig2, ax2 = plt.subplots(figsize=(14,4))
                 plt.subplots_adjust(top=0.85, right=0.93)
+
+                # --- UPDATED: color of dashed Trend line follows GLOBAL (Daily) slope sign ---
+                trend_color = "tab:green" if (np.isfinite(m_global) and m_global >= 0) else "tab:red"
                 ax2.plot(hc.index, hc, label="Intraday")
                 ax2.plot(hc.index, he, "--", label="20 EMA")
-
-                # Colorized by GLOBAL trend:
                 ax2.plot(hc.index, trend_h, "--",
                          label=f"Trend (m={fmt_slope(slope_h)}/bar)", linewidth=2, color=trend_color)
 
@@ -1499,7 +1560,7 @@ with tab1:
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
-                # S/R reversal-based BUY/SELL signal (intraday timing)
+                # S/R reversal-based BUY/SELL signal on intraday price chart (uses intraday slope for timing)
                 sr_sig_h = last_sr_reversal_signal(hc, sup_h, res_h,
                                                    trend_slope=slope_sig_h,
                                                    prox=sr_prox_pct,
@@ -1507,9 +1568,9 @@ with tab1:
                 if sr_sig_h is not None:
                     annotate_crossover(ax2, sr_sig_h["time"], sr_sig_h["price"], sr_sig_h["side"])
 
-                # >>> UPDATED: BUY/SELL instruction uses GLOBAL (DAILY) slope <<<
+                # >>> UPDATED: BUY/SELL instruction uses GLOBAL (DAILY) slope — downtrend: SELL → BUY + pips <<<
                 instr_txt = format_trade_instruction(
-                    trend_slope=m_global,   # <-- global slope drives instruction wording
+                    trend_slope=m_global,   # <-- key
                     buy_val=sup_val,
                     sell_val=res_val,
                     close_val=px_val,
@@ -1545,12 +1606,9 @@ with tab1:
                 if not st_line_intr.dropna().empty:
                     ax2.plot(st_line_intr.index, st_line_intr.values, "-",
                              label=f"Supertrend ({atr_period},{atr_mult})")
-
-                # >>> Color intraday regression trendline by GLOBAL slope <<<
                 if not yhat_h.empty:
                     ax2.plot(yhat_h.index, yhat_h.values, "-",
                              linewidth=2,
-                             color=trend_color,
                              label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
                 if not upper_h.empty and not lower_h.empty:
                     ax2.plot(upper_h.index, upper_h.values, "--", linewidth=2.2,
@@ -1645,8 +1703,6 @@ with tab1:
                         overlay_npx_on_ntd(ax2r, npx_h, ntd_h, mark_crosses=mark_npx_cross)
                     if not ntd_trend_h.empty:
                         ax2r.plot(ntd_trend_h.index, ntd_trend_h.values, "--", linewidth=2,
-                                  # also color NTD trend line by GLOBAL daily sign for quick visual coherence
-                                  color=trend_color,
                                   label=f"NTD Trend {slope_lb_hourly} ({fmt_slope(ntd_m_h)}/bar)")
                     if show_hma_rev_ntd and not hma_h.dropna().empty and not hc.dropna().empty:
                         overlay_hma_reversal_on_ntd(ax2r, hc, hma_h,
@@ -1834,378 +1890,4 @@ with tab2:
             axdw2.axhline(0.75, linestyle="-",  linewidth=1.0, color="black", label="+0.75")
             axdw2.axhline(-0.75, linestyle="-",  linewidth=1.0, color="black", label="-0.75")
             axdw2.set_ylim(-1.1, 1.1)
-            axdw2.set_xlabel("Date (PST)")
-            axdw2.legend(loc="lower left", framealpha=0.5)
-            st.pyplot(fig)
-
-        if view in ("Intraday","Both"):
-            intr = st.session_state.intraday
-            if intr is None or intr.empty or "Close" not in intr:
-                st.warning("No intraday data available.")
-            else:
-                st.info("Intraday view is rendered fully in Tab 1 (logic unchanged here).")
-# --- Tab 3: Bull vs Bear ---
-with tab3:
-    st.header("Bull vs Bear Summary")
-    if not st.session_state.run_all:
-        st.info("Run Tab 1 first.")
-    else:
-        df3 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
-        df3['PctChange'] = df3['Close'].pct_change()
-        df3['Bull'] = df3['PctChange'] > 0
-        bull = int(df3['Bull'].sum())
-        bear = int((~df3['Bull']).sum())
-        total = bull + bear
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Days", total)
-        c2.metric("Bull Days", bull, f"{bull/total*100:.1f}%")
-        c3.metric("Bear Days", bear, f"{bear/total*100:.1f}%")
-        c4.metric("Lookback", bb_period)
-
-# --- Tab 4: Metrics ---
-with tab4:
-    st.header("Detailed Metrics")
-    if not st.session_state.run_all:
-        st.info("Run Tab 1 first.")
-    else:
-        df_hist = fetch_hist(st.session_state.ticker)
-        last_price = _safe_last_float(df_hist)
-        idx, vals, ci = compute_sarimax_forecast(df_hist)
-        p_up = np.mean(vals.to_numpy() > last_price) if np.isfinite(last_price) else np.nan
-        p_dn = 1 - p_up if np.isfinite(p_up) else np.nan
-
-        st.subheader(f"Last 3 Months  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
-        cutoff = df_hist.index.max() - pd.Timedelta(days=90)
-        df3m = df_hist[df_hist.index >= cutoff]
-        ma30_3m = df3m.rolling(30, min_periods=1).mean()
-        res3m = df3m.rolling(30, min_periods=1).max()
-        sup3m = df3m.rolling(30, min_periods=1).min()
-        trend3m, up3m, lo3m, m3m, r2_3m = regression_with_band(df3m, lookback=len(df3m))
-
-        fig, ax = plt.subplots(figsize=(14,5))
-        ax.plot(df3m.index, df3m, label="Close")
-        ax.plot(df3m.index, ma30_3m, label="30 MA")
-        ax.plot(res3m.index, res3m, ":", label="Resistance")
-        ax.plot(sup3m.index, sup3m, ":", label="Support")
-        if not trend3m.empty:
-            ax.plot(trend3m.index, trend3m.values, "--",
-                    label=f"Trend (m={fmt_slope(m3m)}/bar)")
-        if not up3m.empty and not lo3m.empty:
-            ax.plot(up3m.index, up3m.values, ":", linewidth=2.0,
-                     color="black", alpha=0.85, label="Trend +2σ")
-            ax.plot(lo3m.index, lo3m.values, ":", linewidth=2.0,
-                     color="black", alpha=0.85, label="Trend -2σ")
-        ax.set_xlabel("Date (PST)")
-        ax.text(0.50, 0.02,
-                f"R² (3M): {fmt_r2(r2_3m)}",
-                transform=ax.transAxes,
-                ha="center", va="bottom",
-                fontsize=9, color="black",
-                bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-        ax.legend()
-        st.pyplot(fig)
-
-        st.markdown("---")
-        df0 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
-        df0['PctChange'] = df0['Close'].pct_change()
-        df0['Bull'] = df0['PctChange'] > 0
-        df0['MA30'] = df0['Close'].rolling(30, min_periods=1).mean()
-
-        st.subheader("Close + 30-day MA + Trend")
-        res0 = df0['Close'].rolling(30, min_periods=1).max()
-        sup0 = df0['Close'].rolling(30, min_periods=1).min()
-        trend0, up0, lo0, m0, r2_0 = regression_with_band(df0['Close'], lookback=len(df0))
-
-        fig0, ax0 = plt.subplots(figsize=(14,5))
-        ax0.plot(df0.index, df0['Close'], label="Close")
-        ax0.plot(df0.index, df0['MA30'], label="30 MA")
-        ax0.plot(res0.index, res0, ":", label="Resistance")
-        ax0.plot(sup0.index, sup0, ":", label="Support")
-        if not trend0.empty:
-            ax0.plot(trend0.index, trend0.values, "--",
-                     label=f"Trend (m={fmt_slope(m0)}/bar)")
-        if not up0.empty and not lo0.empty:
-            ax0.plot(up0.index, up0.values, ":", linewidth=2.0,
-                     color="black", alpha=0.85, label="Trend +2σ")
-            ax0.plot(lo0.index, lo0.values, ":", linewidth=2.0,
-                     color="black", alpha=0.85, label="Trend -2σ")
-        ax0.set_xlabel("Date (PST)")
-        ax0.text(0.50, 0.02,
-                 f"R² ({bb_period}): {fmt_r2(r2_0)}",
-                 transform=ax0.transAxes,
-                 ha="center", va="bottom",
-                 fontsize=9, color="black",
-                 bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-        ax0.legend()
-        st.pyplot(fig0)
-
-        st.markdown("---")
-        st.subheader("Daily % Change")
-        st.line_chart(df0['PctChange'], use_container_width=True)
-
-        st.subheader("Bull/Bear Distribution")
-        dist = pd.DataFrame({
-            "Type": ["Bull", "Bear"],
-            "Days": [int(df0['Bull'].sum()),
-                     int((~df0['Bull']).sum())]
-        }).set_index("Type")
-        st.bar_chart(dist, use_container_width=True)
-
-# --- Tab 5: NTD -0.75 Scanner (Latest NTD < -0.75) ---
-with tab5:
-    st.header("NTD -0.75 Scanner (NTD < -0.75)")
-    st.caption(
-        "Scans the universe for symbols whose **latest NTD value** is below **-0.75** "
-        "on the Daily NTD line (and on the Hourly NTD line for Forex). "
-        "This highlights symbols in deep negative NTD territory."
-    )
-
-    period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
-    scan_hour_range = st.selectbox(
-        "Hourly lookback for Forex:",
-        ["24h", "48h", "96h"],
-        index=["24h","48h","96h"].index(st.session_state.get("hour_range", "24h")),
-        key="ntd_scan_hour_range"
-    )
-    scan_period = period_map[scan_hour_range]
-
-    # Fixed NTD threshold for this scanner
-    thresh = -0.75
-
-    run = st.button("Scan Universe", key="btn_ntd_scan")
-
-    if run:
-        # ---- DAILY: latest NTD < -0.75 ----
-        daily_rows = []
-        for sym in universe:
-            ntd_val, ts = last_daily_ntd_value(sym, ntd_window)
-            try:
-                s_close = fetch_hist(sym)
-                close_val = _safe_last_float(s_close)
-            except Exception:
-                close_val = np.nan
-            daily_rows.append({
-                "Symbol": sym,
-                "NTD_Last": ntd_val,
-                "BelowThresh": (np.isfinite(ntd_val) and ntd_val < thresh),
-                "Close": close_val,
-                "Timestamp": ts
-            })
-        df_daily = pd.DataFrame(daily_rows)
-        hits_daily = df_daily[df_daily["BelowThresh"] == True].copy()
-        hits_daily = hits_daily.sort_values("NTD_Last")
-
-        c3, c4 = st.columns(2)
-        c3.metric("Universe Size", len(universe))
-        c4.metric(f"Daily NTD < {thresh:+.2f}", int(hits_daily.shape[0]))
-
-        st.subheader(f"Daily — latest NTD < {thresh:+.2f}")
-        if hits_daily.empty:
-            st.info(
-                f"No symbols where the latest **daily** NTD value is below {thresh:+.2f}."
-            )
-        else:
-            view = hits_daily.copy()
-            view["NTD_Last"] = view["NTD_Last"].map(
-                lambda v: f"{v:+.3f}" if np.isfinite(v) else "n/a"
-            )
-            view["Close"] = view["Close"].map(
-                lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a"
-            )
-            st.dataframe(
-                view[["Symbol","Timestamp","Close","NTD_Last"]].reset_index(drop=True),
-                use_container_width=True
-            )
-
-        # ---- DAILY: PRICE > KIJUN ----
-        st.markdown("---")
-        st.subheader(f"Daily — Price > Ichimoku Kijun({ichi_base}) (latest bar)")
-        above_rows = []
-        for sym in universe:
-            above, ts, close_now, kij_now = price_above_kijun_info_daily(sym, base=ichi_base)
-            above_rows.append({
-                "Symbol": sym,
-                "AboveNow": above,
-                "Timestamp": ts,
-                "Close": close_now,
-                "Kijun": kij_now
-            })
-        df_above_daily = pd.DataFrame(above_rows)
-        df_above_daily = df_above_daily[df_above_daily["AboveNow"] == True]
-        if df_above_daily.empty:
-            st.info("No Daily symbols with Price > Kijun on the latest bar.")
-        else:
-            view_above = df_above_daily.copy()
-            view_above["Close"] = view_above["Close"].map(
-                lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a"
-            )
-            view_above["Kijun"] = view_above["Kijun"].map(
-                lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a"
-            )
-            st.dataframe(
-                view_above[["Symbol","Timestamp","Close","Kijun"]].reset_index(drop=True),
-                use_container_width=True
-            )
-
-        # ---- FOREX HOURLY: latest NTD < -0.75 ----
-        if mode == "Forex":
-            st.markdown("---")
-            st.subheader(
-                f"Forex Hourly — latest NTD < {thresh:+.2f} "
-                f"({scan_hour_range} lookback)"
-            )
-            hourly_rows = []
-            for sym in universe:
-                ntd_val_h, ts_h = last_hourly_ntd_value(sym, ntd_window, period=scan_period)
-                try:
-                    intr = fetch_intraday(sym, period=scan_period)
-                    if intr is not None and not intr.empty and "Close" in intr:
-                        close_val_h = _safe_last_float(intr["Close"])
-                    else:
-                        close_val_h = np.nan
-                except Exception:
-                    close_val_h = np.nan
-                hourly_rows.append({
-                    "Symbol": sym,
-                    "NTD_Last": ntd_val_h,
-                    "BelowThresh": (np.isfinite(ntd_val_h) and ntd_val_h < thresh),
-                    "Close": close_val_h,
-                    "Timestamp": ts_h
-                })
-            df_hour = pd.DataFrame(hourly_rows)
-            hits_hour = df_hour[df_hour["BelowThresh"] == True].copy()
-            hits_hour = hits_hour.sort_values("NTD_Last")
-
-            if hits_hour.empty:
-                st.info(
-                    f"No Forex pairs where the latest **hourly** NTD value is below {thresh:+.2f} "
-                    f"within {scan_hour_range} lookback."
-                )
-            else:
-                showh = hits_hour.copy()
-                showh["NTD_Last"] = showh["NTD_Last"].map(
-                    lambda v: f"{v:+.3f}" if np.isfinite(v) else "n/a"
-                )
-                showh["Close"] = showh["Close"].map(
-                    lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a"
-                )
-                st.dataframe(
-                    showh[["Symbol","Timestamp","Close","NTD_Last"]].reset_index(drop=True),
-                    use_container_width=True
-                )
-
-            # ---- FOREX HOURLY: PRICE > KIJUN ----
-            st.subheader(
-                f"Forex Hourly — Price > Ichimoku Kijun({ichi_base}) (latest bar, {scan_hour_range})"
-            )
-            habove_rows = []
-            for sym in universe:
-                above_h, ts_h, close_h, kij_h = price_above_kijun_info_hourly(
-                    sym, period=scan_period, base=ichi_base
-                )
-                habove_rows.append({
-                    "Symbol": sym,
-                    "AboveNow": above_h,
-                    "Timestamp": ts_h,
-                    "Close": close_h,
-                    "Kijun": kij_h
-                })
-            df_above_hour = pd.DataFrame(habove_rows)
-            df_above_hour = df_above_hour[df_above_hour["AboveNow"] == True]
-            if df_above_hour.empty:
-                st.info("No Forex pairs with Price > Kijun on the latest bar.")
-            else:
-                vch = df_above_hour.copy()
-                vch["Close"] = vch["Close"].map(
-                    lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a"
-                )
-                vch["Kijun"] = vch["Kijun"].map(
-                    lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a"
-                )
-                st.dataframe(
-                    vch[["Symbol","Timestamp","Close","Kijun"]].reset_index(drop=True),
-                    use_container_width=True
-                )
-
-# --- Tab 6: Long-Term History ---
-with tab6:
-    st.header("Long-Term History — Price with S/R & Trend")
-    default_idx = 0
-    if st.session_state.get("ticker") in universe:
-        default_idx = universe.index(st.session_state["ticker"])
-    sym = st.selectbox("Ticker:", universe, index=default_idx, key="hist_long_ticker")
-    c1, c2, c3, c4 = st.columns(4)
-    if c1.button("5Y", key="btn_5y"):
-        st.session_state.hist_years = 5
-    if c2.button("10Y", key="btn_10y"):
-        st.session_state.hist_years = 10
-    if c3.button("15Y", key="btn_15y"):
-        st.session_state.hist_years = 15
-    if c4.button("20Y", key="btn_20y"):
-        st.session_state.hist_years = 20
-
-    years = int(st.session_state.hist_years)
-    st.caption(
-        "Showing last **{years} years**. Support/Resistance = rolling **252-day** extremes; "
-        "trendline fits the shown window."
-    )
-
-    s_full = fetch_hist_max(sym)
-    if s_full is None or s_full.empty:
-        st.warning("No historical data available.")
-    else:
-        end_ts = s_full.index.max()
-        start_ts = end_ts - pd.DateOffset(years=years)
-        s = s_full[s_full.index >= start_ts]
-        if s.empty:
-            st.warning(f"No data in the last {years} years for {sym}.")
-        else:
-            res_roll = s.rolling(252, min_periods=1).max()
-            sup_roll = s.rolling(252, min_periods=1).min()
-            res_last = float(res_roll.iloc[-1]) if len(res_roll) else np.nan
-            sup_last = float(sup_roll.iloc[-1]) if len(sup_roll) else np.nan
-            yhat_all, upper_all, lower_all, m_all, r2_all = regression_with_band(s, lookback=len(s))
-
-            fig, ax = plt.subplots(figsize=(14,5))
-            ax.set_title(f"{sym} — Last {years} Years — Price + 252d S/R + Trend")
-            ax.plot(s.index, s.values, label="Close")
-            if np.isfinite(res_last) and np.isfinite(sup_last):
-                ax.hlines(res_last, xmin=s.index[0], xmax=s.index[-1],
-                          colors="tab:red",   linestyles="-", linewidth=1.6,
-                          label="Resistance (252d)")
-                ax.hlines(sup_last, xmin=s.index[0], xmax=s.index[-1],
-                          colors="tab:green", linestyles="-", linewidth=1.6,
-                          label="Support (252d)")
-                label_on_left(ax, res_last, f"R {fmt_price_val(res_last)}", color="tab:red")
-                label_on_left(ax, sup_last, f"S {fmt_price_val(sup_last)}", color="tab:green")
-            if not yhat_all.empty:
-                ax.plot(yhat_all.index, yhat_all.values, "--",
-                        linewidth=2, label=f"Trend (m={fmt_slope(m_all)}/bar)")
-            if not upper_all.empty and not lower_all.empty:
-                ax.plot(upper_all.index, upper_all.values, ":", linewidth=2.0,
-                        color="black", alpha=0.85, label="Trend +2σ")
-            ax.plot(lower_all.index, lower_all.values, ":", linewidth=2.0,
-                    color="black", alpha=0.85, label="Trend -2σ")
-            px_now = _safe_last_float(s)
-            if np.isfinite(px_now):
-                ax.text(0.99, 0.02,
-                        f"Current price: {fmt_price_val(px_now)}",
-                        transform=ax.transAxes, ha="right", va="bottom",
-                        fontsize=11, fontweight="bold",
-                        bbox=dict(boxstyle="round,pad=0.25",
-                                  fc="white", ec="grey", alpha=0.7))
-            ax.text(0.01, 0.02,
-                    f"Slope: {fmt_slope(m_all)}/bar",
-                    transform=ax.transAxes, ha="left", va="bottom",
-                    fontsize=9, color="black",
-                    bbox=dict(boxstyle="round,pad=0.25",
-                              fc="white", ec="grey", alpha=0.7))
-            ax.text(0.50, 0.02,
-                    f"R² (trend): {fmt_r2(r2_all)}",
-                    transform=ax.transAxes, ha="center", va="bottom",
-                    fontsize=9, color="black",
-                    bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-            ax.set_xlabel("Date (PST)")
-            ax.set_ylabel("Price")
-            ax.legend(loc="lower left", framealpha=0.5)
-            st.pyplot(fig)
+            ax
