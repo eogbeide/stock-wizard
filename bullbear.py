@@ -3,8 +3,9 @@
 #   • Stock hourly chart now uses the SAME layout and indicators as Forex hourly view:
 #       - Supertrend, PSAR, Bollinger Bands, HMA
 #       - Volume panel with trendline (Forex-only; stocks skip this panel per request)
-#       - Momentum (ROC%) panel
 #       - NTD + NPX indicator panel with triangles, stars, in-range shading
+#       - NEW: Normalized Momentum (ROC%) overlaid on NTD panels (daily & hourly)
+#         → removed separate Momentum chart/panel
 #   • BUY/SELL instruction uses slope direction.
 #   • Chart BUY/SELL markers only trigger when price "bounces" off the ±2σ band:
 #        - slope > 0 AND price moves from below LOWER band back inside → BUY
@@ -213,9 +214,11 @@ slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 1
 st.sidebar.subheader("Hourly Support/Resistance Window")
 sr_lb_hourly = st.sidebar.slider("Hourly S/R lookback (bars)", 20, 240, 60, 5, key="sb_sr_lb_hourly")
 
-st.sidebar.subheader("Hourly Momentum")
-show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True, key="sb_show_mom_hourly")
-mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, key="sb_mom_lb_hourly")
+# --- NEW: Momentum overlay on NTD (replaces separate momentum panel)
+st.sidebar.subheader("Momentum Overlay")
+show_mom_overlay = st.sidebar.checkbox("Overlay normalized momentum (ROC%) on NTD", value=True, key="sb_show_mom_overlay")
+mom_lb_hourly    = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, key="sb_mom_lb_hourly")
+mom_norm_win     = st.sidebar.slider("Momentum normalization window", 20, 480, 120, 10, key="sb_mom_norm_win")
 
 st.sidebar.subheader("Hourly Indicator Panel")
 show_nrsi   = st.sidebar.checkbox("Show Hourly NTD panel", value=True, key="sb_show_nrsi")
@@ -388,7 +391,6 @@ def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
     R1 = 2 * P - L; S1 = 2 * P - H
     R2 = P + (H - L); S2 = P - (H - L)
     return {"P": P, "R1": R1, "S1": S1, "R2": R2, "S2": S2}
-
 # ---------- Regression & ±2σ band ----------
 def slope_line(series_like, lookback: int):
     s = _coerce_1d_series(series_like).dropna()
@@ -454,15 +456,7 @@ def find_band_bounce_signal(price: pd.Series,
                             lower_band: pd.Series,
                             slope_val: float):
     """
-    Detect the most recent BUY/SELL signal based on a 'bounce' off the ±2σ band
-    around the regression slope.
-
-      • slope > 0 (uptrend): last bar where price moved from BELOW the LOWER band
-        back INSIDE the band → BUY.
-      • slope < 0 (downtrend): last bar where price moved from ABOVE the UPPER band
-        back INSIDE the band → SELL.
-
-    Returns dict(time=..., price=..., side='BUY'/'SELL') or None.
+    Detect the most recent BUY/SELL signal based on a 'bounce' off the ±2σ band.
     """
     p = _coerce_1d_series(price)
     u = _coerce_1d_series(upper_band).reindex(p.index)
@@ -488,7 +482,6 @@ def find_band_bounce_signal(price: pd.Series,
         return None
 
     if slope > 0:
-        # Uptrend: bounce off LOWER band (from below → inside)
         candidates = inside & below.shift(1, fill_value=False)
         idx = list(candidates[candidates].index)
         if not idx:
@@ -496,7 +489,6 @@ def find_band_bounce_signal(price: pd.Series,
         t = idx[-1]
         return {"time": t, "price": float(p.loc[t]), "side": "BUY"}
     else:
-        # Downtrend: bounce off UPPER band (from above → inside)
         candidates = inside & above.shift(1, fill_value=False)
         idx = list(candidates[candidates].index)
         if not idx:
@@ -512,6 +504,23 @@ def compute_roc(series_like, n: int = 10) -> pd.Series:
         return pd.Series(index=s.index, dtype=float)
     roc = base.pct_change(n) * 100.0
     return roc.reindex(s.index)
+
+# --- NEW: Normalized Momentum (ROC%) in [-1, 1] for overlay on NTD
+def compute_normalized_momentum(series_like, n: int = 12, norm_win: int = 120) -> pd.Series:
+    """
+    ROC% over n bars → rolling z-score over norm_win → tanh compression to [-1,1].
+    """
+    s = _coerce_1d_series(series_like).astype(float)
+    if s.empty:
+        return pd.Series(index=s.index, dtype=float)
+    roc = s.pct_change(n) * 100.0
+    minp = max(10, int(norm_win)//10)
+    m = roc.rolling(int(norm_win), min_periods=minp).mean()
+    sd = roc.rolling(int(norm_win), min_periods=minp).std().replace(0, np.nan)
+    z = (roc - m) / sd
+    nmom = np.tanh(z / 3.0)
+    return nmom.reindex(s.index)
+
 def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
     if s.empty or period < 2:
@@ -889,7 +898,6 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
         prev_psar = psar.iloc[i-1]
         if in_uptrend.iloc[i-1]:
             psar.iloc[i] = prev_psar + af * (ep - prev_psar)
-            # cannot be above prior lows
             psar.iloc[i] = min(psar.iloc[i],
                                float(low.iloc[i-1]),
                                float(low.iloc[i-2]) if i >= 2 else float(low.iloc[i-1]))
@@ -897,7 +905,6 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
                 ep = float(high.iloc[i])
                 af = min(af + step, max_step)
             if low.iloc[i] < psar.iloc[i]:
-                # flip to downtrend
                 in_uptrend.iloc[i] = False
                 psar.iloc[i] = ep
                 ep = float(low.iloc[i])
@@ -906,7 +913,6 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
                 in_uptrend.iloc[i] = True
         else:
             psar.iloc[i] = prev_psar + af * (ep - prev_psar)
-            # cannot be below prior highs
             psar.iloc[i] = max(psar.iloc[i],
                                float(high.iloc[i-1]),
                                float(high.iloc[i-2]) if i >= 2 else float(high.iloc[i-1]))
@@ -914,7 +920,6 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
                 ep = float(low.iloc[i])
                 af = min(af + step, max_step)
             if high.iloc[i] > psar.iloc[i]:
-                # flip to uptrend
                 in_uptrend.iloc[i] = True
                 psar.iloc[i] = ep
                 ep = float(high.iloc[i])
@@ -923,7 +928,6 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
                 in_uptrend.iloc[i] = False
 
     return pd.DataFrame({"PSAR": psar, "in_uptrend": in_uptrend})
-
 # ---------- HMA reversal markers on NTD panel ----------
 def detect_hma_reversal_masks(price: pd.Series, hma: pd.Series,
                               lookback: int = 3):
@@ -993,10 +997,6 @@ def overlay_ntd_triangles_by_trend(ax, ntd: pd.Series, trend_slope: float,
     Show triangles on NTD panel, but:
       • GREEN triangles only if price trend slope > 0
       • RED triangles   only if price trend slope < 0
-
-    Triangle events:
-      • Cross 0 upward (green) / downward (red) — plotted at y=0
-      • First entry outside band: above +0.75 (red), below -0.75 (green)
     """
     s = _coerce_1d_series(ntd).dropna()
     if s.empty or not np.isfinite(trend_slope):
@@ -1434,6 +1434,7 @@ def last_green_dot_hourly(symbol: str, ntd_win: int, period: str = "1d",
         return is_signal, ntd_last, idx_last, npx_last, close_last
     except Exception:
         return False, np.nan, None, np.nan, np.nan
+
 # ---------- Session state init ----------
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -1451,7 +1452,6 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "NTD -0.75 Scanner",
     "Long-Term History"
 ])
-
 # ---------- SHARED HOURLY RENDERER (Stock & Forex use this) ----------
 def render_hourly_views(sel: str,
                         intraday: pd.DataFrame,
@@ -1463,8 +1463,7 @@ def render_hourly_views(sel: str,
     Single hourly layout used for BOTH stocks and forex:
       • Price + EMA + S/R + Supertrend + PSAR + HMA + Bollinger + slope ±2σ + bounce signal
       • Volume panel with mid-line & trend (Forex-only; stocks skip this panel per request)
-      • NTD panel (NTD + NPX + triangles + stars + in-range shading)
-      • Momentum (ROC%) panel
+      • NTD panel (NTD + NPX + triangles + stars + in-range shading + Normalized Momentum)
       • Forex-only extras: session lines (PST)
     """
     if intraday is None or intraday.empty or "Close" not in intraday:
@@ -1683,16 +1682,18 @@ def render_hourly_views(sel: str,
         ax2v.legend(loc="lower left", framealpha=0.5)
         st.pyplot(fig2v)
 
-    # ---- Hourly Indicator Panel — NTD + NPX + Triangles + Stars ----
+    # ---- Hourly Indicator Panel — NTD + NPX + Triangles + Stars + Normalized Momentum ----
     if show_nrsi:
         ntd_h = compute_normalized_trend(hc, window=ntd_window)
         ntd_trend_h, ntd_m_h = slope_line(ntd_h, slope_lb_hourly)
         npx_h = compute_normalized_price(hc, window=ntd_window) \
             if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
+        nmom_h = compute_normalized_momentum(hc, n=mom_lb_hourly, norm_win=mom_norm_win) \
+            if show_mom_overlay else pd.Series(index=hc.index, dtype=float)
 
         fig2r, ax2r = plt.subplots(figsize=(14, 2.8))
         ax2r.set_title(
-            f"Hourly Indicator Panel — NTD + NPX + Trend (win={ntd_window})"
+            f"Hourly Indicator Panel — NTD + NPX + Mom + Trend (win={ntd_window})"
         )
         if shade_ntd and not ntd_h.dropna().empty:
             shade_ntd_regions(ax2r, ntd_h)
@@ -1700,6 +1701,10 @@ def render_hourly_views(sel: str,
             overlay_inrange_on_ntd(ax2r, hc, sup_h, res_h)
 
         ax2r.plot(ntd_h.index, ntd_h, "-", linewidth=1.6, label="NTD")
+        if show_mom_overlay and not nmom_h.dropna().empty:
+            ax2r.plot(nmom_h.index, nmom_h.values, "-", linewidth=1.2, alpha=0.9,
+                      label=f"Norm Momentum ROC%({mom_lb_hourly})")
+
         overlay_ntd_triangles_by_trend(ax2r, ntd_h,
                                        trend_slope=m_h,
                                        upper=0.75, lower=-0.75)
@@ -1738,27 +1743,8 @@ def render_hourly_views(sel: str,
         ax2r.set_xlabel("Time (PST)")
         st.pyplot(fig2r)
 
-    # ---- Momentum panel (ROC%) ----
-    if show_mom_hourly:
-        roc = compute_roc(hc, n=mom_lb_hourly)
-        res_m = roc.rolling(60, min_periods=1).max()
-        sup_m = roc.rolling(60, min_periods=1).min()
-
-        fig2m, ax2m = plt.subplots(figsize=(14, 2.8))
-        ax2m.set_title(f"Momentum (ROC% over {mom_lb_hourly} bars)")
-        ax2m.plot(roc.index, roc, label=f"ROC%({mom_lb_hourly})")
-        yhat_m, m_m = slope_line(roc, slope_lb_hourly)
-        if not yhat_m.empty:
-            ax2m.plot(yhat_m.index, yhat_m.values, "--", linewidth=2,
-                      label=f"Trend {slope_lb_hourly} ({fmt_slope(m_m)}%/bar)")
-        ax2m.plot(res_m.index, res_m, ":", label="Mom Resistance")
-        ax2m.plot(sup_m.index, sup_m, ":", label="Mom Support")
-        ax2m.axhline(0, linestyle="--", linewidth=1)
-        ax2m.set_xlabel("Time (PST)")
-        ax2m.legend(loc="lower left", framealpha=0.5)
-        ax2m.set_xlim(xlim_price)
-        st.pyplot(fig2m)
-
+    # (Removed) ---- Momentum panel (ROC%) ----
+    # Replaced by normalized momentum overlay on the NTD panel above.
 # ==================== TAB 1: ORIGINAL FORECAST ====================
 with tab1:
     st.header("Original Forecast")
@@ -1826,6 +1812,8 @@ with tab1:
                 if show_ntd else pd.Series(index=df.index, dtype=float)
             npx_d_full = compute_normalized_price(df, window=ntd_window) \
                 if show_npx_ntd else pd.Series(index=df.index, dtype=float)
+            nmom_d_full = compute_normalized_momentum(df, n=mom_lb_hourly, norm_win=mom_norm_win) \
+                if show_mom_overlay else pd.Series(index=df.index, dtype=float)
 
             kijun_d = pd.Series(index=df.index, dtype=float)
             if df_ohlc is not None and not df_ohlc.empty and show_ichi:
@@ -1851,6 +1839,7 @@ with tab1:
                 if not yhat_ema30.empty else yhat_ema30
             ntd_d_show  = ntd_d.reindex(df_show.index)
             npx_d_show  = npx_d_full.reindex(df_show.index)
+            nmom_d_show = nmom_d_full.reindex(df_show.index)
             kijun_d_show = kijun_d.reindex(df_show.index).ffill().bfill()
             bb_mid_d_show = bb_mid_d.reindex(df_show.index)
             bb_up_d_show  = bb_up_d.reindex(df_show.index)
@@ -1996,14 +1985,18 @@ with tab1:
                               fc="white", ec="grey", alpha=0.7))
             ax.legend(loc="lower left", framealpha=0.5)
 
-            # DAILY NTD PANEL
-            axdw.set_title("Daily Indicator Panel — NTD + NPX + Trend")
+            # DAILY NTD PANEL (+ NPX + Mom)
+            axdw.set_title("Daily Indicator Panel — NTD + NPX + Mom + Trend")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw, ntd_d_show)
             if show_ntd and not ntd_d_show.dropna().empty:
                 axdw.plot(ntd_d_show.index, ntd_d_show, "-",
                           linewidth=1.6,
                           label=f"NTD (win={ntd_window})")
+                if show_mom_overlay and not nmom_d_show.dropna().empty:
+                    axdw.plot(nmom_d_show.index, nmom_d_show.values, "-",
+                              linewidth=1.2, alpha=0.9,
+                              label=f"Norm Momentum ROC%({mom_lb_hourly})")
                 ntd_trend_d, ntd_m_d = slope_line(
                     ntd_d_show, slope_lb_daily
                 )
@@ -2084,6 +2077,7 @@ with tab1:
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
+
 # ==================== TAB 2: ENHANCED FORECAST ====================
 with tab2:
     st.header("Enhanced Forecast")
@@ -2118,6 +2112,8 @@ with tab2:
                 if show_ntd else pd.Series(index=df.index, dtype=float)
             npx_d2_full = compute_normalized_price(df, window=ntd_window) \
                 if show_npx_ntd else pd.Series(index=df.index, dtype=float)
+            nmom_d2_full = compute_normalized_momentum(df, n=mom_lb_hourly, norm_win=mom_norm_win) \
+                if show_mom_overlay else pd.Series(index=df.index, dtype=float)
 
             kijun_d2 = pd.Series(index=df.index, dtype=float)
             if df_ohlc is not None and not df_ohlc.empty and show_ichi:
@@ -2145,6 +2141,7 @@ with tab2:
                 if not lower_d.empty else lower_d
             ntd_d_show = ntd_d2.reindex(df_show.index)
             npx_d2_show = npx_d2_full.reindex(df_show.index)
+            nmom_d2_show = nmom_d2_full.reindex(df_show.index)
             kijun_d2_show = kijun_d2.reindex(df_show.index).ffill().bfill()
             bb_mid_d2_show = bb_mid_d2.reindex(df_show.index)
             bb_up_d2_show  = bb_up_d2.reindex(df_show.index)
@@ -2225,13 +2222,17 @@ with tab2:
                               fc="white", ec="grey", alpha=0.7))
             ax.legend(loc="lower left", framealpha=0.5)
 
-            axdw2.set_title("Daily Indicator Panel — NTD + NPX + Trend")
+            axdw2.set_title("Daily Indicator Panel — NTD + NPX + Mom + Trend")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw2, ntd_d_show)
             if show_ntd and not ntd_d_show.dropna().empty:
                 axdw2.plot(ntd_d_show.index, ntd_d_show, "-",
                            linewidth=1.6,
                            label=f"NTD (win={ntd_window})")
+                if show_mom_overlay and not nmom_d2_show.dropna().empty:
+                    axdw2.plot(nmom_d2_show.index, nmom_d2_show.values, "-",
+                               linewidth=1.2, alpha=0.9,
+                               label=f"Norm Momentum ROC%({mom_lb_hourly})")
                 ntd_trend_d2, ntd_m_d2 = slope_line(
                     ntd_d_show, slope_lb_daily
                 )
@@ -2412,6 +2413,7 @@ with tab4:
                      int((~df0['Bull']).sum())]
         }).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
+
 # ==================== TAB 5: NTD -0.75 Scanner ====================
 with tab5:
     st.header("NTD -0.75 Scanner (NTD < -0.75)")
