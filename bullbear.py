@@ -1,11 +1,10 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # UPDATED — per request:
-#   • BUY/SELL instruction uses slope direction.
-#   • Price-chart BUY/SELL markers show S/R reversals aligned with the slope
-#     (up-slope + reversal from support → BUY; down-slope + reversal from resistance → SELL).
-#   • ±2σ bands around slope are thicker & darker.
-#   • NTD triangles are gated by price trend sign.
-#   • NTD scanner lists symbols whose latest NTD value is below -0.75 (daily; hourly for Forex).
+#   • BUY/SELL instruction at the top of the intraday chart now keys off the
+#     GLOBAL (Daily) slope sign:
+#         - Uptrend (Daily slope > 0): "BUY @Support → SELL @Resistance • pips"
+#         - Downtrend (Daily slope < 0): "SELL @Resistance → BUY @Support • pips"
+#   • Everything else unchanged from prior version (S/R, bands, stars, etc.).
 
 import streamlit as st
 import pandas as pd
@@ -132,8 +131,7 @@ def format_trade_instruction(trend_slope: float,
                              close_val: float,
                              symbol: str) -> str:
     """
-    BUY/SELL text uses the SIGN of `trend_slope`:
-
+    BUY/SELL text uses the SIGN of *global* trend_slope:
       • slope > 0  →  BUY first, then SELL, then pips
       • slope < 0  →  SELL first, then BUY, then pips
     """
@@ -182,7 +180,6 @@ def subset_by_daily_view(obj, view_label: str):
     else:
         start = end - pd.Timedelta(days=days_map.get(view_label, 365))
     return obj.loc[(idx >= start) & (idx <= end)]
-
 # --- Sidebar config ---
 st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
@@ -341,7 +338,6 @@ def fibonacci_levels(series_like):
     diff = hi - lo
     return {"0%": hi, "23.6%": hi - 0.236*diff, "38.2%": hi - 0.382*diff,
             "50%": hi - 0.5*diff, "61.8%": hi - 0.618*diff, "78.6%": hi - 0.786*diff, "100%": lo}
-
 def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
     if ohlc is None or ohlc.empty or not {'High','Low','Close'}.issubset(ohlc.columns):
         return {}
@@ -665,7 +661,7 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     nbb = pctb * 2.0 - 1.0
     return mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index)
 
-# HMA + crossover helpers
+# HMA + crossover helpers — (unchanged for signals on price; S/R reversal used instead)
 def _wma(s: pd.Series, window: int) -> pd.Series:
     s = _coerce_1d_series(s).astype(float)
     if s.empty or window < 1:
@@ -684,7 +680,6 @@ def compute_hma(close: pd.Series, period: int = 55) -> pd.Series:
     diff = 2 * wma_half - wma_full
     hma = _wma(diff, sqrtp)
     return hma.reindex(s.index)
-
 def detect_last_crossover(price: pd.Series, line: pd.Series):
     p = _coerce_1d_series(price)
     l = _coerce_1d_series(line)
@@ -706,10 +701,6 @@ def detect_last_crossover(price: pd.Series, line: pd.Series):
         return {"time": t_dn, "side": "SELL"}
 
 def annotate_crossover(ax, ts, px, side: str, note: str = ""):
-    """
-    Draw a BUY/SELL marker at (ts, px).
-    Now used for S/R reversal signals (no direct HMA-cross triggers).
-    """
     if side == "BUY":
         ax.scatter([ts], [px], marker="P", s=90, color="tab:green", zorder=7)
         label = "BUY" if not note else f"BUY {note}"
@@ -741,9 +732,6 @@ def find_hma_sr_signal(price: pd.Series,
                        resistance: pd.Series,
                        slope_val: float,
                        prox: float):
-    """
-    (Kept for possible future use, but NOT used for price-chart BUY/SELL markers anymore.)
-    """
     p = _coerce_1d_series(price)
     h = _coerce_1d_series(hma).reindex(p.index)
     sup = _coerce_1d_series(support).reindex(p.index)
@@ -760,7 +748,6 @@ def find_hma_sr_signal(price: pd.Series,
     if not np.isfinite(slope) or slope == 0:
         return None
 
-    # Uptrend: look for last up-cross near SUPPORT
     if slope > 0:
         idx_events = list(cross_up[cross_up].index)
         if not idx_events:
@@ -774,7 +761,6 @@ def find_hma_sr_signal(price: pd.Series,
                 continue
             if px <= S * (1.0 + prox):
                 return {"time": t, "price": px, "side": "BUY"}
-    # Downtrend: look for last down-cross near RESISTANCE
     else:
         idx_events = list(cross_dn[cross_dn].index)
         if not idx_events:
@@ -816,11 +802,6 @@ def overlay_hma_reversal_on_ntd(ax, price: pd.Series, hma: pd.Series, lookback: 
 
 # NPX ↔ NTD overlay/helpers (markers dots/x)
 def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = True):
-    """
-    Source of the green dots on the NTD panel:
-      • green 'o' = Price↑NTD (NPX crosses above NTD)
-      • red 'x'   = Price↓NTD
-    """
     npx = _coerce_1d_series(npx)
     ntd = _coerce_1d_series(ntd)
     idx = ntd.index.union(npx.index)
@@ -840,14 +821,6 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = 
 
 # --- NEW: NTD triangles gated by PRICE trend sign ---
 def overlay_ntd_triangles_by_trend(ax, ntd: pd.Series, trend_slope: float, upper: float = 0.75, lower: float = -0.75):
-    """
-    Show triangles on NTD panel, but:
-      • GREEN triangles only if price trend slope > 0
-      • RED triangles   only if price trend slope < 0
-    Triangle events:
-      • Cross 0 upward (green) / downward (red) — plotted at y=0
-      • First entry outside band: above +0.75 (red), below -0.75 (green)
-    """
     s = _coerce_1d_series(ntd).dropna()
     if s.empty or not np.isfinite(trend_slope):
         return
@@ -943,12 +916,6 @@ def last_sr_reversal_signal(price: pd.Series,
                             trend_slope: float,
                             prox: float = 0.0025,
                             bars_confirm: int = 2):
-    """
-    Detect a BUY/SELL signal on the latest bar based on:
-      • Up-slope + reversal from SUPPORT → BUY
-      • Down-slope + reversal from RESISTANCE → SELL
-    Mirrors the logic used for NTD reversal stars, but returns a dict for price-chart markers.
-    """
     p = _coerce_1d_series(price).dropna()
     if p.empty:
         return None
@@ -1131,87 +1098,65 @@ def _has_volume_to_plot(vol: pd.Series) -> bool:
 # --- NEW: helpers for green-dot (Price↑NTD) scanner ---
 @st.cache_data(ttl=120)
 def last_green_dot_daily(symbol: str, ntd_win: int, level: float = None):
-    """
-    Daily: latest bar has green dot (Price↑NTD) on NTD panel.
-    Optionally require NTD < `level`.
-    """
     try:
         s = fetch_hist(symbol)
         if s is None or s.empty:
             return False, np.nan, None, np.nan, np.nan
-
         ntd = compute_normalized_trend(s, window=ntd_win).dropna()
         if ntd.empty or len(ntd) < 2:
             return False, np.nan, None, np.nan, np.nan
-
         npx = compute_normalized_price(s, window=ntd_win).reindex(ntd.index)
         df = pd.DataFrame({"ntd": ntd, "npx": npx}).dropna()
         if df.shape[0] < 2:
             return False, np.nan, None, np.nan, np.nan
-
         above = df["npx"] > df["ntd"]
         above_now = bool(above.iloc[-1])
         above_prev = bool(above.iloc[-2])
         is_signal = (not above_prev) and above_now
-
         ntd_last = float(df["ntd"].iloc[-1])
         npx_last = float(df["npx"].iloc[-1])
         idx_last = df.index[-1]
-
         s_aligned = _coerce_1d_series(s).reindex(df.index)
         try:
             close_last = float(s_aligned.iloc[-1])
         except Exception:
             close_last = _safe_last_float(s)
-
         if level is not None and np.isfinite(ntd_last):
             if not (ntd_last < level):
                 is_signal = False
-
         return is_signal, ntd_last, idx_last, npx_last, close_last
     except Exception:
         return False, np.nan, None, np.nan, np.nan
 
 @st.cache_data(ttl=120)
 def last_green_dot_hourly(symbol: str, ntd_win: int, period: str = "1d", level: float = None):
-    """
-    Hourly: latest bar has green dot (Price↑NTD) on NTD panel.
-    Used by Forex hourly scanner.
-    """
     try:
         df = fetch_intraday(symbol, period=period)
         if df is None or df.empty or "Close" not in df:
             return False, np.nan, None, np.nan, np.nan
-
         s = df["Close"].ffill()
         ntd = compute_normalized_trend(s, window=ntd_win).dropna()
         if ntd.empty or len(ntd) < 2:
             return False, np.nan, None, np.nan, np.nan
-
         npx = compute_normalized_price(s, window=ntd_win).reindex(ntd.index)
         df2 = pd.DataFrame({"ntd": ntd, "npx": npx}).dropna()
         if df2.shape[0] < 2:
             return False, np.nan, None, np.nan, np.nan
-
         above = df2["npx"] > df2["ntd"]
         above_now = bool(above.iloc[-1])
         above_prev = bool(above.iloc[-2])
         is_signal = (not above_prev) and above_now
-
         ntd_last = float(df2["ntd"].iloc[-1])
         npx_last = float(df2["npx"].iloc[-1])
         idx_last = df2.index[-1]
-
         s_aligned = s.reindex(df2.index)
         try:
             close_last = float(s_aligned.iloc[-1])
         except Exception:
             close_last = _safe_last_float(s)
-
         if level is not None and np.isfinite(ntd_last):
             if not (ntd_last < level):
                 is_signal = False
-
         return is_signal, ntd_last, idx_last, npx_last, close_last
     except Exception:
         return False, np.nan, None, np.nan, np.nan
@@ -1358,6 +1303,7 @@ with tab1:
         fx_news = pd.DataFrame()
         if mode == "Forex" and show_fx_news:
             fx_news = fetch_yf_news(sel, window_days=news_window_days)
+
         # ----- Daily (Price + Indicator panel) -----
         if chart in ("Daily","Both"):
             ema30 = df.ewm(span=30).mean()
@@ -1419,7 +1365,6 @@ with tab1:
 
             if show_hma and not hma_d_show.dropna().empty:
                 ax.plot(hma_d_show.index, hma_d_show.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
-                # NOTE: no HMA-cross BUY/SELL markers on price chart anymore
 
             if show_ichi and not kijun_d_show.dropna().empty:
                 ax.plot(kijun_d_show.index, kijun_d_show.values, "-", linewidth=1.8, color="black",
@@ -1456,15 +1401,10 @@ with tab1:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
                         label=f"Daily Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
             if not upper_d_show.empty and not lower_d_show.empty:
-                # Thicker, darker ±2σ around slope
                 ax.plot(upper_d_show.index, upper_d_show.values, "--", linewidth=2.2,
                         color="black", alpha=0.85, label="Daily Trend +2σ")
                 ax.plot(lower_d_show.index, lower_d_show.values, "--", linewidth=2.2,
                         color="black", alpha=0.85, label="Daily Trend -2σ")
-            if not yhat_ema_show.empty:
-                ax.plot(yhat_ema_show.index, yhat_ema_show.values, "-", linewidth=2,
-                        label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
-
             if len(df_show) > 1:
                 draw_trend_direction_line(ax, df_show, label_prefix="Trend")
 
@@ -1481,7 +1421,6 @@ with tab1:
                 ax.text(df_show.index[-1], r30_last, f"  30R = {fmt_price_val(r30_last)}", va="bottom")
                 ax.text(df_show.index[-1], s30_last, f"  30S = {fmt_price_val(s30_last)}", va="top")
 
-            # S/R reversal-based BUY/SELL signal on price chart (no HMA-cross dependency)
             sr_sig_d = last_sr_reversal_signal(df_show, sup30_show, res30_show,
                                                trend_slope=m_d,
                                                prox=sr_prox_pct,
@@ -1490,7 +1429,6 @@ with tab1:
                 annotate_crossover(ax, sr_sig_d["time"], sr_sig_d["price"], sr_sig_d["side"])
 
             ax.set_ylabel("Price")
-
             ax.text(0.50, 0.02,
                     f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}",
                     transform=ax.transAxes,
@@ -1499,7 +1437,7 @@ with tab1:
                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
             ax.legend(loc="lower left", framealpha=0.5)
 
-            # DAILY INDICATOR PANEL — NTD + NPX + Triangles by Trend + Stars
+            # DAILY INDICATOR PANEL
             axdw.set_title("Daily Indicator Panel — NTD + NPX + Trend")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw, ntd_d_show)
@@ -1560,8 +1498,14 @@ with tab1:
 
                 # Local regression trend with ±2σ bands and R² (Hourly)
                 yhat_h, upper_h, lower_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
-                # This is the slope we treat as "the" slope for signals
                 slope_sig_h = m_h if np.isfinite(m_h) else slope_h
+
+                # >>> NEW: GLOBAL (DAILY) SLOPE for the top-of-chart instruction <<<
+                try:
+                    df_global = st.session_state.df_hist
+                    _, _, _, m_global, _ = regression_with_band(df_global, slope_lb_daily)
+                except Exception:
+                    m_global = slope_sig_h  # safe fallback
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
                 plt.subplots_adjust(top=0.85, right=0.93)
@@ -1572,7 +1516,6 @@ with tab1:
 
                 if show_hma and not hma_h.dropna().empty:
                     ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
-                    # NOTE: no HMA-cross BUY/SELL markers on price chart anymore
 
                 if show_ichi and not kijun_h.dropna().empty:
                     ax2.plot(kijun_h.index, kijun_h.values, "-", linewidth=1.8, color="black",
@@ -1612,7 +1555,7 @@ with tab1:
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
-                # S/R reversal-based BUY/SELL signal on intraday price chart
+                # S/R reversal-based BUY/SELL signal on intraday price chart (still uses intraday slope for timing)
                 sr_sig_h = last_sr_reversal_signal(hc, sup_h, res_h,
                                                    trend_slope=slope_sig_h,
                                                    prox=sr_prox_pct,
@@ -1620,9 +1563,9 @@ with tab1:
                 if sr_sig_h is not None:
                     annotate_crossover(ax2, sr_sig_h["time"], sr_sig_h["price"], sr_sig_h["side"])
 
-                # BUY/SELL instruction uses slope_sig_h
+                # >>> UPDATED: BUY/SELL instruction uses GLOBAL (DAILY) slope <<<
                 instr_txt = format_trade_instruction(
-                    trend_slope=slope_sig_h,
+                    trend_slope=m_global,   # <-- key change
                     buy_val=sup_val,
                     sell_val=res_val,
                     close_val=px_val,
@@ -1633,6 +1576,13 @@ with tab1:
                     f"{sel} Intraday ({st.session_state.hour_range})  "
                     f"↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)} — {instr_txt}"
                 )
+
+                # Small caption indicating the slope used for instructions
+                ax2.text(0.01, 0.965,
+                         f"Instruction uses GLOBAL (Daily) slope: {fmt_slope(m_global)}/bar",
+                         transform=ax2.transAxes, ha="left", va="top",
+                         fontsize=9, color="black",
+                         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
                 if np.isfinite(px_val):
                     nbb_txt = ""
@@ -1656,15 +1606,13 @@ with tab1:
                              linewidth=2,
                              label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
                 if not upper_h.empty and not lower_h.empty:
-                    # Thicker, darker ±2σ around slope
                     ax2.plot(upper_h.index, upper_h.values, "--", linewidth=2.2,
                              color="black", alpha=0.85, label="Slope +2σ")
                     ax2.plot(lower_h.index, lower_h.values, "--", linewidth=2.2,
                              color="black", alpha=0.85, label="Slope -2σ")
 
-                # Show slope used for instruction
                 ax2.text(0.01, 0.02,
-                         f"Slope: {fmt_slope(slope_sig_h)}/bar",
+                         f"Intraday slope: {fmt_slope(slope_sig_h)}/bar",
                          transform=ax2.transAxes, ha="left", va="bottom",
                          fontsize=9, color="black",
                          bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
@@ -1874,7 +1822,6 @@ with tab2:
 
             if show_hma and not hma_d2_show.dropna().empty:
                 ax.plot(hma_d2_show.index, hma_d2_show.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
-                # NOTE: no HMA-cross BUY/SELL markers on price chart anymore
 
             if show_ichi and not kijun_d2_show.dropna().empty:
                 ax.plot(kijun_d2_show.index, kijun_d2_show.values, "-", linewidth=1.8,
@@ -1898,7 +1845,6 @@ with tab2:
             if len(df_show) > 1:
                 draw_trend_direction_line(ax, df_show, label_prefix="Trend")
 
-            # S/R reversal-based BUY/SELL signal in Enhanced Daily view
             sr_sig_d2 = last_sr_reversal_signal(df_show, sup30_show, res30_show,
                                                 trend_slope=m_d,
                                                 prox=sr_prox_pct,
@@ -2056,6 +2002,7 @@ with tab4:
                      int((~df0['Bull']).sum())]
         }).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
+
 # --- Tab 5: NTD -0.75 Scanner (Latest NTD < -0.75) ---
 with tab5:
     st.header("NTD -0.75 Scanner (NTD < -0.75)")
@@ -2122,7 +2069,7 @@ with tab5:
                 use_container_width=True
             )
 
-        # ---- DAILY: PRICE > KIJUN (unchanged helper) ----
+        # ---- DAILY: PRICE > KIJUN ----
         st.markdown("---")
         st.subheader(f"Daily — Price > Ichimoku Kijun({ichi_base}) (latest bar)")
         above_rows = []
