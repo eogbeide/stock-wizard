@@ -152,6 +152,7 @@ def format_trade_instruction(trend_slope: float,
     return text
 
 def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
+    from matplotlib.transforms import blended_transform_factory
     trans = blended_transform_factory(ax.transAxes, ax.transData)
     ax.text(0.01, y_val, text, transform=trans, ha="left", va="center",
             color=color, fontsize=fontsize, fontweight="bold",
@@ -237,6 +238,13 @@ hma_rev_lb       = st.sidebar.slider("HMA reversal slope lookback (bars)", 2, 10
 
 st.sidebar.subheader("Reversal Stars (on NTD panel)")
 rev_bars_confirm = st.sidebar.slider("Consecutive bars to confirm reversal", 1, 4, 2, 1, key="sb_rev_bars")
+
+# >>> NEW: Extreme Reversal controls (Price chart)
+st.sidebar.subheader("Extreme Reversal (Price Extremes on Trend)")
+ext_rev_enable   = st.sidebar.checkbox("Enable extreme-reversal signal (max/min + R²)", value=True, key="sb_extrev_enable")
+ext_lb_daily     = st.sidebar.slider("Daily extreme lookback (bars)", 10, 360, 120, 10, key="sb_extrev_lb_daily")
+ext_lb_hourly    = st.sidebar.slider("Hourly extreme lookback (bars)", 12, 480, 180, 6, key="sb_extrev_lb_hourly")
+ext_r2_min       = st.sidebar.slider("Min trend R² (confidence)", 0.50, 0.99, 0.80, 0.01, key="sb_extrev_r2min")
 
 # Forex-only controls
 if mode == "Forex":
@@ -512,7 +520,6 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
     color = "tab:green" if m >= 0 else "tab:red"   # downward = red
     ax.plot(s.index, yhat, "-", linewidth=2.4, color=color, label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return m
-
 # Supertrend
 def _true_range(df: pd.DataFrame):
     hl = (df["High"] - df["Low"]).abs()
@@ -625,6 +632,7 @@ def ichimoku_lines(high: pd.Series, low: pd.Series, close: pd.Series,
     span_b = span_b_raw.shift(base) if shift_cloud else span_b_raw
     chikou = C.shift(-base)
     return tenkan, kijun, span_a, span_b, chikou
+
 # Bollinger Bands + normalized %B / NBB
 def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_ema: bool = False):
     s = _coerce_1d_series(close).astype(float)
@@ -880,7 +888,7 @@ def overlay_ntd_sr_reversal_stars(ax,
     if sell_cond:
         ax.scatter([t], [ntd0], marker="*", s=170, color="tab:red",   zorder=12, label="SELL ★ (Resistance reversal)")
 
-# --- PRICE CHART: Single latest band-reversal trading signal ---
+# --- PRICE CHART: Single latest band-reversal trading signal (existing) ---
 def last_band_reversal_signal(price: pd.Series,
                               band_upper: pd.Series,
                               band_lower: pd.Series,
@@ -908,22 +916,16 @@ def last_band_reversal_signal(price: pd.Series,
     if not np.isfinite(trend_slope) or trend_slope == 0:
         return None
 
-    # latest two bars where all needed values exist
     mask = p.notna() & up.notna() & lo.notna()
-    p = p[mask]
-    up = up[mask]
-    lo = lo[mask]
+    p = p[mask]; up = up[mask]; lo = lo[mask]
     if p.shape[0] < 2:
         return None
 
-    # use last two closes for "reversal"
-    t0 = p.index[-1]
-    t1 = p.index[-2]
+    t0 = p.index[-1]; t1 = p.index[-2]
     c0, c1 = float(p.iloc[-1]), float(p.iloc[-2])
     u0, u1 = float(up.iloc[-1]), float(up.iloc[-2])
     l0, l1 = float(lo.iloc[-1]), float(lo.iloc[-2])
 
-    # Confirm directional move
     def _inc_ok(series: pd.Series, n: int) -> bool:
         s = _coerce_1d_series(series).dropna()
         if len(s) < n+1:
@@ -951,6 +953,79 @@ def last_band_reversal_signal(price: pd.Series,
         if prev_near_upper and rolled_below and going_down:
             return {"time": t0, "price": c0, "side": "SELL", "note": "Band REV"}
     return None
+
+# >>> NEW: Extreme-reversal signal (max/min + high-confidence trend)
+def _rolling_extrema(s: pd.Series, lb: int):
+    s = _coerce_1d_series(s).astype(float)
+    rmax = s.rolling(lb, min_periods=max(3, lb//3)).max()
+    rmin = s.rolling(lb, min_periods=max(3, lb//3)).min()
+    return rmax.reindex(s.index), rmin.reindex(s.index)
+
+def last_extreme_reversal_signal(price: pd.Series,
+                                 lookback: int,
+                                 trend_slope: float,
+                                 trend_r2: float,
+                                 r2_min: float = 0.80,
+                                 prox: float = 0.0025,
+                                 confirm_bars: int = 1):
+    """
+    Returns at most ONE signal on the LATEST bar, based on rolling extremes.
+
+    • If trend is GREEN (m>0) and R² >= r2_min:
+        Trigger when previous bar was at/near the rolling MAX and we reversed down on the latest bar.
+        (Per request: mark this as a BUY on price chart)
+    • If trend is RED (m<0) and R² >= r2_min:
+        Trigger when previous bar was at/near the rolling MIN and we reversed up on the latest bar.
+        (Vice-versa: mark this as a SELL)
+    """
+    p = _coerce_1d_series(price).dropna()
+    if p.shape[0] < 2 or not np.isfinite(trend_slope) or trend_slope == 0 or not np.isfinite(trend_r2):
+        return None
+    if trend_r2 < r2_min:
+        return None
+
+    rmax, rmin = _rolling_extrema(p, lookback)
+    mask = p.notna() & rmax.notna() & rmin.notna()
+    p = p[mask]; rmax = rmax[mask]; rmin = rmin[mask]
+    if p.shape[0] < 2:
+        return None
+
+    t0 = p.index[-1]; t1 = p.index[-2]
+    c0, c1 = float(p.iloc[-1]), float(p.iloc[-2])
+    max1, min1 = float(rmax.iloc[-2]), float(rmin.iloc[-2])
+
+    def _inc_ok(series: pd.Series, n: int) -> bool:
+        s = _coerce_1d_series(series).dropna()
+        if len(s) < n+1:
+            return False
+        d = np.diff(s.iloc[-(n+1):])
+        return bool(np.all(d > 0))
+
+    def _dec_ok(series: pd.Series, n: int) -> bool:
+        s = _coerce_1d_series(series).dropna()
+        if len(s) < n+1:
+            return False
+        d = np.diff(s.iloc[-(n+1):])
+        return bool(np.all(d < 0))
+
+    if trend_slope > 0:
+        prev_at_max = (c1 >= max1 * (1.0 - prox))
+        reversed_dn = (c0 < c1) and _dec_ok(p, confirm_bars)
+        if prev_at_max and reversed_dn:
+            return {"time": t0, "price": c0, "side": "BUY", "note": "MAX REV (R²)"}
+    else:  # trend_slope < 0
+        prev_at_min = (c1 <= min1 * (1.0 + prox))
+        reversed_up = (c0 > c1) and _inc_ok(p, confirm_bars)
+        if prev_at_min and reversed_up:
+            return {"time": t0, "price": c0, "side": "SELL", "note": "MIN REV (R²)"}
+    return None
+
+# >>> NEW: pick the single latest among multiple signal candidates
+def latest_of_signals(*sigs):
+    sigs = [s for s in sigs if isinstance(s, dict) and 'time' in s and s['time'] is not None]
+    if not sigs:
+        return None
+    return max(sigs, key=lambda x: x['time'])
 # Channel-in-range helpers (for NTD visualization)
 def channel_state_series(price: pd.Series, sup: pd.Series, res: pd.Series, eps: float = 0.0) -> pd.Series:
     p = _coerce_1d_series(price)
@@ -1175,7 +1250,6 @@ def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
     now_utc = pd.Timestamp.now(tz="UTC")
     d1 = (now_utc - pd.Timedelta(days=window_days)).tz_convert(PACIFIC)
     return df[df["time"] >= d1].sort_values("time")
-
 def draw_news_markers(ax, times, ymin, ymax, label="News"):
     for t in times:
         try:
@@ -1201,6 +1275,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "NTD -0.75 Scanner",
     "Long-Term History"
 ])
+
 # --- Tab 1: Original Forecast ---
 with tab1:
     st.header("Original Forecast")
@@ -1317,13 +1392,20 @@ with tab1:
             if len(df_show) > 1:
                 draw_trend_direction_line(ax, df_show, label_prefix="Trend")
 
-            # Single latest band-reversal signal (Daily)
+            # ----- Signals (Daily) — choose the latest one only -----
             band_sig_d = last_band_reversal_signal(
                 price=df_show, band_upper=upper_d_show, band_lower=lower_d_show,
                 trend_slope=m_d, prox=sr_prox_pct, confirm_bars=rev_bars_confirm
             )
-            if band_sig_d is not None:
-                annotate_crossover(ax, band_sig_d["time"], band_sig_d["price"], band_sig_d["side"], note=band_sig_d.get("note",""))
+            ext_sig_d = None
+            if ext_rev_enable:
+                ext_sig_d = last_extreme_reversal_signal(
+                    price=df_show, lookback=ext_lb_daily, trend_slope=m_d, trend_r2=r2_d,
+                    r2_min=ext_r2_min, prox=sr_prox_pct, confirm_bars=rev_bars_confirm
+                )
+            latest_sig_d = latest_of_signals(band_sig_d, ext_sig_d)
+            if latest_sig_d is not None:
+                annotate_crossover(ax, latest_sig_d["time"], latest_sig_d["price"], latest_sig_d["side"], note=latest_sig_d.get("note",""))
 
             ax.set_ylabel("Price")
             ax.text(0.50, 0.02,
@@ -1441,13 +1523,20 @@ with tab1:
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
-                # Single latest band-reversal signal (Hourly)
+                # ----- Signals (Hourly) — choose the latest one only -----
                 band_sig_h = last_band_reversal_signal(
                     price=hc, band_upper=upper_h, band_lower=lower_h,
                     trend_slope=m_h, prox=sr_prox_pct, confirm_bars=rev_bars_confirm
                 )
-                if band_sig_h is not None:
-                    annotate_crossover(ax2, band_sig_h["time"], band_sig_h["price"], band_sig_h["side"], note=band_sig_h.get("note",""))
+                ext_sig_h = None
+                if ext_rev_enable:
+                    ext_sig_h = last_extreme_reversal_signal(
+                        price=hc, lookback=ext_lb_hourly, trend_slope=m_h, trend_r2=r2_h,
+                        r2_min=ext_r2_min, prox=sr_prox_pct, confirm_bars=rev_bars_confirm
+                    )
+                latest_sig_h = latest_of_signals(band_sig_h, ext_sig_h)
+                if latest_sig_h is not None:
+                    annotate_crossover(ax2, latest_sig_h["time"], latest_sig_h["price"], latest_sig_h["side"], note=latest_sig_h.get("note",""))
 
                 # BUY/SELL instruction text (fixed SELL → BUY + pips)
                 instr_txt = format_trade_instruction(
@@ -1459,8 +1548,8 @@ with tab1:
                 )
 
                 title_sig = ""
-                if 'band_sig_h' in locals() and band_sig_h is not None:
-                    title_sig = f" — Latest Signal: {band_sig_h['side']} @ {fmt_price_val(band_sig_h['price'])}"
+                if latest_sig_h is not None:
+                    title_sig = f" — Latest Signal: {latest_sig_h['side']} @ {fmt_price_val(latest_sig_h['price'])}"
 
                 ax2.set_title(
                     f"{sel} Intraday ({st.session_state.hour_range})  "
@@ -1736,12 +1825,20 @@ with tab2:
             if len(df_show) > 1:
                 draw_trend_direction_line(ax, df_show, label_prefix="Trend")
 
+            # Signals (Daily) — choose the latest one
             band_sig_d2 = last_band_reversal_signal(
                 price=df_show, band_upper=upper_d_show, band_lower=lower_d_show,
                 trend_slope=m_d, prox=sr_prox_pct, confirm_bars=rev_bars_confirm
             )
-            if band_sig_d2 is not None:
-                annotate_crossover(ax, band_sig_d2["time"], band_sig_d2["price"], band_sig_d2["side"], note=band_sig_d2.get("note",""))
+            ext_sig_d2 = None
+            if ext_rev_enable:
+                ext_sig_d2 = last_extreme_reversal_signal(
+                    price=df_show, lookback=ext_lb_daily, trend_slope=m_d, trend_r2=r2_d,
+                    r2_min=ext_r2_min, prox=sr_prox_pct, confirm_bars=rev_bars_confirm
+                )
+            latest_sig_d2 = latest_of_signals(band_sig_d2, ext_sig_d2)
+            if latest_sig_d2 is not None:
+                annotate_crossover(ax, latest_sig_d2["time"], latest_sig_d2["price"], latest_sig_d2["side"], note=latest_sig_d2.get("note",""))
 
             ax.set_ylabel("Price")
             ax.text(0.50, 0.02,
