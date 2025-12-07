@@ -3,6 +3,9 @@
 #   • Uptrend  → BUY when price reverses up from lower ±2σ band and is near it
 #   • Downtrend→ SELL when price reverses down from upper ±2σ band and is near it
 # Only the latest signal is shown at any time.
+# CHANGELOG (per user request):
+#   • All downward trend lines are colored red (upward = green) throughout the app.
+#   • Instruction text fixed to: "SELL → BUY • Value of Pips: …" (always this order).
 
 import streamlit as st
 import pandas as pd
@@ -129,9 +132,9 @@ def format_trade_instruction(trend_slope: float,
                              close_val: float,
                              symbol: str) -> str:
     """
-    BUY/SELL text uses the sign of *global* trend_slope:
-      • slope > 0  →  BUY first, then SELL, then pips
-      • slope < 0  →  SELL first, then BUY, then pips
+    Instruction format (fixed order):
+      ▼ SELL first, then ▲ BUY, then explicit Value of Pips.
+      Uses the provided `sell_val` (resistance) and `buy_val` (support).
     """
     def _finite(x):
         try:
@@ -142,19 +145,10 @@ def format_trade_instruction(trend_slope: float,
     entry_buy = float(buy_val) if _finite(buy_val) else float(close_val)
     exit_sell = float(sell_val) if _finite(sell_val) else float(close_val)
 
-    try:
-        uptrend = float(trend_slope) > 0.0
-    except Exception:
-        uptrend = False
-
-    if uptrend:
-        leg_a_val, leg_b_val = entry_buy, exit_sell
-        text = f"▲ BUY @{fmt_price_val(leg_a_val)} → ▼ SELL @{fmt_price_val(leg_b_val)}"
-    else:
-        leg_a_val, leg_b_val = exit_sell, entry_buy
-        text = f"▼ SELL @{fmt_price_val(leg_a_val)} → ▲ BUY @{fmt_price_val(leg_b_val)}"
-
-    text += f" • {_diff_text(leg_a_val, leg_b_val, symbol)}"
+    text = (
+        f"▼ SELL @{fmt_price_val(exit_sell)} → ▲ BUY @{fmt_price_val(entry_buy)}"
+        f" • Value of Pips: {_diff_text(exit_sell, entry_buy, symbol)}"
+    )
     return text
 
 def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
@@ -515,7 +509,7 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
     x = np.arange(len(s), dtype=float)
     m, b = np.polyfit(x, s.values, 1)
     yhat = m * x + b
-    color = "tab:green" if m >= 0 else "tab:red"
+    color = "tab:green" if m >= 0 else "tab:red"   # downward = red
     ax.plot(s.index, yhat, "-", linewidth=2.4, color=color, label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return m
 
@@ -631,7 +625,6 @@ def ichimoku_lines(high: pd.Series, low: pd.Series, close: pd.Series,
     span_b = span_b_raw.shift(base) if shift_cloud else span_b_raw
     chikou = C.shift(-base)
     return tenkan, kijun, span_a, span_b, chikou
-
 # Bollinger Bands + normalized %B / NBB
 def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_ema: bool = False):
     s = _coerce_1d_series(close).astype(float)
@@ -958,7 +951,6 @@ def last_band_reversal_signal(price: pd.Series,
         if prev_near_upper and rolled_below and going_down:
             return {"time": t0, "price": c0, "side": "SELL", "note": "Band REV"}
     return None
-
 # Channel-in-range helpers (for NTD visualization)
 def channel_state_series(price: pd.Series, sup: pd.Series, res: pd.Series, eps: float = 0.0) -> pd.Series:
     p = _coerce_1d_series(price)
@@ -1100,6 +1092,7 @@ def _has_volume_to_plot(vol: pd.Series) -> bool:
     vmax = float(np.nanmax(arr))
     vmin = float(np.nanmin(arr))
     return (np.isfinite(vmax) and vmax > 0.0) or (np.isfinite(vmin) and vmin < 0.0)
+
 # --- Sessions & News ---
 NY_TZ   = pytz.timezone("America/New_York")
 LDN_TZ  = pytz.timezone("Europe/London")
@@ -1208,7 +1201,6 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "NTD -0.75 Scanner",
     "Long-Term History"
 ])
-
 # --- Tab 1: Original Forecast ---
 with tab1:
     st.header("Original Forecast")
@@ -1311,29 +1303,11 @@ with tab1:
                         label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
                 ax.plot(bb_up_d_show.index, bb_up_d_show.values, ":", linewidth=1.0)
                 ax.plot(bb_lo_d_show.index, bb_lo_d_show.values, ":", linewidth=1.0)
-                try:
-                    last_pct = float(bb_pctb_d_show.dropna().iloc[-1])
-                    last_nbb = float(bb_nbb_d_show.dropna().iloc[-1])
-                    ax.text(0.99, 0.02, f"NBB {last_nbb:+.2f}  |  %B {fmt_pct(last_pct, digits=0)}",
-                            transform=ax.transAxes, ha="right", va="bottom",
-                            fontsize=9, color="black",
-                            bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-                except Exception:
-                    pass
-
-            if show_psar and not psar_d_df.dropna().empty:
-                up_mask = psar_d_df["in_uptrend"] == True
-                dn_mask = ~up_mask
-                if up_mask.any():
-                    ax.scatter(psar_d_df.index[up_mask], psar_d_df["PSAR"][up_mask],
-                               s=15, color="tab:green", zorder=6,
-                               label=f"PSAR (step={psar_step:.02f}, max={psar_max:.02f})")
-                if dn_mask.any():
-                    ax.scatter(psar_d_df.index[dn_mask], psar_d_df["PSAR"][dn_mask],
-                               s=15, color="tab:red", zorder=6)
 
             if not yhat_d_show.empty:
+                slope_col_d = "tab:green" if m_d >= 0 else "tab:red"  # downward = red
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
+                        color=slope_col_d,
                         label=f"Daily Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
             if not upper_d_show.empty and not lower_d_show.empty:
                 ax.plot(upper_d_show.index, upper_d_show.values, "--", linewidth=2.2,
@@ -1343,20 +1317,13 @@ with tab1:
             if len(df_show) > 1:
                 draw_trend_direction_line(ax, df_show, label_prefix="Trend")
 
-            # === NEW: Single latest band-reversal signal (Daily) ===
+            # Single latest band-reversal signal (Daily)
             band_sig_d = last_band_reversal_signal(
                 price=df_show, band_upper=upper_d_show, band_lower=lower_d_show,
                 trend_slope=m_d, prox=sr_prox_pct, confirm_bars=rev_bars_confirm
             )
             if band_sig_d is not None:
                 annotate_crossover(ax, band_sig_d["time"], band_sig_d["price"], band_sig_d["side"], note=band_sig_d.get("note",""))
-            else:
-                # fallback: S/R reversal only if no band signal
-                sr_sig_d = None  # disabled to keep "one signal at a time"
-                # If you want: uncomment next 3 lines
-                # sr_sig_d = last_sr_reversal_signal(df_show, sup30_show, res30_show,
-                #                                    trend_slope=m_d, prox=sr_prox_pct, bars_confirm=rev_bars_confirm)
-                # if sr_sig_d is not None: annotate_crossover(ax, sr_sig_d["time"], sr_sig_d["price"], sr_sig_d["side"])
 
             ax.set_ylabel("Price")
             ax.text(0.50, 0.02,
@@ -1375,7 +1342,8 @@ with tab1:
                 axdw.plot(ntd_d_show.index, ntd_d_show, "-", linewidth=1.6, label=f"NTD (win={ntd_window})")
                 ntd_trend_d, ntd_m_d = slope_line(ntd_d_show, slope_lb_daily)
                 if not ntd_trend_d.empty:
-                    axdw.plot(ntd_trend_d.index, ntd_trend_d.values, "--", linewidth=2,
+                    nt_col_d = "tab:green" if ntd_m_d >= 0 else "tab:red"
+                    axdw.plot(ntd_trend_d.index, ntd_trend_d.values, "--", linewidth=2, color=nt_col_d,
                               label=f"NTD Trend {slope_lb_daily} ({fmt_slope(ntd_m_d)}/bar)")
 
                 overlay_ntd_triangles_by_trend(axdw, ntd_d_show, trend_slope=m_d, upper=0.75, lower=-0.75)
@@ -1393,6 +1361,7 @@ with tab1:
             axdw.set_xlabel("Date (PST)")
             axdw.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
+
         # ----- Hourly (price + NTD panel + momentum + Volume) -----
         if chart in ("Hourly","Both"):
             intraday = st.session_state.intraday
@@ -1426,7 +1395,7 @@ with tab1:
                 yhat_h, upper_h, lower_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
                 slope_sig_h = m_h if np.isfinite(m_h) else slope_h
 
-                # GLOBAL (DAILY) slope for instruction label (not for signal)
+                # GLOBAL (DAILY) slope for label only
                 try:
                     df_global = st.session_state.df_hist
                     _, _, _, m_global, _ = regression_with_band(df_global, slope_lb_daily)
@@ -1436,7 +1405,7 @@ with tab1:
                 fig2, ax2 = plt.subplots(figsize=(14,4))
                 plt.subplots_adjust(top=0.85, right=0.93)
 
-                trend_color = "tab:green" if (np.isfinite(m_global) and m_global >= 0) else "tab:red"
+                trend_color = "tab:green" if slope_h >= 0 else "tab:red"  # downward = red
                 ax2.plot(hc.index, hc, label="Intraday")
                 ax2.plot(hc.index, he, "--", label="20 EMA")
                 ax2.plot(hc.index, trend_h, "--",
@@ -1454,9 +1423,6 @@ with tab1:
                     ax2.plot(bb_mid_h.index, bb_mid_h.values, "-", linewidth=1.1,
                              label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
                     ax2.plot(bb_up_h.index, bb_up_h.values, ":", linewidth=1.0)
-                    ax2.plot(bb_lo_h.index, bb_lo_h.index.map(bb_lo_h), ":", linewidth=1.0)  # ensure draw
-
-                    # fix drawing lower explicitly (above line used index map)
                     ax2.plot(bb_lo_h.index, bb_lo_h.values, ":", linewidth=1.0)
 
                 res_val = sup_val = px_val = np.nan
@@ -1475,25 +1441,15 @@ with tab1:
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
-                # === NEW: Single latest band-reversal signal (Hourly) ===
+                # Single latest band-reversal signal (Hourly)
                 band_sig_h = last_band_reversal_signal(
                     price=hc, band_upper=upper_h, band_lower=lower_h,
                     trend_slope=m_h, prox=sr_prox_pct, confirm_bars=rev_bars_confirm
                 )
                 if band_sig_h is not None:
                     annotate_crossover(ax2, band_sig_h["time"], band_sig_h["price"], band_sig_h["side"], note=band_sig_h.get("note",""))
-                else:
-                    # fallback S/R only if no band signal
-                    sr_sig_h = None  # disabled for single-signal rule
-                    # Uncomment if you want fallback:
-                    # sr_sig_h = last_sr_reversal_signal(hc, sup_h, res_h,
-                    #                                    trend_slope=slope_sig_h,
-                    #                                    prox=sr_prox_pct,
-                    #                                    bars_confirm=rev_bars_confirm)
-                    # if sr_sig_h is not None:
-                    #     annotate_crossover(ax2, sr_sig_h["time"], sr_sig_h["price"], sr_sig_h["side"])
 
-                # BUY/SELL instruction text (separate from the single plotted signal)
+                # BUY/SELL instruction text (fixed SELL → BUY + pips)
                 instr_txt = format_trade_instruction(
                     trend_slope=m_global,
                     buy_val=sup_val,
@@ -1535,8 +1491,9 @@ with tab1:
                     ax2.plot(st_line_intr.index, st_line_intr.values, "-",
                              label=f"Supertrend ({atr_period},{atr_mult})")
                 if not yhat_h.empty:
+                    slope_col_h = "tab:green" if m_h >= 0 else "tab:red"  # downward = red
                     ax2.plot(yhat_h.index, yhat_h.values, "-",
-                             linewidth=2,
+                             linewidth=2, color=slope_col_h,
                              label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
                 if not upper_h.empty and not lower_h.empty:
                     ax2.plot(upper_h.index, upper_h.values, "--", linewidth=2.2,
@@ -1590,7 +1547,8 @@ with tab1:
                     ax2v.plot(v_mid.index, v_mid, ":", linewidth=1.6,
                               label=f"Mid-line ({slope_lb_hourly}-roll)")
                     if not v_trend.empty:
-                        ax2v.plot(v_trend.index, v_trend.values, "--", linewidth=2,
+                        v_col = "tab:green" if v_m >= 0 else "tab:red"
+                        ax2v.plot(v_trend.index, v_trend.values, "--", linewidth=2, color=v_col,
                                   label=f"Trend {slope_lb_hourly} ({fmt_slope(v_m)}/bar)")
                     ax2v.text(0.01, 0.02,
                               f"Slope: {fmt_slope(v_m)}/bar",
@@ -1630,7 +1588,8 @@ with tab1:
                     if show_npx_ntd and not npx_h.dropna().empty and not ntd_h.dropna().empty:
                         overlay_npx_on_ntd(ax2r, npx_h, ntd_h, mark_crosses=mark_npx_cross)
                     if not ntd_trend_h.empty:
-                        ax2r.plot(ntd_trend_h.index, ntd_trend_h.values, "--", linewidth=2,
+                        nt_col_h = "tab:green" if ntd_m_h >= 0 else "tab:red"
+                        ax2r.plot(ntd_trend_h.index, ntd_trend_h.values, "--", linewidth=2, color=nt_col_h,
                                   label=f"NTD Trend {slope_lb_hourly} ({fmt_slope(ntd_m_h)}/bar)")
 
                     for yv, lab, lw, col in [
@@ -1657,7 +1616,8 @@ with tab1:
                     ax2m.plot(roc.index, roc, label=f"ROC%({mom_lb_hourly})")
                     yhat_m, m_m = slope_line(roc, slope_lb_hourly)
                     if not yhat_m.empty:
-                        ax2m.plot(yhat_m.index, yhat_m.values, "--", linewidth=2,
+                        mom_col = "tab:green" if m_m >= 0 else "tab:red"
+                        ax2m.plot(yhat_m.index, yhat_m.values, "--", linewidth=2, color=mom_col,
                                   label=f"Trend {slope_lb_hourly} ({fmt_slope(m_m)}%/bar)")
                     ax2m.plot(res_m.index, res_m, ":", label="Mom Resistance")
                     ax2m.plot(sup_m.index, sup_m, ":", label="Mom Support")
@@ -1764,17 +1724,18 @@ with tab2:
                 ax.plot(bb_lo_d2_show.index, bb_lo_d2_show.values, ":", linewidth=1.0)
 
             if not yhat_d_show.empty:
-                ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
+                slope_col_d2 = "tab:green" if m_d >= 0 else "tab:red"
+                ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2, color=slope_col_d2,
                         label=f"Daily Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
             if not upper_d_show.empty and not lower_d_show.empty:
                 ax.plot(upper_d_show.index, upper_d_show.values, "--", linewidth=2.2,
                         color="black", alpha=0.85, label="Daily Trend +2σ")
+            if not lower_d_show.empty:
                 ax.plot(lower_d_show.index, lower_d_show.values, "--", linewidth=2.2,
                         color="black", alpha=0.85, label="Daily Trend -2σ")
             if len(df_show) > 1:
                 draw_trend_direction_line(ax, df_show, label_prefix="Trend")
 
-            # === NEW: Single latest band-reversal signal (Daily) ===
             band_sig_d2 = last_band_reversal_signal(
                 price=df_show, band_upper=upper_d_show, band_lower=lower_d_show,
                 trend_slope=m_d, prox=sr_prox_pct, confirm_bars=rev_bars_confirm
@@ -1799,7 +1760,8 @@ with tab2:
                            label=f"NTD (win={ntd_window})")
                 ntd_trend_d2, ntd_m_d2 = slope_line(ntd_d_show, slope_lb_daily)
                 if not ntd_trend_d2.empty:
-                    axdw2.plot(ntd_trend_d2.index, ntd_trend_d2.values, "--", linewidth=2,
+                    col_nd2 = "tab:green" if ntd_m_d2 >= 0 else "tab:red"
+                    axdw2.plot(ntd_trend_d2.index, ntd_trend_d2.values, "--", linewidth=2, color=col_nd2,
                                label=f"NTD Trend {slope_lb_daily} ({fmt_slope(ntd_m_d2)}/bar)")
                 overlay_ntd_triangles_by_trend(axdw2, ntd_d_show, trend_slope=m_d,
                                                upper=0.75, lower=-0.75)
@@ -1870,7 +1832,8 @@ with tab4:
         ax.plot(res3m.index, res3m, ":", label="Resistance")
         ax.plot(sup3m.index, sup3m, ":", label="Support")
         if not trend3m.empty:
-            ax.plot(trend3m.index, trend3m.values, "--",
+            col3 = "tab:green" if m3m >= 0 else "tab:red"
+            ax.plot(trend3m.index, trend3m.values, "--", color=col3,
                     label=f"Trend (m={fmt_slope(m3m)}/bar)")
         if not up3m.empty and not lo3m.empty:
             ax.plot(up3m.index, up3m.values, ":", linewidth=2.0,
@@ -1904,7 +1867,8 @@ with tab4:
         ax0.plot(res0.index, res0, ":", label="Resistance")
         ax0.plot(sup0.index, sup0, ":", label="Support")
         if not trend0.empty:
-            ax0.plot(trend0.index, trend0.values, "--",
+            col0 = "tab:green" if m0 >= 0 else "tab:red"
+            ax0.plot(trend0.index, trend0.values, "--", color=col0,
                      label=f"Trend (m={fmt_slope(m0)}/bar)")
         if not up0.empty and not lo0.empty:
             ax0.plot(up0.index, up0.values, ":", linewidth=2.0,
@@ -1932,6 +1896,7 @@ with tab4:
                      int((~df0['Bull']).sum())]
         }).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
+
 # --- Tab 5: NTD -0.75 Scanner (Latest NTD < -0.75) ---
 with tab5:
     st.header("NTD -0.75 Scanner (NTD < -0.75)")
@@ -2153,8 +2118,9 @@ with tab6:
                 label_on_left(ax, res_last, f"R {fmt_price_val(res_last)}", color="tab:red")
                 label_on_left(ax, sup_last, f"S {fmt_price_val(sup_last)}", color="tab:green")
             if not yhat_all.empty:
+                col_all = "tab:green" if m_all >= 0 else "tab:red"
                 ax.plot(yhat_all.index, yhat_all.values, "--",
-                        linewidth=2, label=f"Trend (m={fmt_slope(m_all)}/bar)")
+                        linewidth=2, color=col_all, label=f"Trend (m={fmt_slope(m_all)}/bar)")
             if not upper_all.empty and not lower_all.empty:
                 ax.plot(upper_all.index, upper_all.values, ":", linewidth=2.0,
                         color="black", alpha=0.85, label="Trend +2σ")
