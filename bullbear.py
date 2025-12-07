@@ -17,8 +17,7 @@
 #   • Signal annotations are arrow callouts (non-overlapping offsets for readability).
 #   • HMA BUY shown only in uptrend; HMA SELL only in downtrend (gated by slope sign).
 #   • Removed “Get Ready to Take Profit” outside annotation per request.
-#   • Outside BUY/SELL ribbons remain.
-#   • Support/Resistance lines added to Daily charts in BOTH Original & Enhanced tabs.
+#   • Outside BUY/SELL ribbons remain; Daily (Tab 2) shows S/R; Daily (Tab 1) now also shows S/R.
 
 import streamlit as st
 import pandas as pd
@@ -948,7 +947,7 @@ with tab1:
             if len(df_show) > 1:
                 draw_trend_direction_line(ax, df_show, label_prefix="")
 
-            # --- NEW: DAILY Support/Resistance lines (30-bar extremes) ---
+            # DAILY — Support/Resistance lines (latest 30-bar extremes)
             try:
                 res_val_d = float(res30_show.iloc[-1])
                 sup_val_d = float(sup30_show.iloc[-1])
@@ -960,8 +959,7 @@ with tab1:
                     label_on_left(ax, res_val_d, f"R {fmt_price_val(res_val_d)}", color="tab:red")
                     label_on_left(ax, sup_val_d, f"S {fmt_price_val(sup_val_d)}", color="tab:green")
             except Exception:
-                res_val_d = np.nan
-                sup_val_d = np.nan
+                pass
 
             # Single latest band-reversal signal (Daily)
             band_sig_d = last_band_reversal_signal(
@@ -1206,6 +1204,7 @@ with tab2:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2.0, color=slope_col_d2, label="Trend")
             if not up_d_show.empty and not lo_d_show.empty:
                 ax.plot(up_d_show.index, up_d_show.values, ":", linewidth=1.8, color="black", alpha=0.6, label="_nolegend_")
+            if not lo_d_show.empty:
                 ax.plot(lo_d_show.index, lo_d_show.values, ":", linewidth=1.8, color="black", alpha=0.6, label="_nolegend_")
             if len(df_show) > 1:
                 draw_trend_direction_line(ax, df_show, label_prefix="")
@@ -1216,7 +1215,7 @@ with tab2:
             if band_sig_d2 is not None:
                 annotate_signal_box(ax, band_sig_d2["time"], band_sig_d2["price"], band_sig_d2["side"], note=band_sig_d2.get("note",""))
 
-            # DAILY — Support/Resistance lines (30-bar extremes)
+            # DAILY — add Support/Resistance horizontal lines (latest 30-bar extremes)
             try:
                 res_val_d2 = float(res30_show.iloc[-1])
                 sup_val_d2 = float(sup30_show.iloc[-1])
@@ -1408,4 +1407,189 @@ with tab5:
             except Exception:
                 ntd_val, ts, close_val = np.nan, None, np.nan
             daily_rows.append({"Symbol": sym, "NTD_Last": ntd_val,
-                               "BelowThresh": (np.isfinite(nt
+                               "BelowThresh": (np.isfinite(ntd_val) and ntd_val < thresh),
+                               "Close": close_val, "Timestamp": ts})
+        df_daily = pd.DataFrame(daily_rows)
+        hits_daily = df_daily[df_daily["BelowThresh"] == True].copy().sort_values("NTD_Last")
+
+        c3, c4 = st.columns(2)
+        c3.metric("Universe Size", len(universe))
+        c4.metric(f"Daily NTD < {thresh:+.2f}", int(hits_daily.shape[0]))
+
+        st.subheader(f"Daily — latest NTD < {thresh:+.2f}")
+        if hits_daily.empty:
+            st.info(f"No symbols where the latest **daily** NTD value is below {thresh:+.2f}.")
+        else:
+            view = hits_daily.copy()
+            view["NTD_Last"] = view["NTD_Last"].map(lambda v: f"{v:+.3f}" if np.isfinite(v) else "n/a")
+            view["Close"] = view["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            st.dataframe(view[["Symbol","Timestamp","Close","NTD_Last"]].reset_index(drop=True), use_container_width=True)
+
+        # ---- DAILY: PRICE > KIJUN ----
+        st.markdown("---")
+        st.subheader(f"Daily — Price > Ichimoku Kijun({ichi_base}) (latest bar)")
+        def _price_above_kijun_from_df(df: pd.DataFrame, base: int = 26):
+            if df is None or df.empty or not {'High','Low','Close'}.issubset(df.columns):
+                return False, None, np.nan, np.nan
+            ohlc = df[['High','Low','Close']].copy()
+            _, kijun, _, _, _ = ichimoku_lines(ohlc['High'], ohlc['Low'], ohlc['Close'], base=base)
+            kijun = kijun.ffill().bfill().reindex(ohlc.index)
+            close = ohlc['Close'].astype(float).reindex(ohlc.index)
+            mask = close.notna() & kijun.notna()
+            if mask.sum() < 1:
+                return False, None, np.nan, np.nan
+            c_now = float(close[mask].iloc[-1]); k_now = float(kijun[mask].iloc[-1])
+            ts = close[mask].index[-1]
+            above = np.isfinite(c_now) and np.isfinite(k_now) and (c_now > k_now)
+            return above, ts if above else None, c_now, k_now
+
+        above_rows = []
+        for sym in universe:
+            try:
+                df_ohlc = fetch_hist_ohlc(sym)
+                above, ts, cnow, know = _price_above_kijun_from_df(df_ohlc, base=ichi_base)
+            except Exception:
+                above, ts, cnow, know = False, None, np.nan, np.nan
+            above_rows.append({"Symbol": sym, "AboveNow": above, "Timestamp": ts, "Close": cnow, "Kijun": know})
+        df_above_daily = pd.DataFrame(above_rows)
+        df_above_daily = df_above_daily[df_above_daily["AboveNow"] == True]
+        if df_above_daily.empty:
+            st.info("No Daily symbols with Price > Kijun on the latest bar.")
+        else:
+            v = df_above_daily.copy()
+            v["Close"] = v["Close"].map(lambda x: fmt_price_val(x) if np.isfinite(x) else "n/a")
+            v["Kijun"] = v["Kijun"].map(lambda x: fmt_price_val(x) if np.isfinite(x) else "n/a")
+            st.dataframe(v[["Symbol","Timestamp","Close","Kijun"]].reset_index(drop=True), use_container_width=True)
+
+        # ---- FOREX HOURLY: latest NTD < -0.75 ----
+        if mode == "Forex":
+            st.markdown("---")
+            st.subheader(f"Forex Hourly — latest NTD < {thresh:+.2f} ({scan_hour_range} lookback)")
+            hourly_rows = []
+            for sym in universe:
+                try:
+                    intr = fetch_intraday(sym, period=scan_period)
+                    close_val_h = _safe_last_float(intr["Close"]) if intr is not None and "Close" in intr else np.nan
+                    ntd = compute_normalized_trend(intr["Close"], window=ntd_window) if (intr is not None and "Close" in intr) else pd.Series(dtype=float)
+                    ntd_val_h = float(ntd.dropna().iloc[-1]) if not ntd.dropna().empty else np.nan
+                    ts_h = ntd.dropna().index[-1] if not ntd.dropna().empty else None
+                except Exception:
+                    close_val_h, ntd_val_h, ts_h = np.nan, np.nan, None
+                hourly_rows.append({"Symbol": sym, "NTD_Last": ntd_val_h, "BelowThresh": (np.isfinite(ntd_val_h) and ntd_val_h < thresh),
+                                    "Close": close_val_h, "Timestamp": ts_h})
+            df_hour = pd.DataFrame(hourly_rows)
+            hits_hour = df_hour[df_hour["BelowThresh"] == True].copy().sort_values("NTD_Last")
+
+            if hits_hour.empty:
+                st.info(f"No Forex pairs where the latest **hourly** NTD value is below {thresh:+.2f} within {scan_hour_range} lookback.")
+            else:
+                showh = hits_hour.copy()
+                showh["NTD_Last"] = showh["NTD_Last"].map(lambda v: f"{v:+.3f}" if np.isfinite(v) else "n/a")
+                showh["Close"] = showh["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+                st.dataframe(showh[["Symbol","Timestamp","Close","NTD_Last"]].reset_index(drop=True), use_container_width=True)
+
+            # ---- FOREX HOURLY: PRICE > KIJUN ----
+            st.subheader(f"Forex Hourly — Price > Ichimoku Kijun({ichi_base}) (latest bar, {scan_hour_range})")
+            habove_rows = []
+            for sym in universe:
+                try:
+                    intr = fetch_intraday(sym, period=scan_period)
+                    if intr is None or intr.empty or not {'High','Low','Close'}.issubset(intr.columns):
+                        above_h, ts_h, close_h, kij_h = False, None, np.nan, np.nan
+                    else:
+                        _, kij, _, _, _ = ichimoku_lines(intr["High"], intr["Low"], intr["Close"], base=ichi_base)
+                        kij = kij.ffill().bfill().reindex(intr.index)
+                        close = intr["Close"].astype(float).reindex(intr.index)
+                        mask = close.notna() & kij.notna()
+                        if mask.sum() < 1:
+                            above_h, ts_h, close_h, kij_h = False, None, np.nan, np.nan
+                        else:
+                            close_h = float(close[mask].iloc[-1]); kij_h = float(kij[mask].iloc[-1])
+                            ts_h = close[mask].index[-1]; above_h = (close_h > kij_h)
+                except Exception:
+                    above_h, ts_h, close_h, kij_h = False, None, np.nan, np.nan
+                habove_rows.append({"Symbol": sym, "AboveNow": above_h, "Timestamp": ts_h, "Close": close_h, "Kijun": kij_h})
+            df_above_hour = pd.DataFrame(habove_rows)
+            df_above_hour = df_above_hour[df_above_hour["AboveNow"] == True]
+            if df_above_hour.empty:
+                st.info("No Forex pairs with Price > Kijun on the latest bar.")
+            else:
+                vch = df_above_hour.copy()
+                vch["Close"] = vch["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+                vch["Kijun"] = vch["Kijun"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+                st.dataframe(vch[["Symbol","Timestamp","Close","Kijun"]].reset_index(drop=True), use_container_width=True)
+
+# --- Tab 6: Long-Term History ---
+with tab6:
+    st.header("Long-Term History — Price with S/R & Trend")
+    default_idx = 0
+    if st.session_state.get("ticker") in universe:
+        default_idx = universe.index(st.session_state["ticker"])
+    sym = st.selectbox("Ticker:", universe, index=default_idx, key="hist_long_ticker")
+    c1, c2, c3, c4 = st.columns(4)
+    if c1.button("5Y", key="btn_5y"):  st.session_state.hist_years = 5
+    if c2.button("10Y", key="btn_10y"): st.session_state.hist_years = 10
+    if c3.button("15Y", key="btn_15y"): st.session_state.hist_years = 15
+    if c4.button("20Y", key="btn_20y"): st.session_state.hist_years = 20
+
+    years = int(st.session_state.hist_years)
+    st.caption(f"Showing last **{years} years**. Support/Resistance = rolling **252-day** extremes; trendline fits the shown window.")
+
+    s_full = fetch_hist_max(sym)
+    if s_full is None or s_full.empty:
+        st.warning("No historical data available.")
+    else:
+        end_ts = s_full.index.max()
+        start_ts = end_ts - pd.DateOffset(years=years)
+        s = s_full[s_full.index >= start_ts]
+        if s.empty:
+            st.warning(f"No data in the last {years} years for {sym}.")
+        else:
+            res_roll = s.rolling(252, min_periods=1).max()
+            sup_roll = s.rolling(252, min_periods=1).min()
+            res_last = float(res_roll.iloc[-1]) if len(res_roll) else np.nan
+            sup_last = float(sup_roll.iloc[-1]) if len(sup_roll) else np.nan
+            yhat_all, upper_all, lower_all, m_all, r2_all = regression_with_band(s, lookback=len(s))
+
+            fig, ax = plt.subplots(figsize=(14,5))
+            plt.subplots_adjust(right=0.78)
+            ax.set_title(f"{sym} — Last {years} Years — Price + 252d S/R + Trend")
+            ax.plot(s.index, s.values, label="Close", linewidth=1.4)
+            if np.isfinite(res_last) and np.isfinite(sup_last):
+                ax.hlines(res_last, xmin=s.index[0], xmax=s.index[-1], colors="tab:red",   linestyles="-", linewidth=1.3, alpha=0.6, label="_nolegend_")
+                ax.hlines(sup_last, xmin=s.index[0], xmax=s.index[-1], colors="tab:green", linestyles="-", linewidth=1.3, alpha=0.6, label="_nolegend_")
+                label_on_left(ax, res_last, f"R {fmt_price_val(res_last)}", color="tab:red")
+                label_on_left(ax, sup_last, f"S {fmt_price_val(sup_last)}", color="tab:green")
+            if not yhat_all.empty:
+                col_all = "tab:green" if m_all >= 0 else "tab:red"
+                ax.plot(yhat_all.index, yhat_all.values, "--",
+                        linewidth=2, color=col_all, label="Trend")
+            if not upper_all.empty and not lower_all.empty:
+                ax.plot(upper_all.index, upper_all.values, ":", linewidth=1.8,
+                        color="black", alpha=0.6, label="_nolegend_")
+                ax.plot(lower_all.index, lower_all.values, ":", linewidth=1.8,
+                        color="black", alpha=0.6, label="_nolegend_")
+            px_now = _safe_last_float(s)
+            if np.isfinite(px_now):
+                ax.text(0.99, 0.02,
+                        f"Current price: {fmt_price_val(px_now)}",
+                        transform=ax.transAxes, ha="right", va="bottom",
+                        fontsize=10, fontweight="bold",
+                        bbox=dict(boxstyle="round,pad=0.25",
+                                  fc="white", ec="grey", alpha=0.7))
+            ax.text(0.01, 0.02,
+                    f"Slope: {fmt_slope(m_all)}/bar",
+                    transform=ax.transAxes, ha="left", va="bottom",
+                    fontsize=9, color="black",
+                    bbox=dict(boxstyle="round,pad=0.25",
+                              fc="white", ec="grey", alpha=0.7))
+            ax.text(0.50, 0.02,
+                    f"R² (trend): {fmt_r2(r2_all)}",
+                    transform=ax.transAxes, ha="center", va="bottom",
+                    fontsize=9, color="black",
+                    bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+            _simplify_axes(ax)
+            ax.set_xlabel("Date (PST)")
+            ax.set_ylabel("Price")
+            ax.legend(loc="lower left", framealpha=0.4)
+            st.pyplot(fig)
