@@ -16,6 +16,8 @@
 #   • Fixed hourly ValueError by robust linear fit fallback.
 #   • Signal annotations are arrow callouts (non-overlapping offsets for readability).
 #   • HMA BUY shown only in uptrend; HMA SELL only in downtrend (gated by slope sign).
+#   • HMA(55) BUY/SELL labels replaced by “Get Ready to Take Profit”, shown OUTSIDE the chart
+#     with an arrow pointing to the crossover point.
 
 import streamlit as st
 import pandas as pd
@@ -636,9 +638,41 @@ def annotate_signal_box(ax, ts, px, side: str, note: str = "", ypad_frac: float 
         )
         ax.scatter([ts], [px], s=60, c=("tab:green" if side=="BUY" else "tab:red"), zorder=10)
     except Exception:
-        # Fallback simple text
         ax.text(ts, px, f" {text}", color="tab:green" if side=="BUY" else "tab:red",
                 fontsize=10, fontweight="bold")
+
+# --- NEW: Outside-of-chart annotation for HMA(55) crossover ---
+def annotate_take_profit(ax, ts, px, side: str):
+    """
+    Show 'Get Ready to Take Profit' OUTSIDE the plotting area (to the right),
+    with an arrow pointing to the crossover point (ts, px).
+    """
+    try:
+        # two vertical slots on the right to avoid overlap
+        y_frac = 0.85 if side == "BUY" else 0.15
+        ax.annotate(
+            "Get Ready to Take Profit",
+            xy=(ts, px), xycoords='data',
+            xytext=(1.02, y_frac), textcoords='axes fraction',
+            ha='left', va='center',
+            fontsize=11, fontweight="bold",
+            color="tab:green" if side == "BUY" else "tab:red",
+            bbox=dict(boxstyle="round,pad=0.3", fc="white",
+                      ec="tab:green" if side == "BUY" else "tab:red", alpha=0.95),
+            arrowprops=dict(arrowstyle="->",
+                            color="tab:green" if side == "BUY" else "tab:red",
+                            lw=1.6),
+            zorder=12,
+            annotation_clip=False  # ensure visible even outside axes
+        )
+        # small marker on the exact crossover
+        ax.scatter([ts], [px], s=70, c=("tab:green" if side=="BUY" else "tab:red"),
+                   edgecolors="white", linewidths=0.8, zorder=13)
+    except Exception:
+        # Very safe fallback inside chart
+        ax.text(ts, px, "Get Ready to Take Profit",
+                color="tab:green" if side=="BUY" else "tab:red",
+                fontsize=11, fontweight="bold")
 # --- Bands + single latest band-reversal trading signal ---
 def last_band_reversal_signal(price: pd.Series,
                               band_upper: pd.Series,
@@ -853,7 +887,8 @@ with tab1:
             hma55_evt_d = detect_hma_trend_reversal(df_show, hma55_d, trend_slope=m_d, confirm_bars=rev_bars_confirm)
 
             fig, ax = plt.subplots(figsize=(14, 6))
-            plt.subplots_adjust(top=0.92, right=0.93)
+            # make extra right margin for outside annotation
+            plt.subplots_adjust(top=0.92, right=0.80)
 
             ax.set_title(f"{sel} Daily — {daily_view} — Price, 30 EMA, 30 S/R, Slope")
             ax.plot(df_show, label="History")
@@ -892,9 +927,9 @@ with tab1:
             if band_sig_d is not None:
                 annotate_signal_box(ax, band_sig_d["time"], band_sig_d["price"], band_sig_d["side"], note=band_sig_d.get("note",""))
 
-            # HMA(55) alert annotation (trend-valid only)
+            # HMA(55) alert → outside label "Get Ready to Take Profit"
             if hma55_evt_d is not None:
-                annotate_signal_box(ax, hma55_evt_d["time"], hma55_evt_d["price"], hma55_evt_d["side"], note="HMA55")
+                annotate_take_profit(ax, hma55_evt_d["time"], hma55_evt_d["price"], hma55_evt_d["side"])
 
             ax.set_ylabel("Price")
             ax.text(0.50, 0.02, f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}",
@@ -959,7 +994,8 @@ with tab1:
                     m_global = slope_sig_h
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
-                plt.subplots_adjust(top=0.85, right=0.93)
+                # make extra right margin for outside annotation
+                plt.subplots_adjust(top=0.85, right=0.80)
 
                 trend_color = "tab:green" if slope_h >= 0 else "tab:red"
                 ax2.plot(hc.index, hc, label="Intraday")
@@ -998,10 +1034,10 @@ with tab1:
                 if band_sig_h is not None:
                     annotate_signal_box(ax2, band_sig_h["time"], band_sig_h["price"], band_sig_h["side"], note=band_sig_h.get("note",""))
 
-                # HMA(55) alert annotation (trend-valid; BUY only in uptrend, SELL only in downtrend)
+                # HMA(55) alert → outside label "Get Ready to Take Profit"
                 hma55_evt_h = detect_hma_trend_reversal(hc, hma55_h, trend_slope=m_h, confirm_bars=rev_bars_confirm)
                 if hma55_evt_h is not None:
-                    annotate_signal_box(ax2, hma55_evt_h["time"], hma55_evt_h["price"], hma55_evt_h["side"], note="HMA55")
+                    annotate_take_profit(ax2, hma55_evt_h["time"], hma55_evt_h["price"], hma55_evt_h["side"])
 
                 # TREND-AWARE instruction text
                 instr_txt = format_trade_instruction(trend_slope=m_global, buy_val=sup_val, sell_val=res_val, close_val=px_val, symbol=sel)
@@ -1118,7 +1154,9 @@ with tab2:
             hma55_evt_d2 = detect_hma_trend_reversal(df_show, hma55_d2, trend_slope=m_d, confirm_bars=rev_bars_confirm)
 
             fig, ax = plt.subplots(figsize=(14, 6))
-            plt.subplots_adjust(top=0.92, right=0.93)
+            # make extra right margin for outside annotation
+            plt.subplots_adjust(top=0.92, right=0.80)
+
             ax.set_title(f"{st.session_state.ticker} Daily — {daily_view} — Price, 30 EMA, 30 S/R, Slope")
             ax.plot(df_show, label="History")
             ax.plot(ema30_show, "--", label="30 EMA")
@@ -1142,6 +1180,7 @@ with tab2:
                         label=f"Daily Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
             if not up_d_show.empty and not lo_d_show.empty:
                 ax.plot(up_d_show.index, up_d_show.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Daily Trend +2σ")
+            if not lo_d_show.empty:
                 ax.plot(lo_d_show.index, lo_d_show.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Daily Trend -2σ")
             if len(df_show) > 1:
                 draw_trend_direction_line(ax, df_show, label_prefix="Trend")
@@ -1152,9 +1191,9 @@ with tab2:
             if band_sig_d2 is not None:
                 annotate_signal_box(ax, band_sig_d2["time"], band_sig_d2["price"], band_sig_d2["side"], note=band_sig_d2.get("note",""))
 
-            # HMA55 trend-valid alert
+            # HMA55 trend-valid alert → outside label
             if hma55_evt_d2 is not None:
-                annotate_signal_box(ax, hma55_evt_d2["time"], hma55_evt_d2["price"], hma55_evt_d2["side"], note="HMA55")
+                annotate_take_profit(ax, hma55_evt_d2["time"], hma55_evt_d2["price"], hma55_evt_d2["side"])
 
             ax.set_ylabel("Price")
             ax.text(0.50, 0.02, f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}",
