@@ -18,6 +18,8 @@
 #   • HMA BUY shown only in uptrend; HMA SELL only in downtrend (gated by slope sign).
 #   • HMA(55) BUY/SELL labels replaced by “Get Ready to Take Profit”, shown OUTSIDE the chart
 #     with an arrow pointing to the crossover point.
+#   • NEW: Outside **instruction ribbons** (green BUY / red SELL) to the right of charts,
+#     using trend-aware prices; charts simplified for a less-cluttered look.
 
 import streamlit as st
 import pandas as pd
@@ -648,7 +650,6 @@ def annotate_take_profit(ax, ts, px, side: str):
     with an arrow pointing to the crossover point (ts, px).
     """
     try:
-        # two vertical slots on the right to avoid overlap
         y_frac = 0.85 if side == "BUY" else 0.15
         ax.annotate(
             "Get Ready to Take Profit",
@@ -663,16 +664,82 @@ def annotate_take_profit(ax, ts, px, side: str):
                             color="tab:green" if side == "BUY" else "tab:red",
                             lw=1.6),
             zorder=12,
-            annotation_clip=False  # ensure visible even outside axes
+            annotation_clip=False
         )
-        # small marker on the exact crossover
         ax.scatter([ts], [px], s=70, c=("tab:green" if side=="BUY" else "tab:red"),
                    edgecolors="white", linewidths=0.8, zorder=13)
     except Exception:
-        # Very safe fallback inside chart
         ax.text(ts, px, "Get Ready to Take Profit",
                 color="tab:green" if side=="BUY" else "tab:red",
                 fontsize=11, fontweight="bold")
+
+# --- NEW: Cleaner axes + OUTSIDE instruction ribbons ---
+def _simplify_axes(ax):
+    """Make charts less cluttered."""
+    ax.grid(True, alpha=0.15, linestyle="--", linewidth=0.6)
+    for spine in ax.spines.values():
+        spine.set_alpha(0.3)
+    ax.tick_params(axis='both', labelsize=9)
+    ax.margins(x=0.01)
+
+def _instruction_pieces(trend_slope, buy_val, sell_val, close_val, symbol):
+    # Build separate BUY / SELL strings plus pips text
+    def _finite(x):
+        try:
+            return np.isfinite(float(x))
+        except Exception:
+            return False
+    buy_price  = float(buy_val)  if _finite(buy_val)  else float(close_val)
+    sell_price = float(sell_val) if _finite(sell_val) else float(close_val)
+    buy_txt  = f"▲ BUY @{fmt_price_val(buy_price)}"
+    sell_txt = f"▼ SELL @{fmt_price_val(sell_price)}"
+    pips_txt = f"Value of Pips: {_diff_text(sell_price, buy_price, symbol)}"
+    return buy_txt, sell_txt, pips_txt
+
+def draw_instruction_ribbons(ax, trend_slope, buy_val, sell_val, close_val, symbol):
+    """
+    Two compact ribbons outside the chart (right side):
+      • Green = BUY instruction (top when uptrend)
+      • Red   = SELL instruction (top when downtrend)
+    """
+    buy_txt, sell_txt, pips_txt = _instruction_pieces(trend_slope, buy_val, sell_val, close_val, symbol)
+    # position depends on trend direction
+    top_is_buy = np.isfinite(trend_slope) and float(trend_slope) > 0
+    slots = [(0.90, 0.80)] if top_is_buy else [(0.90, 0.80)]  # consistent spacing
+    y_top, y_bot = slots[0]
+    top_text  = buy_txt if top_is_buy else sell_txt
+    bot_text  = sell_txt if top_is_buy else buy_txt
+    top_color = "tab:green" if top_is_buy else "tab:red"
+    bot_color = "tab:red" if top_is_buy else "tab:green"
+
+    # top ribbon
+    ax.annotate(
+        top_text,
+        xy=(1.02, y_top), xycoords='axes fraction',
+        ha='left', va='center',
+        fontsize=11, fontweight="bold", color="white",
+        bbox=dict(boxstyle="round,pad=0.35", fc=top_color, ec=top_color, alpha=0.95),
+        zorder=20, annotation_clip=False
+    )
+    # bottom ribbon
+    ax.annotate(
+        bot_text,
+        xy=(1.02, y_bot), xycoords='axes fraction',
+        ha='left', va='center',
+        fontsize=11, fontweight="bold", color="white",
+        bbox=dict(boxstyle="round,pad=0.35", fc=bot_color, ec=bot_color, alpha=0.95),
+        zorder=20, annotation_clip=False
+    )
+    # small neutral pips label below the ribbons
+    ax.annotate(
+        pips_txt,
+        xy=(1.02, y_bot - 0.10), xycoords='axes fraction',
+        ha='left', va='center',
+        fontsize=9, color="black",
+        bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.85),
+        zorder=19, annotation_clip=False
+    )
+
 # --- Bands + single latest band-reversal trading signal ---
 def last_band_reversal_signal(price: pd.Series,
                               band_upper: pd.Series,
@@ -887,37 +954,31 @@ with tab1:
             hma55_evt_d = detect_hma_trend_reversal(df_show, hma55_d, trend_slope=m_d, confirm_bars=rev_bars_confirm)
 
             fig, ax = plt.subplots(figsize=(14, 6))
-            # make extra right margin for outside annotation
-            plt.subplots_adjust(top=0.92, right=0.80)
+            # extra right margin for outside ribbons/annotations
+            plt.subplots_adjust(top=0.92, right=0.78)
 
-            ax.set_title(f"{sel} Daily — {daily_view} — Price, 30 EMA, 30 S/R, Slope")
-            ax.plot(df_show, label="History")
-            ax.plot(ema30_show, "--", label="30 EMA")
-            ax.plot(res30_show, ":", label="30 Resistance")
-            ax.plot(sup30_show, ":", label="30 Support")
+            ax.set_title(f"{sel} Daily — {daily_view}")
+            # core price
+            ax.plot(df_show.index, df_show.values, label="Price", linewidth=1.4)
 
-            if show_hma and not hma_d_full.dropna().empty:
-                ax.plot(hma_d_full.index, hma_d_full.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
-            if show_ichi and not kijun_d_show.dropna().empty:
-                ax.plot(kijun_d_show.index, kijun_d_show.values, "-", linewidth=1.8, color="black",
-                        label=f"Ichimoku Kijun ({ichi_base})")
-
+            # minimalist overlays (no legend clutter)
+            ax.plot(ema30_show.index, ema30_show.values, "--", alpha=0.4, linewidth=1.0, label="_nolegend_")
             if show_bbands and not bb_up_d_show.dropna().empty and not bb_lo_d_show.dropna().empty:
-                ax.fill_between(df_show.index, bb_lo_d_show, bb_up_d_show, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
-                ax.plot(bb_mid_d_show.index, bb_mid_d_show.values, "-", linewidth=1.1,
-                        label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
-                ax.plot(bb_up_d_show.index, bb_up_d_show.values, ":", linewidth=1.0)
-                ax.plot(bb_lo_d_show.index, bb_lo_d_show.values, ":", linewidth=1.0)
+                ax.fill_between(df_show.index, bb_lo_d_show, bb_up_d_show, alpha=0.04, label="_nolegend_")
+                ax.plot(bb_mid_d_show.index, bb_mid_d_show.values, "-", linewidth=0.9, alpha=0.35, label="_nolegend_")
+
+            if show_ichi and not kijun_d_show.dropna().empty:
+                ax.plot(kijun_d_show.index, kijun_d_show.values, "-", linewidth=1.2, color="black",
+                        alpha=0.55, label="Kijun")
 
             if not yhat_d_show.empty:
                 slope_col_d = "tab:green" if m_d >= 0 else "tab:red"
-                ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2, color=slope_col_d,
-                        label=f"Daily Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
+                ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2.0, color=slope_col_d, label="Trend")
             if not upper_d_show.empty and not lower_d_show.empty:
-                ax.plot(upper_d_show.index, upper_d_show.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Daily Trend +2σ")
-                ax.plot(lower_d_show.index, lower_d_show.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Daily Trend -2σ")
+                ax.plot(upper_d_show.index, upper_d_show.values, ":", linewidth=1.8, color="black", alpha=0.6, label="_nolegend_")
+                ax.plot(lower_d_show.index, lower_d_show.values, ":", linewidth=1.8, color="black", alpha=0.6, label="_nolegend_")
             if len(df_show) > 1:
-                draw_trend_direction_line(ax, df_show, label_prefix="Trend")
+                draw_trend_direction_line(ax, df_show, label_prefix="")
 
             # Single latest band-reversal signal (Daily)
             band_sig_d = last_band_reversal_signal(
@@ -931,12 +992,23 @@ with tab1:
             if hma55_evt_d is not None:
                 annotate_take_profit(ax, hma55_evt_d["time"], hma55_evt_d["price"], hma55_evt_d["side"])
 
-            ax.set_ylabel("Price")
+            # OUTSIDE instruction ribbons (Daily) using 30-bar S/R as targets
+            try:
+                sup_val_d = float(sup30_show.iloc[-1])
+                res_val_d = float(res30_show.iloc[-1])
+                px_val_d  = float(df_show.iloc[-1])
+                draw_instruction_ribbons(ax, m_d, sup_val_d, res_val_d, px_val_d, sel)
+            except Exception:
+                pass
+
+            # footer stats
             ax.text(0.50, 0.02, f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}",
                     transform=ax.transAxes, ha="center", va="bottom",
                     fontsize=9, color="black",
                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-            ax.legend(loc="lower left", framealpha=0.5)
+            _simplify_axes(ax)
+            ax.set_ylabel("Price")
+            ax.legend(loc="lower left", framealpha=0.4)
             st.pyplot(fig)
 
         # ----- Hourly (Price only) -----
@@ -946,13 +1018,12 @@ with tab1:
                 st.warning("No intraday data available.")
             else:
                 hc = intraday["Close"].astype(float).ffill()
-                # Robust linear fit to avoid ValueError on degenerate/short series
+                # Robust linear fit
                 xh = np.arange(len(hc), dtype=float)
                 if len(hc.dropna()) >= 2:
                     try:
                         coef = np.polyfit(xh, hc.values.astype(float), 1)
-                        slope_h = float(coef[0])
-                        intercept_h = float(coef[1])
+                        slope_h = float(coef[0]); intercept_h = float(coef[1])
                         trend_h = slope_h * xh + intercept_h
                     except Exception:
                         slope_h = 0.0
@@ -986,7 +1057,7 @@ with tab1:
                 yhat_h, upper_h, lower_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
                 slope_sig_h = m_h if np.isfinite(m_h) else slope_h
 
-                # GLOBAL (DAILY) slope for instruction order
+                # GLOBAL (DAILY) slope for instruction order (unchanged)
                 try:
                     df_global = st.session_state.df_hist
                     _, _, _, m_global, _ = regression_with_band(df_global, slope_lb_daily)
@@ -994,25 +1065,25 @@ with tab1:
                     m_global = slope_sig_h
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
-                # make extra right margin for outside annotation
-                plt.subplots_adjust(top=0.85, right=0.80)
+                plt.subplots_adjust(top=0.85, right=0.78)
 
                 trend_color = "tab:green" if slope_h >= 0 else "tab:red"
-                ax2.plot(hc.index, hc, label="Intraday")
-                ax2.plot(hc.index, he, "--", label="20 EMA")
-                ax2.plot(hc.index, trend_h, "--", label=f"Trend (m={fmt_slope(slope_h)}/bar)", linewidth=2, color=trend_color)
+                ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
+
+                # core intraday price
+                ax2.plot(hc.index, hc, label="Price", linewidth=1.2)
+                ax2.plot(hc.index, he, "--", alpha=0.45, linewidth=0.9, label="_nolegend_")
+                ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=1.6, color=trend_color, alpha=0.75)
 
                 if show_hma and not hma_h.dropna().empty:
-                    ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
+                    ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.3, alpha=0.9, label="HMA")
 
                 if show_ichi and not kijun_h.dropna().empty:
-                    ax2.plot(kijun_h.index, kijun_h.values, "-", linewidth=1.8, color="black", label=f"Ichimoku Kijun ({ichi_base})")
+                    ax2.plot(kijun_h.index, kijun_h.values, "-", linewidth=1.1, color="black", alpha=0.55, label="Kijun")
 
                 if show_bbands and not bb_up_h.dropna().empty and not bb_lo_h.dropna().empty:
-                    ax2.fill_between(hc.index, bb_lo_h, bb_up_h, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
-                    ax2.plot(bb_mid_h.index, bb_mid_h.values, "-", linewidth=1.1, label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
-                    ax2.plot(bb_up_h.index, bb_up_h.values, ":", linewidth=1.0)
-                    ax2.plot(bb_lo_h.index, bb_lo_h.values, ":", linewidth=1.0)
+                    ax2.fill_between(hc.index, bb_lo_h, bb_up_h, alpha=0.04, label="_nolegend_")
+                    ax2.plot(bb_mid_h.index, bb_mid_h.values, "-", linewidth=0.8, alpha=0.3, label="_nolegend_")
 
                 res_val = sup_val = px_val = np.nan
                 try:
@@ -1021,8 +1092,8 @@ with tab1:
                     pass
 
                 if np.isfinite(res_val) and np.isfinite(sup_val):
-                    ax2.hlines(res_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:red",   linestyles="-", linewidth=1.6, label="Resistance")
-                    ax2.hlines(sup_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
+                    ax2.hlines(res_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:red",   linestyles="-", linewidth=1.2, alpha=0.6, label="_nolegend_")
+                    ax2.hlines(sup_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:green", linestyles="-", linewidth=1.2, alpha=0.6, label="_nolegend_")
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
@@ -1034,25 +1105,15 @@ with tab1:
                 if band_sig_h is not None:
                     annotate_signal_box(ax2, band_sig_h["time"], band_sig_h["price"], band_sig_h["side"], note=band_sig_h.get("note",""))
 
-                # HMA(55) alert → outside label "Get Ready to Take Profit"
+                # HMA(55) alert → outside label
                 hma55_evt_h = detect_hma_trend_reversal(hc, hma55_h, trend_slope=m_h, confirm_bars=rev_bars_confirm)
                 if hma55_evt_h is not None:
                     annotate_take_profit(ax2, hma55_evt_h["time"], hma55_evt_h["price"], hma55_evt_h["side"])
 
-                # TREND-AWARE instruction text
-                instr_txt = format_trade_instruction(trend_slope=m_global, buy_val=sup_val, sell_val=res_val, close_val=px_val, symbol=sel)
+                # OUTSIDE instruction ribbons (Hourly) — use GLOBAL daily slope for order
+                draw_instruction_ribbons(ax2, m_global, sup_val, res_val, px_val, sel)
 
-                title_sig = ""
-                if 'band_sig_h' in locals() and band_sig_h is not None:
-                    title_sig = f" — Latest Signal: {band_sig_h['side']} @ {fmt_price_val(band_sig_h['price'])}"
-
-                ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)} — {instr_txt}{title_sig}")
-
-                ax2.text(0.01, 0.965, f"Instruction uses GLOBAL (Daily) slope: {fmt_slope(m_global)}/bar",
-                         transform=ax2.transAxes, ha="left", va="top",
-                         fontsize=9, color="black",
-                         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-
+                # footer stats
                 if np.isfinite(px_val):
                     nbb_txt = ""
                     try:
@@ -1064,17 +1125,17 @@ with tab1:
                         pass
                     ax2.text(0.99, 0.02, f"Current price: {fmt_price_val(px_val)}{nbb_txt}",
                              transform=ax2.transAxes, ha="right", va="bottom",
-                             fontsize=11, fontweight="bold",
+                             fontsize=10, fontweight="bold",
                              bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
                 if not st_line_intr.dropna().empty:
-                    ax2.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
+                    ax2.plot(st_line_intr.index, st_line_intr.values, "-", alpha=0.6, label="_nolegend_")
                 if not yhat_h.empty:
                     slope_col_h = "tab:green" if m_h >= 0 else "tab:red"
-                    ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2, color=slope_col_h, label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
+                    ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=1.8, color=slope_col_h, alpha=0.8, label="Slope Fit")
                 if not upper_h.empty and not lower_h.empty:
-                    ax2.plot(upper_h.index, upper_h.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Slope +2σ")
-                    ax2.plot(lower_h.index, lower_h.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Slope -2σ")
+                    ax2.plot(upper_h.index, upper_h.values, ":", linewidth=1.5, color="black", alpha=0.5, label="_nolegend_")
+                    ax2.plot(lower_h.index, lower_h.values, ":", linewidth=1.5, color="black", alpha=0.5, label="_nolegend_")
 
                 if mode == "Forex" and show_sessions_pst and not hc.empty:
                     sess = compute_session_lines(hc.index)
@@ -1083,12 +1144,13 @@ with tab1:
                 if show_fibs and not hc.empty:
                     fibs_h = fibonacci_levels(hc)
                     for lbl, y in fibs_h.items():
-                        ax2.hlines(y, xmin=hc.index[0], xmax=hc.index[-1], linestyles="dotted", linewidth=1)
+                        ax2.hlines(y, xmin=hc.index[0], xmax=hc.index[-1], linestyles="dotted", linewidth=0.9, alpha=0.35)
                     for lbl, y in fibs_h.items():
-                        ax2.text(hc.index[-1], y, f" {lbl}", va="center")
+                        ax2.text(hc.index[-1], y, f" {lbl}", va="center", fontsize=8, alpha=0.6)
 
+                _simplify_axes(ax2)
                 ax2.set_xlabel("Time (PST)")
-                ax2.legend(loc="lower left", framealpha=0.5)
+                ax2.legend(loc="lower left", framealpha=0.4)
                 st.pyplot(fig2)
 
         # News table
@@ -1105,7 +1167,6 @@ with tab1:
         st.write(pd.DataFrame({"Forecast": st.session_state.fc_vals,
                                "Lower":    st.session_state.fc_ci.iloc[:,0],
                                "Upper":    st.session_state.fc_ci.iloc[:,1]}, index=st.session_state.fc_idx))
-
 # --- Tab 2: Enhanced Forecast ---
 with tab2:
     st.header("Enhanced Forecast")
@@ -1154,36 +1215,28 @@ with tab2:
             hma55_evt_d2 = detect_hma_trend_reversal(df_show, hma55_d2, trend_slope=m_d, confirm_bars=rev_bars_confirm)
 
             fig, ax = plt.subplots(figsize=(14, 6))
-            # make extra right margin for outside annotation
-            plt.subplots_adjust(top=0.92, right=0.80)
+            plt.subplots_adjust(top=0.92, right=0.78)
 
-            ax.set_title(f"{st.session_state.ticker} Daily — {daily_view} — Price, 30 EMA, 30 S/R, Slope")
-            ax.plot(df_show, label="History")
-            ax.plot(ema30_show, "--", label="30 EMA")
-            ax.plot(res30_show, ":", label="30 Resistance")
-            ax.plot(sup30_show, ":", label="30 Support")
-
-            if show_hma and not hma_d2_full.dropna().empty:
-                ax.plot(hma_d2_full.index, hma_d2_full.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
-            if show_ichi and not kijun_d2_show.dropna().empty:
-                ax.plot(kijun_d2_show.index, kijun_d2_show.values, "-", linewidth=1.8, color="black", label=f"Ichimoku Kijun ({ichi_base})")
+            ax.set_title(f"{st.session_state.ticker} Daily — {daily_view}")
+            ax.plot(df_show.index, df_show.values, label="Price", linewidth=1.4)
+            ax.plot(ema30_show.index, ema30_show.values, "--", alpha=0.4, linewidth=1.0, label="_nolegend_")
 
             if show_bbands and not bb_up_d2_show.dropna().empty and not bb_lo_d2_show.dropna().empty:
-                ax.fill_between(df_show.index, bb_lo_d2_show, bb_up_d2_show, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
-                ax.plot(bb_mid_d2_show.index, bb_mid_d2_show.values, "-", linewidth=1.1, label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
-                ax.plot(bb_up_d2_show.index, bb_up_d2_show.values, ":", linewidth=1.0)
-                ax.plot(bb_lo_d2_show.index, bb_lo_d2_show.values, ":", linewidth=1.0)
+                ax.fill_between(df_show.index, bb_lo_d2_show, bb_up_d2_show, alpha=0.04, label="_nolegend_")
+                ax.plot(bb_mid_d2_show.index, bb_mid_d2_show.values, "-", linewidth=0.9, alpha=0.35, label="_nolegend_")
+
+            if show_ichi and not kijun_d2_show.dropna().empty:
+                ax.plot(kijun_d2_show.index, kijun_d2_show.values, "-", linewidth=1.2, color="black",
+                        alpha=0.55, label="Kijun")
 
             if not yhat_d_show.empty:
                 slope_col_d2 = "tab:green" if m_d >= 0 else "tab:red"
-                ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2, color=slope_col_d2,
-                        label=f"Daily Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
+                ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2.0, color=slope_col_d2, label="Trend")
             if not up_d_show.empty and not lo_d_show.empty:
-                ax.plot(up_d_show.index, up_d_show.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Daily Trend +2σ")
-            if not lo_d_show.empty:
-                ax.plot(lo_d_show.index, lo_d_show.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Daily Trend -2σ")
+                ax.plot(up_d_show.index, up_d_show.values, ":", linewidth=1.8, color="black", alpha=0.6, label="_nolegend_")
+                ax.plot(lo_d_show.index, lo_d_show.values, ":", linewidth=1.8, color="black", alpha=0.6, label="_nolegend_")
             if len(df_show) > 1:
-                draw_trend_direction_line(ax, df_show, label_prefix="Trend")
+                draw_trend_direction_line(ax, df_show, label_prefix="")
 
             # Band signal (Daily)
             band_sig_d2 = last_band_reversal_signal(price=df_show, band_upper=up_d_show, band_lower=lo_d_show,
@@ -1195,12 +1248,22 @@ with tab2:
             if hma55_evt_d2 is not None:
                 annotate_take_profit(ax, hma55_evt_d2["time"], hma55_evt_d2["price"], hma55_evt_d2["side"])
 
-            ax.set_ylabel("Price")
+            # OUTSIDE instruction ribbons (Daily)
+            try:
+                sup_val_d2 = float(sup30_show.iloc[-1])
+                res_val_d2 = float(res30_show.iloc[-1])
+                px_val_d2  = float(df_show.iloc[-1])
+                draw_instruction_ribbons(ax, m_d, sup_val_d2, res_val_d2, px_val_d2, st.session_state.ticker)
+            except Exception:
+                pass
+
             ax.text(0.50, 0.02, f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}",
                     transform=ax.transAxes, ha="center", va="bottom",
                     fontsize=9, color="black",
                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-            ax.legend(loc="lower left", framealpha=0.5)
+            _simplify_axes(ax)
+            ax.set_ylabel("Price")
+            ax.legend(loc="lower left", framealpha=0.4)
             st.pyplot(fig)
 
         if view in ("Intraday","Both"):
@@ -1510,28 +1573,29 @@ with tab6:
             yhat_all, upper_all, lower_all, m_all, r2_all = regression_with_band(s, lookback=len(s))
 
             fig, ax = plt.subplots(figsize=(14,5))
+            plt.subplots_adjust(right=0.78)
             ax.set_title(f"{sym} — Last {years} Years — Price + 252d S/R + Trend")
-            ax.plot(s.index, s.values, label="Close")
+            ax.plot(s.index, s.values, label="Close", linewidth=1.4)
             if np.isfinite(res_last) and np.isfinite(sup_last):
-                ax.hlines(res_last, xmin=s.index[0], xmax=s.index[-1], colors="tab:red",   linestyles="-", linewidth=1.6, label="Resistance (252d)")
-                ax.hlines(sup_last, xmin=s.index[0], xmax=s.index[-1], colors="tab:green", linestyles="-", linewidth=1.6, label="Support (252d)")
+                ax.hlines(res_last, xmin=s.index[0], xmax=s.index[-1], colors="tab:red",   linestyles="-", linewidth=1.3, alpha=0.6, label="_nolegend_")
+                ax.hlines(sup_last, xmin=s.index[0], xmax=s.index[-1], colors="tab:green", linestyles="-", linewidth=1.3, alpha=0.6, label="_nolegend_")
                 label_on_left(ax, res_last, f"R {fmt_price_val(res_last)}", color="tab:red")
                 label_on_left(ax, sup_last, f"S {fmt_price_val(sup_last)}", color="tab:green")
             if not yhat_all.empty:
                 col_all = "tab:green" if m_all >= 0 else "tab:red"
                 ax.plot(yhat_all.index, yhat_all.values, "--",
-                        linewidth=2, color=col_all, label=f"Trend (m={fmt_slope(m_all)}/bar)")
+                        linewidth=2, color=col_all, label="Trend")
             if not upper_all.empty and not lower_all.empty:
-                ax.plot(upper_all.index, upper_all.values, ":", linewidth=2.0,
-                        color="black", alpha=0.85, label="Trend +2σ")
-                ax.plot(lower_all.index, lower_all.values, ":", linewidth=2.0,
-                        color="black", alpha=0.85, label="Trend -2σ")
+                ax.plot(upper_all.index, upper_all.values, ":", linewidth=1.8,
+                        color="black", alpha=0.6, label="_nolegend_")
+                ax.plot(lower_all.index, lower_all.values, ":", linewidth=1.8,
+                        color="black", alpha=0.6, label="_nolegend_")
             px_now = _safe_last_float(s)
             if np.isfinite(px_now):
                 ax.text(0.99, 0.02,
                         f"Current price: {fmt_price_val(px_now)}",
                         transform=ax.transAxes, ha="right", va="bottom",
-                        fontsize=11, fontweight="bold",
+                        fontsize=10, fontweight="bold",
                         bbox=dict(boxstyle="round,pad=0.25",
                                   fc="white", ec="grey", alpha=0.7))
             ax.text(0.01, 0.02,
@@ -1545,7 +1609,8 @@ with tab6:
                     transform=ax.transAxes, ha="center", va="bottom",
                     fontsize=9, color="black",
                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+            _simplify_axes(ax)
             ax.set_xlabel("Date (PST)")
             ax.set_ylabel("Price")
-            ax.legend(loc="lower left", framealpha=0.5)
+            ax.legend(loc="lower left", framealpha=0.4)
             st.pyplot(fig)
