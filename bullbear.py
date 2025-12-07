@@ -5,7 +5,9 @@
 # Only the latest signal is shown at any time.
 # CHANGELOG (per user request):
 #   • All downward trend lines are colored red (upward = green) throughout the app.
-#   • Instruction text fixed to: "SELL → BUY • Value of Pips: …" (always this order).
+#   • Instruction text logic fixed:
+#       - Uptrend   → "BUY → SELL • Value of Pips: …"
+#       - Downtrend → "SELL → BUY • Value of Pips: …"
 
 import streamlit as st
 import pandas as pd
@@ -132,8 +134,9 @@ def format_trade_instruction(trend_slope: float,
                              close_val: float,
                              symbol: str) -> str:
     """
-    Instruction format (fixed order):
-      ▼ SELL first, then ▲ BUY, then explicit Value of Pips.
+    Instruction format (dynamic order by trend):
+      • Uptrend   (m>0): ▲ BUY first, then ▼ SELL, then Value of Pips.
+      • Downtrend (m<0): ▼ SELL first, then ▲ BUY, then Value of Pips.
       Uses the provided `sell_val` (resistance) and `buy_val` (support).
     """
     def _finite(x):
@@ -145,10 +148,29 @@ def format_trade_instruction(trend_slope: float,
     entry_buy = float(buy_val) if _finite(buy_val) else float(close_val)
     exit_sell = float(sell_val) if _finite(sell_val) else float(close_val)
 
-    text = (
-        f"▼ SELL @{fmt_price_val(exit_sell)} → ▲ BUY @{fmt_price_val(entry_buy)}"
-        f" • Value of Pips: {_diff_text(exit_sell, entry_buy, symbol)}"
-    )
+    order_buy_first = False
+    try:
+        ts = float(trend_slope)
+        if np.isfinite(ts) and ts > 0:
+            order_buy_first = True
+        elif np.isfinite(ts) and ts < 0:
+            order_buy_first = False
+        else:
+            # Neutral/undefined: default to BUY first if support < resistance
+            order_buy_first = (entry_buy <= exit_sell)
+    except Exception:
+        order_buy_first = (entry_buy <= exit_sell)
+
+    if order_buy_first:
+        text = (
+            f"▲ BUY @{fmt_price_val(entry_buy)} → ▼ SELL @{fmt_price_val(exit_sell)}"
+            f" • Value of Pips: {_diff_text(exit_sell, entry_buy, symbol)}"
+        )
+    else:
+        text = (
+            f"▼ SELL @{fmt_price_val(exit_sell)} → ▲ BUY @{fmt_price_val(entry_buy)}"
+            f" • Value of Pips: {_diff_text(exit_sell, entry_buy, symbol)}"
+        )
     return text
 
 def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
@@ -170,7 +192,6 @@ def subset_by_daily_view(obj, view_label: str):
     else:
         start = end - pd.Timedelta(days=days_map.get(view_label, 365))
     return obj.loc[(idx >= start) & (idx <= end)]
-
 # --- Sidebar config ---
 st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
@@ -270,6 +291,7 @@ else:
         'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','EURCAD=X',
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
     ]
+
 # Cache TTL = 120s
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
@@ -404,7 +426,6 @@ def compute_roc(series_like, n: int = 10) -> pd.Series:
         return pd.Series(index=s.index, dtype=float)
     roc = base.pct_change(n) * 100.0
     return roc.reindex(s.index)
-
 # RSI / Normalized RSI
 def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
@@ -520,6 +541,7 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
     color = "tab:green" if m >= 0 else "tab:red"   # downward = red
     ax.plot(s.index, yhat, "-", linewidth=2.4, color=color, label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return m
+
 # Supertrend
 def _true_range(df: pd.DataFrame):
     hl = (df["High"] - df["Low"]).abs()
@@ -649,7 +671,6 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     pctb = ((s - lower) / width).clip(0.0, 1.0)
     nbb = pctb * 2.0 - 1.0
     return mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index)
-
 # HMA + crossover helpers
 def _wma(s: pd.Series, window: int) -> pd.Series:
     s = _coerce_1d_series(s).astype(float)
@@ -841,7 +862,6 @@ def _n_consecutive_decreasing(series: pd.Series, n: int = 2) -> bool:
         return False
     deltas = np.diff(s.iloc[-(n+1):])
     return bool(np.all(deltas < 0))
-
 def overlay_ntd_sr_reversal_stars(ax,
                                   price: pd.Series,
                                   sup: pd.Series,
@@ -1026,6 +1046,7 @@ def latest_of_signals(*sigs):
     if not sigs:
         return None
     return max(sigs, key=lambda x: x['time'])
+
 # Channel-in-range helpers (for NTD visualization)
 def channel_state_series(price: pd.Series, sup: pd.Series, res: pd.Series, eps: float = 0.0) -> pd.Series:
     p = _coerce_1d_series(price)
@@ -1250,6 +1271,7 @@ def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
     now_utc = pd.Timestamp.now(tz="UTC")
     d1 = (now_utc - pd.Timedelta(days=window_days)).tz_convert(PACIFIC)
     return df[df["time"] >= d1].sort_values("time")
+
 def draw_news_markers(ax, times, ymin, ymax, label="News"):
     for t in times:
         try:
@@ -1538,7 +1560,7 @@ with tab1:
                 if latest_sig_h is not None:
                     annotate_crossover(ax2, latest_sig_h["time"], latest_sig_h["price"], latest_sig_h["side"], note=latest_sig_h.get("note",""))
 
-                # BUY/SELL instruction text (fixed SELL → BUY + pips)
+                # BUY/SELL instruction text (dynamic by trend + pips)
                 instr_txt = format_trade_instruction(
                     trend_slope=m_global,
                     buy_val=sup_val,
