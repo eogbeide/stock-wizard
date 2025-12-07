@@ -1,13 +1,7 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
-# UPDATED — per request:
-#   • BUY/SELL instruction at the top of the intraday chart now keys off the
-#     GLOBAL (Daily) slope sign:
-#         - Uptrend (Daily slope > 0): "BUY @Support → SELL @Resistance • pips"
-#         - Downtrend (Daily slope < 0): "SELL @Resistance → BUY @Support • pips"
-#   • Intraday dashed Trend line color now keys off the GLOBAL (Daily) slope sign:
-#         - Uptrend: green   • Downtrend: red
-#   • NEW: annotate_ntd_price_signals adds extra BUY/SELL markers to the price chart,
-#          derived from NTD/NPX cross behavior (better entries in trends).
+# UPDATED — NTD-derived price markers now prefer those nearest the regression ±2σ band:
+#   • Uptrend  → choose signals nearest the LOWER band (good dips to buy)
+#   • Downtrend→ choose signals nearest the UPPER band (good pops to sell)
 
 import streamlit as st
 import pandas as pd
@@ -1079,30 +1073,37 @@ def _has_volume_to_plot(vol: pd.Series) -> bool:
     vmin = float(np.nanmin(arr))
     return (np.isfinite(vmax) and vmax > 0.0) or (np.isfinite(vmin) and vmin < 0.0)
 
-# --- NEW: Extra BUY/SELL markers on PRICE derived from NTD/NPX behavior ---
+# --- UPDATED: Extra BUY/SELL markers on PRICE derived from NTD/NPX,
+#              filtered to be closest to the regression ±2σ band per trend direction.
 def annotate_ntd_price_signals(ax, price: pd.Series, ntd: pd.Series, npx: pd.Series = None,
-                               trend_slope: float = 0.0, upper: float = 0.75, lower: float = -0.75,
+                               trend_slope: float = 0.0,
+                               upper: float = 0.75, lower: float = -0.75,
+                               band_upper: pd.Series = None, band_lower: pd.Series = None,
                                show_limit: int = 6):
     """
-    Adds extra BUY/SELL markers to the **price chart**:
-      • Uptrend  (slope>0): mark when NTD crosses up through 0 or -0.75; also when NPX crosses up over NTD.
-      • Downtrend(slope<0): mark when NTD crosses down through 0 or +0.75; also when NPX crosses down below NTD.
+    Adds extra BUY/SELL markers to the **price chart** derived from NTD/NPX behavior.
+    Selection is biased toward bars **closest** to the regression ±2σ band:
+      • Uptrend  → pick indices nearest LOWER band (buy dips)
+      • Downtrend→ pick indices nearest UPPER band (sell pops)
+    If bands are not provided, falls back to the previous behavior (most recent signals).
     """
     p = _coerce_1d_series(price)
     s = _coerce_1d_series(ntd).reindex(p.index)
     if p.dropna().empty or s.dropna().empty or not np.isfinite(trend_slope):
         return
+
     uptrend = trend_slope > 0
     downtrend = trend_slope < 0
 
+    # 1) Build candidate indices based on NTD / NPX events
     idxs = []
     if uptrend:
         c0 = (s >= 0.0) & (s.shift(1) < 0.0)
-        cl = (s >= lower) & (s.shift(1) < lower)
+        cl = (s >= lower) & (s.shift(1) < lower)     # rising above -0.75
         idxs += list(c0[c0].index) + list(cl[cl].index)
     if downtrend:
         c0d = (s <= 0.0) & (s.shift(1) > 0.0)
-        cHd = (s <= upper) & (s.shift(1) > upper)
+        cHd = (s <= upper) & (s.shift(1) > upper)    # falling below +0.75
         idxs += list(c0d[c0d].index) + list(cHd[cHd].index)
 
     if npx is not None:
@@ -1116,8 +1117,31 @@ def annotate_ntd_price_signals(ax, price: pd.Series, ntd: pd.Series, npx: pd.Ser
 
     if not idxs:
         return
-    idxs = sorted(pd.Index(idxs).unique())[-show_limit:]  # limit most recent to reduce clutter
 
+    # 2) If regression bands are available, keep the ones CLOSEST to the relevant band
+    idxs = sorted(pd.Index(idxs).unique())
+    target_band = None
+    if uptrend and band_lower is not None:
+        target_band = _coerce_1d_series(band_lower).reindex(p.index)
+    elif downtrend and band_upper is not None:
+        target_band = _coerce_1d_series(band_upper).reindex(p.index)
+
+    if target_band is not None and not target_band.dropna().empty:
+        pairs = []
+        for t in idxs:
+            if t in p.index and pd.notna(p.loc[t]) and t in target_band.index and pd.notna(target_band.loc[t]):
+                dist = abs(float(p.loc[t]) - float(target_band.loc[t]))
+                pairs.append((t, dist))
+        if pairs:
+            pairs.sort(key=lambda x: x[1])  # ascending by distance
+            idxs = [t for t, _ in pairs[:show_limit]]
+        else:
+            idxs = idxs[-show_limit:]
+    else:
+        # fallback: most recent N indices
+        idxs = idxs[-show_limit:]
+
+    # 3) Plot markers on price using selected indices
     for t in idxs:
         if t in p.index and pd.notna(p.loc[t]):
             px = float(p.loc[t])
@@ -1430,8 +1454,11 @@ with tab1:
             if sr_sig_d is not None:
                 annotate_crossover(ax, sr_sig_d["time"], sr_sig_d["price"], sr_sig_d["side"])
 
-            # NEW: extra NTD-driven markers on the PRICE chart
-            annotate_ntd_price_signals(ax, df_show, ntd=ntd_d_show, npx=npx_d_show, trend_slope=m_d)
+            # UPDATED: extra NTD-driven markers on the PRICE chart
+            annotate_ntd_price_signals(
+                ax, df_show, ntd=ntd_d_show, npx=npx_d_show, trend_slope=m_d,
+                band_upper=upper_d_show, band_lower=lower_d_show
+            )
 
             ax.set_ylabel("Price")
             ax.text(0.50, 0.02,
@@ -1555,10 +1582,13 @@ with tab1:
                 if sr_sig_h is not None:
                     annotate_crossover(ax2, sr_sig_h["time"], sr_sig_h["price"], sr_sig_h["side"])
 
-                # NEW: extra NTD-driven markers on price (hourly uses GLOBAL slope)
+                # UPDATED: extra NTD-driven markers on price (hourly uses GLOBAL slope for bias)
                 ntd_h_sig = compute_normalized_trend(hc, window=ntd_window)
                 npx_h_sig = compute_normalized_price(hc, window=ntd_window) if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
-                annotate_ntd_price_signals(ax2, hc, ntd=ntd_h_sig, npx=npx_h_sig, trend_slope=m_global)
+                annotate_ntd_price_signals(
+                    ax2, hc, ntd=ntd_h_sig, npx=npx_h_sig, trend_slope=m_global,
+                    band_upper=upper_h, band_lower=lower_h
+                )
 
                 # BUY/SELL instruction text
                 instr_txt = format_trade_instruction(
