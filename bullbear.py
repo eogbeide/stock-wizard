@@ -3,7 +3,7 @@
 #   • Uptrend  → choose signals nearest the LOWER band (good dips to buy)
 #   • Downtrend→ choose signals nearest the UPPER band (good pops to sell)
 
-import streamlit as st
+import streamlit as std
 import pandas as pd
 import numpy as np
 import yfinance as yf
