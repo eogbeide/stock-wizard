@@ -13,7 +13,9 @@
 #   • Fibonacci default = ON (hourly only).
 #   • Fixed SARIMAX crash when history is empty/too short.
 #   • Fixed NameError: included Supertrend/PSAR/Ichimoku/BB helpers.
+#   • Fixed hourly ValueError by robust linear fit fallback.
 #   • Signal annotations are arrow callouts (non-overlapping offsets for readability).
+#   • HMA BUY shown only in uptrend; HMA SELL only in downtrend (gated by slope sign).
 
 import streamlit as st
 import pandas as pd
@@ -845,7 +847,7 @@ with tab1:
             bb_up_d_show  = bb_up_d.reindex(df_show.index)
             bb_lo_d_show  = bb_lo_d.reindex(df_show.index)
 
-            # HMA lines & HMA(55) signal
+            # HMA lines & HMA(55) signal (gated by trend sign)
             hma_d_full = compute_hma(df, period=hma_period).reindex(df_show.index)
             hma55_d = compute_hma(df, period=55).reindex(df_show.index)
             hma55_evt_d = detect_hma_trend_reversal(df_show, hma55_d, trend_slope=m_d, confirm_bars=rev_bars_confirm)
@@ -890,7 +892,7 @@ with tab1:
             if band_sig_d is not None:
                 annotate_signal_box(ax, band_sig_d["time"], band_sig_d["price"], band_sig_d["side"], note=band_sig_d.get("note",""))
 
-            # HMA(55) alert annotation (trend-valid)
+            # HMA(55) alert annotation (trend-valid only)
             if hma55_evt_d is not None:
                 annotate_signal_box(ax, hma55_evt_d["time"], hma55_evt_d["price"], hma55_evt_d["side"], note="HMA55")
 
@@ -908,11 +910,25 @@ with tab1:
             if intraday is None or intraday.empty or "Close" not in intraday:
                 st.warning("No intraday data available.")
             else:
-                hc = intraday["Close"].ffill()
+                hc = intraday["Close"].astype(float).ffill()
+                # Robust linear fit to avoid ValueError on degenerate/short series
+                xh = np.arange(len(hc), dtype=float)
+                if len(hc.dropna()) >= 2:
+                    try:
+                        coef = np.polyfit(xh, hc.values.astype(float), 1)
+                        slope_h = float(coef[0])
+                        intercept_h = float(coef[1])
+                        trend_h = slope_h * xh + intercept_h
+                    except Exception:
+                        slope_h = 0.0
+                        intercept_h = float(hc.iloc[-1]) if len(hc) else 0.0
+                        trend_h = np.full_like(xh, intercept_h, dtype=float)
+                else:
+                    slope_h = 0.0
+                    intercept_h = float(hc.iloc[-1]) if len(hc) else 0.0
+                    trend_h = np.full_like(xh, intercept_h, dtype=float)
+
                 he = hc.ewm(span=20).mean()
-                xh = np.arange(len(hc))
-                slope_h, intercept_h = np.polyfit(xh, hc.values, 1)
-                trend_h = slope_h * xh + intercept_h
                 res_h = hc.rolling(sr_lb_hourly, min_periods=1).max()
                 sup_h = hc.rolling(sr_lb_hourly, min_periods=1).min()
                 st_intraday = compute_supertrend(intraday, atr_period=atr_period, atr_mult=atr_mult)
@@ -931,7 +947,7 @@ with tab1:
                 psar_h_df = compute_psar_from_ohlc(intraday, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
                 psar_h_df = psar_h_df.reindex(hc.index)
 
-                # Hourly regression slope & bands
+                # Hourly regression slope & bands (for signals)
                 yhat_h, upper_h, lower_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
                 slope_sig_h = m_h if np.isfinite(m_h) else slope_h
 
@@ -982,7 +998,7 @@ with tab1:
                 if band_sig_h is not None:
                     annotate_signal_box(ax2, band_sig_h["time"], band_sig_h["price"], band_sig_h["side"], note=band_sig_h.get("note",""))
 
-                # HMA(55) alert annotation (trend-valid)
+                # HMA(55) alert annotation (trend-valid; BUY only in uptrend, SELL only in downtrend)
                 hma55_evt_h = detect_hma_trend_reversal(hc, hma55_h, trend_slope=m_h, confirm_bars=rev_bars_confirm)
                 if hma55_evt_h is not None:
                     annotate_signal_box(ax2, hma55_evt_h["time"], hma55_evt_h["price"], hma55_evt_h["side"], note="HMA55")
@@ -1469,8 +1485,8 @@ with tab6:
             if not upper_all.empty and not lower_all.empty:
                 ax.plot(upper_all.index, upper_all.values, ":", linewidth=2.0,
                         color="black", alpha=0.85, label="Trend +2σ")
-            ax.plot(lower_all.index, lower_all.values, ":", linewidth=2.0,
-                    color="black", alpha=0.85, label="Trend -2σ")
+                ax.plot(lower_all.index, lower_all.values, ":", linewidth=2.0,
+                        color="black", alpha=0.85, label="Trend -2σ")
             px_now = _safe_last_float(s)
             if np.isfinite(px_now):
                 ax.text(0.99, 0.02,
