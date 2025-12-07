@@ -9,7 +9,7 @@
 #   • NEW: annotate_ntd_price_signals adds extra BUY/SELL markers to the price chart,
 #          derived from NTD/NPX cross behavior (better entries in trends).
 
-import streamlit as stv
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
