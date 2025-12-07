@@ -7,7 +7,7 @@
 #   • All downward trend lines are colored red (upward = green) throughout the app.
 #   • Instruction text fixed to: "SELL → BUY • Value of Pips: …" (always this order).
 
-import streamlit as st
+import streamlit as stv
 import pandas as pd
 import numpy as np
 import yfinance as yf
