@@ -6,11 +6,6 @@
 # CHANGELOG (per user request):
 #   • All downward trend lines are colored red (upward = green) throughout the app.
 #   • Instruction text fixed to: "SELL → BUY • Value of Pips: …" (always this order).
-#   • NEW: During a green (up) price trendline, whenever the NTD panel shows green triangles
-#          at +0.75 and 0.00 (NTD crossing upward), write corresponding BUY signals on the
-#          Price Chart. During a red (down) price trendline, whenever the NTD panel shows red
-#          triangles at -0.75 and 0.00 (NTD crossing downward), write corresponding SELL
-#          signals on the Price Chart.
 
 import streamlit as st
 import pandas as pd
@@ -343,6 +338,7 @@ def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
     R1 = 2 * P - L; S1 = 2 * P - H
     R2 = P + (H - L); S2 = P - (H - L)
     return {"P": P, "R1": R1, "S1": S1, "R2": R2, "S2": S2}
+
 def slope_line(series_like, lookback: int):
     s = _coerce_1d_series(series_like).dropna()
     if s.shape[0] < 2:
@@ -629,7 +625,6 @@ def ichimoku_lines(high: pd.Series, low: pd.Series, close: pd.Series,
     span_b = span_b_raw.shift(base) if shift_cloud else span_b_raw
     chikou = C.shift(-base)
     return tenkan, kijun, span_a, span_b, chikou
-
 # Bollinger Bands + normalized %B / NBB
 def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_ema: bool = False):
     s = _coerce_1d_series(close).astype(float)
@@ -794,86 +789,35 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = 
             ax.scatter(up_idx, ntd.loc[up_idx], marker="o", s=40, color="tab:green", zorder=9, label="Price↑NTD")
         if len(dn_idx):
             ax.scatter(dn_idx, ntd.loc[dn_idx], marker="x", s=60, color="tab:red",   zorder=9, label="Price↓NTD")
-# --- NTD triangles gated by PRICE trend sign (visual guide + NEW thresholds) ---
+
+# --- NTD triangles gated by PRICE trend sign (visual guide) ---
 def overlay_ntd_triangles_by_trend(ax, ntd: pd.Series, trend_slope: float, upper: float = 0.75, lower: float = -0.75):
-    """
-    Draw NTD direction triangles conditioned on the PRICE trend slope:
-      • Uptrend (green): show upward triangles when NTD crosses ↑ through 0.00 and ↑ through +0.75
-      • Downtrend (red): show downward triangles when NTD crosses ↓ through 0.00 and ↓ through -0.75
-    """
     s = _coerce_1d_series(ntd).dropna()
     if s.empty or not np.isfinite(trend_slope):
         return
     uptrend = trend_slope > 0
     downtrend = trend_slope < 0
 
-    # Upward crosses
-    cross_up0  = (s >= 0.0) & (s.shift(1) < 0.0)
-    cross_uphi = (s >= upper) & (s.shift(1) < upper)
+    cross_up0 = (s >= 0.0) & (s.shift(1) < 0.0)
+    cross_dn0 = (s <= 0.0) & (s.shift(1) > 0.0)
+    idx_up0 = list(cross_up0[cross_up0].index)
+    idx_dn0 = list(cross_dn0[cross_dn0].index)
 
-    # Downward crosses
-    cross_dn0  = (s <= 0.0) & (s.shift(1) > 0.0)
-    cross_dnlo = (s <= lower) & (s.shift(1) > lower)
-
-    idx_up0  = list(cross_up0[cross_up0].index)
-    idx_uphi = list(cross_uphi[cross_uphi].index)
-    idx_dn0  = list(cross_dn0[cross_dn0].index)
-    idx_dnlo = list(cross_dnlo[cross_dnlo].index)
+    cross_out_hi = (s <= upper) & (s.shift(1) > upper)  # falling back below +0.75
+    cross_out_lo = (s >= lower) & (s.shift(1) < lower)  # rising back above -0.75
+    idx_hi = list(cross_out_hi[cross_out_hi].index)
+    idx_lo = list(cross_out_lo[cross_out_lo].index)
 
     if uptrend:
         if idx_up0:
-            ax.scatter(idx_up0, [0.0]*len(idx_up0), marker="^", s=95, color="tab:green", zorder=10, label="NTD 0.00↑")
-        if idx_uphi:
-            ax.scatter(idx_uphi, s.loc[idx_uphi], marker="^", s=85, color="tab:green", zorder=10, label="NTD +0.75↑")
+            ax.scatter(idx_up0, [0.0]*len(idx_up0), marker="^", s=95, color="tab:green", zorder=10, label="NTD 0↑")
+        if idx_lo:
+            ax.scatter(idx_lo, s.loc[idx_lo], marker="^", s=85, color="tab:green", zorder=10, label="NTD > -0.75")
     if downtrend:
         if idx_dn0:
-            ax.scatter(idx_dn0, [0.0]*len(idx_dn0), marker="v", s=95, color="tab:red", zorder=10, label="NTD 0.00↓")
-        if idx_dnlo:
-            ax.scatter(idx_dnlo, s.loc[idx_dnlo], marker="v", s=85, color="tab:red", zorder=10, label="NTD -0.75↓")
-
-# --- NEW: Convert NTD triangles into price-chart trade signals ---
-def ntd_trade_events(ntd: pd.Series, trend_slope: float, upper: float = 0.75, lower: float = -0.75):
-    """
-    Returns a list of (timestamp, side, note) based on NTD threshold crosses given trend direction:
-      • Uptrend  → BUY on NTD crossing ↑ 0.00 and ↑ +0.75
-      • Downtrend→ SELL on NTD crossing ↓ 0.00 and ↓ -0.75
-    """
-    s = _coerce_1d_series(ntd).dropna()
-    if s.empty or not np.isfinite(trend_slope) or trend_slope == 0:
-        return []
-
-    events = []
-    # Cross definitions (same as overlay)
-    cross_up0  = (s >= 0.0) & (s.shift(1) < 0.0)
-    cross_uphi = (s >= upper) & (s.shift(1) < upper)
-    cross_dn0  = (s <= 0.0) & (s.shift(1) > 0.0)
-    cross_dnlo = (s <= lower) & (s.shift(1) > lower)
-
-    if trend_slope > 0:
-        for t in list(cross_up0[cross_up0].index):
-            events.append((t, "BUY", "NTD 0.00↑"))
-        for t in list(cross_uphi[cross_uphi].index):
-            events.append((t, "BUY", "NTD +0.75↑"))
-    elif trend_slope < 0:
-        for t in list(cross_dn0[cross_dn0].index):
-            events.append((t, "SELL", "NTD 0.00↓"))
-        for t in list(cross_dnlo[cross_dnlo].index):
-            events.append((t, "SELL", "NTD -0.75↓"))
-
-    return events
-
-def annotate_signals_from_ntd_on_price(ax, price: pd.Series, ntd: pd.Series,
-                                       trend_slope: float, upper: float = 0.75, lower: float = -0.75):
-    """
-    On the price chart `ax`, annotate BUY/SELL signals at times when NTD triangles occur per trend direction.
-    """
-    p = _coerce_1d_series(price)
-    evts = ntd_trade_events(ntd, trend_slope, upper=upper, lower=lower)
-    if not evts or p.empty:
-        return
-    for (t, side, note) in evts:
-        if (t in p.index) and pd.notna(p.loc[t]):
-            annotate_crossover(ax, t, float(p.loc[t]), side, note=note)
+            ax.scatter(idx_dn0, [0.0]*len(idx_dn0), marker="v", s=95, color="tab:red", zorder=10, label="NTD 0↓")
+        if idx_hi:
+            ax.scatter(idx_hi, s.loc[idx_hi], marker="v", s=85, color="tab:red", zorder=10, label="NTD < +0.75")
 
 # --- Reversal helpers for NTD panel stars ---
 def _n_consecutive_increasing(series: pd.Series, n: int = 2) -> bool:
@@ -1007,7 +951,6 @@ def last_band_reversal_signal(price: pd.Series,
         if prev_near_upper and rolled_below and going_down:
             return {"time": t0, "price": c0, "side": "SELL", "note": "Band REV"}
     return None
-
 # Channel-in-range helpers (for NTD visualization)
 def channel_state_series(price: pd.Series, sup: pd.Series, res: pd.Series, eps: float = 0.0) -> pd.Series:
     p = _coerce_1d_series(price)
@@ -1176,6 +1119,7 @@ def session_markers_for_index(idx: pd.DatetimeIndex, session_tz, open_hr: int, c
         if lo <= dt_close_pst <= hi:
             closes.append(dt_close_pst)
     return opens, closes
+
 def compute_session_lines(idx: pd.DatetimeIndex):
     ldn_open, ldn_close = session_markers_for_index(idx, LDN_TZ, 8, 17)
     ny_open, ny_close   = session_markers_for_index(idx, NY_TZ,  8, 17)
@@ -1300,10 +1244,7 @@ with tab1:
             # Trendline with ±2σ band and R² (Daily)
             yhat_d, upper_d, lower_d, m_d, r2_d = regression_with_band(df, slope_lb_daily)
 
-            # NTD for panel (respect toggle) and for price-signal mapping (always compute)
             ntd_d = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
-            ntd_d_for_sig = compute_normalized_trend(df, window=ntd_window)
-
             npx_d_full = compute_normalized_price(df, window=ntd_window) if show_npx_ntd else pd.Series(index=df.index, dtype=float)
 
             kijun_d = pd.Series(index=df.index, dtype=float)
@@ -1322,7 +1263,6 @@ with tab1:
             upper_d_show = upper_d.reindex(df_show.index) if not upper_d.empty else upper_d
             lower_d_show = lower_d.reindex(df_show.index) if not lower_d.empty else lower_d
             ntd_d_show  = ntd_d.reindex(df_show.index)
-            ntd_d_for_sig_show = ntd_d_for_sig.reindex(df_show.index)
             npx_d_show  = npx_d_full.reindex(df_show.index)
             kijun_d_show = kijun_d.reindex(df_show.index).ffill().bfill()
 
@@ -1384,9 +1324,6 @@ with tab1:
             )
             if band_sig_d is not None:
                 annotate_crossover(ax, band_sig_d["time"], band_sig_d["price"], band_sig_d["side"], note=band_sig_d.get("note",""))
-
-            # NEW: Annotate BUY/SELL signals on price from NTD triangle events
-            annotate_signals_from_ntd_on_price(ax, df_show, ntd_d_for_sig_show, trend_slope=m_d, upper=0.75, lower=-0.75)
 
             ax.set_ylabel("Price")
             ax.text(0.50, 0.02,
@@ -1465,9 +1402,6 @@ with tab1:
                 except Exception:
                     m_global = slope_sig_h
 
-                # Compute NTD for mapping signals on price (always)
-                ntd_h_for_sig = compute_normalized_trend(hc, window=ntd_window)
-
                 fig2, ax2 = plt.subplots(figsize=(14,4))
                 plt.subplots_adjust(top=0.85, right=0.93)
 
@@ -1489,8 +1423,6 @@ with tab1:
                     ax2.plot(bb_mid_h.index, bb_mid_h.values, "-", linewidth=1.1,
                              label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
                     ax2.plot(bb_up_h.index, bb_up_h.values, ":", linewidth=1.0)
-                    ax2.plot(bb_lo_h.index, bb_lo_h.index, ":", linewidth=1.0)  # (typo will be corrected below)
-                    # Corrected lower band plot
                     ax2.plot(bb_lo_h.index, bb_lo_h.values, ":", linewidth=1.0)
 
                 res_val = sup_val = px_val = np.nan
@@ -1516,9 +1448,6 @@ with tab1:
                 )
                 if band_sig_h is not None:
                     annotate_crossover(ax2, band_sig_h["time"], band_sig_h["price"], band_sig_h["side"], note=band_sig_h.get("note",""))
-
-                # NEW: Annotate BUY/SELL signals on price from NTD triangle events (Hourly)
-                annotate_signals_from_ntd_on_price(ax2, hc, ntd_h_for_sig, trend_slope=m_h, upper=0.75, lower=-0.75)
 
                 # BUY/SELL instruction text (fixed SELL → BUY + pips)
                 instr_txt = format_trade_instruction(
@@ -1743,7 +1672,6 @@ with tab2:
             yhat_d, upper_d, lower_d, m_d, r2_d = regression_with_band(df, slope_lb_daily)
 
             ntd_d2 = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
-            ntd_d2_for_sig = compute_normalized_trend(df, window=ntd_window)
             npx_d2_full = compute_normalized_price(df, window=ntd_window) if show_npx_ntd else pd.Series(index=df.index, dtype=float)
 
             kijun_d2 = pd.Series(index=df.index, dtype=float)
@@ -1764,7 +1692,6 @@ with tab2:
             upper_d_show = upper_d.reindex(df_show.index) if not upper_d.empty else upper_d
             lower_d_show = lower_d.reindex(df_show.index) if not lower_d.empty else lower_d
             ntd_d_show = ntd_d2.reindex(df_show.index)
-            ntd_d2_for_sig_show = ntd_d2_for_sig.reindex(df_show.index)
             npx_d2_show = npx_d2_full.reindex(df_show.index)
             kijun_d2_show = kijun_d2.reindex(df_show.index).ffill().bfill()
             bb_mid_d2_show = bb_mid_d2.reindex(df_show.index)
@@ -1815,9 +1742,6 @@ with tab2:
             )
             if band_sig_d2 is not None:
                 annotate_crossover(ax, band_sig_d2["time"], band_sig_d2["price"], band_sig_d2["side"], note=band_sig_d2.get("note",""))
-
-            # NEW: annotate NTD-based signals on price (Enhanced Daily view)
-            annotate_signals_from_ntd_on_price(ax, df_show, ntd_d2_for_sig_show, trend_slope=m_d, upper=0.75, lower=-0.75)
 
             ax.set_ylabel("Price")
             ax.text(0.50, 0.02,
