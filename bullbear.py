@@ -10,6 +10,7 @@
 #   • HMA(55) alert added to price charts; signals gated by trend + reversal confirmation.
 #   • Fibonacci default = ON (hourly only).
 #   • Fixed SARIMAX crash when history is empty/too short.
+#   • Fixed NameError: added back Supertrend/PSAR/Ichimoku/BB helpers.
 
 import streamlit as st
 import pandas as pd
@@ -240,7 +241,7 @@ if mode == "Stock":
     ])
 else:
     universe = [
-        'EURUSD[=X]'.replace('[','').replace(']',''),'EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X',
+        'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X',
         'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','EURCAD=X',
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
     ]
@@ -309,11 +310,8 @@ def compute_sarimax_forecast(series_like):
     fc = model.get_forecast(steps=30)
     last_idx = series.index[-1]
     idx = pd.date_range(last_idx + timedelta(days=1), periods=30, freq="D", tz=PACIFIC)
-    # Ensure outputs align with idx (reindex in case library returns naive tz)
-    mean = fc.predicted_mean
-    ci = fc.conf_int()
-    mean.index = idx
-    ci.index = idx
+    mean = fc.predicted_mean; mean.index = idx
+    ci = fc.conf_int();       ci.index   = idx
     return idx, mean, ci
 
 def fibonacci_levels(series_like):
@@ -375,6 +373,147 @@ def regression_with_band(series_like, lookback: int = 0, z: float = 2.0):
     upper_s = pd.Series(yhat + z * std, index=s.index)
     lower_s = pd.Series(yhat - z * std, index=s.index)
     return yhat_s, upper_s, lower_s, float(m), r2
+
+def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "Trend"):
+    s = _coerce_1d_series(series_like).dropna()
+    if s.shape[0] < 2:
+        return np.nan
+    x = np.arange(len(s), dtype=float)
+    m, b = np.polyfit(x, s.values, 1)
+    yhat = m * x + b
+    color = "tab:green" if m >= 0 else "tab:red"   # downward = red
+    ax.plot(s.index, yhat, "-", linewidth=2.4, color=color, label=f"{label_prefix} ({fmt_slope(m)}/bar)")
+    return m
+
+# --- Supertrend / ATR ---
+def _true_range(df: pd.DataFrame):
+    hl = (df["High"] - df["Low"]).abs()
+    hc = (df["High"] - df["Close"].shift()).abs()
+    lc = (df["Low"]  - df["Close"].shift()).abs()
+    return pd.concat([hl, hc, lc], axis=1).max(axis=1)
+
+def compute_atr(df: pd.DataFrame, period: int = 10) -> pd.Series:
+    tr = _true_range(df[['High','Low','Close']])
+    return tr.ewm(alpha=1/period, adjust=False).mean()
+
+def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float = 3.0):
+    if df is None or df.empty or not {'High','Low','Close'}.issubset(df.columns):
+        idx = df.index if df is not None else pd.Index([])
+        return pd.DataFrame(index=idx, columns=["ST","in_uptrend","upperband","lowerband"])
+    ohlc = df[['High','Low','Close']].copy()
+    hl2 = (ohlc['High'] + ohlc['Low']) / 2.0
+    atr = compute_atr(ohlc, atr_period)
+    upperband = hl2 + atr_mult * atr
+    lowerband = hl2 - atr_mult * atr
+    st_line = pd.Series(index=ohlc.index, dtype=float)
+    in_up   = pd.Series(index=ohlc.index, dtype=bool)
+    st_line.iloc[0] = upperband.iloc[0]
+    in_up.iloc[0]   = True
+    for i in range(1, len(ohlc)):
+        prev_st = st_line.iloc[i-1]
+        prev_up = in_up.iloc[i-1]
+        up_i = min(upperband.iloc[i], prev_st) if prev_up else upperband.iloc[i]
+        dn_i = max(lowerband.iloc[i], prev_st) if not prev_up else lowerband.iloc[i]
+        close_i = ohlc['Close'].iloc[i]
+        if close_i > up_i:
+            curr_up = True
+        elif close_i < dn_i:
+            curr_up = False
+        else:
+            curr_up = prev_up
+        in_up.iloc[i]   = curr_up
+        st_line.iloc[i] = dn_i if curr_up else up_i
+    return pd.DataFrame({"ST": st_line, "in_uptrend": in_up,
+                         "upperband": upperband, "lowerband": lowerband})
+
+# --- Parabolic SAR ---
+def compute_parabolic_sar(high: pd.Series, low: pd.Series, step: float = 0.02, max_step: float = 0.2):
+    H = _coerce_1d_series(high).astype(float)
+    L = _coerce_1d_series(low).astype(float)
+    df = pd.concat([H.rename("H"), L.rename("L")], axis=1).dropna()
+    if df.empty:
+        idx = H.index if len(H) else L.index
+        return pd.Series(index=idx, dtype=float), pd.Series(index=idx, dtype=bool)
+    n = len(df)
+    psar = np.zeros(n) * np.nan
+    up = np.zeros(n, dtype=bool)
+    uptrend = True
+    af = float(step)
+    ep = df["H"].iloc[0]
+    psar[0] = df["L"].iloc[0]
+    up[0] = True
+    for i in range(1, n):
+        prev_psar = psar[i-1]
+        if uptrend:
+            psar[i] = prev_psar + af * (ep - prev_psar)
+            lo1 = df["L"].iloc[i-1]
+            lo2 = df["L"].iloc[i-2] if i >= 2 else lo1
+            psar[i] = min(psar[i], lo1, lo2)
+            if df["H"].iloc[i] > ep:
+                ep = df["H"].iloc[i]
+                af = min(af + step, max_step)
+            if df["L"].iloc[i] < psar[i]:
+                uptrend = False
+                psar[i] = ep
+                ep = df["L"].iloc[i]
+                af = step
+        else:
+            psar[i] = prev_psar + af * (ep - prev_psar)
+            hi1 = df["H"].iloc[i-1]
+            hi2 = df["H"].iloc[i-2] if i >= 2 else hi1
+            psar[i] = max(psar[i], hi1, hi2)
+            if df["L"].iloc[i] < ep:
+                ep = df["L"].iloc[i]
+                af = min(af + step, max_step)
+            if df["H"].iloc[i] > psar[i]:
+                uptrend = True
+                psar[i] = ep
+                ep = df["H"].iloc[i]
+                af = step
+        up[i] = uptrend
+    return pd.Series(psar, index=df.index, name="PSAR"), pd.Series(up, index=df.index, name="in_uptrend")
+
+def compute_psar_from_ohlc(df: pd.DataFrame, step: float = 0.02, max_step: float = 0.2) -> pd.DataFrame:
+    if df is None or df.empty or not {"High","Low"}.issubset(df.columns):
+        idx = df.index if df is not None else pd.Index([])
+        return pd.DataFrame(index=idx, columns=["PSAR","in_uptrend"])
+    ps, up = compute_parabolic_sar(df["High"], df["Low"], step=step, max_step=max_step)
+    return pd.DataFrame({"PSAR": ps, "in_uptrend": up})
+
+# --- Ichimoku (classic) ---
+def ichimoku_lines(high: pd.Series, low: pd.Series, close: pd.Series,
+                   conv: int = 9, base: int = 26, span_b: int = 52, shift_cloud: bool = False):
+    H = _coerce_1d_series(high)
+    L = _coerce_1d_series(low)
+    C = _coerce_1d_series(close)
+    if H.empty or L.empty or C.empty:
+        idx = C.index if not C.empty else (H.index if not H.empty else L.index)
+        return (pd.Series(index=idx, dtype=float),)*5
+    tenkan = (H.rolling(conv).max() + L.rolling(conv).min()) / 2.0
+    kijun  = (H.rolling(base).max() + L.rolling(base).min()) / 2.0
+    span_a_raw = (tenkan + kijun) / 2.0
+    span_b_raw = (H.rolling(span_b).max() + L.rolling(span_b).min()) / 2.0
+    span_a = span_a_raw.shift(base) if shift_cloud else span_a_raw
+    span_b = span_b_raw.shift(base) if shift_cloud else span_b_raw
+    chikou = C.shift(-base)
+    return tenkan, kijun, span_a, span_b, chikou
+
+# --- Bollinger Bands + normalized %B / NBB ---
+def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_ema: bool = False):
+    s = _coerce_1d_series(close).astype(float)
+    idx = s.index
+    if s.empty or window < 2 or not np.isfinite(mult):
+        empty = pd.Series(index=idx, dtype=float)
+        return empty, empty, empty, empty, empty
+    minp = max(2, window // 2)
+    mid = s.ewm(span=window, adjust=False).mean() if use_ema else s.rolling(window, min_periods=minp).mean()
+    std = s.rolling(window, min_periods=minp).std().replace(0, np.nan)
+    upper = mid + mult * std
+    lower = mid - mult * std
+    width = (upper - lower).replace(0, np.nan)
+    pctb = ((s - lower) / width).clip(0.0, 1.0)
+    nbb = pctb * 2.0 - 1.0
+    return mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index)
 
 # --- HMA & signal helpers ---
 def _wma(s: pd.Series, window: int) -> pd.Series:
@@ -544,10 +683,8 @@ def session_markers_for_index(idx: pd.DatetimeIndex, session_tz, open_hr: int, c
             dt_close_local = session_tz.localize(datetime(d.year, d.month, d.day, close_hr, 0, 0))
         dt_open_pst  = dt_open_local.astimezone(PACIFIC)
         dt_close_pst = dt_close_local.astimezone(PACIFIC)
-        if lo <= dt_open_pst  <= hi:
-            opens.append(dt_open_pst)
-        if lo <= dt_close_pst <= hi:
-            closes.append(dt_close_pst)
+        if lo <= dt_open_pst  <= hi: opens.append(dt_open_pst)
+        if lo <= dt_close_pst <= hi: closes.append(dt_close_pst)
     return opens, closes
 
 def compute_session_lines(idx: pd.DatetimeIndex):
@@ -675,15 +812,13 @@ with tab1:
             upper_d_show = upper_d.reindex(df_show.index) if not upper_d.empty else upper_d
             lower_d_show = lower_d.reindex(df_show.index) if not lower_d.empty else lower_d
             kijun_d_show = kijun_d.reindex(df_show.index).ffill().bfill()
-
             bb_mid_d_show = bb_mid_d.reindex(df_show.index)
             bb_up_d_show  = bb_up_d.reindex(df_show.index)
             bb_lo_d_show  = bb_lo_d.reindex(df_show.index)
 
-            # HMA lines
+            # HMA lines & HMA(55) signal
             hma_d_full = compute_hma(df, period=hma_period)
             hma_d_show = hma_d_full.reindex(df_show.index)
-            # HMA(55) signal (trend + reversal confirmation)
             hma55_d = compute_hma(df, period=55).reindex(df_show.index)
             hma55_evt_d = detect_hma_trend_reversal(df_show, hma55_d, trend_slope=m_d, confirm_bars=rev_bars_confirm)
 
@@ -875,44 +1010,6 @@ with tab1:
                 ax2.set_xlabel("Time (PST)")
                 ax2.legend(loc="lower left", framealpha=0.5)
                 st.pyplot(fig2)
-
-                # Volume panel (kept)
-                def rolling_midline(series_like: pd.Series, window: int) -> pd.Series:
-                    s = _coerce_1d_series(series_like).astype(float)
-                    if s.empty:
-                        return pd.Series(index=s.index, dtype=float)
-                    roll = s.rolling(window, min_periods=1)
-                    mid = (roll.max() + roll.min()) / 2.0
-                    return mid.reindex(s.index)
-
-                def _has_volume_to_plot(vol: pd.Series) -> bool:
-                    s = _coerce_1d_series(vol).astype(float).replace([np.inf, -np.inf], np.nan).dropna()
-                    if s.shape[0] < 2:
-                        return False
-                    arr = s.to_numpy(dtype=float)
-                    return np.isfinite(arr).any()
-
-                vol = _coerce_1d_series(intraday.get("Volume", pd.Series(index=hc.index))).reindex(hc.index).astype(float)
-                if _has_volume_to_plot(vol):
-                    v_mid = rolling_midline(vol, window=max(3, int(slope_lb_hourly)))
-                    v_trend, v_m = slope_line(vol, slope_lb_hourly)
-                    v_r2 = regression_r2(vol, slope_lb_hourly)
-
-                    fig2v, ax2v = plt.subplots(figsize=(14, 2.8))
-                    ax2v.set_title(f"Volume (Hourly) — Mid-line & Trend  |  Slope={fmt_slope(v_m)}/bar")
-                    ax2v.fill_between(vol.index, 0, vol, alpha=0.18, label="Volume", color="tab:blue")
-                    ax2v.plot(vol.index, vol, linewidth=1.0, color="tab:blue")
-                    ax2v.plot(v_mid.index, v_mid, ":", linewidth=1.6, label=f"Mid-line ({slope_lb_hourly}-roll)")
-                    if not v_trend.empty:
-                        v_col = "tab:green" if v_m >= 0 else "tab:red"
-                        ax2v.plot(v_trend.index, v_trend.values, "--", linewidth=2, color=v_col, label=f"Trend {slope_lb_hourly} ({fmt_slope(v_m)}/bar)")
-                    ax2v.text(0.01, 0.02, f"Slope: {fmt_slope(v_m)}/bar", transform=ax2v.transAxes, ha="left", va="bottom",
-                              fontsize=9, color="black", bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-                    ax2v.text(0.50, 0.02, f"R² ({slope_lb_hourly} bars): {fmt_r2(v_r2)}", transform=ax2v.transAxes, ha="center", va="bottom",
-                              fontsize=9, color="black", bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-                    ax2v.set_xlabel("Time (PST)")
-                    ax2v.legend(loc="lower left", framealpha=0.5)
-                    st.pyplot(fig2v)
 
         # News table
         if mode == "Forex" and show_fx_news:
@@ -1135,6 +1232,7 @@ with tab5:
     thresh = -0.75
     run = st.button("Scan Universe", key="btn_ntd_scan")
 
+    # Local NTD (kept for scanner only)
     def compute_normalized_trend(close: pd.Series, window: int = 60) -> pd.Series:
         s = _coerce_1d_series(close).astype(float)
         if s.empty or window < 3:
