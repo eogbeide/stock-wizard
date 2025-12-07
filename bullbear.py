@@ -123,6 +123,26 @@ def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: i
     except Exception:
         pass
 
+# NEW: Instruction ribbon helper (green banner) — upward: "Buy, Sell, Value of Pips"; downward: "Sell, Buy, Value of Pips"
+def draw_trade_instruction(ax, uptrend: bool):
+    """
+    Draws a green 'ribbon' banner at the top of `ax` with instruction order based on trend:
+      - Upward  → 'Buy, Sell, Value of Pips'
+      - Downward→ 'Sell, Buy, Value of Pips'
+    The green bbox aligns with the instruction text.
+    """
+    seq = ["Buy", "Sell", "Value of Pips"] if uptrend else ["Sell", "Buy", "Value of Pips"]
+    text_str = ", ".join(seq)
+    try:
+        ax.text(
+            0.5, 0.98, text_str,
+            transform=ax.transAxes, ha="center", va="top",
+            fontsize=11, fontweight="bold", color="black", zorder=10,
+            bbox=dict(boxstyle="round,pad=0.25", fc="palegreen", ec="green", alpha=0.85)
+        )
+    except Exception:
+        pass
+
 # Range helper for daily views
 def subset_by_daily_view(obj, view_label: str):
     if obj is None or len(obj.index) == 0:
@@ -399,7 +419,6 @@ def compute_roc(series_like, n: int = 10) -> pd.Series:
         return pd.Series(index=s.index, dtype=float)
     roc = base.pct_change(n) * 100.0
     return roc.reindex(s.index)
-
 # ---- RSI / Normalized RSI ----
 def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
@@ -1255,7 +1274,6 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "NTD -0.5 Scanner",
     "Long-Term History"
 ])
-
 # --- Tab 1: Original Forecast ---
 with tab1:
     st.header("Original Forecast")
@@ -1433,6 +1451,12 @@ with tab1:
                 ax.text(df_show.index[-1], r30_last, f"  30R = {fmt_price_val(r30_last)}", va="bottom")
                 ax.text(df_show.index[-1], s30_last, f"  30S = {fmt_price_val(s30_last)}", va="top")
             ax.set_ylabel("Price")
+            # NEW: Instruction ribbon on Daily price chart
+            try:
+                uptrend_daily = bool(float(m_d) >= 0) if np.isfinite(m_d) else True
+                draw_trade_instruction(ax, uptrend_daily)
+            except Exception:
+                pass
             ax.legend(loc="lower left", framealpha=0.5)
 
             # Probabilistic HMA crossover (Daily)
@@ -1657,6 +1681,13 @@ with tab1:
                     bb_divergence_signals(ax2, hc, bb_up_h, bb_lo_h,
                                           lookback=slope_lb_hourly, conf_up=p_up, conf_dn=p_dn, conf_level=bb_conf)
 
+                # NEW: Instruction ribbon on Intraday price chart
+                try:
+                    uptrend_intraday = bool(float(slope_h) >= 0) if np.isfinite(slope_h) else True
+                    draw_trade_instruction(ax2, uptrend_intraday)
+                except Exception:
+                    pass
+
                 ax2.set_xlabel("Time (PST)")
                 ax2.legend(loc="lower left", framealpha=0.5)
                 xlim_price = ax2.get_xlim()
@@ -1780,7 +1811,6 @@ with tab1:
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
-
 # --- Tab 2: Enhanced Forecast ---
 with tab2:
     st.header("Enhanced Forecast")
@@ -1911,6 +1941,12 @@ with tab2:
                 ax.text(df_show.index[-1], r30_last, f"  30R = {fmt_price_val(r30_last)}", va="bottom")
                 ax.text(df_show.index[-1], s30_last, f"  30S = {fmt_price_val(s30_last)}", va="top")
             ax.set_ylabel("Price")
+            # NEW: Instruction ribbon on Daily price chart (Enhanced tab)
+            try:
+                uptrend_daily2 = bool(float(m_d) >= 0) if np.isfinite(m_d) else True
+                draw_trade_instruction(ax, uptrend_daily2)
+            except Exception:
+                pass
             ax.legend(loc="lower left", framealpha=0.5)
 
             # Probabilistic HMA crossover (Daily, Enhanced)
@@ -2120,6 +2156,13 @@ with tab2:
                     bb_divergence_signals(ax3, ic, bb_up_i, bb_lo_i,
                                           lookback=slope_lb_hourly, conf_up=p_up, conf_dn=p_dn, conf_level=bb_conf)
 
+                # NEW: Instruction ribbon on Intraday price chart (Enhanced tab)
+                try:
+                    uptrend_intraday2 = bool(float(slope_i) >= 0) if np.isfinite(slope_i) else True
+                    draw_trade_instruction(ax3, uptrend_intraday2)
+                except Exception:
+                    pass
+
                 ax3.set_xlabel("Time (PST)")
                 ax3.legend(loc="lower left", framealpha=0.5)
                 xlim_price2 = ax3.get_xlim()
@@ -2215,7 +2258,6 @@ with tab2:
                     ax3m.legend(loc="lower left", framealpha=0.5)
                     ax3m.set_xlim(xlim_price2)
                     st.pyplot(fig3m)
-
 # --- Tab 3: Bull vs Bear ---
 with tab3:
     st.header("Bull vs Bear Summary")
