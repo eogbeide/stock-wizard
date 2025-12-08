@@ -18,6 +18,7 @@
 #   • HMA BUY shown only in uptrend; HMA SELL only in downtrend (gated by slope sign).
 #   • Removed “Get Ready to Take Profit” outside annotation per request.
 #   • Outside BUY/SELL ribbon is now a single combined sentence with correct order.
+#   • NEW: Instruction moved to a TOP BANNER outside the chart; charts now use full width (no right margin).
 
 import streamlit as st
 import pandas as pd
@@ -641,7 +642,7 @@ def annotate_signal_box(ax, ts, px, side: str, note: str = "", ypad_frac: float 
         ax.text(ts, px, f" {text}", color="tab:green" if side=="BUY" else "tab:red",
                 fontsize=10, fontweight="bold")
 
-# --- Cleaner axes + OUTSIDE instruction ribbon (single sentence with correct order) ---
+# --- Cleaner axes + TOP instruction banner (outside the chart) ---
 def _simplify_axes(ax):
     """Make charts less cluttered."""
     ax.grid(True, alpha=0.15, linestyle="--", linewidth=0.6)
@@ -651,7 +652,7 @@ def _simplify_axes(ax):
     ax.margins(x=0.01)
 
 def _instruction_pieces(trend_slope, buy_val, sell_val, close_val, symbol):
-    # Kept for possible reuse; not used by the new single-ribbon rendering.
+    # Kept for possible reuse.
     def _finite(x):
         try:
             return np.isfinite(float(x))
@@ -666,7 +667,7 @@ def _instruction_pieces(trend_slope, buy_val, sell_val, close_val, symbol):
 
 def draw_instruction_ribbons(ax, trend_slope, buy_val, sell_val, close_val, symbol):
     """
-    Render ONE combined instruction ribbon on the right:
+    Render ONE combined instruction **as a top banner OUTSIDE the chart**:
       Uptrend (green):  "▲ BUY @… → ▼ SELL @… • Value of Pips: …"
       Downtrend (red):  "▼ SELL @… → ▲ BUY @… • Value of Pips: …"
     """
@@ -674,13 +675,14 @@ def draw_instruction_ribbons(ax, trend_slope, buy_val, sell_val, close_val, symb
         return
     combined = format_trade_instruction(trend_slope, buy_val, sell_val, close_val, symbol)
     ribbon_color = "tab:green" if float(trend_slope) > 0 else "tab:red"
-    ax.annotate(
-        combined,
-        xy=(1.02, 0.88), xycoords='axes fraction',
-        ha='left', va='center',
+    fig = ax.figure
+    # Place centered near the very top of the figure (outside axes)
+    fig.text(
+        0.5, 0.985, combined,
+        ha="center", va="top",
         fontsize=11, fontweight="bold", color="white",
-        bbox=dict(boxstyle="round,pad=0.45", fc=ribbon_color, ec=ribbon_color, alpha=0.95),
-        zorder=20, annotation_clip=False
+        bbox=dict(boxstyle="round,pad=0.45", fc=ribbon_color, ec=ribbon_color, alpha=0.98),
+        zorder=100, transform=fig.transFigure
     )
 
 # --- Bands + single latest band-reversal trading signal ---
@@ -895,8 +897,8 @@ with tab1:
             hma_d_full = compute_hma(df, period=hma_period).reindex(df_show.index)
 
             fig, ax = plt.subplots(figsize=(14, 6))
-            # extra right margin for outside ribbon
-            plt.subplots_adjust(top=0.92, right=0.78)
+            # Use full width; leave room at top for banner
+            plt.subplots_adjust(top=0.86, right=0.98, left=0.06)
 
             ax.set_title(f"{sel} Daily — {daily_view}")
             # core price
@@ -946,7 +948,7 @@ with tab1:
             if band_sig_d is not None:
                 annotate_signal_box(ax, band_sig_d["time"], band_sig_d["price"], band_sig_d["side"], note=band_sig_d.get("note",""))
 
-            # OUTSIDE instruction ribbon (Daily) using S/R as targets
+            # TOP instruction banner (Daily) using S/R as targets
             try:
                 px_val_d  = float(df_show.iloc[-1])
                 draw_instruction_ribbons(ax, m_d, sup_val_d, res_val_d, px_val_d, sel)
@@ -1016,7 +1018,8 @@ with tab1:
                     m_global = slope_sig_h
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
-                plt.subplots_adjust(top=0.85, right=0.78)
+                # Full width; room for top banner
+                plt.subplots_adjust(top=0.86, right=0.98, left=0.06)
 
                 trend_color = "tab:green" if slope_h >= 0 else "tab:red"
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
@@ -1056,7 +1059,7 @@ with tab1:
                 if band_sig_h is not None:
                     annotate_signal_box(ax2, band_sig_h["time"], band_sig_h["price"], band_sig_h["side"], note=band_sig_h.get("note",""))
 
-                # OUTSIDE instruction ribbon (Hourly) — use GLOBAL daily slope for order
+                # TOP instruction banner (Hourly) — use GLOBAL daily slope for order
                 draw_instruction_ribbons(ax2, m_global, sup_val, res_val, px_val, sel)
 
                 # footer stats
@@ -1159,7 +1162,8 @@ with tab2:
             hma_d2_full = compute_hma(df, period=hma_period).reindex(df_show.index)
 
             fig, ax = plt.subplots(figsize=(14, 6))
-            plt.subplots_adjust(top=0.92, right=0.78)
+            # Full width; room for top banner
+            plt.subplots_adjust(top=0.86, right=0.98, left=0.06)
 
             ax.set_title(f"{st.session_state.ticker} Daily — {daily_view}")
             ax.plot(df_show.index, df_show.values, label="Price", linewidth=1.4)
@@ -1205,7 +1209,7 @@ with tab2:
             except Exception:
                 pass
 
-            # OUTSIDE instruction ribbon (Daily)
+            # TOP instruction banner (Daily)
             try:
                 px_val_d2  = float(df_show.iloc[-1])
                 draw_instruction_ribbons(ax, m_d, sup_val_d2, res_val_d2, px_val_d2, st.session_state.ticker)
@@ -1528,7 +1532,8 @@ with tab6:
             yhat_all, upper_all, lower_all, m_all, r2_all = regression_with_band(s, lookback=len(s))
 
             fig, ax = plt.subplots(figsize=(14,5))
-            plt.subplots_adjust(right=0.78)
+            # Full width for history
+            plt.subplots_adjust(right=0.98, left=0.06, top=0.92)
             ax.set_title(f"{sym} — Last {years} Years — Price + 252d S/R + Trend")
             ax.plot(s.index, s.values, label="Close", linewidth=1.4)
             if np.isfinite(res_last) and np.isfinite(sup_last):
