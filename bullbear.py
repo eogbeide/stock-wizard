@@ -17,7 +17,7 @@
 #   • Signal annotations are arrow callouts (non-overlapping offsets for readability).
 #   • HMA BUY shown only in uptrend; HMA SELL only in downtrend (gated by slope sign).
 #   • Removed “Get Ready to Take Profit” outside annotation per request.
-#   • Outside BUY/SELL ribbons remain; Daily (Tab 2) shows S/R; Daily (Tab 1) now also shows S/R.
+#   • Outside BUY/SELL ribbon is now a single combined sentence with correct order.
 
 import streamlit as st
 import pandas as pd
@@ -146,9 +146,9 @@ def format_trade_instruction(trend_slope: float,
                              close_val: float,
                              symbol: str) -> str:
     """
-    TREND-AWARE instruction order:
-      • Uptrend   → BUY first, then SELL, then Pips value
-      • Downtrend → SELL first, then BUY, then Pips value
+    TREND-AWARE instruction order (SINGLE SENTENCE):
+      • Uptrend (green)   → BUY first, then SELL, then Value of Pips
+      • Downtrend (red)   → SELL first, then BUY, then Value of Pips
     """
     def _finite(x):
         try:
@@ -641,7 +641,7 @@ def annotate_signal_box(ax, ts, px, side: str, note: str = "", ypad_frac: float 
         ax.text(ts, px, f" {text}", color="tab:green" if side=="BUY" else "tab:red",
                 fontsize=10, fontweight="bold")
 
-# --- Cleaner axes + OUTSIDE instruction ribbons ---
+# --- Cleaner axes + OUTSIDE instruction ribbon (single sentence with correct order) ---
 def _simplify_axes(ax):
     """Make charts less cluttered."""
     ax.grid(True, alpha=0.15, linestyle="--", linewidth=0.6)
@@ -651,7 +651,7 @@ def _simplify_axes(ax):
     ax.margins(x=0.01)
 
 def _instruction_pieces(trend_slope, buy_val, sell_val, close_val, symbol):
-    # Build separate BUY / SELL strings plus pips text
+    # Kept for possible reuse; not used by the new single-ribbon rendering.
     def _finite(x):
         try:
             return np.isfinite(float(x))
@@ -666,44 +666,21 @@ def _instruction_pieces(trend_slope, buy_val, sell_val, close_val, symbol):
 
 def draw_instruction_ribbons(ax, trend_slope, buy_val, sell_val, close_val, symbol):
     """
-    Two compact ribbons outside the chart (right side):
-      • Green = BUY instruction (top when uptrend)
-      • Red   = SELL instruction (top when downtrend)
+    Render ONE combined instruction ribbon on the right:
+      Uptrend (green):  "▲ BUY @… → ▼ SELL @… • Value of Pips: …"
+      Downtrend (red):  "▼ SELL @… → ▲ BUY @… • Value of Pips: …"
     """
-    buy_txt, sell_txt, pips_txt = _instruction_pieces(trend_slope, buy_val, sell_val, close_val, symbol)
-    top_is_buy = np.isfinite(trend_slope) and float(trend_slope) > 0
-    y_top, y_bot = 0.90, 0.80
-    top_text  = buy_txt if top_is_buy else sell_txt
-    bot_text  = sell_txt if top_is_buy else buy_txt
-    top_color = "tab:green" if top_is_buy else "tab:red"
-    bot_color = "tab:red" if top_is_buy else "tab:green"
-
-    # top ribbon
+    if not np.isfinite(trend_slope):
+        return
+    combined = format_trade_instruction(trend_slope, buy_val, sell_val, close_val, symbol)
+    ribbon_color = "tab:green" if float(trend_slope) > 0 else "tab:red"
     ax.annotate(
-        top_text,
-        xy=(1.02, y_top), xycoords='axes fraction',
+        combined,
+        xy=(1.02, 0.88), xycoords='axes fraction',
         ha='left', va='center',
         fontsize=11, fontweight="bold", color="white",
-        bbox=dict(boxstyle="round,pad=0.35", fc=top_color, ec=top_color, alpha=0.95),
+        bbox=dict(boxstyle="round,pad=0.45", fc=ribbon_color, ec=ribbon_color, alpha=0.95),
         zorder=20, annotation_clip=False
-    )
-    # bottom ribbon
-    ax.annotate(
-        bot_text,
-        xy=(1.02, y_bot), xycoords='axes fraction',
-        ha='left', va='center',
-        fontsize=11, fontweight="bold", color="white",
-        bbox=dict(boxstyle="round,pad=0.35", fc=bot_color, ec=bot_color, alpha=0.95),
-        zorder=20, annotation_clip=False
-    )
-    # small neutral pips label below the ribbons
-    ax.annotate(
-        pips_txt,
-        xy=(1.02, y_bot - 0.10), xycoords='axes fraction',
-        ha='left', va='center',
-        fontsize=9, color="black",
-        bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.85),
-        zorder=19, annotation_clip=False
     )
 
 # --- Bands + single latest band-reversal trading signal ---
@@ -918,7 +895,7 @@ with tab1:
             hma_d_full = compute_hma(df, period=hma_period).reindex(df_show.index)
 
             fig, ax = plt.subplots(figsize=(14, 6))
-            # extra right margin for outside ribbons/annotations
+            # extra right margin for outside ribbon
             plt.subplots_adjust(top=0.92, right=0.78)
 
             ax.set_title(f"{sel} Daily — {daily_view}")
@@ -969,7 +946,7 @@ with tab1:
             if band_sig_d is not None:
                 annotate_signal_box(ax, band_sig_d["time"], band_sig_d["price"], band_sig_d["side"], note=band_sig_d.get("note",""))
 
-            # OUTSIDE instruction ribbons (Daily) using 30-bar S/R as targets
+            # OUTSIDE instruction ribbon (Daily) using S/R as targets
             try:
                 px_val_d  = float(df_show.iloc[-1])
                 draw_instruction_ribbons(ax, m_d, sup_val_d, res_val_d, px_val_d, sel)
@@ -1079,7 +1056,7 @@ with tab1:
                 if band_sig_h is not None:
                     annotate_signal_box(ax2, band_sig_h["time"], band_sig_h["price"], band_sig_h["side"], note=band_sig_h.get("note",""))
 
-                # OUTSIDE instruction ribbons (Hourly) — use GLOBAL daily slope for order
+                # OUTSIDE instruction ribbon (Hourly) — use GLOBAL daily slope for order
                 draw_instruction_ribbons(ax2, m_global, sup_val, res_val, px_val, sel)
 
                 # footer stats
@@ -1204,7 +1181,6 @@ with tab2:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2.0, color=slope_col_d2, label="Trend")
             if not up_d_show.empty and not lo_d_show.empty:
                 ax.plot(up_d_show.index, up_d_show.values, ":", linewidth=1.8, color="black", alpha=0.6, label="_nolegend_")
-            if not lo_d_show.empty:
                 ax.plot(lo_d_show.index, lo_d_show.values, ":", linewidth=1.8, color="black", alpha=0.6, label="_nolegend_")
             if len(df_show) > 1:
                 draw_trend_direction_line(ax, df_show, label_prefix="")
@@ -1229,7 +1205,7 @@ with tab2:
             except Exception:
                 pass
 
-            # OUTSIDE instruction ribbons (Daily)
+            # OUTSIDE instruction ribbon (Daily)
             try:
                 px_val_d2  = float(df_show.iloc[-1])
                 draw_instruction_ribbons(ax, m_d, sup_val_d2, res_val_d2, px_val_d2, st.session_state.ticker)
