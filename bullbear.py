@@ -9,11 +9,10 @@
 #   • Removed Momentum & NTD/NPX charts (scanner tab remains).
 #   • HMA line can be plotted; HMA BUY/SELL signal callouts removed.
 #   • ★ Star marker for recent peak/trough reversals (trend-aware).
-#     - Peak REV: star + small label near the point.
-#     - Trough REV: star only, with compact top badge to avoid clutter.
-#   • NEW: Buy Band REV now shows an ▲ triangle marker INSIDE the chart,
-#           while still adding a compact top badge. Sell Band REV remains
-#           an outside callout.
+#     - Peak REV: star + small label near the point + TOP BADGE.
+#     - Trough REV: star only in chart (no label) + TOP BADGE.
+#   • NEW: Buy Band REV shows an ▲ triangle marker INSIDE the chart
+#           and also a compact top badge; SELL Band REV remains an outside callout.
 #   • Fibonacci default = ON (hourly only).
 #   • Fixed SARIMAX crash when history is empty/too short.
 #   • Included Supertrend/PSAR/Ichimoku/BB helpers.
@@ -479,7 +478,7 @@ def compute_parabolic_sar(high: pd.Series, low: pd.Series, step: float = 0.02, m
                 af = step
         else:
             psar[i] = prev_psar + af * (ep - prev_psar)
-            hi1 = df["H"].iloc[i-1]          # FIXED: correct indexing (prevents syntax error)
+            hi1 = df["H"].iloc[i-1]          # FIXED: correct indexing
             hi2 = df["H"].iloc[i-2] if i >= 2 else hi1
             psar[i] = max(psar[i], hi1, hi2)
             if df["L"].iloc[i] < ep:
@@ -661,7 +660,6 @@ def annotate_buy_triangle(ax, ts, px, size: int = 140):
     try:
         ax.scatter([ts], [px], marker="^", s=size, c="tab:green", edgecolors="none", zorder=12)
     except Exception:
-        # Fallback to simple text triangle
         ax.text(ts, px, "▲", color="tab:green", fontsize=12, fontweight="bold", zorder=12)
 
 # --- Star: recent peak/trough + reversal (trend-aware) ---
@@ -730,7 +728,7 @@ def draw_instruction_ribbons(ax, trend_slope, buy_val, sell_val, close_val, symb
         zorder=100, transform=fig.transFigure
     )
 
-# --- Compact top badges (legends) for Buy Band REV & Trough REV ---
+# --- Compact top badges (legends) for Band REV & Star REVs ---
 def draw_top_badges(ax, badges):
     """
     badges: list of tuples [(text, color), ...]
@@ -1004,7 +1002,7 @@ with tab1:
             except Exception:
                 res_val_d = sup_val_d = np.nan
 
-            # --- Signals to badges: BUY Band REV & Trough REV; plus star/triangle rendering ---
+            # --- Signals to badges: BUY Band REV & Star REVs; plus star/triangle rendering ---
             badges_top = []
 
             # Band REV (Daily)
@@ -1013,19 +1011,19 @@ with tab1:
                 trend_slope=m_d, prox=sr_prox_pct, confirm_bars=rev_bars_confirm
             )
             if band_sig_d is not None and band_sig_d.get("side") == "BUY":
-                # Top badge + in-chart ▲ triangle
                 badges_top.append((f"▲ BUY Band REV @{fmt_price_val(band_sig_d['price'])}", "tab:green"))
                 annotate_buy_triangle(ax, band_sig_d["time"], band_sig_d["price"])
             elif band_sig_d is not None and band_sig_d.get("side") == "SELL":
-                # SELL remains outside to avoid clutter
                 annotate_band_rev_outside(ax, band_sig_d["time"], band_sig_d["price"], band_sig_d["side"], note=band_sig_d.get("note",""))
 
-            # Star (Daily) — draw on chart for BOTH kinds; trough also gets top badge
+            # Star (Daily) — draw on chart for BOTH kinds; trough/peak also get top badges
             star_d = last_reversal_star(df_show, trend_slope=m_d, lookback=20, confirm_bars=rev_bars_confirm)
             if star_d is not None:
                 annotate_star(ax, star_d["time"], star_d["price"], star_d["kind"], show_text=(star_d["kind"] == "peak"))
                 if star_d.get("kind") == "trough":
                     badges_top.append((f"★ Trough REV @{fmt_price_val(star_d['price'])}", "tab:green"))
+                elif star_d.get("kind") == "peak":
+                    badges_top.append((f"★ Peak REV @{fmt_price_val(star_d['price'])}", "tab:red"))
 
             # Draw compact badges
             draw_top_badges(ax, badges_top)
@@ -1148,6 +1146,8 @@ with tab1:
                     annotate_star(ax2, star_h["time"], star_h["price"], star_h["kind"], show_text=(star_h["kind"] == "peak"))
                     if star_h.get("kind") == "trough":
                         badges_top_h.append((f"★ Trough REV @{fmt_price_val(star_h['price'])}", "tab:green"))
+                    elif star_h.get("kind") == "peak":
+                        badges_top_h.append((f"★ Peak REV @{fmt_price_val(star_h['price'])}", "tab:red"))
 
                 draw_top_badges(ax2, badges_top_h)
 
@@ -1312,6 +1312,8 @@ with tab2:
                 annotate_star(ax, star_d2["time"], star_d2["price"], star_d2["kind"], show_text=(star_d2["kind"] == "peak"))
                 if star_d2.get("kind") == "trough":
                     badges_top2.append((f"★ Trough REV @{fmt_price_val(star_d2['price'])}", "tab:green"))
+                elif star_d2.get("kind") == "peak":
+                    badges_top2.append((f"★ Peak REV @{fmt_price_val(star_d2['price'])}", "tab:red"))
 
             draw_top_badges(ax, badges_top2)
 
