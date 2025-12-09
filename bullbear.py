@@ -9,8 +9,8 @@
 #       Uptrend   → "▲ BUY → ▼ SELL • Value of Pips: …"
 #       Downtrend → "▼ SELL → ▲ BUY • Value of Pips: …"
 #   • Removed Momentum & NTD/NPX charts (scanner tab remains).
-#   • Removed HMA BUY/SELL annotations (HMA line can still be plotted).
-#   • Added Peak★ marker: last confirmed peak reversal (local high with N lower closes).
+#   • Removed HMA BUY/SELL signal callouts (HMA line can still be plotted).
+#   • Added ★ star marker to denote a recent peak/trough + reversal (trend-aware).
 #   • Fibonacci default = ON (hourly only).
 #   • Fixed SARIMAX crash when history is empty/too short.
 #   • Fixed NameError: included Supertrend/PSAR/Ichimoku/BB helpers.
@@ -59,6 +59,7 @@ def auto_refresh():
     elif time.time() - st.session_state.last_refresh > REFRESH_INTERVAL:
         st.session_state.last_refresh = time.time()
         try:
+            # st.rerun()  # new API; keep fallback for older Streamlit
             st.experimental_rerun()
         except Exception:
             pass
@@ -403,6 +404,7 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
     color = "tab:green" if m >= 0 else "tab:red"   # downward = red
     ax.plot(s.index, yhat, "-", linewidth=2.4, color=color, label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return m
+
 # --- Supertrend / ATR ---
 def _true_range(df: pd.DataFrame):
     hl = (df["High"] - df["Low"]).abs()
@@ -477,7 +479,7 @@ def compute_parabolic_sar(high: pd.Series, low: pd.Series, step: float = 0.02, m
                 af = step
         else:
             psar[i] = prev_psar + af * (ep - prev_psar)
-            hi1 = df["H"].iloc{i-1}
+            hi1 = df["H"].iloc[i-1]        # FIXED: square brackets, not curly braces
             hi2 = df["H"].iloc[i-2] if i >= 2 else hi1
             psar[i] = max(psar[i], hi1, hi2)
             if df["L"].iloc[i] < ep:
@@ -533,7 +535,7 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     nbb = pctb * 2.0 - 1.0
     return mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index)
 
-# --- HMA (for plotting only; signals removed) ---
+# --- HMA (only plotting retained; signals removed) ---
 def _wma(s: pd.Series, window: int) -> pd.Series:
     s = _coerce_1d_series(s).astype(float)
     if s.empty or window < 1:
@@ -553,9 +555,32 @@ def compute_hma(close: pd.Series, period: int = 55) -> pd.Series:
     hma = _wma(diff, sqrtp)
     return hma.reindex(s.index)
 
-# --- Annotations ---
+# Helpers used by band reversal & star detection
+def _inc_ok_at(series: pd.Series, t, n: int) -> bool:
+    s = _coerce_1d_series(series)
+    if t not in s.index or n < 1:
+        return False
+    seg = s.loc[:t].dropna().iloc[-(n+1):]
+    if len(seg) < n+1:
+        return False
+    d = np.diff(seg)
+    return bool(np.all(d > 0))
+
+def _dec_ok_at(series: pd.Series, t, n: int) -> bool:
+    s = _coerce_1d_series(series)
+    if t not in s.index or n < 1:
+        return False
+    seg = s.loc[:t].dropna().iloc[-(n+1):]
+    if len(seg) < n+1:
+        return False
+    d = np.diff(seg)
+    return bool(np.all(d < 0))
+
 def annotate_signal_box(ax, ts, px, side: str, note: str = "", ypad_frac: float = 0.045):
-    """Generic BUY/SELL callout used as a fallback elsewhere."""
+    """
+    Draw a non-overlapping callout box with an arrow pointing to (ts, px).
+    ypad_frac is fraction of y-range used to offset the box above/below price.
+    """
     try:
         ymin, ymax = ax.get_ylim()
         yr = ymax - ymin if np.isfinite(ymax) and np.isfinite(ymin) else 1.0
@@ -581,84 +606,153 @@ def annotate_signal_box(ax, ts, px, side: str, note: str = "", ypad_frac: float 
                 fontsize=10, fontweight="bold")
 
 def annotate_band_rev_outside(ax, ts, px, side: str, note: str = "Band REV"):
-    """Draw the Band REV label OUTSIDE the chart area, arrow to point."""
+    """
+    Draw the Band REV label OUTSIDE the chart area (above the axes),
+    with an arrow pointing from the label to the (ts, px) point inside the chart.
+    """
     try:
         fig = ax.figure
-        ax_bbox = ax.get_position()
+        ax_bbox = ax.get_position()  # in figure fraction coords
+        # Map the x position to figure fraction to align horizontally with the point.
         x_disp, _ = ax.transData.transform((ts, px))
         x_fig, _ = fig.transFigure.inverted().transform((x_disp, 0.0))
+        # Keep text within left/right margins and below the top banner
         x_text = float(np.clip(x_fig, 0.08, 0.92))
-        y_text = float(min(0.955, ax_bbox.y1 + 0.02))
+        y_text = float(min(0.955, ax_bbox.y1 + 0.02))  # outside the axes but below top banner
         label = f"{'▲ BUY' if side=='BUY' else '▼ SELL'} {note}"
 
         ax.annotate(
             label,
-            xy=(ts, px), xycoords='data',
-            xytext=(x_text, y_text), textcoords=fig.transFigure,
-            ha='center', va='bottom', fontsize=10, fontweight="bold",
+            xy=(ts, px),                 # data point (inside chart)
+            xycoords='data',
+            xytext=(x_text, y_text),     # outside position (figure coords)
+            textcoords=fig.transFigure,
+            ha='center',
+            va='bottom',
+            fontsize=10,
+            fontweight="bold",
             color=("tab:green" if side == "BUY" else "tab:red"),
-            bbox=dict(boxstyle="round,pad=0.35", fc="white",
-                      ec=("tab:green" if side=="BUY" else "tab:red"), alpha=0.98),
+            bbox=dict(boxstyle="round,pad=0.35",
+                      fc="white",
+                      ec=("tab:green" if side=="BUY" else "tab:red"),
+                      alpha=0.98),
             arrowprops=dict(arrowstyle="->",
                             color=("tab:green" if side=="BUY" else "tab:red"),
                             lw=1.6),
-            annotation_clip=False, zorder=1000
+            annotation_clip=False,  # ensure it's drawn even if outside axes
+            zorder=1000
         )
         ax.scatter([ts], [px], s=60, c=("tab:green" if side=="BUY" else "tab:red"), zorder=1001)
     except Exception:
         annotate_signal_box(ax, ts, px, side, note=note)
 
-# --- Peak★ detection & annotation ---
-def detect_last_peak_reversal(price: pd.Series, confirm_bars: int = 2):
+# --- Star marker: recent peak/trough + reversal (trend-aware) ---
+def _after_all_increasing(series: pd.Series, start_ts, n: int) -> bool:
+    s = _coerce_1d_series(series).dropna()
+    if start_ts not in s.index or n < 1:
+        return False
+    seg = s.loc[start_ts:].iloc[:n+1]
+    if len(seg) < n+1:
+        return False
+    d = np.diff(seg)
+    return bool(np.all(d > 0))
+
+def _after_all_decreasing(series: pd.Series, start_ts, n: int) -> bool:
+    s = _coerce_1d_series(series).dropna()
+    if start_ts not in s.index or n < 1:
+        return False
+    seg = s.loc[start_ts:].iloc[:n+1]
+    if len(seg) < n+1:
+        return False
+    d = np.diff(seg)
+    return bool(np.all(d < 0))
+
+def last_reversal_star(price: pd.Series,
+                       trend_slope: float,
+                       lookback: int = 20,
+                       confirm_bars: int = 2):
     """
-    Returns most-recent confirmed peak (local high) followed by `confirm_bars`
-    consecutively lower closes. Output: {'time': ts, 'price': px} or None.
+    If downtrend: return most-recent local PEAK followed by `confirm_bars` of lower closes.
+    If uptrend:   return most-recent local TROUGH followed by `confirm_bars` of higher closes.
+    Returns dict: {"time", "price", "kind": "peak"|"trough"} or None.
     """
-    p = _coerce_1d_series(price).dropna()
-    n = len(p)
-    if n < confirm_bars + 3:
+    if not np.isfinite(trend_slope) or trend_slope == 0:
         return None
-    # i must have at least confirm_bars points after it
-    for i in range(n - confirm_bars - 1, 1, -1):
-        mid = p.iloc[i]
-        prev1 = p.iloc[i-1]
-        next1 = p.iloc[i+1]
-        # local peak condition
-        if not (mid >= prev1 and mid > next1):
-            continue
-        # confirm descending sequence after peak
-        ok = True
-        last = p.iloc[i]
-        for k in range(1, confirm_bars + 1):
-            nxt = p.iloc[i + k]
-            if nxt >= last:
-                ok = False
-                break
-            last = nxt
-        if ok:
-            return {"time": p.index[i], "price": float(p.iloc[i])}
+    s = _coerce_1d_series(price).dropna()
+    if s.shape[0] < confirm_bars + 3:
+        return None
+    tail = s.iloc[-(lookback + confirm_bars + 1):]
+    if len(tail) < confirm_bars + 3:
+        return None
+
+    if trend_slope < 0:
+        # look for peak then falling
+        cand = tail.iloc[:-confirm_bars]
+        t_peak = cand.idxmax()
+        if _after_all_decreasing(tail, t_peak, confirm_bars):
+            return {"time": t_peak, "price": float(s.loc[t_peak]), "kind": "peak"}
+    else:
+        # look for trough then rising
+        cand = tail.iloc[:-confirm_bars]
+        t_trough = cand.idxmin()
+        if _after_all_increasing(tail, t_trough, confirm_bars):
+            return {"time": t_trough, "price": float(s.loc[t_trough]), "kind": "trough"}
     return None
 
-def annotate_peak_star(ax, ts, px):
-    """Draw a red star at the confirmed peak-reversal point."""
-    ax.scatter([ts], [px], marker='*', s=200, c='tab:red',
-               edgecolors='black', linewidths=0.8, zorder=12)
+def annotate_star(ax, ts, px, kind: str):
+    """
+    Draw a star at (ts, px) with a tiny label.
+    kind: "peak" (red) or "trough" (green)
+    """
+    color = "tab:red" if kind == "peak" else "tab:green"
+    label = "★ Peak REV" if kind == "peak" else "★ Trough REV"
+    try:
+        ax.scatter([ts], [px], marker="*", s=160, c=color, zorder=12, edgecolors="none")
+        # slight vertical offset for label
+        ymin, ymax = ax.get_ylim()
+        yoff = (ymax - ymin) * (0.02 if kind == "trough" else -0.02)
+        ax.text(ts, px + yoff, label, color=color, fontsize=9, fontweight="bold",
+                ha="left", va="bottom" if kind == "trough" else "top",
+                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=color, alpha=0.9),
+                zorder=12)
+    except Exception:
+        ax.text(ts, px, label, color=color, fontsize=9, fontweight="bold")
 
 # --- Cleaner axes + TOP instruction banner (outside the chart) ---
 def _simplify_axes(ax):
+    """Make charts less cluttered."""
     ax.grid(True, alpha=0.15, linestyle="--", linewidth=0.6)
     for spine in ax.spines.values():
         spine.set_alpha(0.3)
     ax.tick_params(axis='both', labelsize=9)
     ax.margins(x=0.01)
 
+def _instruction_pieces(trend_slope, buy_val, sell_val, close_val, symbol):
+    # Kept for possible reuse.
+    def _finite(x):
+        try:
+            return np.isfinite(float(x))
+        except Exception:
+            return False
+    buy_price  = float(buy_val)  if _finite(buy_val)  else float(close_val)
+    sell_price = float(sell_val) if _finite(sell_val) else float(close_val)
+    buy_txt  = f"▲ BUY @{fmt_price_val(buy_price)}"
+    sell_txt = f"▼ SELL @{fmt_price_val(sell_price)}"
+    pips_txt = f"Value of Pips: {_diff_text(sell_price, buy_price, symbol)}"
+    return buy_txt, sell_txt, pips_txt
+
 def draw_instruction_ribbons(ax, trend_slope, buy_val, sell_val, close_val, symbol):
-    """Render ONE combined instruction as a top banner OUTSIDE the chart."""
+    """
+    Render ONE combined instruction **as a top banner OUTSIDE the chart**:
+      Uptrend (green):  "▲ BUY @… → ▼ SELL @… • Value of Pips: …"
+      Downtrend (red):  "▼ SELL @… → ▲ BUY @… • Value of Pips: …"
+    """
     if not np.isfinite(trend_slope):
         return
     combined = format_trade_instruction(trend_slope, buy_val, sell_val, close_val, symbol)
     ribbon_color = "tab:green" if float(trend_slope) > 0 else "tab:red"
     fig = ax.figure
+    # Place centered near the very top of the figure (outside axes)
     fig.text(
         0.5, 0.985, combined,
         ha="center", va="top",
@@ -814,6 +908,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "NTD -0.75 Scanner",
     "Long-Term History"
 ])
+
 # --- Tab 1: Original Forecast ---
 with tab1:
     st.header("Original Forecast")
@@ -875,7 +970,7 @@ with tab1:
             bb_up_d_show  = bb_up_d.reindex(df_show.index)
             bb_lo_d_show  = bb_lo_d.reindex(df_show.index)
 
-            # HMA line (signals removed)
+            # HMA lines (no HMA signal callouts)
             hma_d_full = compute_hma(df, period=hma_period).reindex(df_show.index)
 
             fig, ax = plt.subplots(figsize=(14, 6))
@@ -930,10 +1025,10 @@ with tab1:
             if band_sig_d is not None:
                 annotate_band_rev_outside(ax, band_sig_d["time"], band_sig_d["price"], band_sig_d["side"], note=band_sig_d.get("note",""))
 
-            # Peak★ marker (Daily)
-            peak_evt_d = detect_last_peak_reversal(df_show, confirm_bars=rev_bars_confirm)
-            if peak_evt_d is not None:
-                annotate_peak_star(ax, peak_evt_d["time"], peak_evt_d["price"])
+            # NEW: Star marker for peak/trough + reversal (Daily)
+            star_d = last_reversal_star(df_show, trend_slope=m_d, lookback=20, confirm_bars=rev_bars_confirm)
+            if star_d is not None:
+                annotate_star(ax, star_d["time"], star_d["price"], star_d["kind"])
 
             # TOP instruction banner (Daily) using S/R as targets
             try:
@@ -1046,10 +1141,10 @@ with tab1:
                 if band_sig_h is not None:
                     annotate_band_rev_outside(ax2, band_sig_h["time"], band_sig_h["price"], band_sig_h["side"], note=band_sig_h.get("note",""))
 
-                # Peak★ marker (Hourly)
-                peak_evt_h = detect_last_peak_reversal(hc, confirm_bars=rev_bars_confirm)
-                if peak_evt_h is not None:
-                    annotate_peak_star(ax2, peak_evt_h["time"], peak_evt_h["price"])
+                # NEW: Star marker for peak/trough + reversal (Hourly)
+                star_h = last_reversal_star(hc, trend_slope=m_h, lookback=20, confirm_bars=rev_bars_confirm)
+                if star_h is not None:
+                    annotate_star(ax2, star_h["time"], star_h["price"], star_h["kind"])
 
                 # TOP instruction banner (Hourly) — use GLOBAL daily slope for order
                 draw_instruction_ribbons(ax2, m_global, sup_val, res_val, px_val, sel)
@@ -1102,12 +1197,13 @@ with tab1:
             else:
                 show_cols = fx_news.copy()
                 show_cols["time"] = show_cols["time"].dt.strftime("%Y-%m-%d %H:%M")
-                st.dataframe(show_cols[["time","publisher","title","link"]].reset_index(drop=True), use_container_width=True)
+                st.dataframe(show_cols[{"time","publisher","title","link"}].reset_index(drop=True), use_container_width=True)
 
         # Forecast table
         st.write(pd.DataFrame({"Forecast": st.session_state.fc_vals,
                                "Lower":    st.session_state.fc_ci.iloc[:,0],
                                "Upper":    st.session_state.fc_ci.iloc[:,1]}, index=st.session_state.fc_idx))
+
 # --- Tab 2: Enhanced Forecast ---
 with tab2:
     st.header("Enhanced Forecast")
@@ -1188,7 +1284,7 @@ with tab2:
             if band_sig_d2 is not None:
                 annotate_band_rev_outside(ax, band_sig_d2["time"], band_sig_d2["price"], band_sig_d2["side"], note=band_sig_d2.get("note",""))
 
-            # DAILY — S/R lines
+            # DAILY — Support/Resistance horizontal lines (latest 30-bar extremes)
             try:
                 res_val_d2 = float(res30_show.iloc[-1])
                 sup_val_d2 = float(sup30_show.iloc[-1])
@@ -1202,12 +1298,12 @@ with tab2:
             except Exception:
                 res_val_d2 = sup_val_d2 = np.nan
 
-            # Peak★ marker (Daily)
-            peak_evt_d2 = detect_last_peak_reversal(df_show, confirm_bars=rev_bars_confirm)
-            if peak_evt_d2 is not None:
-                annotate_peak_star(ax, peak_evt_d2["time"], peak_evt_d2["price"])
+            # NEW: Star marker (Daily)
+            star_d2 = last_reversal_star(df_show, trend_slope=m_d, lookback=20, confirm_bars=rev_bars_confirm)
+            if star_d2 is not None:
+                annotate_star(ax, star_d2["time"], star_d2["price"], star_d2["kind"])
 
-            # TOP banner
+            # TOP instruction banner (Daily)
             try:
                 px_val_d2  = float(df_show.iloc[-1])
                 draw_instruction_ribbons(ax, m_d, sup_val_d2, res_val_d2, px_val_d2, st.session_state.ticker)
@@ -1338,6 +1434,7 @@ with tab4:
                      int((~df0['Bull']).sum())]
         }).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
+
 # --- Tab 5: NTD -0.75 Scanner (Latest NTD < -0.75) ---
 with tab5:
     st.header("NTD -0.75 Scanner (NTD < -0.75)")
