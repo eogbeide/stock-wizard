@@ -1172,7 +1172,7 @@ with tab1:
                 # --- TOP WARNING (opposite slopes: hourly vs global daily) ---
                 try:
                     if np.isfinite(m_h) and np.isfinite(m_global) and (m_h * m_global < 0):
-                        top_warn.warning("Please trade with caution because slope line shows that the current trend may be reversing")
+                        top_warn.warning("ALERT: Please exercise caution while trading, as the current slope indicates that the trend may be reversing")
                 except Exception:
                     pass
 
