@@ -19,6 +19,10 @@
 #   • Fixed hourly ValueError by robust linear fit fallback.
 #   • Outside BUY/SELL ribbon is a single combined sentence with correct order.
 #   • Charts use full width (no right margin) to make room for top banners.
+#   • NEW (Daily): Buy ★ when price crosses **above HMA** on an **upward slope**;
+#                  Sell ★ when price crosses **below HMA** on a **downward slope**.
+#   • NEW (Scanner): Replaced "Daily — Price > Ichimoku Kijun(26)" with
+#                    "Daily — HMA Cross + Trend Agreement (latest bar)".
 
 import streamlit as st
 import pandas as pd
@@ -534,7 +538,7 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     nbb = pctb * 2.0 - 1.0
     return mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index)
 
-# --- HMA (only plotting retained; signals removed) ---
+# --- HMA (plotting retained) ---
 def _wma(s: pd.Series, window: int) -> pd.Series:
     s = _coerce_1d_series(s).astype(float)
     if s.empty or window < 1:
@@ -696,6 +700,40 @@ def last_reversal_star(price: pd.Series,
             return {"time": t_trough, "price": float(s.loc[t_trough]), "kind": "trough"}
     return None
 
+# --- NEW: HMA-cross star detection for Daily chart ---
+def last_hma_cross_star(price: pd.Series,
+                        hma: pd.Series,
+                        trend_slope: float,
+                        lookback: int = 30):
+    """
+    Returns a star event at the most recent *confirmed* price/HMA cross that agrees with the daily trend:
+      • Uptrend (trend_slope > 0):  price crosses UP through HMA  → kind='trough' (green star)
+      • Downtrend (trend_slope < 0): price crosses DOWN through HMA→ kind='peak'   (red star)
+    Only the latest event within `lookback` bars is considered.
+    """
+    if not np.isfinite(trend_slope) or trend_slope == 0:
+        return None
+    p = _coerce_1d_series(price).astype(float)
+    h = _coerce_1d_series(hma).astype(float).reindex(p.index)
+
+    mask = p.notna() & h.notna()
+    if mask.sum() < 2:
+        return None
+    p = p[mask]; h = h[mask]
+    if lookback and len(p) > lookback:
+        p = p.iloc[-lookback:]; h = h.iloc[-lookback:]
+
+    up_cross   = (p.shift(1) < h.shift(1)) & (p >= h)   # crossed up on this bar
+    down_cross = (p.shift(1) > h.shift(1)) & (p <= h)   # crossed down on this bar
+
+    if trend_slope > 0 and up_cross.any():
+        t = up_cross[up_cross].index[-1]
+        return {"time": t, "price": float(p.loc[t]), "kind": "trough"}  # green star
+    if trend_slope < 0 and down_cross.any():
+        t = down_cross[down_cross].index[-1]
+        return {"time": t, "price": float(p.loc[t]), "kind": "peak"}    # red star
+    return None
+
 # --- Cleaner axes + TOP instruction banner (outside the chart) ---
 def _simplify_axes(ax):
     ax.grid(True, alpha=0.15, linestyle="--", linewidth=0.6)
@@ -773,11 +811,6 @@ def last_band_reversal_signal(price: pd.Series,
     if p.shape[0] < 2:
         return None
 
-    t0 = p.index[-1]
-    c0, c1 = float(p.iloc[-1]), float(p.iloc[-2])
-    u0, u1 = float(up.iloc[-1]), float(up.iloc[-2])
-    l0, l1 = float(lo.iloc[-1]), float(lo.iloc[-2])
-
     def _inc_ok(series: pd.Series, n: int) -> bool:
         s = _coerce_1d_series(series).dropna()
         if len(s) < n+1:
@@ -791,6 +824,11 @@ def last_band_reversal_signal(price: pd.Series,
             return False
         d = np.diff(s.iloc[-(n+1):])
         return bool(np.all(d < 0))
+
+    t0 = p.index[-1]
+    c0, c1 = float(p.iloc[-1]), float(p.iloc[-2])
+    u0, u1 = float(up.iloc[-1]), float(up.iloc[-2])
+    l0, l1 = float(lo.iloc[-1]), float(lo.iloc[-2])
 
     if trend_slope > 0:
         prev_near_lower = (c1 <= l1 * (1.0 + prox))
@@ -961,7 +999,7 @@ with tab1:
             bb_up_d_show  = bb_up_d.reindex(df_show.index)
             bb_lo_d_show  = bb_lo_d.reindex(df_show.index)
 
-            # HMA lines (no HMA signal callouts)
+            # HMA lines (for star-cross signals too)
             hma_d_full = compute_hma(df, period=hma_period).reindex(df_show.index)
 
             fig, ax = plt.subplots(figsize=(14, 6))
@@ -1005,7 +1043,7 @@ with tab1:
             except Exception:
                 res_val_d = sup_val_d = np.nan
 
-            # --- Signals to badges: BUY Band REV & Star REVs; plus star/triangle rendering ---
+            # --- Signals to badges: Band REV, Reversal stars, and NEW HMA-cross star ---
             badges_top = []
 
             # Band REV (Daily)
@@ -1027,6 +1065,15 @@ with tab1:
                     badges_top.append((f"★ Trough REV @{fmt_price_val(star_d['price'])}", "tab:green"))
                 elif star_d.get("kind") == "peak":
                     badges_top.append((f"★ Peak REV @{fmt_price_val(star_d['price'])}", "tab:red"))
+
+            # NEW: HMA-cross star (Daily)
+            hma_cross_star = last_hma_cross_star(df_show, hma_d_full, trend_slope=m_d, lookback=30)
+            if hma_cross_star is not None:
+                annotate_star(ax, hma_cross_star["time"], hma_cross_star["price"], hma_cross_star["kind"], show_text=False)
+                if hma_cross_star["kind"] == "trough":
+                    badges_top.append((f"★ Buy HMA Cross @{fmt_price_val(hma_cross_star['price'])}", "tab:green"))
+                else:
+                    badges_top.append((f"★ Sell HMA Cross @{fmt_price_val(hma_cross_star['price'])}", "tab:red"))
 
             # Draw compact badges
             draw_top_badges(ax, badges_top)
@@ -1254,7 +1301,7 @@ with tab2:
             bb_up_d2_show  = bb_up_d2.reindex(df_show.index)
             bb_lo_d2_show  = bb_lo_d2.reindex(df_show.index)
 
-            # HMA plotting (signals removed)
+            # HMA plotting (and HMA-cross star)
             hma_d2_full = compute_hma(df, period=hma_period).reindex(df_show.index)
 
             fig, ax = plt.subplots(figsize=(14, 6))
@@ -1309,7 +1356,7 @@ with tab2:
             except Exception:
                 res_val_d2 = sup_val_d2 = np.nan
 
-            # Star (Daily) — chart sign only
+            # Reversal star (Daily)
             star_d2 = last_reversal_star(df_show, trend_slope=m_d, lookback=20, confirm_bars=rev_bars_confirm)
             if star_d2 is not None:
                 annotate_star(ax, star_d2["time"], star_d2["price"], star_d2["kind"], show_text=False)
@@ -1317,6 +1364,15 @@ with tab2:
                     badges_top2.append((f"★ Trough REV @{fmt_price_val(star_d2['price'])}", "tab:green"))
                 elif star_d2.get("kind") == "peak":
                     badges_top2.append((f"★ Peak REV @{fmt_price_val(star_d2['price'])}", "tab:red"))
+
+            # NEW: HMA-cross star (Daily)
+            hma_cross_star2 = last_hma_cross_star(df_show, hma_d2_full, trend_slope=m_d, lookback=30)
+            if hma_cross_star2 is not None:
+                annotate_star(ax, hma_cross_star2["time"], hma_cross_star2["price"], hma_cross_star2["kind"], show_text=False)
+                if hma_cross_star2["kind"] == "trough":
+                    badges_top2.append((f"★ Buy HMA Cross @{fmt_price_val(hma_cross_star2['price'])}", "tab:green"))
+                else:
+                    badges_top2.append((f"★ Sell HMA Cross @{fmt_price_val(hma_cross_star2['price'])}", "tab:red"))
 
             draw_top_badges(ax, badges_top2)
 
@@ -1516,41 +1572,51 @@ with tab5:
             view["Close"] = view["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
             st.dataframe(view[["Symbol","Timestamp","Close","NTD_Last"]].reset_index(drop=True), use_container_width=True)
 
-        # ---- DAILY: PRICE > KIJUN ----
+        # ---- REPLACED: Daily HMA Cross + Trend Agreement (latest bar)
         st.markdown("---")
-        st.subheader(f"Daily — Price > Ichimoku Kijun({ichi_base}) (latest bar)")
-        def _price_above_kijun_from_df(df: pd.DataFrame, base: int = 26):
-            if df is None or df.empty or not {'High','Low','Close'}.issubset(df.columns):
-                return False, None, np.nan, np.nan
-            ohlc = df[['High','Low','Close']].copy()
-            _, kijun, _, _, _ = ichimoku_lines(ohlc['High'], ohlc['Low'], ohlc['Close'], base=base)
-            kijun = kijun.ffill().bfill().reindex(ohlc.index)
-            close = ohlc['Close'].astype(float).reindex(ohlc.index)
-            mask = close.notna() & kijun.notna()
-            if mask.sum() < 1:
-                return False, None, np.nan, np.nan
-            c_now = float(close[mask].iloc[-1]); k_now = float(kijun[mask].iloc[-1])
-            ts = close[mask].index[-1]
-            above = np.isfinite(c_now) and np.isfinite(k_now) and (c_now > k_now)
-            return above, ts if above else None, c_now, k_now
-
-        above_rows = []
+        st.subheader("Daily — HMA Cross + Trend Agreement (latest bar)")
+        hmact_rows = []
         for sym in universe:
             try:
-                df_ohlc_sym = fetch_hist_ohlc(sym)
-                above, ts, cnow, know = _price_above_kijun_from_df(df_ohlc_sym, base=ichi_base)
+                s = fetch_hist(sym)  # daily close
+                h = compute_hma(s, period=hma_period).reindex(s.index)
+                # trend slope based on configured daily lookback
+                _, _, _, m_sym, _ = regression_with_band(s, slope_lb_daily)
+                # require last two valid observations with HMA present
+                mask = s.notna() & h.notna()
+                if mask.sum() >= 2 and np.isfinite(m_sym) and m_sym != 0:
+                    s2 = s[mask]; h2 = h[mask]
+                    c_prev, c_now = float(s2.iloc[-2]), float(s2.iloc[-1])
+                    h_prev, h_now = float(h2.iloc[-2]), float(h2.iloc[-1])
+                    up_cross = (c_prev < h_prev) and (c_now >= h_now)
+                    dn_cross = (c_prev > h_prev) and (c_now <= h_now)
+
+                    if (m_sym > 0 and up_cross) or (m_sym < 0 and dn_cross):
+                        direction = "BUY" if m_sym > 0 else "SELL"
+                        hmact_rows.append({
+                            "Symbol": sym,
+                            "Timestamp": s2.index[-1],
+                            "Direction": direction,
+                            "Close": c_now,
+                            "HMA": h_now,
+                            "Slope": m_sym
+                        })
             except Exception:
-                above, ts, cnow, know = False, None, np.nan, np.nan
-            above_rows.append({"Symbol": sym, "AboveNow": above, "Timestamp": ts, "Close": cnow, "Kijun": know})
-        df_above_daily = pd.DataFrame(above_rows)
-        df_above_daily = df_above_daily[df_above_daily["AboveNow"] == True]
-        if df_above_daily.empty:
-            st.info("No Daily symbols with Price > Kijun on the latest bar.")
+                pass
+
+        if not hmact_rows:
+            st.info("No daily symbols just crossed the HMA in the trend direction on the latest bar.")
         else:
-            v = df_above_daily.copy()
-            v["Close"] = v["Close"].map(lambda x: fmt_price_val(x) if np.isfinite(x) else "n/a")
-            v["Kijun"] = v["Kijun"].map(lambda x: fmt_price_val(x) if np.isfinite(x) else "n/a")
-            st.dataframe(v[["Symbol","Timestamp","Close","Kijun"]].reset_index(drop=True), use_container_width=True)
+            df_hmact = pd.DataFrame(hmact_rows)
+            # show BUY first, then SELL
+            df_hmact["SortKey"] = df_hmact["Direction"].map({"BUY": 0, "SELL": 1})
+            df_hmact = df_hmact.sort_values(["SortKey", "Symbol"]).drop(columns=["SortKey"])
+            show_df = df_hmact.copy()
+            show_df["Close"] = show_df["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            show_df["HMA"] = show_df["HMA"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            show_df["Slope"] = show_df["Slope"].map(lambda v: f"{v:+.5f}" if np.isfinite(v) else "n/a")
+            st.dataframe(show_df[["Symbol","Timestamp","Direction","Close","HMA","Slope"]].reset_index(drop=True),
+                         use_container_width=True)
 
         # ---- FOREX HOURLY: latest NTD < -0.75 ----
         if mode == "Forex":
@@ -1579,7 +1645,7 @@ with tab5:
                 showh["Close"] = showh["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
                 st.dataframe(showh[["Symbol","Timestamp","Close","NTD_Last"]].reset_index(drop=True), use_container_width=True)
 
-            # ---- FOREX HOURLY: PRICE > KIJUN ----
+            # ---- FOREX HOURLY: PRICE > KIJUN (kept for intraday context)
             st.subheader(f"Forex Hourly — Price > Ichimoku Kijun({ichi_base}) (latest bar, {scan_hour_range})")
             habove_rows = []
             for sym in universe:
