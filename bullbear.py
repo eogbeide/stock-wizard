@@ -729,10 +729,10 @@ def last_hma_cross_star(price: pd.Series,
 
     if trend_slope > 0 and up_cross.any():
         t = up_cross[up_cross].index[-1]
-        return {"time": t, "price": float(p.loc[t]), "kind": "trough"}  # green star by default
+        return {"time": t, "price": float(p.loc[t]), "kind": "trough"}  # default green
     if trend_slope < 0 and down_cross.any():
         t = down_cross[down_cross].index[-1]
-        return {"time": t, "price": float(p.loc[t]), "kind": "peak"}    # red star by default
+        return {"time": t, "price": float(p.loc[t]), "kind": "peak"}    # default red
     return None
 
 # --- Cleaner axes + TOP instruction banner (outside the chart) ---
@@ -1228,7 +1228,7 @@ with tab1:
                     ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=1.8, color=slope_col_h, alpha=0.8, label="Slope Fit")
                 if not upper_h.empty and not lower_h.empty:
                     ax2.plot(upper_h.index, upper_h.values, ":", linewidth=1.5, color="black", alpha=0.5, label="_nolegend_")
-                    ax2.plot(lower_h.index, lower_h.index, ":", linewidth=1.5, color="black", alpha=0.5, label="_nolegend_")
+                    ax2.plot(lower_h.index, lower_h.values, ":", linewidth=1.5, color="black", alpha=0.5, label="_nolegend_")
 
                 if mode == "Forex" and show_sessions_pst and not hc.empty:
                     sess = compute_session_lines(hc.index)
@@ -1408,7 +1408,9 @@ with tab3:
     if not st.session_state.run_all:
         st.info("Run Tab 1 first.")
     else:
-        df3 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
+        # SAFE: ensure a single-level 'Close' Series to avoid MultiIndex column assignment errors
+        close3 = yf.download(st.session_state.ticker, period=bb_period)['Close'].dropna()
+        df3 = pd.DataFrame({"Close": close3})
         df3['PctChange'] = df3['Close'].pct_change()
         df3['Bull'] = df3['PctChange'] > 0
         bull = int(df3['Bull'].sum())
@@ -1465,7 +1467,9 @@ with tab4:
         st.pyplot(fig)
 
         st.markdown("---")
-        df0 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
+        # SAFE: flatten to a 1D 'Close' Series, then build our own simple DataFrame
+        close0 = yf.download(st.session_state.ticker, period=bb_period)['Close'].dropna()
+        df0 = pd.DataFrame({"Close": close0})
         df0['PctChange'] = df0['Close'].pct_change()
         df0['Bull'] = df0['PctChange'] > 0
         df0['MA30'] = df0['Close'].rolling(30, min_periods=1).mean()
