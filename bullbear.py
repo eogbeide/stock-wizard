@@ -54,6 +54,9 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# --- Top-of-page caution banner placeholder ---
+top_warn = st.empty()
+
 # --- Auto-refresh ---
 REFRESH_INTERVAL = 120  # seconds
 PACIFIC = pytz.timezone("US/Pacific")
@@ -1165,6 +1168,13 @@ with tab1:
                     _, _, _, m_global, _ = regression_with_band(df_global, slope_lb_daily)
                 except Exception:
                     m_global = slope_sig_h
+
+                # --- TOP WARNING (opposite slopes: hourly vs global daily) ---
+                try:
+                    if np.isfinite(m_h) and np.isfinite(m_global) and (m_h * m_global < 0):
+                        top_warn.warning("Please trade with caution because slope line shows that the current trend may be reversing")
+                except Exception:
+                    pass
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
                 plt.subplots_adjust(top=0.86, right=0.995, left=0.06)
