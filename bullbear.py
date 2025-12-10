@@ -23,6 +23,7 @@
 #                  Sell ★ when price crosses **below HMA** on a **downward slope**.
 #   • NEW (Scanner): Replaced "Daily — Price > Ichimoku Kijun(26)" with
 #                    "Daily — HMA Cross + Trend Agreement (latest bar)".
+#   • NEW (Daily): HMA Cross colors → Buy = Black, Sell = Blue (badges and stars).
 
 import streamlit as st
 import pandas as pd
@@ -308,6 +309,24 @@ def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
         pass
     return df.tz_convert(PACIFIC)
 
+# NEW: Robust helper to safely get a Close DataFrame for a period (avoids scalar/empty issues)
+@st.cache_data(ttl=120)
+def fetch_close_df_period(ticker: str, period: str) -> pd.DataFrame:
+    try:
+        raw = yf.download(ticker, period=period)
+    except Exception:
+        return pd.DataFrame(columns=["Close"])
+    # Standard case: DataFrame with 'Close'
+    if isinstance(raw, pd.DataFrame) and 'Close' in raw.columns:
+        s = raw['Close'].dropna()
+    else:
+        # Fallback: coerce whatever came back into a Series
+        s = _coerce_1d_series(raw).dropna()
+    if isinstance(s, pd.Series) and not s.empty:
+        return pd.DataFrame({"Close": s})
+    # Final fallback: empty DF with the expected column
+    return pd.DataFrame(columns=["Close"])
+
 @st.cache_data(ttl=120)
 def compute_sarimax_forecast(series_like):
     series = _coerce_1d_series(series_like).dropna()
@@ -482,7 +501,7 @@ def compute_parabolic_sar(high: pd.Series, low: pd.Series, step: float = 0.02, m
                 af = step
         else:
             psar[i] = prev_psar + af * (ep - prev_psar)
-            hi1 = df["H"].iloc[i-1]          # FIXED: correct indexing
+            hi1 = df["H"].iloc[i-1]
             hi2 = df["H"].iloc[i-2] if i >= 2 else hi1
             psar[i] = max(psar[i], hi1, hi2)
             if df["L"].iloc[i] < ep:
@@ -660,7 +679,6 @@ def annotate_star(ax, ts, px, kind: str, show_text: bool = False, color_override
                     bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=color, alpha=0.9),
                     zorder=12)
     except Exception:
-        # Fallback: at least draw a star glyph, no descriptive label
         ax.text(ts, px, "★", color=color, fontsize=12, fontweight="bold")
 
 def annotate_buy_triangle(ax, ts, px, size: int = 140):
@@ -1408,19 +1426,21 @@ with tab3:
     if not st.session_state.run_all:
         st.info("Run Tab 1 first.")
     else:
-        # SAFE: ensure a single-level 'Close' Series to avoid MultiIndex column assignment errors
-        close3 = yf.download(st.session_state.ticker, period=bb_period)['Close'].dropna()
-        df3 = pd.DataFrame({"Close": close3})
-        df3['PctChange'] = df3['Close'].pct_change()
-        df3['Bull'] = df3['PctChange'] > 0
-        bull = int(df3['Bull'].sum())
-        bear = int((~df3['Bull']).sum())
-        total = bull + bear
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Total Days", total)
-        c2.metric("Bull Days", bull, f"{bull/total*100:.1f}%")
-        c3.metric("Bear Days", bear, f"{bear/total*100:.1f}%")
-        c4.metric("Lookback", bb_period)
+        # SAFE: use robust fetch to avoid scalar/empty issues
+        df3 = fetch_close_df_period(st.session_state.ticker, bb_period)
+        if df3.empty or 'Close' not in df3:
+            st.warning("Not enough historical data to compute Bull vs Bear summary.")
+        else:
+            df3['PctChange'] = df3['Close'].pct_change()
+            df3['Bull'] = df3['PctChange'] > 0
+            bull = int(df3['Bull'].sum())
+            bear = int((~df3['Bull']).sum())
+            total = bull + bear if (bull + bear) > 0 else 1
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Total Days", bull + bear)
+            c2.metric("Bull Days", bull, f"{bull/total*100:.1f}%")
+            c3.metric("Bear Days", bear, f"{bear/total*100:.1f}%")
+            c4.metric("Lookback", bb_period)
 
 # --- Tab 4: Metrics ---
 with tab4:
@@ -1467,53 +1487,55 @@ with tab4:
         st.pyplot(fig)
 
         st.markdown("---")
-        # SAFE: flatten to a 1D 'Close' Series, then build our own simple DataFrame
-        close0 = yf.download(st.session_state.ticker, period=bb_period)['Close'].dropna()
-        df0 = pd.DataFrame({"Close": close0})
-        df0['PctChange'] = df0['Close'].pct_change()
-        df0['Bull'] = df0['PctChange'] > 0
-        df0['MA30'] = df0['Close'].rolling(30, min_periods=1).mean()
+        # SAFE: flatten to a robust Close DataFrame for the selected period
+        df0 = fetch_close_df_period(st.session_state.ticker, bb_period)
+        if df0.empty or 'Close' not in df0:
+            st.warning("Not enough data to compute metrics for the selected lookback.")
+        else:
+            df0['PctChange'] = df0['Close'].pct_change()
+            df0['Bull'] = df0['PctChange'] > 0
+            df0['MA30'] = df0['Close'].rolling(30, min_periods=1).mean()
 
-        st.subheader("Close + 30-day MA + Trend")
-        res0 = df0['Close'].rolling(30, min_periods=1).max()
-        sup0 = df0['Close'].rolling(30, min_periods=1).min()
-        trend0, up0, lo0, m0, r2_0 = regression_with_band(df0['Close'], lookback=len(df0))
+            st.subheader("Close + 30-day MA + Trend")
+            res0 = df0['Close'].rolling(30, min_periods=1).max()
+            sup0 = df0['Close'].rolling(30, min_periods=1).min()
+            trend0, up0, lo0, m0, r2_0 = regression_with_band(df0['Close'], lookback=len(df0))
 
-        fig0, ax0 = plt.subplots(figsize=(14,5))
-        ax0.plot(df0.index, df0['Close'], label="Close")
-        ax0.plot(df0.index, df0['MA30'], label="30 MA")
-        ax0.plot(res0.index, res0, ":", label="Resistance")
-        ax0.plot(sup0.index, sup0, ":", label="Support")
-        if not trend0.empty:
-            col0 = "tab:green" if m0 >= 0 else "tab:red"
-            ax0.plot(trend0.index, trend0.values, "--", color=col0,
-                     label=f"Trend (m={fmt_slope(m0)}/bar)")
-        if not up0.empty and not lo0.empty:
-            ax0.plot(up0.index, up0.values, ":", linewidth=2.0,
-                     color="black", alpha=0.85, label="Trend +2σ")
-            ax0.plot(lo0.index, lo0.values, ":", linewidth=2.0,
-                     color="black", alpha=0.85, label="Trend -2σ")
-        ax0.set_xlabel("Date (PST)")
-        ax0.text(0.50, 0.02,
-                 f"R² ({bb_period}): {fmt_r2(r2_0)}",
-                 transform=ax0.transAxes,
-                 ha="center", va="bottom",
-                 fontsize=9, color="black",
-                 bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-        ax0.legend()
-        st.pyplot(fig0)
+            fig0, ax0 = plt.subplots(figsize=(14,5))
+            ax0.plot(df0.index, df0['Close'], label="Close")
+            ax0.plot(df0.index, df0['MA30'], label="30 MA")
+            ax0.plot(res0.index, res0, ":", label="Resistance")
+            ax0.plot(sup0.index, sup0, ":", label="Support")
+            if not trend0.empty:
+                col0 = "tab:green" if m0 >= 0 else "tab:red"
+                ax0.plot(trend0.index, trend0.values, "--", color=col0,
+                         label=f"Trend (m={fmt_slope(m0)}/bar)")
+            if not up0.empty and not lo0.empty:
+                ax0.plot(up0.index, up0.values, ":", linewidth=2.0,
+                         color="black", alpha=0.85, label="Trend +2σ")
+                ax0.plot(lo0.index, lo0.values, ":", linewidth=2.0,
+                         color="black", alpha=0.85, label="Trend -2σ")
+            ax0.set_xlabel("Date (PST)")
+            ax0.text(0.50, 0.02,
+                     f"R² ({bb_period}): {fmt_r2(r2_0)}",
+                     transform=ax0.transAxes,
+                     ha="center", va="bottom",
+                     fontsize=9, color="black",
+                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+            ax0.legend()
+            st.pyplot(fig0)
 
-        st.markdown("---")
-        st.subheader("Daily % Change")
-        st.line_chart(df0['PctChange'], use_container_width=True)
+            st.markdown("---")
+            st.subheader("Daily % Change")
+            st.line_chart(df0['PctChange'], use_container_width=True)
 
-        st.subheader("Bull/Bear Distribution")
-        dist = pd.DataFrame({
-            "Type": ["Bull", "Bear"],
-            "Days": [int(df0['Bull'].sum()),
-                     int((~df0['Bull']).sum())]
-        }).set_index("Type")
-        st.bar_chart(dist, use_container_width=True)
+            st.subheader("Bull/Bear Distribution")
+            dist = pd.DataFrame({
+                "Type": ["Bull", "Bear"],
+                "Days": [int(df0['Bull'].sum()),
+                         int((~df0['Bull']).sum())]
+            }).set_index("Type")
+            st.bar_chart(dist, use_container_width=True)
 
 # --- Tab 5: NTD -0.75 Scanner (Latest NTD < -0.75) ---
 with tab5:
