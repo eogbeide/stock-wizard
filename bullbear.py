@@ -1175,7 +1175,7 @@ with tab1:
                 try:
                     if np.isfinite(m_h) and np.isfinite(m_global) and (m_h * m_global < 0):
                         # Show the caution message right below the Forecast Button
-                        caution_below_btn.warning("Please trade with caution because slope line shows that the current trend may be reversing")
+                        caution_below_btn.warning("ALERT: Please exercise caution while trading, as the current slope indicates that the trend may be reversing")
                 except Exception:
                     pass
 
