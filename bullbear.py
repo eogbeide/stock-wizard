@@ -1172,7 +1172,7 @@ with tab1:
                 # --- TOP WARNING (opposite slopes: hourly vs global daily) ---
                 try:
                     if np.isfinite(m_h) and np.isfinite(m_global) and (m_h * m_global < 0):
-                        top_warn.warning("ALERT: Please exercise caution while trading, as the current slope indicates that the trend may be reversing")
+                        top_warn.warning("Please trade with caution because slope line shows that the current trend may be reversing")
                 except Exception:
                     pass
 
@@ -1647,7 +1647,7 @@ with tab5:
             st.info("No daily symbols just crossed the HMA in the trend direction on the latest bar.")
         else:
             df_hmact = pd.DataFrame(hmact_rows)
-            # show BUY first, then SELL
+            # show BUY first, then SELL (combined view)
             df_hmact["SortKey"] = df_hmact["Direction"].map({"BUY": 0, "SELL": 1})
             df_hmact = df_hmact.sort_values(["SortKey", "Symbol"]).drop(columns=["SortKey"])
             show_df = df_hmact.copy()
@@ -1656,6 +1656,31 @@ with tab5:
             show_df["Slope"] = show_df["Slope"].map(lambda v: f"{v:+.5f}" if np.isfinite(v) else "n/a")
             st.dataframe(show_df[["Symbol","Timestamp","Direction","Close","HMA","Slope"]].reset_index(drop=True),
                          use_container_width=True)
+
+            # --- NEW: Separate lists for (1) upward cross in uptrend and (2) downward cross in downtrend
+            st.markdown("#### Upward Cross in Uptrend (BUY)")
+            df_buy = df_hmact[df_hmact["Direction"] == "BUY"].copy().sort_values("Symbol")
+            if df_buy.empty:
+                st.info("No symbols with an upward price↗HMA cross while in an upward slope on the latest bar.")
+            else:
+                df_buy_fmt = df_buy.copy()
+                df_buy_fmt["Close"] = df_buy_fmt["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+                df_buy_fmt["HMA"] = df_buy_fmt["HMA"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+                df_buy_fmt["Slope"] = df_buy_fmt["Slope"].map(lambda v: f"{v:+.5f}" if np.isfinite(v) else "n/a")
+                st.dataframe(df_buy_fmt[["Symbol","Timestamp","Close","HMA","Slope"]].reset_index(drop=True),
+                             use_container_width=True)
+
+            st.markdown("#### Downward Cross in Downtrend (SELL)")
+            df_sell = df_hmact[df_hmact["Direction"] == "SELL"].copy().sort_values("Symbol")
+            if df_sell.empty:
+                st.info("No symbols with a downward price↘HMA cross while in a downward slope on the latest bar.")
+            else:
+                df_sell_fmt = df_sell.copy()
+                df_sell_fmt["Close"] = df_sell_fmt["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+                df_sell_fmt["HMA"] = df_sell_fmt["HMA"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+                df_sell_fmt["Slope"] = df_sell_fmt["Slope"].map(lambda v: f"{v:+.5f}" if np.isfinite(v) else "n/a")
+                st.dataframe(df_sell_fmt[["Symbol","Timestamp","Close","HMA","Slope"]].reset_index(drop=True),
+                             use_container_width=True)
 
         # ---- FOREX HOURLY: latest NTD < -0.75 ----
         if mode == "Forex":
