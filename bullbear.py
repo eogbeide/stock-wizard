@@ -24,6 +24,8 @@
 #   • NEW (Scanner): Replaced "Daily — Price > Ichimoku Kijun(26)" with
 #                    "Daily — HMA Cross + Trend Agreement (latest bar)".
 #   • NEW (Daily): HMA Cross colors → Buy = Black, Sell = Blue (badges and stars).
+#   • NEW (Daily): **Purple ★ Kijun Cross** — Buy when price crosses **up through Kijun** during an **upward slope**,
+#                  Sell when price crosses **down through Kijun** during a **downward slope**.
 
 import streamlit as st
 import pandas as pd
@@ -759,6 +761,40 @@ def last_hma_cross_star(price: pd.Series,
         return {"time": t, "price": float(p.loc[t]), "kind": "peak"}    # default red
     return None
 
+# --- NEW: Kijun-cross star detection for Daily chart (PURPLE star) ---
+def last_kijun_cross_star(price: pd.Series,
+                          kijun: pd.Series,
+                          trend_slope: float,
+                          lookback: int = 30):
+    """
+    Returns a PURPLE star when price crosses the Ichimoku **Kijun** in the direction of the LOCAL daily trend:
+      • Uptrend (trend_slope > 0):  price crosses UP through Kijun → BUY
+      • Downtrend (trend_slope < 0): price crosses DOWN through Kijun → SELL
+    Only the latest event within `lookback` bars is considered.
+    """
+    if not np.isfinite(trend_slope) or trend_slope == 0:
+        return None
+    p = _coerce_1d_series(price).astype(float)
+    k = _coerce_1d_series(kijun).astype(float).reindex(p.index)
+
+    mask = p.notna() & k.notna()
+    if mask.sum() < 2:
+        return None
+    p = p[mask]; k = k[mask]
+    if lookback and len(p) > lookback:
+        p = p.iloc[-lookback:]; k = k.iloc[-lookback:]
+
+    up_cross   = (p.shift(1) < k.shift(1)) & (p >= k)
+    down_cross = (p.shift(1) > k.shift(1)) & (p <= k)
+
+    if trend_slope > 0 and up_cross.any():
+        t = up_cross[up_cross].index[-1]
+        return {"time": t, "price": float(p.loc[t]), "side": "BUY"}
+    if trend_slope < 0 and down_cross.any():
+        t = down_cross[down_cross].index[-1]
+        return {"time": t, "price": float(p.loc[t]), "side": "SELL"}
+    return None
+
 # --- Cleaner axes + TOP instruction banner (outside the chart) ---
 def _simplify_axes(ax):
     ax.grid(True, alpha=0.15, linestyle="--", linewidth=0.6)
@@ -1071,7 +1107,7 @@ with tab1:
             except Exception:
                 res_val_d = sup_val_d = np.nan
 
-            # --- Signals to badges: Band REV, Reversal stars, and NEW HMA-cross star ---
+            # --- Signals to badges: Band REV, Reversal stars, HMA-cross star, and NEW Kijun-cross star ---
             badges_top = []
 
             # Band REV (Daily)
@@ -1103,6 +1139,14 @@ with tab1:
                 else:
                     annotate_star(ax, hma_cross_star["time"], hma_cross_star["price"], hma_cross_star["kind"], show_text=False, color_override="tab:blue")
                     badges_top.append((f"★ Sell HMA Cross @{fmt_price_val(hma_cross_star['price'])}", "tab:blue"))
+
+            # NEW: Kijun-cross PURPLE star (Daily)
+            if not kijun_d_show.dropna().empty:
+                kijun_cross_star = last_kijun_cross_star(df_show, kijun_d_show, trend_slope=m_d, lookback=30)
+                if kijun_cross_star is not None:
+                    kind = "trough" if kijun_cross_star["side"] == "BUY" else "peak"
+                    annotate_star(ax, kijun_cross_star["time"], kijun_cross_star["price"], kind, show_text=False, color_override="purple")
+                    badges_top.append((f"★ Kijun {kijun_cross_star['side']} @{fmt_price_val(kijun_cross_star['price'])}", "purple"))
 
             # Draw compact badges
             draw_top_badges(ax, badges_top)
@@ -1411,6 +1455,14 @@ with tab2:
                 else:
                     annotate_star(ax, hma_cross_star2["time"], hma_cross_star2["price"], hma_cross_star2["kind"], show_text=False, color_override="tab:blue")
                     badges_top2.append((f"★ Sell HMA Cross @{fmt_price_val(hma_cross_star2['price'])}", "tab:blue"))
+
+            # NEW: Kijun-cross PURPLE star (Daily)
+            if not kijun_d2_show.dropna().empty:
+                kijun_cross_star2 = last_kijun_cross_star(df_show, kijun_d2_show, trend_slope=m_d, lookback=30)
+                if kijun_cross_star2 is not None:
+                    kind2 = "trough" if kijun_cross_star2["side"] == "BUY" else "peak"
+                    annotate_star(ax, kijun_cross_star2["time"], kijun_cross_star2["price"], kind2, show_text=False, color_override="purple")
+                    badges_top2.append((f"★ Kijun {kijun_cross_star2['side']} @{fmt_price_val(kijun_cross_star2['price'])}", "purple"))
 
             draw_top_badges(ax, badges_top2)
 
