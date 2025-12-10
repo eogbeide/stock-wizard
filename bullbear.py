@@ -155,9 +155,9 @@ def format_trade_instruction(trend_slope: float,
                              close_val: float,
                              symbol: str) -> str:
     """
-    TREND-AWARE instruction order (SINGLE SENTENCE):
-      • Uptrend (green)   → BUY first, then SELL, then Value of Pips
-      • Downtrend (red)   → SELL first, then BUY, then Value of Pips
+    TREND-AWARE instruction order (SINGLE SENTENCE, uses LOCAL slope):
+      • Uptrend (green)   → BUY first, then SELL, then Value of PIPS
+      • Downtrend (red)   → SELL first, then BUY, then Value of PIPS
     """
     def _finite(x):
         try:
@@ -170,7 +170,8 @@ def format_trade_instruction(trend_slope: float,
 
     buy_txt  = f"▲ BUY @{fmt_price_val(entry_buy)}"
     sell_txt = f"▼ SELL @{fmt_price_val(exit_sell)}"
-    pips_txt = f" • Value of Pips: {_diff_text(exit_sell, entry_buy, symbol)}"
+    # CHANGED: "PIPS" in caps per request
+    pips_txt = f" • Value of PIPS: {_diff_text(exit_sell, entry_buy, symbol)}"
 
     try:
         tslope = float(trend_slope)
@@ -178,8 +179,10 @@ def format_trade_instruction(trend_slope: float,
         tslope = 0.0
 
     if np.isfinite(tslope) and tslope > 0:
+        # Upward local slope → Buy, Sell, Value of PIPS
         return f"{buy_txt} → {sell_txt}{pips_txt}"
     else:
+        # Downward local slope → Sell, Buy, Value of PIPS
         return f"{sell_txt} → {buy_txt}{pips_txt}"
 
 def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
@@ -774,7 +777,8 @@ def _instruction_pieces(trend_slope, buy_val, sell_val, close_val, symbol):
     sell_price = float(sell_val) if _finite(sell_val) else float(close_val)
     buy_txt  = f"▲ BUY @{fmt_price_val(buy_price)}"
     sell_txt = f"▼ SELL @{fmt_price_val(sell_price)}"
-    pips_txt = f"Value of Pips: {_diff_text(sell_price, buy_price, symbol)}"
+    # CHANGED: "PIPS" in caps for consistency
+    pips_txt = f"Value of PIPS: {_diff_text(sell_price, buy_price, symbol)}"
     return buy_txt, sell_txt, pips_txt
 
 def draw_instruction_ribbons(ax, trend_slope, buy_val, sell_val, close_val, symbol):
@@ -1103,7 +1107,7 @@ with tab1:
             # Draw compact badges
             draw_top_badges(ax, badges_top)
 
-            # TOP instruction banner (Daily)
+            # TOP instruction banner (Daily) — uses LOCAL daily slope (m_d)
             try:
                 px_val_d  = float(df_show.iloc[-1])
                 draw_instruction_ribbons(ax, m_d, sup_val_d, res_val_d, px_val_d, sel)
@@ -1162,9 +1166,9 @@ with tab1:
 
                 # Hourly regression slope & bands (for signals)
                 yhat_h, upper_h, lower_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
-                slope_sig_h = m_h if np.isfinite(m_h) else slope_h
+                slope_sig_h = m_h if np.isfinite(m_h) else slope_h  # LOCAL slope for instruction
 
-                # GLOBAL (DAILY) slope for instruction order
+                # GLOBAL (DAILY) slope (still used for caution check)
                 try:
                     df_global = st.session_state.df_hist
                     _, _, _, m_global, _ = regression_with_band(df_global, slope_lb_daily)
@@ -1234,8 +1238,8 @@ with tab1:
 
                 draw_top_badges(ax2, badges_top_h)
 
-                # TOP instruction banner (Hourly) — use GLOBAL daily slope for order
-                draw_instruction_ribbons(ax2, m_global, sup_val, res_val, px_val, sel)
+                # TOP instruction banner (Hourly) — CHANGED to use LOCAL slope (slope_sig_h)
+                draw_instruction_ribbons(ax2, slope_sig_h, sup_val, res_val, px_val, sel)
 
                 # footer stats
                 if np.isfinite(px_val):
@@ -1410,7 +1414,7 @@ with tab2:
 
             draw_top_badges(ax, badges_top2)
 
-            # TOP instruction banner (Daily)
+            # TOP instruction banner (Daily) — uses LOCAL daily slope (m_d)
             try:
                 px_val_d2  = float(df_show.iloc[-1])
                 draw_instruction_ribbons(ax, m_d, sup_val_d2, res_val_d2, px_val_d2, st.session_state.ticker)
