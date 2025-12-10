@@ -648,9 +648,9 @@ def annotate_star(ax, ts, px, kind: str, show_text: bool = True):
             ymin, ymax = ax.get_ylim()
             yoff = (ymax - ymin) * (0.02 if kind == "trough" else -0.02)
             ax.text(ts, px + yoff, label, color=color, fontsize=9, fontweight="bold",
-                ha="left", va="bottom" if kind == "trough" else "top",
-                bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=color, alpha=0.9),
-                zorder=12)
+                    ha="left", va="bottom" if kind == "trough" else "top",
+                    bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=color, alpha=0.9),
+                    zorder=12)
     except Exception:
         if show_text:
             ax.text(ts, px, label, color=color, fontsize=9, fontweight="bold")
