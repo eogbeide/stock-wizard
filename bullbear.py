@@ -9,8 +9,8 @@
 #   • Removed Momentum & NTD/NPX charts (scanner tab remains).
 #   • HMA line can be plotted; HMA BUY/SELL signal callouts removed.
 #   • ★ Star marker for recent peak/trough reversals (trend-aware).
-#     - Peak REV: star + small label near the point + TOP BADGE.
-#     - Trough REV: star only in chart (no label) + TOP BADGE.
+#     - Peak REV: star (no label in chart) + TOP BADGE.
+#     - Trough REV: star (no label in chart) + TOP BADGE.
 #   • NEW: Buy Band REV shows an ▲ triangle marker INSIDE the chart
 #           and also a compact top badge; SELL Band REV remains an outside callout.
 #   • Fibonacci default = ON (hourly only).
@@ -638,8 +638,11 @@ def annotate_band_rev_outside(ax, ts, px, side: str, note: str = "Band REV"):
     except Exception:
         annotate_signal_box(ax, ts, px, side, note=note)
 
-def annotate_star(ax, ts, px, kind: str, show_text: bool = True):
-    """Star at peak/trough."""
+def annotate_star(ax, ts, px, kind: str, show_text: bool = False):
+    """
+    Star at peak/trough (chart sign only by default).
+    If `show_text` is True, add a small label near the point.
+    """
     color = "tab:red" if kind == "peak" else "tab:green"
     label = "★ Peak REV" if kind == "peak" else "★ Trough REV"
     try:
@@ -652,8 +655,8 @@ def annotate_star(ax, ts, px, kind: str, show_text: bool = True):
                     bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=color, alpha=0.9),
                     zorder=12)
     except Exception:
-        if show_text:
-            ax.text(ts, px, label, color=color, fontsize=9, fontweight="bold")
+        # Fallback: at least draw a star glyph, no descriptive label
+        ax.text(ts, px, "★", color=color, fontsize=12, fontweight="bold")
 
 def annotate_buy_triangle(ax, ts, px, size: int = 140):
     """Up-triangle marker for BUY Band REV inside the chart (no label)."""
@@ -1016,10 +1019,10 @@ with tab1:
             elif band_sig_d is not None and band_sig_d.get("side") == "SELL":
                 annotate_band_rev_outside(ax, band_sig_d["time"], band_sig_d["price"], band_sig_d["side"], note=band_sig_d.get("note",""))
 
-            # Star (Daily) — draw on chart for BOTH kinds; trough/peak also get top badges
+            # Star (Daily) — chart sign only; details appear in top badges
             star_d = last_reversal_star(df_show, trend_slope=m_d, lookback=20, confirm_bars=rev_bars_confirm)
             if star_d is not None:
-                annotate_star(ax, star_d["time"], star_d["price"], star_d["kind"], show_text=(star_d["kind"] == "peak"))
+                annotate_star(ax, star_d["time"], star_d["price"], star_d["kind"], show_text=False)
                 if star_d.get("kind") == "trough":
                     badges_top.append((f"★ Trough REV @{fmt_price_val(star_d['price'])}", "tab:green"))
                 elif star_d.get("kind") == "peak":
@@ -1143,7 +1146,7 @@ with tab1:
 
                 star_h = last_reversal_star(hc, trend_slope=m_h, lookback=20, confirm_bars=rev_bars_confirm)
                 if star_h is not None:
-                    annotate_star(ax2, star_h["time"], star_h["price"], star_h["kind"], show_text=(star_h["kind"] == "peak"))
+                    annotate_star(ax2, star_h["time"], star_h["price"], star_h["kind"], show_text=False)
                     if star_h.get("kind") == "trough":
                         badges_top_h.append((f"★ Trough REV @{fmt_price_val(star_h['price'])}", "tab:green"))
                     elif star_h.get("kind") == "peak":
@@ -1306,10 +1309,10 @@ with tab2:
             except Exception:
                 res_val_d2 = sup_val_d2 = np.nan
 
-            # Star (Daily)
+            # Star (Daily) — chart sign only
             star_d2 = last_reversal_star(df_show, trend_slope=m_d, lookback=20, confirm_bars=rev_bars_confirm)
             if star_d2 is not None:
-                annotate_star(ax, star_d2["time"], star_d2["price"], star_d2["kind"], show_text=(star_d2["kind"] == "peak"))
+                annotate_star(ax, star_d2["time"], star_d2["price"], star_d2["kind"], show_text=False)
                 if star_d2.get("kind") == "trough":
                     badges_top2.append((f"★ Trough REV @{fmt_price_val(star_d2['price'])}", "tab:green"))
                 elif star_d2.get("kind") == "peak":
