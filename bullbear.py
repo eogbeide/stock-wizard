@@ -983,6 +983,8 @@ with tab1:
             "intraday": intraday, "ticker": sel, "chart": chart,
             "hour_range": hour_range, "run_all": True
         })
+    # --- Caution placeholder positioned just below the Forecast button ---
+    caution_below_btn = st.empty()
 
     if st.session_state.run_all and st.session_state.ticker == sel:
         df = st.session_state.df_hist
@@ -1172,7 +1174,8 @@ with tab1:
                 # --- TOP WARNING (opposite slopes: hourly vs global daily) ---
                 try:
                     if np.isfinite(m_h) and np.isfinite(m_global) and (m_h * m_global < 0):
-                        top_warn.warning("Please trade with caution because slope line shows that the current trend may be reversing")
+                        # Show the caution message right below the Forecast Button
+                        caution_below_btn.warning("Please trade with caution because slope line shows that the current trend may be reversing")
                 except Exception:
                     pass
 
