@@ -1043,8 +1043,8 @@ with tab1:
                 slope_col_d = "tab:green" if m_d >= 0 else "tab:red"
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2.0, color=slope_col_d, label="Trend")
             if not upper_d_show.empty and not lower_d_show.empty:
-                ax.plot(upper_d_show.index, upper_d_show.values, ":", linewidth=1.8, color="black", alpha=0.6, label="_nolegend_")
-                ax.plot(lower_d_show.index, lower_d_show.values, ":", linewidth=1.8, color="black", alpha=0.6, label="_nolegend_")
+                ax.plot(upper_d_show.index, upper_d_show.values, ":", linewidth=1.8, color="black", alpha=0.9, label="_nolegend_")
+                ax.plot(lower_d_show.index, lower_d_show.values, ":", linewidth=1.8, color="black", alpha=0.9, label="_nolegend_")
             if len(df_show) > 1:
                 draw_trend_direction_line(ax, df_show, label_prefix="")
 
@@ -1245,8 +1245,8 @@ with tab1:
                     slope_col_h = "tab:green" if m_h >= 0 else "tab:red"
                     ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=1.8, color=slope_col_h, alpha=0.8, label="Slope Fit")
                 if not upper_h.empty and not lower_h.empty:
-                    ax2.plot(upper_h.index, upper_h.values, ":", linewidth=1.5, color="black", alpha=0.5, label="_nolegend_")
-                    ax2.plot(lower_h.index, lower_h.values, ":", linewidth=1.5, color="black", alpha=0.5, label="_nolegend_")
+                    ax2.plot(upper_h.index, upper_h.values, ":", linewidth=1.5, color="black", alpha=0.9, label="_nolegend_")
+                    ax2.plot(lower_h.index, lower_h.values, ":", linewidth=1.5, color="black", alpha=0.9, label="_nolegend_")
 
                 if mode == "Forex" and show_sessions_pst and not hc.empty:
                     sess = compute_session_lines(hc.index)
@@ -1346,9 +1346,9 @@ with tab2:
                 slope_col_d2 = "tab:green" if m_d >= 0 else "tab:red"
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2.0, color=slope_col_d2, label="Trend")
             if not up_d_show.empty and not lo_d_show.empty:
-                ax.plot(up_d_show.index, up_d_show.values, ":", linewidth=1.8, color="black", alpha=0.6, label="_nolegend_")
+                ax.plot(up_d_show.index, up_d_show.values, ":", linewidth=1.8, color="black", alpha=0.9, label="_nolegend_")
             if not lo_d_show.empty:
-                ax.plot(lo_d_show.index, lo_d_show.values, ":", linewidth=1.8, color="black", alpha=0.6, label="_nolegend_")
+                ax.plot(lo_d_show.index, lo_d_show.values, ":", linewidth=1.8, color="black", alpha=0.9, label="_nolegend_")
             if len(df_show) > 1:
                 draw_trend_direction_line(ax, df_show, label_prefix="")
 
@@ -1473,9 +1473,9 @@ with tab4:
                     label=f"Trend (m={fmt_slope(m3m)}/bar)")
         if not up3m.empty and not lo3m.empty:
             ax.plot(up3m.index, up3m.values, ":", linewidth=2.0,
-                     color="black", alpha=0.85, label="Trend +2σ")
+                     color="black", alpha=0.9, label="Trend +2σ")
             ax.plot(lo3m.index, lo3m.values, ":", linewidth=2.0,
-                     color="black", alpha=0.85, label="Trend -2σ")
+                     color="black", alpha=0.9, label="Trend -2σ")
         ax.set_xlabel("Date (PST)")
         ax.text(0.50, 0.02,
                 f"R² (3M): {fmt_r2(r2_3m)}",
@@ -1512,9 +1512,9 @@ with tab4:
                          label=f"Trend (m={fmt_slope(m0)}/bar)")
             if not up0.empty and not lo0.empty:
                 ax0.plot(up0.index, up0.values, ":", linewidth=2.0,
-                         color="black", alpha=0.85, label="Trend +2σ")
+                         color="black", alpha=0.9, label="Trend +2σ")
                 ax0.plot(lo0.index, lo0.values, ":", linewidth=2.0,
-                         color="black", alpha=0.85, label="Trend -2σ")
+                         color="black", alpha=0.9, label="Trend -2σ")
             ax0.set_xlabel("Date (PST)")
             ax0.text(0.50, 0.02,
                      f"R² ({bb_period}): {fmt_r2(r2_0)}",
@@ -1752,9 +1752,9 @@ with tab6:
                         linewidth=2, color=col_all, label="Trend")
             if not upper_all.empty and not lower_all.empty:
                 ax.plot(upper_all.index, upper_all.values, ":", linewidth=1.8,
-                        color="black", alpha=0.6, label="_nolegend_")
+                        color="black", alpha=0.9, label="_nolegend_")
                 ax.plot(lower_all.index, lower_all.values, ":", linewidth=1.8,
-                        color="black", alpha=0.6, label="_nolegend_")
+                        color="black", alpha=0.9, label="_nolegend_")
             px_now = _safe_last_float(s)
             if np.isfinite(px_now):
                 ax.text(0.99, 0.02,
