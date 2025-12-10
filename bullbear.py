@@ -20,7 +20,7 @@
 #   • Outside BUY/SELL ribbon is a single combined sentence with correct order.
 #   • Charts use full width (no right margin) to make room for top banners.
 
-import streamlit as stcc
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
