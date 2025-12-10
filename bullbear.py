@@ -642,12 +642,13 @@ def annotate_band_rev_outside(ax, ts, px, side: str, note: str = "Band REV"):
     except Exception:
         annotate_signal_box(ax, ts, px, side, note=note)
 
-def annotate_star(ax, ts, px, kind: str, show_text: bool = False):
+def annotate_star(ax, ts, px, kind: str, show_text: bool = False, color_override: str = None):
     """
     Star at peak/trough (chart sign only by default).
     If `show_text` is True, add a small label near the point.
+    Optional color_override lets callers override the default red/green-by-kind.
     """
-    color = "tab:red" if kind == "peak" else "tab:green"
+    color = color_override if color_override else ("tab:red" if kind == "peak" else "tab:green")
     label = "★ Peak REV" if kind == "peak" else "★ Trough REV"
     try:
         ax.scatter([ts], [px], marker="*", s=160, c=color, zorder=12, edgecolors="none")
@@ -728,10 +729,10 @@ def last_hma_cross_star(price: pd.Series,
 
     if trend_slope > 0 and up_cross.any():
         t = up_cross[up_cross].index[-1]
-        return {"time": t, "price": float(p.loc[t]), "kind": "trough"}  # green star
+        return {"time": t, "price": float(p.loc[t]), "kind": "trough"}  # green star by default
     if trend_slope < 0 and down_cross.any():
         t = down_cross[down_cross].index[-1]
-        return {"time": t, "price": float(p.loc[t]), "kind": "peak"}    # red star
+        return {"time": t, "price": float(p.loc[t]), "kind": "peak"}    # red star by default
     return None
 
 # --- Cleaner axes + TOP instruction banner (outside the chart) ---
@@ -1066,14 +1067,15 @@ with tab1:
                 elif star_d.get("kind") == "peak":
                     badges_top.append((f"★ Peak REV @{fmt_price_val(star_d['price'])}", "tab:red"))
 
-            # NEW: HMA-cross star (Daily)
+            # NEW: HMA-cross star (Daily) — CUSTOM COLORS: Buy=Black, Sell=Blue
             hma_cross_star = last_hma_cross_star(df_show, hma_d_full, trend_slope=m_d, lookback=30)
             if hma_cross_star is not None:
-                annotate_star(ax, hma_cross_star["time"], hma_cross_star["price"], hma_cross_star["kind"], show_text=False)
                 if hma_cross_star["kind"] == "trough":
-                    badges_top.append((f"★ Buy HMA Cross @{fmt_price_val(hma_cross_star['price'])}", "tab:green"))
+                    annotate_star(ax, hma_cross_star["time"], hma_cross_star["price"], hma_cross_star["kind"], show_text=False, color_override="black")
+                    badges_top.append((f"★ Buy HMA Cross @{fmt_price_val(hma_cross_star['price'])}", "black"))
                 else:
-                    badges_top.append((f"★ Sell HMA Cross @{fmt_price_val(hma_cross_star['price'])}", "tab:red"))
+                    annotate_star(ax, hma_cross_star["time"], hma_cross_star["price"], hma_cross_star["kind"], show_text=False, color_override="tab:blue")
+                    badges_top.append((f"★ Sell HMA Cross @{fmt_price_val(hma_cross_star['price'])}", "tab:blue"))
 
             # Draw compact badges
             draw_top_badges(ax, badges_top)
@@ -1226,7 +1228,7 @@ with tab1:
                     ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=1.8, color=slope_col_h, alpha=0.8, label="Slope Fit")
                 if not upper_h.empty and not lower_h.empty:
                     ax2.plot(upper_h.index, upper_h.values, ":", linewidth=1.5, color="black", alpha=0.5, label="_nolegend_")
-                    ax2.plot(lower_h.index, lower_h.values, ":", linewidth=1.5, color="black", alpha=0.5, label="_nolegend_")
+                    ax2.plot(lower_h.index, lower_h.index, ":", linewidth=1.5, color="black", alpha=0.5, label="_nolegend_")
 
                 if mode == "Forex" and show_sessions_pst and not hc.empty:
                     sess = compute_session_lines(hc.index)
@@ -1365,14 +1367,15 @@ with tab2:
                 elif star_d2.get("kind") == "peak":
                     badges_top2.append((f"★ Peak REV @{fmt_price_val(star_d2['price'])}", "tab:red"))
 
-            # NEW: HMA-cross star (Daily)
+            # NEW: HMA-cross star (Daily) — CUSTOM COLORS: Buy=Black, Sell=Blue
             hma_cross_star2 = last_hma_cross_star(df_show, hma_d2_full, trend_slope=m_d, lookback=30)
             if hma_cross_star2 is not None:
-                annotate_star(ax, hma_cross_star2["time"], hma_cross_star2["price"], hma_cross_star2["kind"], show_text=False)
                 if hma_cross_star2["kind"] == "trough":
-                    badges_top2.append((f"★ Buy HMA Cross @{fmt_price_val(hma_cross_star2['price'])}", "tab:green"))
+                    annotate_star(ax, hma_cross_star2["time"], hma_cross_star2["price"], hma_cross_star2["kind"], show_text=False, color_override="black")
+                    badges_top2.append((f"★ Buy HMA Cross @{fmt_price_val(hma_cross_star2['price'])}", "black"))
                 else:
-                    badges_top2.append((f"★ Sell HMA Cross @{fmt_price_val(hma_cross_star2['price'])}", "tab:red"))
+                    annotate_star(ax, hma_cross_star2["time"], hma_cross_star2["price"], hma_cross_star2["kind"], show_text=False, color_override="tab:blue")
+                    badges_top2.append((f"★ Sell HMA Cross @{fmt_price_val(hma_cross_star2['price'])}", "tab:blue"))
 
             draw_top_badges(ax, badges_top2)
 
