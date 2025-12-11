@@ -1618,76 +1618,51 @@ with tab5:
             view["Close"] = view["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
             st.dataframe(view[["Symbol","Timestamp","Close","NTD_Last"]].reset_index(drop=True), use_container_width=True)
 
-        # ---- REPLACED: Daily HMA Cross + Trend Agreement (latest bar)
+        # ---- SECOND SCANNER: Daily — Kijun Up-Cross + Upward Slope (latest bar)
         st.markdown("---")
-        st.subheader("Daily — HMA Cross + Trend Agreement (latest bar)")
-        hmact_rows = []
+        st.subheader(f"Daily — Kijun Up-Cross + Upward Slope (latest bar, Kijun={ichi_base})")
+        kij_rows = []
         for sym in universe:
             try:
-                s = fetch_hist(sym)  # daily close
-                h = compute_hma(s, period=hma_period).reindex(s.index)
-                # trend slope based on configured daily lookback
-                _, _, _, m_sym, _ = regression_with_band(s, slope_lb_daily)
-                # require last two valid observations with HMA present
-                mask = s.notna() & h.notna()
-                if mask.sum() >= 2 and np.isfinite(m_sym) and m_sym != 0:
-                    s2 = s[mask]; h2 = h[mask]
-                    c_prev, c_now = float(s2.iloc[-2]), float(s2.iloc[-1])
-                    h_prev, h_now = float(h2.iloc[-2]), float(h2.iloc[-1])
-                    up_cross = (c_prev < h_prev) and (c_now >= h_now)
-                    dn_cross = (c_prev > h_prev) and (c_now <= h_now)
-
-                    if (m_sym > 0 and up_cross) or (m_sym < 0 and dn_cross):
-                        direction = "BUY" if m_sym > 0 else "SELL"
-                        hmact_rows.append({
-                            "Symbol": sym,
-                            "Timestamp": s2.index[-1],
-                            "Direction": direction,
-                            "Close": c_now,
-                            "HMA": h_now,
-                            "Slope": m_sym
-                        })
+                ohlc = fetch_hist_ohlc(sym)
+                if ohlc is None or ohlc.empty or not {'High','Low','Close'}.issubset(ohlc.columns):
+                    continue
+                # Daily slope based on configured lookback
+                _, _, _, m_sym, _ = regression_with_band(ohlc["Close"], slope_lb_daily)
+                if not np.isfinite(m_sym) or m_sym <= 0:
+                    continue  # require upward slope
+                # Compute Kijun and test for up-cross on latest bar
+                _, kijun, _, _, _ = ichimoku_lines(ohlc["High"], ohlc["Low"], ohlc["Close"],
+                                                   conv=ichi_conv, base=ichi_base, span_b=ichi_spanb, shift_cloud=False)
+                kijun = kijun.ffill().bfill().reindex(ohlc.index)
+                close = ohlc["Close"].astype(float).reindex(ohlc.index)
+                mask = close.notna() & kijun.notna()
+                if mask.sum() < 2:
+                    continue
+                c_prev, c_now = float(close[mask].iloc[-2]), float(close[mask].iloc[-1])
+                k_prev, k_now = float(kijun[mask].iloc[-2]), float(kijun[mask].iloc[-1])
+                up_cross = (c_prev < k_prev) and (c_now >= k_now)
+                if up_cross:
+                    kij_rows.append({
+                        "Symbol": sym,
+                        "Timestamp": close[mask].index[-1],
+                        "Close": c_now,
+                        "Kijun": k_now,
+                        "Slope": m_sym
+                    })
             except Exception:
                 pass
 
-        if not hmact_rows:
-            st.info("No daily symbols just crossed the HMA in the trend direction on the latest bar.")
+        if not kij_rows:
+            st.info("No daily symbols just crossed **up through the Kijun** while in an **upward slope** on the latest bar.")
         else:
-            df_hmact = pd.DataFrame(hmact_rows)
-            # show BUY first, then SELL (combined view)
-            df_hmact["SortKey"] = df_hmact["Direction"].map({"BUY": 0, "SELL": 1})
-            df_hmact = df_hmact.sort_values(["SortKey", "Symbol"]).drop(columns=["SortKey"])
-            show_df = df_hmact.copy()
-            show_df["Close"] = show_df["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-            show_df["HMA"] = show_df["HMA"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-            show_df["Slope"] = show_df["Slope"].map(lambda v: f"{v:+.5f}" if np.isfinite(v) else "n/a")
-            st.dataframe(show_df[["Symbol","Timestamp","Direction","Close","HMA","Slope"]].reset_index(drop=True),
+            df_kij = pd.DataFrame(kij_rows).sort_values("Symbol")
+            show_kij = df_kij.copy()
+            show_kij["Close"] = show_kij["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            show_kij["Kijun"] = show_kij["Kijun"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            show_kij["Slope"] = show_kij["Slope"].map(lambda v: f"{v:+.5f}" if np.isfinite(v) else "n/a")
+            st.dataframe(show_kij[["Symbol","Timestamp","Close","Kijun","Slope"]].reset_index(drop=True),
                          use_container_width=True)
-
-            # --- NEW: Separate lists for (1) upward cross in uptrend and (2) downward cross in downtrend
-            st.markdown("#### Upward Cross in Uptrend (BUY)")
-            df_buy = df_hmact[df_hmact["Direction"] == "BUY"].copy().sort_values("Symbol")
-            if df_buy.empty:
-                st.info("No symbols with an upward price↗HMA cross while in an upward slope on the latest bar.")
-            else:
-                df_buy_fmt = df_buy.copy()
-                df_buy_fmt["Close"] = df_buy_fmt["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-                df_buy_fmt["HMA"] = df_buy_fmt["HMA"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-                df_buy_fmt["Slope"] = df_buy_fmt["Slope"].map(lambda v: f"{v:+.5f}" if np.isfinite(v) else "n/a")
-                st.dataframe(df_buy_fmt[["Symbol","Timestamp","Close","HMA","Slope"]].reset_index(drop=True),
-                             use_container_width=True)
-
-            st.markdown("#### Downward Cross in Downtrend (SELL)")
-            df_sell = df_hmact[df_hmact["Direction"] == "SELL"].copy().sort_values("Symbol")
-            if df_sell.empty:
-                st.info("No symbols with a downward price↘HMA cross while in a downward slope on the latest bar.")
-            else:
-                df_sell_fmt = df_sell.copy()
-                df_sell_fmt["Close"] = df_sell_fmt["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-                df_sell_fmt["HMA"] = df_sell_fmt["HMA"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-                df_sell_fmt["Slope"] = df_sell_fmt["Slope"].map(lambda v: f"{v:+.5f}" if np.isfinite(v) else "n/a")
-                st.dataframe(df_sell_fmt[["Symbol","Timestamp","Close","HMA","Slope"]].reset_index(drop=True),
-                             use_container_width=True)
 
         # ---- FOREX HOURLY: latest NTD < -0.75 ----
         if mode == "Forex":
