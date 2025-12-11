@@ -24,8 +24,6 @@
 #   • NEW (Scanner): Replaced "Daily — Price > Ichimoku Kijun(26)" with
 #                    "Daily — HMA Cross + Trend Agreement (latest bar)".
 #   • NEW (Daily): HMA Cross colors → Buy = Black, Sell = Blue (badges and stars).
-#   • NEW (Daily): **Purple ★ Kijun Cross** — Buy when price crosses **up through Kijun** during an **upward slope**,
-#                  Sell when price crosses **down through Kijun** during a **downward slope**.
 
 import streamlit as st
 import pandas as pd
@@ -157,8 +155,7 @@ def format_trade_instruction(trend_slope: float,
                              close_val: float,
                              symbol: str) -> str:
     """
-    TREND-AWARE instruction order (SINGLE SENTENCE; uses the slope that is passed in
-    — callers can supply local or global slope):
+    TREND-AWARE instruction order (SINGLE SENTENCE, uses LOCAL slope):
       • Uptrend (green)   → BUY first, then SELL, then Value of PIPS
       • Downtrend (red)   → SELL first, then BUY, then Value of PIPS
     """
@@ -173,7 +170,7 @@ def format_trade_instruction(trend_slope: float,
 
     buy_txt  = f"▲ BUY @{fmt_price_val(entry_buy)}"
     sell_txt = f"▼ SELL @{fmt_price_val(exit_sell)}"
-    # "PIPS" in caps per request
+    # CHANGED: "PIPS" in caps per request
     pips_txt = f" • Value of PIPS: {_diff_text(exit_sell, entry_buy, symbol)}"
 
     try:
@@ -182,10 +179,10 @@ def format_trade_instruction(trend_slope: float,
         tslope = 0.0
 
     if np.isfinite(tslope) and tslope > 0:
-        # Upward slope → Buy, Sell, Value of PIPS
+        # Upward local slope → Buy, Sell, Value of PIPS
         return f"{buy_txt} → {sell_txt}{pips_txt}"
     else:
-        # Downward slope → Sell, Buy, Value of PIPS
+        # Downward local slope → Sell, Buy, Value of PIPS
         return f"{sell_txt} → {buy_txt}{pips_txt}"
 
 def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
@@ -762,40 +759,6 @@ def last_hma_cross_star(price: pd.Series,
         return {"time": t, "price": float(p.loc[t]), "kind": "peak"}    # default red
     return None
 
-# --- NEW: Kijun-cross star detection for Daily chart (PURPLE star) ---
-def last_kijun_cross_star(price: pd.Series,
-                          kijun: pd.Series,
-                          trend_slope: float,
-                          lookback: int = 30):
-    """
-    Returns a PURPLE star when price crosses the Ichimoku **Kijun** in the direction of the LOCAL daily trend:
-      • Uptrend (trend_slope > 0):  price crosses UP through Kijun → BUY
-      • Downtrend (trend_slope < 0): price crosses DOWN through Kijun → SELL
-    Only the latest event within `lookback` bars is considered.
-    """
-    if not np.isfinite(trend_slope) or trend_slope == 0:
-        return None
-    p = _coerce_1d_series(price).astype(float)
-    k = _coerce_1d_series(kijun).astype(float).reindex(p.index)
-
-    mask = p.notna() & k.notna()
-    if mask.sum() < 2:
-        return None
-    p = p[mask]; k = k[mask]
-    if lookback and len(p) > lookback:
-        p = p.iloc[-lookback:]; k = k.iloc[-lookback:]
-
-    up_cross   = (p.shift(1) < k.shift(1)) & (p >= k)
-    down_cross = (p.shift(1) > k.shift(1)) & (p <= k)
-
-    if trend_slope > 0 and up_cross.any():
-        t = up_cross[up_cross].index[-1]
-        return {"time": t, "price": float(p.loc[t]), "side": "BUY"}
-    if trend_slope < 0 and down_cross.any():
-        t = down_cross[down_cross].index[-1]
-        return {"time": t, "price": float(p.loc[t]), "side": "SELL"}
-    return None
-
 # --- Cleaner axes + TOP instruction banner (outside the chart) ---
 def _simplify_axes(ax):
     ax.grid(True, alpha=0.15, linestyle="--", linewidth=0.6)
@@ -814,7 +777,7 @@ def _instruction_pieces(trend_slope, buy_val, sell_val, close_val, symbol):
     sell_price = float(sell_val) if _finite(sell_val) else float(close_val)
     buy_txt  = f"▲ BUY @{fmt_price_val(buy_price)}"
     sell_txt = f"▼ SELL @{fmt_price_val(sell_price)}"
-    # "PIPS" in caps for consistency
+    # CHANGED: "PIPS" in caps for consistency
     pips_txt = f"Value of PIPS: {_diff_text(sell_price, buy_price, symbol)}"
     return buy_txt, sell_txt, pips_txt
 
@@ -1108,7 +1071,7 @@ with tab1:
             except Exception:
                 res_val_d = sup_val_d = np.nan
 
-            # --- Signals to badges: Band REV, Reversal stars, HMA-cross star, and NEW Kijun-cross star ---
+            # --- Signals to badges: Band REV, Reversal stars, and NEW HMA-cross star ---
             badges_top = []
 
             # Band REV (Daily)
@@ -1140,14 +1103,6 @@ with tab1:
                 else:
                     annotate_star(ax, hma_cross_star["time"], hma_cross_star["price"], hma_cross_star["kind"], show_text=False, color_override="tab:blue")
                     badges_top.append((f"★ Sell HMA Cross @{fmt_price_val(hma_cross_star['price'])}", "tab:blue"))
-
-            # NEW: Kijun-cross PURPLE star (Daily)
-            if not kijun_d_show.dropna().empty:
-                kijun_cross_star = last_kijun_cross_star(df_show, kijun_d_show, trend_slope=m_d, lookback=30)
-                if kijun_cross_star is not None:
-                    kind = "trough" if kijun_cross_star["side"] == "BUY" else "peak"
-                    annotate_star(ax, kijun_cross_star["time"], kijun_cross_star["price"], kind, show_text=False, color_override="purple")
-                    badges_top.append((f"★ Kijun {kijun_cross_star['side']} @{fmt_price_val(kijun_cross_star['price'])}", "purple"))
 
             # Draw compact badges
             draw_top_badges(ax, badges_top)
@@ -1211,9 +1166,9 @@ with tab1:
 
                 # Hourly regression slope & bands (for signals)
                 yhat_h, upper_h, lower_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
-                slope_sig_h = m_h if np.isfinite(m_h) else slope_h  # LOCAL slope (used for signals)
+                slope_sig_h = m_h if np.isfinite(m_h) else slope_h  # LOCAL slope for instruction
 
-                # GLOBAL (DAILY) slope (used for instruction alignment & caution check)
+                # GLOBAL (DAILY) slope (still used for caution check)
                 try:
                     df_global = st.session_state.df_hist
                     _, _, _, m_global, _ = regression_with_band(df_global, slope_lb_daily)
@@ -1283,9 +1238,8 @@ with tab1:
 
                 draw_top_badges(ax2, badges_top_h)
 
-                # TOP instruction banner (Hourly) — use GLOBAL (daily) slope to set order
-                instr_slope_h = m_global if np.isfinite(m_global) else slope_sig_h
-                draw_instruction_ribbons(ax2, instr_slope_h, sup_val, res_val, px_val, sel)
+                # TOP instruction banner (Hourly) — CHANGED to use LOCAL slope (slope_sig_h)
+                draw_instruction_ribbons(ax2, slope_sig_h, sup_val, res_val, px_val, sel)
 
                 # footer stats
                 if np.isfinite(px_val):
@@ -1457,14 +1411,6 @@ with tab2:
                 else:
                     annotate_star(ax, hma_cross_star2["time"], hma_cross_star2["price"], hma_cross_star2["kind"], show_text=False, color_override="tab:blue")
                     badges_top2.append((f"★ Sell HMA Cross @{fmt_price_val(hma_cross_star2['price'])}", "tab:blue"))
-
-            # NEW: Kijun-cross PURPLE star (Daily)
-            if not kijun_d2_show.dropna().empty:
-                kijun_cross_star2 = last_kijun_cross_star(df_show, kijun_d2_show, trend_slope=m_d, lookback=30)
-                if kijun_cross_star2 is not None:
-                    kind2 = "trough" if kijun_cross_star2["side"] == "BUY" else "peak"
-                    annotate_star(ax, kijun_cross_star2["time"], kijun_cross_star2["price"], kind2, show_text=False, color_override="purple")
-                    badges_top2.append((f"★ Kijun {kijun_cross_star2['side']} @{fmt_price_val(kijun_cross_star2['price'])}", "purple"))
 
             draw_top_badges(ax, badges_top2)
 
