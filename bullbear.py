@@ -26,12 +26,6 @@
 #   • NEW (Daily): HMA Cross colors → Buy = Black, Sell = Blue (badges and stars).
 #   • NEW (Daily): **Purple ★ Kijun Cross** — Buy when price crosses **up through Kijun** during an **upward slope**,
 #                  Sell when price crosses **down through Kijun** during a **downward slope**.
-#   • NEW (Hourly): **ADX-based Regime Switcher** — when local (hourly) and global (daily) slopes conflict,
-#       use ADX to *switch which slope drives signals & the top instruction banner*:
-#         - If ADX ≥ High threshold → follow **LOCAL (hourly)** slope (trend is strong intraday).
-#         - If ADX <  Low threshold → fall back to **GLOBAL (daily)** slope (trend is weak/choppy).
-#       Hysteresis prevents flip-flop (High to enter Local, Low to exit back to Global).
-#       Adds a top badge “Regime: Local/Global (ADX xx.x)” and adjusts hourly Band REV & stars accordingly.
 
 import streamlit as st
 import pandas as pd
@@ -197,9 +191,9 @@ def format_trade_instruction(trend_slope: float,
 def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
     trans = blended_transform_factory(ax.transAxes, ax.transData)
     ax.text(0.01, y_val, text, transform=trans, ha="left", va="center",
-        color=color, fontsize=fontsize, fontweight="bold",
-        bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.75),
-        zorder=6)
+            color=color, fontsize=fontsize, fontweight="bold",
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.75),
+            zorder=6)
 
 def subset_by_daily_view(obj, view_label: str):
     if obj is None or len(obj.index) == 0:
@@ -259,13 +253,6 @@ hma_conf    = st.sidebar.slider("Crossover confidence (unused label-only)", 0.50
 
 st.sidebar.subheader("Scanner Settings")
 ntd_window= st.sidebar.slider("NTD slope window (for scanner)", 10, 300, 60, 5, key="sb_ntd_win")
-
-# --- Regime Switcher (ADX) ---
-st.sidebar.subheader("Regime Switch (ADX)")
-adx_enable = st.sidebar.checkbox("Enable ADX-based regime switch", value=True, key="sb_adx_enable")
-adx_period = st.sidebar.slider("ADX period", 5, 50, 14, 1, key="sb_adx_period")
-adx_high   = st.sidebar.slider("ADX switch threshold (enter Local ≥)", 10, 50, 22, 1, key="sb_adx_hi")
-adx_low    = st.sidebar.slider("ADX revert threshold (back to Global <)", 5, 50, 18, 1, key="sb_adx_lo")
 
 # Forex-only controls
 if mode == "Forex":
@@ -598,28 +585,6 @@ def compute_hma(close: pd.Series, period: int = 55) -> pd.Series:
     diff = 2 * wma_half - wma_full
     hma = _wma(diff, sqrtp)
     return hma.reindex(s.index)
-
-# --- ADX (Average Directional Index) for regime switch ---
-def compute_adx(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14):
-    H = _coerce_1d_series(high).astype(float)
-    L = _coerce_1d_series(low).astype(float)
-    C = _coerce_1d_series(close).astype(float)
-    df = pd.concat([H.rename("High"), L.rename("Low"), C.rename("Close")], axis=1).dropna()
-    if df.empty:
-        idx = C.index if not C.empty else (H.index if len(H) else L.index)
-        empty = pd.Series(index=idx, dtype=float)
-        return empty, empty, empty
-    up_move = df["High"].diff()
-    down_move = -df["Low"].diff()
-    plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0.0), index=df.index)
-    minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0.0), index=df.index)
-    tr = _true_range(df)
-    atr = tr.ewm(alpha=1/period, adjust=False).mean()
-    plus_di  = (100.0 * plus_dm.ewm(alpha=1/period, adjust=False).mean() / atr).replace([np.inf,-np.inf], np.nan)
-    minus_di = (100.0 * minus_dm.ewm(alpha=1/period, adjust=False).mean() / atr).replace([np.inf,-np.inf], np.nan)
-    dx = (100.0 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)).fillna(0.0)
-    adx = dx.ewm(alpha=1/period, adjust=False).mean()
-    return adx.reindex(df.index), plus_di.reindex(df.index), minus_di.reindex(df.index)
 
 # --- Reversal detection helpers ---
 def _after_all_increasing(series: pd.Series, start_ts, n: int) -> bool:
@@ -1246,48 +1211,20 @@ with tab1:
 
                 # Hourly regression slope & bands (for signals)
                 yhat_h, upper_h, lower_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
-                slope_sig_h = m_h if np.isfinite(m_h) else slope_h  # LOCAL slope (used for backup)
+                slope_sig_h = m_h if np.isfinite(m_h) else slope_h  # LOCAL slope (used for signals)
 
-                # GLOBAL (DAILY) slope
+                # GLOBAL (DAILY) slope (used for instruction alignment & caution check)
                 try:
                     df_global = st.session_state.df_hist
                     _, _, _, m_global, _ = regression_with_band(df_global, slope_lb_daily)
                 except Exception:
                     m_global = slope_sig_h
 
-                # --- ADX-based Regime Switcher (LOCAL vs GLOBAL slope control) ---
-                # Compute ADX on intraday data (requires OHLC)
-                if {'High','Low','Close'}.issubset(intraday.columns):
-                    adx_series, _, _ = compute_adx(intraday["High"], intraday["Low"], intraday["Close"], period=int(adx_period))
-                    adx_now = float(adx_series.dropna().iloc[-1]) if not adx_series.dropna().empty else np.nan
-                else:
-                    adx_series = pd.Series(dtype=float)
-                    adx_now = np.nan
-
-                regime_key = f"regime_{sel}"
-                prev_regime = st.session_state.get(regime_key, "GLOBAL")
-
-                # Ensure thresholds are ordered
-                hi_thr = max(adx_high, adx_low + 1e-6)
-                lo_thr = min(adx_low, adx_high - 1e-6)
-
-                if adx_enable and np.isfinite(adx_now):
-                    if prev_regime == "LOCAL":
-                        regime = "LOCAL" if adx_now >= lo_thr else "GLOBAL"
-                    else:
-                        regime = "LOCAL" if adx_now >= hi_thr else "GLOBAL"
-                else:
-                    regime = "GLOBAL"
-                st.session_state[regime_key] = regime
-
-                # Conflict warning & switch note
+                # --- TOP WARNING (opposite slopes: hourly vs global daily) ---
                 try:
-                    conflict = (np.isfinite(m_h) and np.isfinite(m_global) and (np.sign(m_h) != np.sign(m_global)))
-                    if conflict:
-                        if regime == "LOCAL":
-                            caution_below_btn.warning(f"SWITCH TRIGGER: Slopes conflict; ADX {adx_now:.1f} ≥ {hi_thr:.1f} → Using LOCAL (hourly) slope for signals & instructions.")
-                        else:
-                            caution_below_btn.warning(f"SWITCH TRIGGER: Slopes conflict; ADX {adx_now:.1f} < {hi_thr:.1f} → Using GLOBAL (daily) slope for signals & instructions.")
+                    if np.isfinite(m_h) and np.isfinite(m_global) and (m_h * m_global < 0):
+                        # Show the caution message right below the Forecast Button
+                        caution_below_btn.warning("ALERT: Please exercise caution while trading, as the current slope indicates that the trend may be reversing")
                 except Exception:
                     pass
 
@@ -1295,9 +1232,7 @@ with tab1:
                 plt.subplots_adjust(top=0.86, right=0.995, left=0.06)
 
                 trend_color = "tab:green" if slope_h >= 0 else "tab:red"
-                title_suffix = f" | ADX {adx_now:.1f}" if np.isfinite(adx_now) else ""
-                title_regime = f" | Regime: {regime.title()}"
-                ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{title_suffix}{title_regime}")
+                ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
 
                 ax2.plot(hc.index, hc, label="Price", linewidth=1.2)
                 ax2.plot(hc.index, he, "--", alpha=0.45, linewidth=0.9, label="_nolegend_")
@@ -1328,23 +1263,9 @@ with tab1:
                 # --- Signals to badges + stars/triangles (Hourly) ---
                 badges_top_h = []
 
-                # Add regime badge first
-                if regime == "LOCAL":
-                    reg_color = "tab:green" if np.sign(slope_sig_h or 0) >= 0 else "tab:red"
-                    adx_txt = f"{adx_now:.1f}" if np.isfinite(adx_now) else "n/a"
-                    badges_top_h.append((f"Regime: LOCAL (ADX {adx_txt})", reg_color))
-                else:
-                    reg_color = "tab:green" if np.sign(m_global or 0) >= 0 else "tab:red"
-                    adx_txt = f"{adx_now:.1f}" if np.isfinite(adx_now) else "n/a"
-                    badges_top_h.append((f"Regime: GLOBAL (ADX {adx_txt})", reg_color))
-
-                # Choose which slope governs signals (band & stars) and instruction order
-                trend_for_signal = m_h if regime == "LOCAL" else m_global
-                trend_for_order  = slope_sig_h if regime == "LOCAL" else m_global
-
                 band_sig_h = last_band_reversal_signal(
                     price=hc, band_upper=upper_h, band_lower=lower_h,
-                    trend_slope=trend_for_signal, prox=sr_prox_pct, confirm_bars=rev_bars_confirm
+                    trend_slope=m_h, prox=sr_prox_pct, confirm_bars=rev_bars_confirm
                 )
                 if band_sig_h is not None and band_sig_h.get("side") == "BUY":
                     badges_top_h.append((f"▲ BUY Band REV @{fmt_price_val(band_sig_h['price'])}", "tab:green"))
@@ -1352,7 +1273,7 @@ with tab1:
                 elif band_sig_h is not None and band_sig_h.get("side") == "SELL":
                     annotate_band_rev_outside(ax2, band_sig_h["time"], band_sig_h["price"], band_sig_h["side"], note=band_sig_h.get("note",""))
 
-                star_h = last_reversal_star(hc, trend_slope=trend_for_signal, lookback=20, confirm_bars=rev_bars_confirm)
+                star_h = last_reversal_star(hc, trend_slope=m_h, lookback=20, confirm_bars=rev_bars_confirm)
                 if star_h is not None:
                     annotate_star(ax2, star_h["time"], star_h["price"], star_h["kind"], show_text=False)
                     if star_h.get("kind") == "trough":
@@ -1362,8 +1283,8 @@ with tab1:
 
                 draw_top_badges(ax2, badges_top_h)
 
-                # TOP instruction banner (Hourly) — now uses ADX-selected regime slope
-                instr_slope_h = trend_for_order
+                # TOP instruction banner (Hourly) — use GLOBAL (daily) slope to set order
+                instr_slope_h = m_global if np.isfinite(m_global) else slope_sig_h
                 draw_instruction_ribbons(ax2, instr_slope_h, sup_val, res_val, px_val, sel)
 
                 # footer stats
