@@ -25,7 +25,7 @@
 #                    "Daily — HMA Cross + Trend Agreement (latest bar)".
 #   • NEW (Daily): HMA Cross colors → Buy = Black, Sell = Blue (badges and stars).
 
-import streamlit as std
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
