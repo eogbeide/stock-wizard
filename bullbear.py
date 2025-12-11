@@ -759,6 +759,76 @@ def last_hma_cross_star(price: pd.Series,
         return {"time": t, "price": float(p.loc[t]), "kind": "peak"}    # default red
     return None
 
+# --- NEW: Breakout detection (ADDED) ---
+def last_breakout_signal(price: pd.Series,
+                         resistance: pd.Series,
+                         support: pd.Series,
+                         prox: float = 0.0,
+                         confirm_bars: int = 1):
+    """
+    Detects a breakout above prior rolling resistance or below prior rolling support.
+    Uses the *previous bar's* S/R (shifted) so the current candle can be the breakout.
+    Returns dict: {"time", "price", "dir": "UP"|"DOWN"} or None.
+    """
+    p = _coerce_1d_series(price).dropna()
+    if p.shape[0] < max(3, confirm_bars + 1):
+        return None
+    r_prev = _coerce_1d_series(resistance).reindex(p.index).shift(1)
+    s_prev = _coerce_1d_series(support).reindex(p.index).shift(1)
+
+    # Need finite values on the bars we check
+    if not (np.isfinite(p.iloc[-1]) and np.isfinite(p.iloc[-2])):
+        return None
+
+    # Helper: confirm persistence over last `confirm_bars` bars
+    def _confirmed_up():
+        k = max(1, int(confirm_bars))
+        p_tail = p.iloc[-k:]
+        r_tail = r_prev.iloc[-k:]
+        mask = p_tail.notna() & r_tail.notna()
+        if mask.sum() < k:
+            return False
+        return bool(np.all(p_tail[mask] > (r_tail[mask] * (1.0 + prox))))
+
+    def _confirmed_down():
+        k = max(1, int(confirm_bars))
+        p_tail = p.iloc[-k:]
+        s_tail = s_prev.iloc[-k:]
+        mask = p_tail.notna() & s_tail.notna()
+        if mask.sum() < k:
+            return False
+        return bool(np.all(p_tail[mask] < (s_tail[mask] * (1.0 - prox))))
+
+    # Cross conditions use the last two bars vs prior S/R
+    up_ok = (np.isfinite(r_prev.iloc[-1]) and np.isfinite(r_prev.iloc[-2]) and
+             (p.iloc[-2] <= r_prev.iloc[-2] * (1.0 + prox)) and
+             (p.iloc[-1] >  r_prev.iloc[-1] * (1.0 + prox)) and _confirmed_up())
+
+    dn_ok = (np.isfinite(s_prev.iloc[-1]) and np.isfinite(s_prev.iloc[-2]) and
+             (p.iloc[-2] >= s_prev.iloc[-2] * (1.0 - prox)) and
+             (p.iloc[-1] <  s_prev.iloc[-1] * (1.0 - prox)) and _confirmed_down())
+
+    if up_ok:
+        return {"time": p.index[-1], "price": float(p.iloc[-1]), "dir": "UP"}
+    if dn_ok:
+        return {"time": p.index[-1], "price": float(p.iloc[-1]), "dir": "DOWN"}
+    return None
+
+def annotate_breakout(ax, ts, px, direction: str):
+    """
+    Small in-chart marker for breakout events.
+    UP  → green diamond; DOWN → red inverted triangle.
+    """
+    try:
+        if direction == "UP":
+            ax.scatter([ts], [px], marker="D", s=110, c="tab:green", edgecolors="none", zorder=13)
+        else:
+            ax.scatter([ts], [px], marker="v", s=110, c="tab:red", edgecolors="none", zorder=13)
+    except Exception:
+        ax.text(ts, px, "B/O" if direction == "UP" else "B/D",
+                color=("tab:green" if direction=="UP" else "tab:red"),
+                fontsize=9, fontweight="bold", zorder=13)
+
 # --- Cleaner axes + TOP instruction banner (outside the chart) ---
 def _simplify_axes(ax):
     ax.grid(True, alpha=0.15, linestyle="--", linewidth=0.6)
@@ -1071,7 +1141,7 @@ with tab1:
             except Exception:
                 res_val_d = sup_val_d = np.nan
 
-            # --- Signals to badges: Band REV, Reversal stars, and NEW HMA-cross star ---
+            # --- Signals to badges: Band REV, Reversal stars, NEW HMA-cross star ---
             badges_top = []
 
             # Band REV (Daily)
@@ -1085,7 +1155,7 @@ with tab1:
             elif band_sig_d is not None and band_sig_d.get("side") == "SELL":
                 annotate_band_rev_outside(ax, band_sig_d["time"], band_sig_d["price"], band_sig_d["side"], note=band_sig_d.get("note",""))
 
-            # Star (Daily) — chart sign only; details appear in top badges
+            # Star (Daily)
             star_d = last_reversal_star(df_show, trend_slope=m_d, lookback=20, confirm_bars=rev_bars_confirm)
             if star_d is not None:
                 annotate_star(ax, star_d["time"], star_d["price"], star_d["kind"], show_text=False)
@@ -1094,7 +1164,7 @@ with tab1:
                 elif star_d.get("kind") == "peak":
                     badges_top.append((f"★ Peak REV @{fmt_price_val(star_d['price'])}", "tab:red"))
 
-            # NEW: HMA-cross star (Daily) — CUSTOM COLORS: Buy=Black, Sell=Blue
+            # NEW: HMA-cross star (Daily)
             hma_cross_star = last_hma_cross_star(df_show, hma_d_full, trend_slope=m_d, lookback=30)
             if hma_cross_star is not None:
                 if hma_cross_star["kind"] == "trough":
@@ -1103,6 +1173,19 @@ with tab1:
                 else:
                     annotate_star(ax, hma_cross_star["time"], hma_cross_star["price"], hma_cross_star["kind"], show_text=False, color_override="tab:blue")
                     badges_top.append((f"★ Sell HMA Cross @{fmt_price_val(hma_cross_star['price'])}", "tab:blue"))
+
+            # NEW: Breakout (Daily) — ADDED
+            breakout_d = last_breakout_signal(
+                price=df_show, resistance=res30_show, support=sup30_show,
+                prox=sr_prox_pct, confirm_bars=rev_bars_confirm
+            )
+            if breakout_d is not None:
+                if breakout_d["dir"] == "UP":
+                    annotate_breakout(ax, breakout_d["time"], breakout_d["price"], "UP")
+                    badges_top.append((f"▲ BREAKOUT @{fmt_price_val(breakout_d['price'])}", "tab:green"))
+                else:
+                    annotate_breakout(ax, breakout_d["time"], breakout_d["price"], "DOWN")
+                    badges_top.append((f"▼ BREAKDOWN @{fmt_price_val(breakout_d['price'])}", "tab:red"))
 
             # Draw compact badges
             draw_top_badges(ax, badges_top)
@@ -1238,6 +1321,19 @@ with tab1:
                         badges_top_h.append((f"★ Trough REV @{fmt_price_val(star_h['price'])}", "tab:green"))
                     elif star_h.get("kind") == "peak":
                         badges_top_h.append((f"★ Peak REV @{fmt_price_val(star_h['price'])}", "tab:red"))
+
+                # NEW: Breakout (Hourly) — ADDED
+                breakout_h = last_breakout_signal(
+                    price=hc, resistance=res_h, support=sup_h,
+                    prox=sr_prox_pct, confirm_bars=rev_bars_confirm
+                )
+                if breakout_h is not None:
+                    if breakout_h["dir"] == "UP":
+                        annotate_breakout(ax2, breakout_h["time"], breakout_h["price"], "UP")
+                        badges_top_h.append((f"▲ BREAKOUT @{fmt_price_val(breakout_h['price'])}", "tab:green"))
+                    else:
+                        annotate_breakout(ax2, breakout_h["time"], breakout_h["price"], "DOWN")
+                        badges_top_h.append((f"▼ BREAKDOWN @{fmt_price_val(breakout_h['price'])}", "tab:red"))
 
                 draw_top_badges(ax2, badges_top_h)
 
@@ -1409,7 +1505,7 @@ with tab2:
                 elif star_d2.get("kind") == "peak":
                     badges_top2.append((f"★ Peak REV @{fmt_price_val(star_d2['price'])}", "tab:red"))
 
-            # NEW: HMA-cross star (Daily) — CUSTOM COLORS: Buy=Black, Sell=Blue
+            # NEW: HMA-cross star (Daily)
             hma_cross_star2 = last_hma_cross_star(df_show, hma_d2_full, trend_slope=m_d, lookback=30)
             if hma_cross_star2 is not None:
                 if hma_cross_star2["kind"] == "trough":
@@ -1418,6 +1514,19 @@ with tab2:
                 else:
                     annotate_star(ax, hma_cross_star2["time"], hma_cross_star2["price"], hma_cross_star2["kind"], show_text=False, color_override="tab:blue")
                     badges_top2.append((f"★ Sell HMA Cross @{fmt_price_val(hma_cross_star2['price'])}", "tab:blue"))
+
+            # NEW: Breakout (Daily) — ADDED
+            breakout_d2 = last_breakout_signal(
+                price=df_show, resistance=res30_show, support=sup30_show,
+                prox=sr_prox_pct, confirm_bars=rev_bars_confirm
+            )
+            if breakout_d2 is not None:
+                if breakout_d2["dir"] == "UP":
+                    annotate_breakout(ax, breakout_d2["time"], breakout_d2["price"], "UP")
+                    badges_top2.append((f"▲ BREAKOUT @{fmt_price_val(breakout_d2['price'])}", "tab:green"))
+                else:
+                    annotate_breakout(ax, breakout_d2["time"], breakout_d2["price"], "DOWN")
+                    badges_top2.append((f"▼ BREAKDOWN @{fmt_price_val(breakout_d2['price'])}", "tab:red"))
 
             draw_top_badges(ax, badges_top2)
 
