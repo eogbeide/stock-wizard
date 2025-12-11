@@ -1175,9 +1175,9 @@ with tab1:
                 except Exception:
                     m_global = slope_sig_h
 
-                # --- TOP WARNING (opposite slopes: hourly vs global daily) ---
+                # --- TOP WARNING (opposite directions: hourly trendline vs hourly slope fit) ---
                 try:
-                    if np.isfinite(m_h) and np.isfinite(m_global) and (m_h * m_global < 0):
+                    if np.isfinite(slope_h) and np.isfinite(m_h) and (slope_h * m_h < 0):
                         # Show the caution message right below the Forecast Button
                         caution_below_btn.warning("ALERT: Please exercise caution while trading, as the current slope indicates that the trend may be reversing")
                 except Exception:
