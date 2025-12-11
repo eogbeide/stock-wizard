@@ -554,7 +554,7 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
         empty = pd.Series(index=idx, dtype=float)
         return empty, empty, empty, empty, empty
     minp = max(2, window // 2)
-    mid = s.ewm(span=window, adjust=False).mean() if use_ema else s.rolling(window, min_periods=minp).mean()
+    mid = s.rolling(window, min_periods=minp).mean() if not use_ema else s.ewm(span=window, adjust=False).mean()
     std = s.rolling(window, min_periods=minp).std().replace(0, np.nan)
     upper = mid + mult * std
     lower = mid - mult * std
@@ -1114,10 +1114,13 @@ with tab1:
             except Exception:
                 pass
 
-            ax.text(0.50, 0.02, f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}",
-                    transform=ax.transAxes, ha="center", va="bottom",
+            # Bottom-right ONLY: R² and slope (daily)
+            ax.text(0.99, 0.02,
+                    f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}  •  Slope: {fmt_slope(m_d)}/bar",
+                    transform=ax.transAxes, ha="right", va="bottom",
                     fontsize=9, color="black",
                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+
             _simplify_axes(ax)
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.4)
@@ -1241,7 +1244,7 @@ with tab1:
                 # TOP instruction banner (Hourly) — CHANGED to use LOCAL slope (slope_sig_h)
                 draw_instruction_ribbons(ax2, slope_sig_h, sup_val, res_val, px_val, sel)
 
-                # footer stats
+                # footer stats (bottom-right ONLY: merge price + R² + slope)
                 if np.isfinite(px_val):
                     nbb_txt = ""
                     try:
@@ -1251,7 +1254,11 @@ with tab1:
                             nbb_txt = f"  |  NBB {last_nbb:+.2f}  •  %B {fmt_pct(last_pct, digits=0)}"
                     except Exception:
                         pass
-                    ax2.text(0.99, 0.02, f"Current price: {fmt_price_val(px_val)}{nbb_txt}",
+                    footer_txt = (
+                        f"Current price: {fmt_price_val(px_val)}{nbb_txt}\n"
+                        f"R² ({slope_lb_hourly} bars): {fmt_r2(r2_h)}  •  Slope: {fmt_slope(m_h)}/bar"
+                    )
+                    ax2.text(0.99, 0.02, footer_txt,
                              transform=ax2.transAxes, ha="right", va="bottom",
                              fontsize=10, fontweight="bold",
                              bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
@@ -1421,10 +1428,13 @@ with tab2:
             except Exception:
                 pass
 
-            ax.text(0.50, 0.02, f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}",
-                    transform=ax.transAxes, ha="center", va="bottom",
+            # Bottom-right ONLY: R² and slope (enhanced daily)
+            ax.text(0.99, 0.02,
+                    f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}  •  Slope: {fmt_slope(m_d)}/bar",
+                    transform=ax.transAxes, ha="right", va="bottom",
                     fontsize=9, color="black",
                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+
             _simplify_axes(ax)
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.4)
@@ -1494,10 +1504,10 @@ with tab4:
             ax.plot(lo3m.index, lo3m.values, ":", linewidth=3.0,
                      color="black", alpha=1.0, label="Trend -2σ")
         ax.set_xlabel("Date (PST)")
-        ax.text(0.50, 0.02,
-                f"R² (3M): {fmt_r2(r2_3m)}",
+        ax.text(0.99, 0.02,
+                f"R² (3M): {fmt_r2(r2_3m)}  •  Slope: {fmt_slope(m3m)}/bar",
                 transform=ax.transAxes,
-                ha="center", va="bottom",
+                ha="right", va="bottom",
                 fontsize=9, color="black",
                 bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
         ax.legend()
@@ -1533,10 +1543,10 @@ with tab4:
                 ax0.plot(lo0.index, lo0.values, ":", linewidth=3.0,
                          color="black", alpha=1.0, label="Trend -2σ")
             ax0.set_xlabel("Date (PST)")
-            ax0.text(0.50, 0.02,
-                     f"R² ({bb_period}): {fmt_r2(r2_0)}",
+            ax0.text(0.99, 0.02,
+                     f"R² ({bb_period}): {fmt_r2(r2_0)}  •  Slope: {fmt_slope(m0)}/bar",
                      transform=ax0.transAxes,
-                     ha="center", va="bottom",
+                     ha="right", va="bottom",
                      fontsize=9, color="black",
                      bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
             ax0.legend()
@@ -1772,25 +1782,18 @@ with tab6:
                         color="black", alpha=1.0, label="_nolegend_")
                 ax.plot(lower_all.index, lower_all.values, ":", linewidth=3.0,
                         color="black", alpha=1.0, label="_nolegend_")
+
+            # Bottom-right ONLY: combine current price + R² + slope
             px_now = _safe_last_float(s)
-            if np.isfinite(px_now):
-                ax.text(0.99, 0.02,
-                        f"Current price: {fmt_price_val(px_now)}",
-                        transform=ax.transAxes, ha="right", va="bottom",
-                        fontsize=10, fontweight="bold",
-                        bbox=dict(boxstyle="round,pad=0.25",
-                                  fc="white", ec="grey", alpha=0.7))
-            ax.text(0.01, 0.02,
-                    f"Slope: {fmt_slope(m_all)}/bar",
-                    transform=ax.transAxes, ha="left", va="bottom",
-                    fontsize=9, color="black",
+            price_line = f"Current price: {fmt_price_val(px_now)}" if np.isfinite(px_now) else ""
+            footer = (price_line + ("\n" if price_line else "") +
+                      f"R² (trend): {fmt_r2(r2_all)}  •  Slope: {fmt_slope(m_all)}/bar")
+            ax.text(0.99, 0.02, footer,
+                    transform=ax.transAxes, ha="right", va="bottom",
+                    fontsize=10, fontweight="bold",
                     bbox=dict(boxstyle="round,pad=0.25",
                               fc="white", ec="grey", alpha=0.7))
-            ax.text(0.50, 0.02,
-                    f"R² (trend): {fmt_r2(r2_all)}",
-                    transform=ax.transAxes, ha="center", va="bottom",
-                    fontsize=9, color="black",
-                    bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+
             _simplify_axes(ax)
             ax.set_xlabel("Date (PST)")
             ax.set_ylabel("Price")
