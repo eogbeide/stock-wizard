@@ -1452,11 +1452,17 @@ with tab1:
 
                 if show_fibs and not hc.empty:
                     fibs_h = fibonacci_levels(hc)
-                    # Add thin, light Fibonacci level lines
+                    # Draw bold, thick black Fibonacci lines across the entire chart with bold labels
                     for lbl, y in fibs_h.items():
-                        ax2.hlines(y, xmin=hc.index[0], xmax=hc.index[-1], linestyles="dotted", linewidth=0.6, alpha=0.35)
+                        ax2.axhline(y=y, linestyle="-", linewidth=2.6, color="black", alpha=0.9, zorder=1)
                     for lbl, y in fibs_h.items():
-                        ax2.text(hc.index[-1], y, f" {lbl}", va="center", fontsize=8, alpha=0.6)
+                        ax2.text(
+                            hc.index[-1], y, f" {lbl}",
+                            va="center", ha="left",
+                            fontsize=10, fontweight="bold", color="black",
+                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="black", alpha=0.8),
+                            zorder=2
+                        )
 
                     # --- NEW: High-confidence Fibonacci extreme reversal markers (ADDED) ---
                     try:
