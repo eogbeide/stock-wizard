@@ -1431,8 +1431,9 @@ with tab1:
                         f"Current price: {fmt_price_val(px_val)}{nbb_txt}\n"
                         f"R² ({slope_lb_hourly} bars): {fmt_r2(r2_h)}  •  Slope: {fmt_slope(m_h)}/bar"
                     )
-                    ax2.text(0.99, 0.02, footer_txt,
-                             transform=ax2.transAxes, ha="right", va="bottom",
+                    # MOVED TO CENTER (from right) — keep bottom alignment
+                    ax2.text(0.5, 0.02, footer_txt,
+                             transform=ax2.transAxes, ha="center", va="bottom",
                              fontsize=10, fontweight="bold",
                              bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
@@ -1456,7 +1457,8 @@ with tab1:
                     for lbl, y in fibs_h.items():
                         ax2.hlines(y, xmin=hc.index[0], xmax=hc.index[-1], linestyles="dotted", linewidth=0.6, alpha=0.35)
                     for lbl, y in fibs_h.items():
-                        ax2.text(hc.index[-1], y, f" {lbl}", va="center", fontsize=8, alpha=0.6)
+                        # MAKE FIBONACCI LABELS BOLD (unchanged position at right edge)
+                        ax2.text(hc.index[-1], y, f" {lbl}", va="center", fontsize=8, alpha=0.6, fontweight="bold")
 
                     # --- NEW: High-confidence Fibonacci extreme reversal markers (ADDED) ---
                     try:
