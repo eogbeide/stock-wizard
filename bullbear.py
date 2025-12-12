@@ -1452,16 +1452,18 @@ with tab1:
 
                 if show_fibs and not hc.empty:
                     fibs_h = fibonacci_levels(hc)
-                    # Draw bold, thick black Fibonacci lines across the entire chart with bold labels
+                    # Draw THIN and FAINT Fibonacci lines; place labels at the far right to avoid blocking price
+                    trans_right = blended_transform_factory(ax2.transAxes, ax2.transData)
                     for lbl, y in fibs_h.items():
-                        ax2.axhline(y=y, linestyle="-", linewidth=2.6, color="black", alpha=0.9, zorder=1)
+                        ax2.axhline(y=y, linestyle="-", linewidth=0.7, color="black", alpha=0.18, zorder=1)
                     for lbl, y in fibs_h.items():
                         ax2.text(
-                            hc.index[-1], y, f" {lbl}",
-                            va="center", ha="left",
-                            fontsize=10, fontweight="bold", color="black",
-                            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="black", alpha=0.8),
-                            zorder=2
+                            0.995, y, lbl,
+                            transform=trans_right,
+                            va="center", ha="right",
+                            fontsize=8, color="black",
+                            bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.55),
+                            zorder=2, clip_on=False
                         )
 
                     # --- NEW: High-confidence Fibonacci extreme reversal markers (ADDED) ---
