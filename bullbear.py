@@ -430,7 +430,8 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
     m, b = np.polyfit(x, s.values, 1)
     yhat = m * x + b
     color = "tab:green" if m >= 0 else "tab:red"   # downward = red
-    ax.plot(s.index, yhat, "-", linewidth=2.4, color=color, label=f"{label_prefix} ({fmt_slope(m)}/bar)")
+    # Thicker & darker trend direction line
+    ax.plot(s.index, yhat, "-", linewidth=3.2, color=color, label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return m
 
 # --- Supertrend / ATR ---
@@ -1193,22 +1194,23 @@ with tab1:
 
             if not yhat_d_show.empty:
                 slope_col_d = "tab:green" if m_d >= 0 else "tab:red"
-                ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2.0, color=slope_col_d, label="Trend")
+                # Thicker & darker main regression trendline
+                ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=3.2, color=slope_col_d, label="Trend")
             if not upper_d_show.empty and not lower_d_show.empty:
                 ax.plot(upper_d_show.index, upper_d_show.values, ":", linewidth=3.0, color="black", alpha=1.0, label="_nolegend_")
                 ax.plot(lower_d_show.index, lower_d_show.values, ":", linewidth=3.0, color="black", alpha=1.0, label="_nolegend_")
             if len(df_show) > 1:
                 draw_trend_direction_line(ax, df_show, label_prefix="")
 
-            # DAILY — Support/Resistance lines
+            # DAILY — Support/Resistance lines (thicker & darker)
             try:
                 res_val_d = float(res30_show.iloc[-1])
                 sup_val_d = float(sup30_show.iloc[-1])
                 if np.isfinite(res_val_d) and np.isfinite(sup_val_d):
                     ax.hlines(res_val_d, xmin=df_show.index[0], xmax=df_show.index[-1],
-                              colors="tab:red", linestyles="-", linewidth=1.3, alpha=0.65, label="_nolegend_")
+                              colors="tab:red", linestyles="-", linewidth=2.2, alpha=0.95, label="_nolegend_")
                     ax.hlines(sup_val_d, xmin=df_show.index[0], xmax=df_show.index[-1],
-                              colors="tab:green", linestyles="-", linewidth=1.3, alpha=0.65, label="_nolegend_")
+                              colors="tab:green", linestyles="-", linewidth=2.2, alpha=0.95, label="_nolegend_")
                     label_on_left(ax, res_val_d, f"R {fmt_price_val(res_val_d)}", color="tab:red")
                     label_on_left(ax, sup_val_d, f"S {fmt_price_val(sup_val_d)}", color="tab:green")
             except Exception:
@@ -1350,7 +1352,8 @@ with tab1:
 
                 ax2.plot(hc.index, hc, label="Price", linewidth=1.2)
                 ax2.plot(hc.index, he, "--", alpha=0.45, linewidth=0.9, label="_nolegend_")
-                ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=1.6, color=trend_color, alpha=0.75)
+                # Thicker & darker intraday trend line
+                ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2.4, color=trend_color, alpha=0.95)
 
                 if show_hma and not hma_h.dropna().empty:
                     ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.3, alpha=0.9, label="HMA")
@@ -1368,9 +1371,10 @@ with tab1:
                 except Exception:
                     pass
 
+                # Hourly S/R lines thicker & darker
                 if np.isfinite(res_val) and np.isfinite(sup_val):
-                    ax2.hlines(res_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:red",   linestyles="-", linewidth=1.2, alpha=0.6, label="_nolegend_")
-                    ax2.hlines(sup_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:green", linestyles="-", linewidth=1.2, alpha=0.6, label="_nolegend_")
+                    ax2.hlines(res_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:red",   linestyles="-", linewidth=2.0, alpha=0.95, label="_nolegend_")
+                    ax2.hlines(sup_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:green", linestyles="-", linewidth=2.0, alpha=0.95, label="_nolegend_")
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
@@ -1436,7 +1440,8 @@ with tab1:
                     ax2.plot(st_line_intr.index, st_line_intr.values, "-", alpha=0.6, label="_nolegend_")
                 if not yhat_h.empty:
                     slope_col_h = "tab:green" if m_h >= 0 else "tab:red"
-                    ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=1.8, color=slope_col_h, alpha=0.8, label="Slope Fit")
+                    # Thicker & darker slope-fit line
+                    ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2.6, color=slope_col_h, alpha=0.95, label="Slope Fit")
                 if not upper_h.empty and not lower_h.empty:
                     ax2.plot(upper_h.index, upper_h.values, ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
                     ax2.plot(lower_h.index, lower_h.values, ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
@@ -1447,8 +1452,9 @@ with tab1:
 
                 if show_fibs and not hc.empty:
                     fibs_h = fibonacci_levels(hc)
+                    # Add thin, light Fibonacci level lines
                     for lbl, y in fibs_h.items():
-                        ax2.hlines(y, xmin=hc.index[0], xmax=hc.index[-1], linestyles="dotted", linewidth=0.9, alpha=0.35)
+                        ax2.hlines(y, xmin=hc.index[0], xmax=hc.index[-1], linestyles="dotted", linewidth=0.6, alpha=0.35)
                     for lbl, y in fibs_h.items():
                         ax2.text(hc.index[-1], y, f" {lbl}", va="center", fontsize=8, alpha=0.6)
 
@@ -1571,7 +1577,8 @@ with tab2:
 
             if not yhat_d_show.empty:
                 slope_col_d2 = "tab:green" if m_d >= 0 else "tab:red"
-                ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2.0, color=slope_col_d2, label="Trend")
+                # Thicker & darker main regression trendline
+                ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=3.2, color=slope_col_d2, label="Trend")
             if not up_d_show.empty and not lo_d_show.empty:
                 ax.plot(up_d_show.index, up_d_show.values, ":", linewidth=3.0, color="black", alpha=1.0, label="_nolegend_")
             if not lo_d_show.empty:
@@ -1589,15 +1596,15 @@ with tab2:
             elif band_sig_d2 is not None and band_sig_d2.get("side") == "SELL":
                 annotate_band_rev_outside(ax, band_sig_d2["time"], band_sig_d2["price"], band_sig_d2["side"], note=band_sig_d2.get("note",""))
 
-            # DAILY — Support/Resistance horizontal lines
+            # DAILY — Support/Resistance horizontal lines (thicker & darker)
             try:
                 res_val_d2 = float(res30_show.iloc[-1])
                 sup_val_d2 = float(sup30_show.iloc[-1])
                 if np.isfinite(res_val_d2) and np.isfinite(sup_val_d2):
                     ax.hlines(res_val_d2, xmin=df_show.index[0], xmax=df_show.index[-1],
-                              colors="tab:red", linestyles="-", linewidth=1.3, alpha=0.65, label="_nolegend_")
+                              colors="tab:red", linestyles="-", linewidth=2.2, alpha=0.95, label="_nolegend_")
                     ax.hlines(sup_val_d2, xmin=df_show.index[0], xmax=df_show.index[-1],
-                              colors="tab:green", linestyles="-", linewidth=1.3, alpha=0.65, label="_nolegend_")
+                              colors="tab:green", linestyles="-", linewidth=2.2, alpha=0.95, label="_nolegend_")
                     label_on_left(ax, res_val_d2, f"R {fmt_price_val(res_val_d2)}", color="tab:red")
                     label_on_left(ax, sup_val_d2, f"S {fmt_price_val(sup_val_d2)}", color="tab:green")
             except Exception:
@@ -1708,11 +1715,13 @@ with tab4:
         fig, ax = plt.subplots(figsize=(14,5))
         ax.plot(df3m.index, df3m, label="Close")
         ax.plot(df3m.index, ma30_3m, label="30 MA")
-        ax.plot(res3m.index, res3m, ":", label="Resistance")
-        ax.plot(sup3m.index, sup3m, ":", label="Support")
+        # Thicker & darker S/R lines
+        ax.plot(res3m.index, res3m, ":", linewidth=2.0, color="tab:red", alpha=0.9, label="Resistance")
+        ax.plot(sup3m.index, sup3m, ":", linewidth=2.0, color="tab:green", alpha=0.9, label="Support")
         if not trend3m.empty:
             col3 = "tab:green" if m3m >= 0 else "tab:red"
-            ax.plot(trend3m.index, trend3m.values, "--", color=col3,
+            # Thicker & darker trendline
+            ax.plot(trend3m.index, trend3m.values, "--", color=col3, linewidth=3.0,
                     label=f"Trend (m={fmt_slope(m3m)}/bar)")
         if not up3m.empty and not lo3m.empty:
             ax.plot(up3m.index, up3m.values, ":", linewidth=3.0,
@@ -1747,11 +1756,13 @@ with tab4:
             fig0, ax0 = plt.subplots(figsize=(14,5))
             ax0.plot(df0.index, df0['Close'], label="Close")
             ax0.plot(df0.index, df0['MA30'], label="30 MA")
-            ax0.plot(res0.index, res0, ":", label="Resistance")
-            ax0.plot(sup0.index, sup0, ":", label="Support")
+            # Thicker & darker S/R lines
+            ax0.plot(res0.index, res0, ":", linewidth=2.0, color="tab:red", alpha=0.9, label="Resistance")
+            ax0.plot(sup0.index, sup0, ":", linewidth=2.0, color="tab:green", alpha=0.9, label="Support")
             if not trend0.empty:
                 col0 = "tab:green" if m0 >= 0 else "tab:red"
-                ax0.plot(trend0.index, trend0.values, "--", color=col0,
+                # Thicker & darker trendline
+                ax0.plot(trend0.index, trend0.values, "--", color=col0, linewidth=3.0,
                          label=f"Trend (m={fmt_slope(m0)}/bar)")
             if not up0.empty and not lo0.empty:
                 ax0.plot(up0.index, up0.values, ":", linewidth=3.0,
@@ -1985,14 +1996,16 @@ with tab6:
             ax.set_title(f"{sym} — Last {years} Years — Price + 252d S/R + Trend")
             ax.plot(s.index, s.values, label="Close", linewidth=1.4)
             if np.isfinite(res_last) and np.isfinite(sup_last):
-                ax.hlines(res_last, xmin=s.index[0], xmax=s.index[-1], colors="tab:red",   linestyles="-", linewidth=1.3, alpha=0.6, label="_nolegend_")
-                ax.hlines(sup_last, xmin=s.index[0], xmax=s.index[-1], colors="tab:green", linestyles="-", linewidth=1.3, alpha=0.6, label="_nolegend_")
+                # Thicker & darker S/R lines
+                ax.hlines(res_last, xmin=s.index[0], xmax=s.index[-1], colors="tab:red",   linestyles="-", linewidth=2.2, alpha=0.95, label="_nolegend_")
+                ax.hlines(sup_last, xmin=s.index[0], xmax=s.index[-1], colors="tab:green", linestyles="-", linewidth=2.2, alpha=0.95, label="_nolegend_")
                 label_on_left(ax, res_last, f"R {fmt_price_val(res_last)}", color="tab:red")
                 label_on_left(ax, sup_last, f"S {fmt_price_val(sup_last)}", color="tab:green")
             if not yhat_all.empty:
                 col_all = "tab:green" if m_all >= 0 else "tab:red"
+                # Thicker & darker long-term trendline
                 ax.plot(yhat_all.index, yhat_all.values, "--",
-                        linewidth=2, color=col_all, label="Trend")
+                        linewidth=3.2, color=col_all, label="Trend")
             if not upper_all.empty and not lower_all.empty:
                 ax.plot(upper_all.index, upper_all.values, ":", linewidth=3.0,
                         color="black", alpha=1.0, label="_nolegend_")
