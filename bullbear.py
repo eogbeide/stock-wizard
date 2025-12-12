@@ -1452,6 +1452,14 @@ with tab1:
                     for lbl, y in fibs_h.items():
                         ax2.text(hc.index[-1], y, f" {lbl}", va="center", fontsize=8, alpha=0.6)
 
+                    # --- NEW: Bold Fibonacci labels + thick black dashed lines across chart (ADDED) ---
+                    for lbl, y in fibs_h.items():
+                        ax2.hlines(y, xmin=hc.index[0], xmax=hc.index[-1],
+                                   colors="black", linestyles="--", linewidth=2.8, alpha=0.95)
+                    for lbl, y in fibs_h.items():
+                        ax2.text(hc.index[-1], y, f" {lbl}",
+                                 va="center", fontsize=10, fontweight="bold", color="black")
+
                     # --- NEW: High-confidence Fibonacci extreme reversal markers (ADDED) ---
                     try:
                         fib0 = fibs_h.get("0%")
