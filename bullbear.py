@@ -1338,7 +1338,7 @@ with tab1:
                 try:
                     if np.isfinite(slope_h) and np.isfinite(m_h) and (slope_h * m_h < 0):
                         # Show the caution message right below the Forecast Button
-                        caution_below_btn.warning("ALERT: Please exercise caution while trading at this moment, as the current slope indicates that the dash trendline may be reversing. You can still place your trade according to the current green or red trendline (NOT THE SLOPE) once the price (blue line) crosses the GREEN SLOPE LINE upward for an upward trend, or crosses the red slope line downward for a downward trend")
+                        caution_below_btn.warning("ALERT: Please exercise caution while trading at this moment, as the current slope indicates that the dash trendline may be reversing. A reversal occurs near the 100% or 0% Fibonacci retracement levels. Once the reversal is confirmed, the trendline changes direction")
                 except Exception:
                     pass
 
