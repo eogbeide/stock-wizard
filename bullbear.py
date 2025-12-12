@@ -829,6 +829,79 @@ def annotate_breakout(ax, ts, px, direction: str):
                 color=("tab:green" if direction=="UP" else "tab:red"),
                 fontsize=9, fontweight="bold", zorder=13)
 
+# --- NEW: Fibonacci extreme reversal detection & marker (ADDED) ---
+def last_fib_extreme_reversal(price: pd.Series,
+                              slope: float,
+                              fib0_level: float,
+                              fib100_level: float,
+                              prox: float = 0.0025,
+                              confirm_bars: int = 2,
+                              lookback: int = 40):
+    """
+    High-confidence reversal at Fibonacci extremes:
+      • 0% (the swing HIGH): if recent price was within `prox` of 0% and
+        after that we have `confirm_bars` strictly lower closes and a NEGATIVE slope → DOWN toward 100%.
+      • 100% (the swing LOW): if recent price was within `prox` of 100% and
+        after that we have `confirm_bars` strictly higher closes and a POSITIVE slope → UP toward 0%.
+
+    Returns: {"dir": "DOWN"|"UP", "time": last_bar_time, "level": fib_level, "t_touch": time_of_touch} or None
+    """
+    if not np.isfinite(slope):
+        return None
+    p = _coerce_1d_series(price).dropna()
+    if p.shape[0] < max(5, confirm_bars + 2):
+        return None
+
+    tail = p.iloc[-min(lookback, len(p)):]
+    last_time = p.index[-1]
+
+    sig = None
+
+    # 0% check → DOWN
+    if np.isfinite(fib0_level) and slope < 0:
+        near0 = (np.abs(tail - fib0_level) / max(1e-12, abs(fib0_level))) <= prox
+        if near0.any():
+            t_touch0 = tail[near0].index[-1]
+            if _after_all_decreasing(p, t_touch0, confirm_bars):
+                # ensure we are moving away from the high
+                if float(p.iloc[-1]) < float(p.loc[t_touch0]):
+                    sig = {"dir": "DOWN", "time": last_time, "level": float(fib0_level), "t_touch": t_touch0}
+
+    # 100% check → UP
+    if np.isfinite(fib100_level) and slope > 0:
+        near100 = (np.abs(tail - fib100_level) / max(1e-12, abs(fib100_level))) <= prox
+        if near100.any():
+            t_touch100 = tail[near100].index[-1]
+            if _after_all_increasing(p, t_touch100, confirm_bars):
+                if float(p.iloc[-1]) > float(p.loc[t_touch100]):
+                    # If both extremes qualify, prefer the one touched most recently
+                    cand = {"dir": "UP", "time": last_time, "level": float(fib100_level), "t_touch": t_touch100}
+                    if sig is None or cand["t_touch"] > sig["t_touch"]:
+                        sig = cand
+    return sig
+
+def annotate_fib_reversal(ax, ts, y_level: float, direction: str, label: str = ""):
+    """
+    Places a marker on the Fibonacci 0%/100% line to indicate a high-confidence reversal
+    (DOWN from 0% toward 100%, or UP from 100% toward 0%).
+    """
+    try:
+        color = "tab:red" if direction == "DOWN" else "tab:green"
+        marker = "v" if direction == "DOWN" else "^"
+        ax.scatter([ts], [y_level], marker=marker, s=130, c=color, edgecolors="none", zorder=14)
+        ymin, ymax = ax.get_ylim()
+        yoff = (ymax - ymin) * (0.025 if direction == "UP" else -0.025)
+        if label:
+            ax.text(ts, y_level + yoff, label,
+                    ha="left", va="bottom" if direction == "UP" else "top",
+                    fontsize=9, fontweight="bold", color=color,
+                    bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.95),
+                    zorder=14)
+    except Exception:
+        # Minimal fallback
+        ax.text(ts, y_level, "Fib REV", color=("tab:red" if direction=="DOWN" else "tab:green"),
+                fontsize=9, fontweight="bold", zorder=14)
+
 # --- Cleaner axes + TOP instruction banner (outside the chart) ---
 def _simplify_axes(ax):
     ax.grid(True, alpha=0.15, linestyle="--", linewidth=0.6)
@@ -1378,6 +1451,40 @@ with tab1:
                         ax2.hlines(y, xmin=hc.index[0], xmax=hc.index[-1], linestyles="dotted", linewidth=0.9, alpha=0.35)
                     for lbl, y in fibs_h.items():
                         ax2.text(hc.index[-1], y, f" {lbl}", va="center", fontsize=8, alpha=0.6)
+
+                    # --- NEW: High-confidence Fibonacci extreme reversal markers (ADDED) ---
+                    try:
+                        fib0 = fibs_h.get("0%")
+                        fib100 = fibs_h.get("100%")
+                        if np.isfinite(fib0) and np.isfinite(fib100):
+                            fib_sig = last_fib_extreme_reversal(
+                                price=hc,
+                                slope=slope_sig_h,
+                                fib0_level=float(fib0),
+                                fib100_level=float(fib100),
+                                prox=sr_prox_pct,
+                                confirm_bars=rev_bars_confirm,
+                                lookback=max(20, int(sr_lb_hourly))  # re-use hourly S/R lookback as a sensible window
+                            )
+                            if fib_sig is not None:
+                                if fib_sig["dir"] == "DOWN":
+                                    annotate_fib_reversal(
+                                        ax2,
+                                        ts=hc.index[-1],
+                                        y_level=float(fib0),
+                                        direction="DOWN",
+                                        label="Fib 0% REV → 100%"
+                                    )
+                                elif fib_sig["dir"] == "UP":
+                                    annotate_fib_reversal(
+                                        ax2,
+                                        ts=hc.index[-1],
+                                        y_level=float(fib100),
+                                        direction="UP",
+                                        label="Fib 100% REV → 0%"
+                                    )
+                    except Exception:
+                        pass
 
                 _simplify_axes(ax2)
                 ax2.set_xlabel("Time (PST)")
