@@ -192,6 +192,27 @@ def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: i
             bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="none", alpha=0.75),
             zorder=6)
 
+# --- NEW: Right-side, outside-of-axes label helper (for Fibonacci values) ---
+def label_on_right_outside(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
+    """
+    Place a bold label just OUTSIDE the right edge of the axes at the given y (data coords),
+    similar to how prices appear beside the y-axis on the left.
+    """
+    fig = ax.figure
+    # Convert y (in data coords) to figure coords for vertical placement
+    _, y_disp = ax.transData.transform((0.0, float(y_val)))
+    _, y_fig = fig.transFigure.inverted().transform((0.0, y_disp))
+    # Slightly to the right of the axes area
+    ax_box = ax.get_position()  # in figure fraction
+    x_fig = min(0.98, ax_box.x1 + 0.01)
+    # Clamp y within the figure
+    y_fig = float(np.clip(y_fig, 0.02, 0.98))
+    fig.text(x_fig, y_fig, text,
+             ha="left", va="center",
+             fontsize=fontsize, fontweight="bold", color=color,
+             bbox=dict(boxstyle="round,pad=0.20", fc="white", ec="none", alpha=0.85),
+             zorder=1000)
+
 def subset_by_daily_view(obj, view_label: str):
     if obj is None or len(obj.index) == 0:
         return obj
@@ -1345,7 +1366,8 @@ with tab1:
                     pass
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
-                plt.subplots_adjust(top=0.86, right=0.995, left=0.06)
+                # --- UPDATED: make room on the RIGHT for outside Fibonacci labels ---
+                plt.subplots_adjust(top=0.86, right=0.89, left=0.06)
 
                 trend_color = "tab:green" if slope_h >= 0 else "tab:red"
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
@@ -1452,21 +1474,15 @@ with tab1:
 
                 if show_fibs and not hc.empty:
                     fibs_h = fibonacci_levels(hc)
-                    # Draw THIN and FAINT Fibonacci lines; place labels at the far right to avoid blocking price
-                    trans_right = blended_transform_factory(ax2.transAxes, ax2.transData)
+                    # Draw THIN and FAINT Fibonacci lines
                     for lbl, y in fibs_h.items():
                         ax2.axhline(y=y, linestyle="-", linewidth=0.7, color="black", alpha=0.18, zorder=1)
+                    # --- UPDATED: place Fibonacci VALUES OUTSIDE on the RIGHT (bold) ---
+                    # Show both level label and formatted price, e.g., "38.2%  123.456"
                     for lbl, y in fibs_h.items():
-                        ax2.text(
-                            0.995, y, lbl,
-                            transform=trans_right,
-                            va="center", ha="right",
-                            fontsize=8, color="black",
-                            bbox=dict(boxstyle="round,pad=0.15", fc="white", ec="none", alpha=0.55),
-                            zorder=2, clip_on=False
-                        )
+                        label_on_right_outside(ax2, y, f"{lbl}  {fmt_price_val(y)}", color="black", fontsize=9)
 
-                    # --- NEW: High-confidence Fibonacci extreme reversal markers (ADDED) ---
+                    # --- High-confidence Fibonacci extreme reversal markers (unchanged) ---
                     try:
                         fib0 = fibs_h.get("0%")
                         fib100 = fibs_h.get("100%")
