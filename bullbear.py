@@ -1339,6 +1339,7 @@ with tab1:
                     if np.isfinite(slope_h) and np.isfinite(m_h) and (slope_h * m_h < 0):
                         # Show the caution message right below the Forecast Button
                         caution_below_btn.warning("ALERT: Please exercise caution while trading at this moment, as the current slope indicates that the dash trendline may be reversing")
+                        caution_below_btn.warning("ALERT: You can execute the slope reversal trade when the price (blue line) crosses the red downward trendline or the green upward trendline")
                 except Exception:
                     pass
 
