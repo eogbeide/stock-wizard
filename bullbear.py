@@ -24,6 +24,11 @@
 #   • NEW (Scanner): Replaced "Daily — Price > Ichimoku Kijun(26)" with
 #                    "Daily — HMA Cross + Trend Agreement (latest bar)".
 #   • NEW (Daily): HMA Cross colors → Buy = Black, Sell = Blue (badges and stars).
+#   • NEW (Daily-only): Show **Buy Alert** / **Sell Alert** when price reverses
+#       from **Support (upward slope)** or **Resistance (downward slope)**,
+#       validated against a **99% (~2.576σ) regression band**; plot the **99% band only**.
+#   • NEW (Scanner): "99% SR Reversal" tab listing symbols that just triggered
+#       a Support/Resistance reversal with 99% confidence (same rules as the daily chart).
 
 import streamlit as st
 import pandas as pd
@@ -1014,6 +1019,83 @@ def last_band_reversal_signal(price: pd.Series,
             return {"time": t0, "price": c0, "side": "SELL", "note": "Band REV"}
     return None
 
+# --- NEW (Daily-only): 99% confidence SR reversal logic ---
+Z_FOR_99 = 2.576  # ≈ 99% two-sided (~2.58σ)
+
+def _rel_near(a: float, b: float, tol: float) -> bool:
+    try:
+        a = float(a); b = float(b)
+    except Exception:
+        return False
+    if not (np.isfinite(a) and np.isfinite(b)):
+        return False
+    denom = max(abs(b), 1e-12)
+    return abs(a - b) / denom <= float(tol)
+
+def daily_sr_99_reversal_signal(price: pd.Series,
+                                support: pd.Series,
+                                resistance: pd.Series,
+                                upper99: pd.Series,
+                                lower99: pd.Series,
+                                trend_slope: float,
+                                prox: float = 0.0025,
+                                confirm_bars: int = 2):
+    """
+    DAILY-ONLY signal:
+      • Uptrend (slope>0): previous close near **Support**, Support near **lower 99% band**,
+                           and last `confirm_bars` closes strictly increasing → BUY ALERT.
+      • Downtrend (slope<0): previous close near **Resistance**, Resistance near **upper 99% band**,
+                             and last `confirm_bars` closes strictly decreasing → SELL ALERT.
+    Returns dict: {"time","price","side","note"} or None.
+    """
+    p = _coerce_1d_series(price).dropna()
+    if p.shape[0] < max(3, confirm_bars + 1) or not np.isfinite(trend_slope) or trend_slope == 0:
+        return None
+
+    sup = _coerce_1d_series(support).reindex(p.index).ffill().bfill()
+    res = _coerce_1d_series(resistance).reindex(p.index).ffill().bfill()
+    up99 = _coerce_1d_series(upper99).reindex(p.index)
+    lo99 = _coerce_1d_series(lower99).reindex(p.index)
+
+    if sup.dropna().empty or res.dropna().empty or up99.dropna().empty or lo99.dropna().empty:
+        return None
+
+    def _inc_ok(series: pd.Series, n: int) -> bool:
+        s = _coerce_1d_series(series).dropna()
+        if len(s) < n+1: return False
+        d = np.diff(s.iloc[-(n+1):])
+        return bool(np.all(d > 0))
+
+    def _dec_ok(series: pd.Series, n: int) -> bool:
+        s = _coerce_1d_series(series).dropna()
+        if len(s) < n+1: return False
+        d = np.diff(s.iloc[-(n+1):])
+        return bool(np.all(d < 0))
+
+    # Last two bars
+    t0 = p.index[-1]
+    c0, c1 = float(p.iloc[-1]), float(p.iloc[-2])
+    s0, s1 = float(sup.iloc[-1]), float(sup.iloc[-2])
+    r0, r1 = float(res.iloc[-1]), float(res.iloc[-2])
+    u1 = float(up99.iloc[-2]) if np.isfinite(up99.iloc[-2]) else np.nan
+    l1 = float(lo99.iloc[-2]) if np.isfinite(lo99.iloc[-2]) else np.nan
+
+    if trend_slope > 0:
+        # BUY ALERT: prev close near support and that support sits near the lower 99% band
+        prev_near_support = (c1 <= s1 * (1.0 + prox))
+        support_near_99   = _rel_near(s1, l1, prox)
+        going_up          = _inc_ok(p, confirm_bars)
+        if prev_near_support and support_near_99 and going_up:
+            return {"time": t0, "price": c0, "side": "BUY", "note": "ALERT 99% SR REV"}
+    else:
+        # SELL ALERT: prev close near resistance and that resistance sits near the upper 99% band
+        prev_near_resistance = (c1 >= r1 * (1.0 - prox))
+        resistance_near_99   = _rel_near(r1, u1, prox)
+        going_down           = _dec_ok(p, confirm_bars)
+        if prev_near_resistance and resistance_near_99 and going_down:
+            return {"time": t0, "price": c0, "side": "SELL", "note": "ALERT 99% SR REV"}
+    return None
+
 # --- Sessions & News ---
 NY_TZ   = pytz.timezone("America/New_York")
 LDN_TZ  = pytz.timezone("Europe/London")
@@ -1099,13 +1181,14 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
     "NTD -0.75 Scanner",
-    "Long-Term History"
+    "Long-Term History",
+    "99% SR Reversal Scanner"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -1148,8 +1231,8 @@ with tab1:
             res30 = df.rolling(30, min_periods=1).max()
             sup30 = df.rolling(30, min_periods=1).min()
 
-            # Trendline with ±2σ band and R² (Daily)
-            yhat_d, upper_d, lower_d, m_d, r2_d = regression_with_band(df, slope_lb_daily)
+            # Trendline with **99% (~2.576σ)** band and R² (Daily ONLY change)
+            yhat_d, upper_d, lower_d, m_d, r2_d = regression_with_band(df, slope_lb_daily, z=Z_FOR_99)
 
             kijun_d = pd.Series(index=df.index, dtype=float)
             if df_ohlc is not None and not df_ohlc.empty and show_ichi:
@@ -1196,6 +1279,7 @@ with tab1:
                 slope_col_d = "tab:green" if m_d >= 0 else "tab:red"
                 # Thicker & darker main regression trendline
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=3.2, color=slope_col_d, label="Trend")
+            # Daily-only: draw *99%* band (±2.576σ)
             if not upper_d_show.empty and not lower_d_show.empty:
                 ax.plot(upper_d_show.index, upper_d_show.values, ":", linewidth=3.0, color="black", alpha=1.0, label="_nolegend_")
                 ax.plot(lower_d_show.index, lower_d_show.values, ":", linewidth=3.0, color="black", alpha=1.0, label="_nolegend_")
@@ -1261,6 +1345,25 @@ with tab1:
                 else:
                     annotate_breakout(ax, breakout_d["time"], breakout_d["price"], "DOWN")
                     badges_top.append((f"▼ BREAKDOWN @{fmt_price_val(breakout_d['price'])}", "tab:red"))
+
+            # NEW (Daily-only): 99% SR Reversal Alert
+            sr99_sig = daily_sr_99_reversal_signal(
+                price=df_show,
+                support=sup30_show,
+                resistance=res30_show,
+                upper99=upper_d_show,
+                lower99=lower_d_show,
+                trend_slope=m_d,
+                prox=sr_prox_pct,
+                confirm_bars=rev_bars_confirm
+            )
+            if sr99_sig is not None:
+                if sr99_sig["side"] == "BUY":
+                    annotate_signal_box(ax, sr99_sig["time"], sr99_sig["price"], side="BUY", note=sr99_sig["note"])
+                    badges_top.append((f"▲ BUY ALERT 99% SR REV @{fmt_price_val(sr99_sig['price'])}", "tab:green"))
+                else:
+                    annotate_signal_box(ax, sr99_sig["time"], sr99_sig["price"], side="SELL", note=sr99_sig["note"])
+                    badges_top.append((f"▼ SELL ALERT 99% SR REV @{fmt_price_val(sr99_sig['price'])}", "tab:red"))
 
             # Draw compact badges
             draw_top_badges(ax, badges_top)
@@ -1534,7 +1637,8 @@ with tab2:
             ema30 = df.ewm(span=30).mean()
             res30 = df.rolling(30, min_periods=1).max()
             sup30 = df.rolling(30, min_periods=1).min()
-            yhat_d, up_d, lo_d, m_d, r2_d = regression_with_band(df, slope_lb_daily)
+            # Daily-only: use 99% (~2.576σ) band
+            yhat_d, up_d, lo_d, m_d, r2_d = regression_with_band(df, slope_lb_daily, z=Z_FOR_99)
 
             kijun_d2 = pd.Series(index=df.index, dtype=float)
             if df_ohlc is not None and not df_ohlc.empty and show_ichi:
@@ -1581,6 +1685,7 @@ with tab2:
                 slope_col_d2 = "tab:green" if m_d >= 0 else "tab:red"
                 # Thicker & darker main regression trendline
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=3.2, color=slope_col_d2, label="Trend")
+            # Daily-only: draw *99%* band
             if not up_d_show.empty and not lo_d_show.empty:
                 ax.plot(up_d_show.index, up_d_show.values, ":", linewidth=3.0, color="black", alpha=1.0, label="_nolegend_")
             if not lo_d_show.empty:
@@ -1643,6 +1748,25 @@ with tab2:
                 else:
                     annotate_breakout(ax, breakout_d2["time"], breakout_d2["price"], "DOWN")
                     badges_top2.append((f"▼ BREAKDOWN @{fmt_price_val(breakout_d2['price'])}", "tab:red"))
+
+            # NEW (Daily-only): 99% SR Reversal Alert
+            sr99_sig2 = daily_sr_99_reversal_signal(
+                price=df_show,
+                support=sup30_show,
+                resistance=res30_show,
+                upper99=up_d_show,
+                lower99=lo_d_show,
+                trend_slope=m_d,
+                prox=sr_prox_pct,
+                confirm_bars=rev_bars_confirm
+            )
+            if sr99_sig2 is not None:
+                if sr99_sig2["side"] == "BUY":
+                    annotate_signal_box(ax, sr99_sig2["time"], sr99_sig2["price"], side="BUY", note=sr99_sig2["note"])
+                    badges_top2.append((f"▲ BUY ALERT 99% SR REV @{fmt_price_val(sr99_sig2['price'])}", "tab:green"))
+                else:
+                    annotate_signal_box(ax, sr99_sig2["time"], sr99_sig2["price"], side="SELL", note=sr99_sig2["note"])
+                    badges_top2.append((f"▼ SELL ALERT 99% SR REV @{fmt_price_val(sr99_sig2['price'])}", "tab:red"))
 
             draw_top_badges(ax, badges_top2)
 
@@ -2030,3 +2154,64 @@ with tab6:
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.4)
             st.pyplot(fig)
+
+# --- Tab 7: 99% SR Reversal Scanner (NEW) ---
+with tab7:
+    st.header("99% SR Reversal Scanner")
+    st.caption("Lists symbols whose **Daily** price just reversed from **Support** (uptrend → BUY ALERT) "
+               "or **Resistance** (downtrend → SELL ALERT) with **99% (~2.576σ) band agreement**.")
+
+    run99 = st.button("Scan Universe for 99% SR Reversals", key="btn_scan_99sr")
+
+    if run99:
+        rows = []
+        for sym in universe:
+            try:
+                s = fetch_hist(sym)
+                if s is None or s.dropna().shape[0] < max(3, slope_lb_daily):
+                    continue
+                # 30-bar S/R for daily
+                res30 = s.rolling(30, min_periods=1).max()
+                sup30 = s.rolling(30, min_periods=1).min()
+                # 99% band on daily
+                yhat_s, up99, lo99, m_sym, r2_sym = regression_with_band(s, lookback=slope_lb_daily, z=Z_FOR_99)
+                sig = daily_sr_99_reversal_signal(
+                    price=s,
+                    support=sup30,
+                    resistance=res30,
+                    upper99=up99,
+                    lower99=lo99,
+                    trend_slope=m_sym,
+                    prox=sr_prox_pct,
+                    confirm_bars=rev_bars_confirm
+                )
+                if sig is not None:
+                    side = sig["side"]
+                    t = sig["time"]
+                    px = sig["price"]
+                    rows.append({
+                        "Symbol": sym,
+                        "Side": side,
+                        "Timestamp": t,
+                        "Close": px,
+                        "Slope": m_sym,
+                        "R2": r2_sym,
+                        "Support": float(sup30.reindex(s.index).iloc[-1]) if len(sup30) else np.nan,
+                        "Resistance": float(res30.reindex(s.index).iloc[-1]) if len(res30) else np.nan
+                    })
+            except Exception:
+                pass
+
+        if not rows:
+            st.info("No symbols triggered a **99% SR Reversal** on the latest daily bar.")
+        else:
+            out = pd.DataFrame(rows).sort_values(["Side","Symbol"])
+            view = out.copy()
+            view["Close"] = view["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            view["Slope"] = view["Slope"].map(lambda v: f"{v:+.5f}" if np.isfinite(v) else "n/a")
+            view["R2"] = view["R2"].map(lambda v: fmt_pct(v, 1) if np.isfinite(v) else "n/a")
+            view["Support"] = view["Support"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            view["Resistance"] = view["Resistance"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            st.dataframe(view[["Symbol","Side","Timestamp","Close","Support","Resistance","Slope","R2"]]
+                         .reset_index(drop=True),
+                         use_container_width=True)
