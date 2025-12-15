@@ -209,6 +209,81 @@ def subset_by_daily_view(obj, view_label: str):
         start = end - pd.Timedelta(days=days_map.get(view_label, 365))
     return obj.loc[(idx >= start) & (idx <= end)]
 
+# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+# NEW — Gap-aware plotting helpers (used only for intraday/hourly charts)
+# Break connecting lines across market-closed periods by inserting NaNs where
+# time gaps exceed a multiple of the typical bar spacing (e.g., overnight/weekend).
+def _gap_mask_for_index(idx: pd.Index, factor: float = 3.0) -> pd.Series:
+    """
+    Returns a boolean Series aligned to `idx` where True marks the FIRST bar after
+    a 'long' gap (gap > factor * median spacing). If `idx` is not a DatetimeIndex,
+    returns all False (no gaps).
+    """
+    if not isinstance(idx, pd.DatetimeIndex) or idx.size < 2:
+        return pd.Series(False, index=idx)
+    # Use int64 nanoseconds for robust diff on tz-aware indexes
+    diffs = np.diff(idx.asi8)
+    pos = diffs[diffs > 0]
+    if pos.size == 0:
+        thr = np.inf
+    else:
+        thr = np.median(pos) * float(factor)  # "long" gap threshold
+    breaks = np.insert(diffs > thr, 0, False)  # align back to index length
+    return pd.Series(breaks, index=idx)
+
+def _break_series_on_gaps(y, idx: pd.Index = None, factor: float = 3.0) -> pd.Series:
+    """
+    Returns a Series (values of `y`) aligned to an index with NaNs injected at
+    'long' gap boundaries so matplotlib won't connect lines across closed periods.
+
+    Robust to inputs:
+      • If `y` is a Series → uses its own index (unless an `idx` override is provided).
+      • If `y` is array-like and `idx` is None → tries `y.index` if present, otherwise
+        falls back to a simple RangeIndex of matching length (no gaps will be detected).
+      • If `y` is 2D (e.g., shape (n,1) or (1,n)) → first vector is used.
+    """
+    # If `y` is already a Series, prefer its own index unless caller provides override.
+    if isinstance(y, pd.Series):
+        s = y.copy()
+        if idx is None:
+            idx = s.index
+    else:
+        # Try to recover an index from the object, else create a range index.
+        cand_idx = getattr(y, "index", None)
+        if idx is None:
+            idx = cand_idx
+
+        # Normalize data to 1-D numpy array
+        arr = np.asarray(y)
+        if arr.ndim == 0:
+            arr = arr.reshape(1)
+        elif arr.ndim == 2:
+            # Prefer first column; if row vector, take the row
+            if arr.shape[1] == 1:
+                arr = arr[:, 0]
+            elif arr.shape[0] == 1:
+                arr = arr[0]
+            else:
+                # Multi-column: take the first column to preserve alignment
+                arr = arr[:, 0]
+        elif arr.ndim > 2:
+            # Flatten, but we'll also reset index to match
+            arr = arr.ravel()
+
+        # Ensure index exists and matches length
+        if idx is None or len(idx) != len(arr):
+            idx = pd.RangeIndex(len(arr))
+
+        s = pd.Series(arr, index=idx, dtype="float64")
+
+    # Build a gap mask (all-False if idx isn't a DatetimeIndex) and inject NaNs.
+    mask = _gap_mask_for_index(s.index, factor=factor)
+    # Align mask to s just in case of any index quirks
+    mask = mask.reindex(s.index, fill_value=False)
+    s.loc[mask] = np.nan
+    return s
+# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
 # --- Sidebar config (single, deduplicated) ---
 st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
@@ -1447,26 +1522,47 @@ with tab1:
                 except Exception:
                     pass
 
+                # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+                # GAP-AWARE plot series (no connecting lines across closed-market periods)
+                gap_factor = 3.0  # 3× the typical spacing (safe for 5m/15m/1h bars)
+                plot_hc    = _break_series_on_gaps(hc, factor=gap_factor)
+                plot_he    = _break_series_on_gaps(he.reindex(hc.index), factor=gap_factor)
+                plot_trend = _break_series_on_gaps(trend_h, idx=hc.index, factor=gap_factor)
+
+                plot_hma   = _break_series_on_gaps(hma_h.reindex(hc.index), factor=gap_factor)
+                plot_kijun = _break_series_on_gaps(kijun_h.reindex(hc.index), factor=gap_factor)
+
+                plot_bb_mid = _break_series_on_gaps(bb_mid_h.reindex(hc.index), factor=gap_factor)
+                plot_bb_up  = _break_series_on_gaps(bb_up_h.reindex(hc.index),  factor=gap_factor)
+                plot_bb_lo  = _break_series_on_gaps(bb_lo_h.reindex(hc.index),  factor=gap_factor)
+
+                plot_st     = _break_series_on_gaps(st_line_intr.reindex(hc.index), factor=gap_factor)
+
+                plot_yhat   = _break_series_on_gaps(yhat_h.reindex(hc.index), factor=gap_factor)
+                plot_up2s   = _break_series_on_gaps(upper_h.reindex(hc.index), factor=gap_factor)
+                plot_lo2s   = _break_series_on_gaps(lower_h.reindex(hc.index), factor=gap_factor)
+                # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
                 fig2, ax2 = plt.subplots(figsize=(14,4))
                 plt.subplots_adjust(top=0.86, right=0.995, left=0.06)
 
                 trend_color = "tab:green" if slope_h >= 0 else "tab:red"
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
 
-                ax2.plot(hc.index, hc, label="Price", linewidth=1.2)
-                ax2.plot(hc.index, he, "--", alpha=0.45, linewidth=0.9, label="_nolegend_")
-                # Thicker & darker intraday trend line
-                ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2.4, color=trend_color, alpha=0.95)
+                # Use gap-broken series for ALL plotted lines/fills on the hourly chart
+                ax2.plot(plot_hc.index, plot_hc.values, label="Price", linewidth=1.2)
+                ax2.plot(plot_he.index, plot_he.values, "--", alpha=0.45, linewidth=0.9, label="_nolegend_")
+                ax2.plot(plot_trend.index, plot_trend.values, "--", label="Trend", linewidth=2.4, color=trend_color, alpha=0.95)
 
-                if show_hma and not hma_h.dropna().empty:
-                    ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.3, alpha=0.9, label="HMA")
+                if show_hma and not plot_hma.dropna().empty:
+                    ax2.plot(plot_hma.index, plot_hma.values, "-", linewidth=1.3, alpha=0.9, label="HMA")
 
-                if show_ichi and not kijun_h.dropna().empty:
-                    ax2.plot(kijun_h.index, kijun_h.values, "-", linewidth=1.1, color="black", alpha=0.55, label="Kijun")
+                if show_ichi and not plot_kijun.dropna().empty:
+                    ax2.plot(plot_kijun.index, plot_kijun.values, "-", linewidth=1.1, color="black", alpha=0.55, label="Kijun")
 
-                if show_bbands and not bb_up_h.dropna().empty and not bb_lo_h.dropna().empty:
-                    ax2.fill_between(hc.index, bb_lo_h, bb_up_h, alpha=0.04, label="_nolegend_")
-                    ax2.plot(bb_mid_h.index, bb_mid_h.values, "-", linewidth=0.8, alpha=0.3, label="_nolegend_")
+                if show_bbands and not plot_bb_up.dropna().empty and not plot_bb_lo.dropna().empty:
+                    ax2.fill_between(hc.index, plot_bb_lo.values, plot_bb_up.values, alpha=0.04, label="_nolegend_")
+                    ax2.plot(plot_bb_mid.index, plot_bb_mid.values, "-", linewidth=0.8, alpha=0.3, label="_nolegend_")
 
                 res_val = sup_val = px_val = np.nan
                 try:
@@ -1540,15 +1636,15 @@ with tab1:
                              fontsize=10, fontweight="bold",
                              bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-                if not st_line_intr.dropna().empty:
-                    ax2.plot(st_line_intr.index, st_line_intr.values, "-", alpha=0.6, label="_nolegend_")
-                if not yhat_h.empty:
+                if not plot_st.dropna().empty:
+                    ax2.plot(plot_st.index, plot_st.values, "-", alpha=0.6, label="_nolegend_")
+                if not plot_yhat.dropna().empty:
                     slope_col_h = "tab:green" if m_h >= 0 else "tab:red"
                     # Thicker & darker slope-fit line
-                    ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2.6, color=slope_col_h, alpha=0.95, label="Slope Fit")
-                if not upper_h.empty and not lower_h.empty:
-                    ax2.plot(upper_h.index, upper_h.values, ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
-                    ax2.plot(lower_h.index, lower_h.index.map(lambda i: lower_h.loc[i]), ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
+                    ax2.plot(plot_yhat.index, plot_yhat.values, "-", linewidth=2.6, color=slope_col_h, alpha=0.95, label="Slope Fit")
+                if not plot_up2s.dropna().empty and not plot_lo2s.dropna().empty:
+                    ax2.plot(plot_up2s.index, plot_up2s.values, ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
+                    ax2.plot(plot_lo2s.index, plot_lo2s.values, ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
 
                 if mode == "Forex" and show_sessions_pst and not hc.empty:
                     sess = compute_session_lines(hc.index)
