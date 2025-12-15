@@ -33,7 +33,7 @@
 #       the price line continuous. Session lines & markers are mapped to the compressed axis.
 #   • NEW (Instruction ribbon): Aligns with the **GLOBAL daily trend** (hourly charts now use the daily slope).
 
-import streamlit as stn
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
