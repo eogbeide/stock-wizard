@@ -61,18 +61,6 @@ st.markdown("""
                    width: 100% !important; position: relative !important; margin-bottom: 1rem; }
     .css-1v3fvcr { margin-left: 0 !important; }
   }
-  /* Ribbon style for important notices (top/below-button banners) */
-  .ribbon-alert {
-    font-weight: 700;
-    font-size: 0.95rem;
-    color: #fff;
-    background: linear-gradient(90deg, #d32f2f, #f44336);
-    border-radius: 10px;
-    padding: 12px 16px;
-    text-align: center;
-    margin: 0.75rem 0 0.25rem 0;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.08);
-  }
 </style>
 """, unsafe_allow_html=True)
 
@@ -1279,10 +1267,7 @@ with tab1:
         })
 
     # --- REQUIRED NOTE directly under the Forecast button (per request) ---
-    st.markdown(
-        '<div class="ribbon-alert">ALERT: Please exercise caution while trading at this moment, as the current slope indicates that the dash trendline may be reversing. A reversal occurs near the 100% or 0% Fibonacci retracement levels. Once the reversal is confirmed, the trendline changes direction.</div>',
-        unsafe_allow_html=True
-    )
+    st.caption("The Slope Line is for Information only to show when a trend change is imminent, not for trading.")
 
     # --- Caution placeholder positioned just below the Forecast button ---
     caution_below_btn = st.empty()
