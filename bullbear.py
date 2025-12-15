@@ -32,6 +32,8 @@
 #   • NEW (Hourly): **Market-time compressed axis** → removes closed-market gaps and keeps
 #       the price line continuous. Session lines & markers are mapped to the compressed axis.
 #   • NEW (Instruction ribbon): Aligns with the **GLOBAL daily trend** (hourly charts now use the daily slope).
+#   • NEW (QoL): BUY/SELL *and* Value of PIPS in the ribbon are computed from entry→exit
+#       consistent with the **GLOBAL (daily) trend direction**.
 
 import streamlit as st
 import pandas as pd
@@ -164,9 +166,10 @@ def format_trade_instruction(trend_slope: float,
                              close_val: float,
                              symbol: str) -> str:
     """
-    TREND-AWARE instruction order (SINGLE SENTENCE, uses caller-provided *GLOBAL* slope):
-      • Uptrend (green)   → BUY first, then SELL, then Value of PIPS
-      • Downtrend (red)   → SELL first, then BUY, then Value of PIPS
+    TREND-AWARE instruction (SINGLE SENTENCE) driven by **GLOBAL DAILY SLOPE**:
+      • Uptrend (green)   → BUY first, then SELL. Pips = SELL - BUY (long).
+      • Downtrend (red)   → SELL first, then BUY. Pips = SELL - BUY (short entry minus exit).
+    buy_val/sell_val are raw S/R *levels*; we compute entry/exit from global trend.
     """
     def _finite(x):
         try:
@@ -174,25 +177,44 @@ def format_trade_instruction(trend_slope: float,
         except Exception:
             return False
 
-    entry_buy = float(buy_val) if _finite(buy_val) else float(close_val)
-    exit_sell = float(sell_val) if _finite(sell_val) else float(close_val)
-
-    buy_txt  = f"▲ BUY @{fmt_price_val(entry_buy)}"
-    sell_txt = f"▼ SELL @{fmt_price_val(exit_sell)}"
-    # "PIPS" in caps per request
-    pips_txt = f" • Value of PIPS: {_diff_text(exit_sell, entry_buy, symbol)}"
+    # Fallback to current price if levels are missing
+    buy_price  = float(buy_val)  if _finite(buy_val)  else float(close_val)
+    sell_price = float(sell_val) if _finite(sell_val) else float(close_val)
 
     try:
         tslope = float(trend_slope)
     except Exception:
         tslope = 0.0
 
+    # Determine sentence order AND entry/exit pairing from GLOBAL trend
     if np.isfinite(tslope) and tslope > 0:
-        # Upward GLOBAL slope → Buy, Sell, Value of PIPS
-        return f"{buy_txt} → {sell_txt}{pips_txt}"
+        # Uptrend: long from Support → exit at Resistance
+        entry = buy_price
+        exit_ = sell_price
+        lhs = f"▲ BUY @{fmt_price_val(entry)}"
+        rhs = f"▼ SELL @{fmt_price_val(exit_)}"
+        # Pips (or Δ) computed as exit - entry
+        ps = pip_size_for_symbol(symbol)
+        if ps:
+            pips = (exit_ - entry) / ps
+            pips_txt = f" • Value of PIPS: {pips:.1f} pips"
+        else:
+            pips_txt = f" • Value of PIPS: Δ {(exit_ - entry):.3f}"
+        return f"{lhs} → {rhs}{pips_txt}"
     else:
-        # Downward GLOBAL slope → Sell, Buy, Value of PIPS
-        return f"{sell_txt} → {buy_txt}{pips_txt}"
+        # Downtrend: short from Resistance → exit at Support
+        entry = sell_price
+        exit_ = buy_price
+        lhs = f"▼ SELL @{fmt_price_val(entry)}"
+        rhs = f"▲ BUY @{fmt_price_val(exit_)}"
+        # Pips computed as entry - exit (should be positive when trending down)
+        ps = pip_size_for_symbol(symbol)
+        if ps:
+            pips = (entry - exit_) / ps
+            pips_txt = f" • Value of PIPS: {pips:.1f} pips"
+        else:
+            pips_txt = f" • Value of PIPS: Δ {(entry - exit_):.3f}"
+        return f"{lhs} → {rhs}{pips_txt}"
 
 def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
     trans = blended_transform_factory(ax.transAxes, ax.transData)
@@ -1277,6 +1299,10 @@ with tab1:
         p_dn = 1 - p_up if np.isfinite(p_up) else np.nan
         fx_news = fetch_yf_news(sel, window_days=news_window_days) if (mode == "Forex" and show_fx_news) else pd.DataFrame()
 
+        # --- Compute GLOBAL (DAILY) trend slope ONCE and reuse on both Daily & Hourly ribbons ---
+        # Use 99% band (z=2.576) for the daily fit; slope is the "global trend".
+        _, _, _, m_global, _ = regression_with_band(df, slope_lb_daily, z=Z_FOR_99)
+
         # ----- Daily (Price only) -----
         if chart in ("Daily","Both"):
             ema30 = df.ewm(span=30).mean()
@@ -1420,10 +1446,10 @@ with tab1:
             # Draw compact badges
             draw_top_badges(ax, badges_top)
 
-            # TOP instruction banner (Daily) — uses GLOBAL daily slope (m_d)
+            # TOP instruction banner (Daily) — now also uses **GLOBAL daily slope (m_global)**
             try:
                 px_val_d  = float(df_show.iloc[-1])
-                draw_instruction_ribbons(ax, m_d, sup_val_d, res_val_d, px_val_d, sel)
+                draw_instruction_ribbons(ax, m_global, sup_val_d, res_val_d, px_val_d, sel)
             except Exception:
                 pass
 
@@ -1487,13 +1513,6 @@ with tab1:
                 # Hourly regression slope & bands (for signals)
                 yhat_h, upper_h, lower_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
                 slope_sig_h = m_h if np.isfinite(m_h) else slope_h  # LOCAL slope for diagnostics
-
-                # GLOBAL (DAILY) slope (used for instruction & caution check)
-                try:
-                    df_global = st.session_state.df_hist
-                    _, _, _, m_global, _ = regression_with_band(df_global, slope_lb_daily)
-                except Exception:
-                    m_global = slope_sig_h
 
                 # --- TOP WARNING (opposite directions: hourly trendline vs hourly slope fit) ---
                 try:
@@ -1589,7 +1608,7 @@ with tab1:
 
                 draw_top_badges(ax2, badges_top_h)
 
-                # TOP instruction banner (Hourly) — uses GLOBAL daily slope (m_global)
+                # TOP instruction banner (Hourly) — uses **GLOBAL daily slope (m_global)**
                 draw_instruction_ribbons(ax2, m_global, sup_val, res_val, px_val, sel)
 
                 # footer stats (bottom-right ONLY: merge price + R² + slope)
@@ -1850,10 +1869,12 @@ with tab2:
 
             draw_top_badges(ax, badges_top2)
 
-            # TOP instruction banner (Daily) — uses GLOBAL daily slope (m_d)
+            # TOP instruction banner (Daily) — **use GLOBAL daily slope** for order + pips calc
             try:
                 px_val_d2  = float(df_show.iloc[-1])
-                draw_instruction_ribbons(ax, m_d, sup_val_d2, res_val_d2, px_val_d2, st.session_state.ticker)
+                # NOTE: still pass the same S/R levels; the ribbon uses m_global to decide entry/exit semantics.
+                _, _, _, m_global2, _ = regression_with_band(df, slope_lb_daily, z=Z_FOR_99)
+                draw_instruction_ribbons(ax, m_global2, sup_val_d2, res_val_d2, px_val_d2, st.session_state.ticker)
             except Exception:
                 pass
 
