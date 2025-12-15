@@ -31,6 +31,7 @@
 #       an **upward daily slope** and **price below the slope** (latest bar).
 #   • NEW (Hourly): **Market-time compressed axis** → removes closed-market gaps and keeps
 #       the price line continuous. Session lines & markers are mapped to the compressed axis.
+#   • NEW (Hourly): **Right-edge x-padding** so the last price sample is always visible.
 
 import streamlit as st
 import pandas as pd
@@ -1176,6 +1177,9 @@ def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
     return df[df["time"] >= d1].sort_values("time")
 
 # --- Market-time compressed axis utilities (NEW) ---
+# Right-edge pad so the final sample is visible (tweak if desired)
+RIGHT_X_PAD = 0.8
+
 def make_market_time_formatter(index: pd.DatetimeIndex) -> FuncFormatter:
     def _fmt(x, _pos=None):
         i = int(round(x))
@@ -1202,8 +1206,14 @@ def map_times_to_positions(index: pd.DatetimeIndex, times: list):
 def map_session_lines_to_positions(lines: dict, index: pd.DatetimeIndex):
     return {k: map_times_to_positions(index, v) for k, v in lines.items()}
 
+def set_x_limits_with_pad(ax, n_points: int, left_pad: float = 0.0, right_pad: float = RIGHT_X_PAD):
+    left = 0.0 - float(left_pad)
+    right = max(0.0, float(n_points - 1)) + float(right_pad)
+    ax.set_xlim(left, right)
+
 def market_time_axis(ax, index: pd.DatetimeIndex):
-    ax.set_xlim(0, max(0, len(index) - 1))
+    # Apply padded x-limits and market-time tick formatter
+    set_x_limits_with_pad(ax, len(index))
     ax.xaxis.set_major_locator(MaxNLocator(nbins=8, integer=True))
     ax.xaxis.set_major_formatter(make_market_time_formatter(index))
 
@@ -1485,6 +1495,7 @@ with tab1:
                 # --- NEW: Market-time compressed plotting (remove closed-market gaps) ---
                 idx_mt = hc.index
                 x_mt = np.arange(len(idx_mt), dtype=float)
+                x_max_pad = len(x_mt) - 1 + RIGHT_X_PAD  # ensure last sample visible
 
                 # Helper to map timestamps → market-time positions
                 def _pos(ts):
@@ -1520,8 +1531,8 @@ with tab1:
 
                 # Hourly S/R lines thicker & darker across x-range
                 if np.isfinite(res_val) and np.isfinite(sup_val):
-                    ax2.hlines(res_val, xmin=0, xmax=len(x_mt)-1, colors="tab:red",   linestyles="-", linewidth=2.0, alpha=0.95, label="_nolegend_")
-                    ax2.hlines(sup_val, xmin=0, xmax=len(x_mt)-1, colors="tab:green", linestyles="-", linewidth=2.0, alpha=0.95, label="_nolegend_")
+                    ax2.hlines(res_val, xmin=0, xmax=x_max_pad, colors="tab:red",   linestyles="-", linewidth=2.0, alpha=0.95, label="_nolegend_")
+                    ax2.hlines(sup_val, xmin=0, xmax=x_max_pad, colors="tab:green", linestyles="-", linewidth=2.0, alpha=0.95, label="_nolegend_")
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
@@ -1610,7 +1621,7 @@ with tab1:
                     fibs_h = fibonacci_levels(hc)
                     # Add thin, light Fibonacci level lines
                     for lbl, y in fibs_h.items():
-                        ax2.hlines(y, xmin=0, xmax=len(x_mt)-1, linestyles="dotted", linewidth=0.6, alpha=0.35)
+                        ax2.hlines(y, xmin=0, xmax=x_max_pad, linestyles="dotted", linewidth=0.6, alpha=0.35)
                     for lbl, y in fibs_h.items():
                         # MAKE FIBONACCI LABELS BOLD (kept at right edge)
                         ax2.text(len(x_mt)-1, y, f" {lbl}", va="center", fontsize=8, alpha=0.6, fontweight="bold")
@@ -1649,7 +1660,7 @@ with tab1:
                     except Exception:
                         pass
 
-                # Apply market-time axis formatter
+                # Apply market-time axis (with right pad so last point is visible)
                 market_time_axis(ax2, idx_mt)
 
                 _simplify_axes(ax2)
