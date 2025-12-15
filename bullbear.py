@@ -31,6 +31,7 @@
 #       an **upward daily slope** and **price below the slope** (latest bar).
 #   • NEW (Hourly): **Market-time compressed axis** → removes closed-market gaps and keeps
 #       the price line continuous. Session lines & markers are mapped to the compressed axis.
+#   • NEW (Instruction ribbon): Aligns with the **GLOBAL daily trend** (hourly charts now use the daily slope).
 
 import streamlit as st
 import pandas as pd
@@ -163,7 +164,7 @@ def format_trade_instruction(trend_slope: float,
                              close_val: float,
                              symbol: str) -> str:
     """
-    TREND-AWARE instruction order (SINGLE SENTENCE, uses LOCAL slope):
+    TREND-AWARE instruction order (SINGLE SENTENCE, uses caller-provided *GLOBAL* slope):
       • Uptrend (green)   → BUY first, then SELL, then Value of PIPS
       • Downtrend (red)   → SELL first, then BUY, then Value of PIPS
     """
@@ -178,7 +179,7 @@ def format_trade_instruction(trend_slope: float,
 
     buy_txt  = f"▲ BUY @{fmt_price_val(entry_buy)}"
     sell_txt = f"▼ SELL @{fmt_price_val(exit_sell)}"
-    # CHANGED: "PIPS" in caps per request
+    # "PIPS" in caps per request
     pips_txt = f" • Value of PIPS: {_diff_text(exit_sell, entry_buy, symbol)}"
 
     try:
@@ -187,10 +188,10 @@ def format_trade_instruction(trend_slope: float,
         tslope = 0.0
 
     if np.isfinite(tslope) and tslope > 0:
-        # Upward local slope → Buy, Sell, Value of PIPS
+        # Upward GLOBAL slope → Buy, Sell, Value of PIPS
         return f"{buy_txt} → {sell_txt}{pips_txt}"
     else:
-        # Downward local slope → Sell, Buy, Value of PIPS
+        # Downward GLOBAL slope → Sell, Buy, Value of PIPS
         return f"{sell_txt} → {buy_txt}{pips_txt}"
 
 def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
@@ -929,7 +930,7 @@ def _instruction_pieces(trend_slope, buy_val, sell_val, close_val, symbol):
     sell_price = float(sell_val) if _finite(sell_val) else float(close_val)
     buy_txt  = f"▲ BUY @{fmt_price_val(buy_price)}"
     sell_txt = f"▼ SELL @{fmt_price_val(sell_price)}"
-    # CHANGED: "PIPS" in caps for consistency
+    # "PIPS" in caps for consistency
     pips_txt = f"Value of PIPS: {_diff_text(sell_price, buy_price, symbol)}"
     return buy_txt, sell_txt, pips_txt
 
@@ -1265,6 +1266,8 @@ with tab1:
         })
     # --- Caution placeholder positioned just below the Forecast button ---
     caution_below_btn = st.empty()
+    # --- NEW: Static ALERT below Forecast button (requested) ---
+    st.warning("The Slope Line is for Information only to show when a trend change is imminent, not for trading")
 
     if st.session_state.run_all and st.session_state.ticker == sel:
         df = st.session_state.df_hist
@@ -1417,7 +1420,7 @@ with tab1:
             # Draw compact badges
             draw_top_badges(ax, badges_top)
 
-            # TOP instruction banner (Daily) — uses LOCAL daily slope (m_d)
+            # TOP instruction banner (Daily) — uses GLOBAL daily slope (m_d)
             try:
                 px_val_d  = float(df_show.iloc[-1])
                 draw_instruction_ribbons(ax, m_d, sup_val_d, res_val_d, px_val_d, sel)
@@ -1483,9 +1486,9 @@ with tab1:
 
                 # Hourly regression slope & bands (for signals)
                 yhat_h, upper_h, lower_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
-                slope_sig_h = m_h if np.isfinite(m_h) else slope_h  # LOCAL slope for instruction
+                slope_sig_h = m_h if np.isfinite(m_h) else slope_h  # LOCAL slope for diagnostics
 
-                # GLOBAL (DAILY) slope (still used for caution check)
+                # GLOBAL (DAILY) slope (used for instruction & caution check)
                 try:
                     df_global = st.session_state.df_hist
                     _, _, _, m_global, _ = regression_with_band(df_global, slope_lb_daily)
@@ -1586,8 +1589,8 @@ with tab1:
 
                 draw_top_badges(ax2, badges_top_h)
 
-                # TOP instruction banner (Hourly) — uses LOCAL slope (slope_sig_h)
-                draw_instruction_ribbons(ax2, slope_sig_h, sup_val, res_val, px_val, sel)
+                # TOP instruction banner (Hourly) — uses GLOBAL daily slope (m_global)
+                draw_instruction_ribbons(ax2, m_global, sup_val, res_val, px_val, sel)
 
                 # footer stats (bottom-right ONLY: merge price + R² + slope)
                 if np.isfinite(px_val):
@@ -1847,7 +1850,7 @@ with tab2:
 
             draw_top_badges(ax, badges_top2)
 
-            # TOP instruction banner (Daily) — uses LOCAL daily slope (m_d)
+            # TOP instruction banner (Daily) — uses GLOBAL daily slope (m_d)
             try:
                 px_val_d2  = float(df_show.iloc[-1])
                 draw_instruction_ribbons(ax, m_d, sup_val_d2, res_val_d2, px_val_d2, st.session_state.ticker)
