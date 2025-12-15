@@ -31,6 +31,8 @@
 #       an **upward daily slope** and **price below the slope** (latest bar).
 #   • NEW (Hourly): **Market-time compressed axis** → removes closed-market gaps and keeps
 #       the price line continuous. Session lines & markers are mapped to the compressed axis.
+#   • NEW (Instruction ribbon): Aligns with the **LOCAL dashed slope** on intraday (dashed line).
+#   • NEW (QoL): BUY/SELL *and* Value of PIPS in the ribbon are computed from entry→exit.
 
 import streamlit as st
 import pandas as pd
@@ -164,8 +166,8 @@ def format_trade_instruction(trend_slope: float,
                              symbol: str) -> str:
     """
     TREND-AWARE instruction order (SINGLE SENTENCE, uses LOCAL slope):
-      • Uptrend (green)   → BUY first, then SELL, then Value of PIPS
-      • Downtrend (red)   → SELL first, then BUY, then Value of PIPS
+      • Uptrend (green / dashed on intraday) → BUY first, then SELL, then Value of PIPS
+      • Downtrend (red)                      → SELL first, then BUY, then Value of PIPS
     """
     def _finite(x):
         try:
@@ -178,7 +180,7 @@ def format_trade_instruction(trend_slope: float,
 
     buy_txt  = f"▲ BUY @{fmt_price_val(entry_buy)}"
     sell_txt = f"▼ SELL @{fmt_price_val(exit_sell)}"
-    # CHANGED: "PIPS" in caps per request
+    # "PIPS" in caps per requirement
     pips_txt = f" • Value of PIPS: {_diff_text(exit_sell, entry_buy, symbol)}"
 
     try:
@@ -187,10 +189,10 @@ def format_trade_instruction(trend_slope: float,
         tslope = 0.0
 
     if np.isfinite(tslope) and tslope > 0:
-        # Upward local slope → Buy, Sell, Value of PIPS
+        # Upward slope → Buy, Sell, Value of PIPS
         return f"{buy_txt} → {sell_txt}{pips_txt}"
     else:
-        # Downward local slope → Sell, Buy, Value of PIPS
+        # Downward slope → Sell, Buy, Value of PIPS
         return f"{sell_txt} → {buy_txt}{pips_txt}"
 
 def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
@@ -929,7 +931,7 @@ def _instruction_pieces(trend_slope, buy_val, sell_val, close_val, symbol):
     sell_price = float(sell_val) if _finite(sell_val) else float(close_val)
     buy_txt  = f"▲ BUY @{fmt_price_val(buy_price)}"
     sell_txt = f"▼ SELL @{fmt_price_val(sell_price)}"
-    # CHANGED: "PIPS" in caps for consistency
+    # "PIPS" in caps for consistency
     pips_txt = f"Value of PIPS: {_diff_text(sell_price, buy_price, symbol)}"
     return buy_txt, sell_txt, pips_txt
 
@@ -1263,6 +1265,10 @@ with tab1:
             "intraday": intraday, "ticker": sel, "chart": chart,
             "hour_range": hour_range, "run_all": True
         })
+
+    # --- REQUIRED NOTE directly under the Forecast button (per request) ---
+    st.caption("The Slope Line is for Information only to show when a trend change is imminent, not for trading.")
+
     # --- Caution placeholder positioned just below the Forecast button ---
     caution_below_btn = st.empty()
 
@@ -1447,7 +1453,7 @@ with tab1:
                 st.warning("No intraday data available.")
             else:
                 hc = intraday["Close"].astype(float).ffill()
-                # Robust linear fit
+                # Robust linear fit (DASHED trendline on intraday)
                 xh = np.arange(len(hc), dtype=float)
                 if len(hc.dropna()) >= 2:
                     try:
@@ -1483,16 +1489,8 @@ with tab1:
 
                 # Hourly regression slope & bands (for signals)
                 yhat_h, upper_h, lower_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
-                slope_sig_h = m_h if np.isfinite(m_h) else slope_h  # LOCAL slope for instruction
 
-                # GLOBAL (DAILY) slope (still used for caution check)
-                try:
-                    df_global = st.session_state.df_hist
-                    _, _, _, m_global, _ = regression_with_band(df_global, slope_lb_daily)
-                except Exception:
-                    m_global = slope_sig_h
-
-                # --- TOP WARNING (opposite directions: hourly trendline vs hourly slope fit) ---
+                # --- TOP WARNING (opposite directions: hourly dashed trendline vs hourly slope fit) ---
                 try:
                     if np.isfinite(slope_h) and np.isfinite(m_h) and (slope_h * m_h < 0):
                         # Show the caution message right below the Forecast Button
@@ -1586,8 +1584,8 @@ with tab1:
 
                 draw_top_badges(ax2, badges_top_h)
 
-                # TOP instruction banner (Hourly) — uses LOCAL slope (slope_sig_h)
-                draw_instruction_ribbons(ax2, slope_sig_h, sup_val, res_val, px_val, sel)
+                # TOP instruction banner (Hourly) — uses **DASHED** local slope (slope_h) per requirement
+                draw_instruction_ribbons(ax2, slope_h, sup_val, res_val, px_val, sel)
 
                 # footer stats (bottom-right ONLY: merge price + R² + slope)
                 if np.isfinite(px_val):
@@ -1640,7 +1638,7 @@ with tab1:
                         if np.isfinite(fib0) and np.isfinite(fib100):
                             fib_sig = last_fib_extreme_reversal(
                                 price=hc,
-                                slope=slope_sig_h,
+                                slope=slope_h,  # use dashed-line slope for this intraday logic
                                 fib0_level=float(fib0),
                                 fib100_level=float(fib100),
                                 prox=sr_prox_pct,
