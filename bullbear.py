@@ -213,11 +213,11 @@ def subset_by_daily_view(obj, view_label: str):
 # NEW — Gap-aware plotting helpers (used only for intraday/hourly charts)
 # Break connecting lines across market-closed periods by inserting NaNs where
 # time gaps exceed a multiple of the typical bar spacing (e.g., overnight/weekend).
-def _gap_mask_for_index(idx: pd.DatetimeIndex, factor: float = 3.0) -> pd.Series:
+def _gap_mask_for_index(idx: pd.Index, factor: float = 3.0) -> pd.Series:
     """
     Returns a boolean Series aligned to `idx` where True marks the FIRST bar after
-    a 'long' gap (gap > factor * median spacing). Setting those points to NaN
-    in plotted series breaks line segments across closed-market periods.
+    a 'long' gap (gap > factor * median spacing). If `idx` is not a DatetimeIndex,
+    returns all False (no gaps).
     """
     if not isinstance(idx, pd.DatetimeIndex) or idx.size < 2:
         return pd.Series(False, index=idx)
@@ -231,20 +231,37 @@ def _gap_mask_for_index(idx: pd.DatetimeIndex, factor: float = 3.0) -> pd.Series
     breaks = np.insert(diffs > thr, 0, False)  # align back to index length
     return pd.Series(breaks, index=idx)
 
-def _break_series_on_gaps(y, idx: pd.DatetimeIndex = None, factor: float = 3.0) -> pd.Series:
+def _break_series_on_gaps(y, idx: pd.Index = None, factor: float = 3.0) -> pd.Series:
     """
-    Returns a Series (values of `y`) aligned to `idx` with NaNs injected at
+    Returns a Series (values of `y`) aligned to an index with NaNs injected at
     'long' gap boundaries so matplotlib won't connect lines across closed periods.
+
+    Robust to inputs:
+      • If `y` is a Series → uses its own index (unless an `idx` override is provided).
+      • If `y` is array-like and `idx` is None → tries `y.index` if present, otherwise
+        falls back to a simple RangeIndex of matching length (no gaps will be detected).
     """
+    # If `y` is already a Series, prefer its own index unless caller provides override.
     if isinstance(y, pd.Series):
         s = y.copy()
-        idx = y.index
-    else:
-        # array-like
         if idx is None:
-            raise ValueError("idx is required when y is not a pandas Series.")
-        s = pd.Series(y, index=idx)
+            idx = s.index
+    else:
+        # Try to recover an index from the object, else create a range index.
+        cand_idx = getattr(y, "index", None)
+        if idx is None:
+            idx = cand_idx
+        if idx is None:
+            try:
+                idx = pd.RangeIndex(len(y))
+            except Exception:
+                idx = pd.RangeIndex(0)
+        s = pd.Series(np.asarray(y), index=idx)
+
+    # Build a gap mask (all-False if idx isn't a DatetimeIndex) and inject NaNs.
     mask = _gap_mask_for_index(idx, factor=factor)
+    # Align mask to s just in case of any index quirks
+    mask = mask.reindex(s.index, fill_value=False)
     s[mask] = np.nan
     return s
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
