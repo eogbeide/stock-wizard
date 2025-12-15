@@ -27,8 +27,8 @@
 #   • NEW (Daily-only): Show **Buy Alert** / **Sell Alert** when price reverses
 #       from **Support (upward slope)** or **Resistance (downward slope)**,
 #       validated against a **99% (~2.576σ) regression band**; plot the **99% band only**.
-#   • NEW (Scanner): "99% SR Reversal" tab listing symbols that just triggered
-#       a Support/Resistance reversal with 99% confidence (same rules as the daily chart).
+#   • NEW (Scanner): "Upward Slope Stickers" tab listing symbols that currently have
+#       an **upward daily slope** and **price below the slope** (latest bar).
 
 import streamlit as st
 import pandas as pd
@@ -1188,7 +1188,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "Metrics",
     "NTD -0.75 Scanner",
     "Long-Term History",
-    "99% SR Reversal Scanner"
+    "Upward Slope Stickers"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -1548,7 +1548,7 @@ with tab1:
                     ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2.6, color=slope_col_h, alpha=0.95, label="Slope Fit")
                 if not upper_h.empty and not lower_h.empty:
                     ax2.plot(upper_h.index, upper_h.values, ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
-                    ax2.plot(lower_h.index, lower_h.values, ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
+                    ax2.plot(lower_h.index, lower_h.index.map(lambda i: lower_h.loc[i]), ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
 
                 if mode == "Forex" and show_sessions_pst and not hc.empty:
                     sess = compute_session_lines(hc.index)
@@ -2155,13 +2155,12 @@ with tab6:
             ax.legend(loc="lower left", framealpha=0.4)
             st.pyplot(fig)
 
-# --- Tab 7: 99% SR Reversal Scanner (NEW) ---
+# --- Tab 7: Upward Slope Stickers (UPDATED) ---
 with tab7:
-    st.header("99% SR Reversal Scanner")
-    st.caption("Lists symbols whose **Daily** price just reversed from **Support** (uptrend → BUY ALERT) "
-               "or **Resistance** (downtrend → SELL ALERT) with **99% (~2.576σ) band agreement**.")
+    st.header("Upward Slope Stickers")
+    st.caption("Lists symbols whose **Daily** regression slope is **upward** (m>0) and the **latest close** is **below the trendline** (price < fitted slope).")
 
-    run99 = st.button("Scan Universe for 99% SR Reversals", key="btn_scan_99sr")
+    run99 = st.button("Scan Universe for Upward Slope & Below-Slope", key="btn_scan_upslope_below")
 
     if run99:
         rows = []
@@ -2170,48 +2169,42 @@ with tab7:
                 s = fetch_hist(sym)
                 if s is None or s.dropna().shape[0] < max(3, slope_lb_daily):
                     continue
-                # 30-bar S/R for daily
-                res30 = s.rolling(30, min_periods=1).max()
-                sup30 = s.rolling(30, min_periods=1).min()
-                # 99% band on daily
+                # 99% band on daily (retain for diagnostics) + slope/trendline
                 yhat_s, up99, lo99, m_sym, r2_sym = regression_with_band(s, lookback=slope_lb_daily, z=Z_FOR_99)
-                sig = daily_sr_99_reversal_signal(
-                    price=s,
-                    support=sup30,
-                    resistance=res30,
-                    upper99=up99,
-                    lower99=lo99,
-                    trend_slope=m_sym,
-                    prox=sr_prox_pct,
-                    confirm_bars=rev_bars_confirm
-                )
-                if sig is not None:
-                    side = sig["side"]
-                    t = sig["time"]
-                    px = sig["price"]
+
+                # Latest values
+                last_close = float(s.dropna().iloc[-1]) if s.dropna().shape[0] else np.nan
+                last_time  = s.dropna().index[-1] if s.dropna().shape[0] else None
+                yhat_last  = float(yhat_s.iloc[-1]) if not yhat_s.empty else np.nan
+
+                # Filter: upward slope AND price below slope
+                if np.isfinite(m_sym) and m_sym > 0 and np.isfinite(last_close) and np.isfinite(yhat_last) and (last_close < yhat_last):
+                    gap = yhat_last - last_close
+                    gap_pct = gap / yhat_last if yhat_last != 0 else np.nan
                     rows.append({
                         "Symbol": sym,
-                        "Side": side,
-                        "Timestamp": t,
-                        "Close": px,
+                        "Timestamp": last_time,
+                        "Close": last_close,
+                        "Trendline": yhat_last,
+                        "Gap": gap,
+                        "GapPct": gap_pct,
                         "Slope": m_sym,
-                        "R2": r2_sym,
-                        "Support": float(sup30.reindex(s.index).iloc[-1]) if len(sup30) else np.nan,
-                        "Resistance": float(res30.reindex(s.index).iloc[-1]) if len(res30) else np.nan
+                        "R2": r2_sym
                     })
             except Exception:
                 pass
 
         if not rows:
-            st.info("No symbols triggered a **99% SR Reversal** on the latest daily bar.")
+            st.info("No symbols currently have an **upward daily slope** with **price below the slope** on the latest bar.")
         else:
-            out = pd.DataFrame(rows).sort_values(["Side","Symbol"])
+            out = pd.DataFrame(rows).sort_values(["GapPct","Symbol"], ascending=[False, True])
             view = out.copy()
             view["Close"] = view["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            view["Trendline"] = view["Trendline"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            view["Gap"] = view["Gap"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            view["GapPct"] = view["GapPct"].map(lambda v: fmt_pct(v, 2) if np.isfinite(v) else "n/a")
             view["Slope"] = view["Slope"].map(lambda v: f"{v:+.5f}" if np.isfinite(v) else "n/a")
             view["R2"] = view["R2"].map(lambda v: fmt_pct(v, 1) if np.isfinite(v) else "n/a")
-            view["Support"] = view["Support"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-            view["Resistance"] = view["Resistance"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-            st.dataframe(view[["Symbol","Side","Timestamp","Close","Support","Resistance","Slope","R2"]]
+            st.dataframe(view[["Symbol","Timestamp","Close","Trendline","Gap","GapPct","Slope","R2"]]
                          .reset_index(drop=True),
                          use_container_width=True)
