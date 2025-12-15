@@ -29,6 +29,8 @@
 #       validated against a **99% (~2.576σ) regression band**; plot the **99% band only**.
 #   • NEW (Scanner): "Upward Slope Stickers" tab listing symbols that currently have
 #       an **upward daily slope** and **price below the slope** (latest bar).
+#   • NEW (Hourly): **Market-time compressed axis** → removes closed-market gaps and keeps
+#       the price line continuous. Session lines & markers are mapped to the compressed axis.
 
 import streamlit as st
 import pandas as pd
@@ -37,6 +39,7 @@ import yfinance as yf
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import timedelta, datetime
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator, FuncFormatter
 import time
 import pytz
 from matplotlib.transforms import blended_transform_factory
@@ -1172,6 +1175,38 @@ def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
     d1 = (now_utc - pd.Timedelta(days=window_days)).tz_convert(PACIFIC)
     return df[df["time"] >= d1].sort_values("time")
 
+# --- Market-time compressed axis utilities (NEW) ---
+def make_market_time_formatter(index: pd.DatetimeIndex) -> FuncFormatter:
+    def _fmt(x, _pos=None):
+        i = int(round(x))
+        if 0 <= i < len(index):
+            ts = index[i]
+            # compact label; adjust to taste
+            return ts.strftime("%m-%d %H:%M")
+        return ""
+    return FuncFormatter(_fmt)
+
+def map_times_to_positions(index: pd.DatetimeIndex, times: list):
+    pos = []
+    if not isinstance(index, pd.DatetimeIndex) or len(index) == 0:
+        return pos
+    for t in times:
+        try:
+            j = index.get_indexer([pd.Timestamp(t).tz_convert(index.tz)], method="nearest")[0]
+        except Exception:
+            j = index.get_indexer([pd.Timestamp(t)], method="nearest")[0]
+        if j != -1:
+            pos.append(j)
+    return pos
+
+def map_session_lines_to_positions(lines: dict, index: pd.DatetimeIndex):
+    return {k: map_times_to_positions(index, v) for k, v in lines.items()}
+
+def market_time_axis(ax, index: pd.DatetimeIndex):
+    ax.set_xlim(0, max(0, len(index) - 1))
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=8, integer=True))
+    ax.xaxis.set_major_formatter(make_market_time_formatter(index))
+
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -1447,26 +1482,35 @@ with tab1:
                 except Exception:
                     pass
 
+                # --- NEW: Market-time compressed plotting (remove closed-market gaps) ---
+                idx_mt = hc.index
+                x_mt = np.arange(len(idx_mt), dtype=float)
+
+                # Helper to map timestamps → market-time positions
+                def _pos(ts):
+                    ix = idx_mt.get_indexer([ts], method="nearest")[0]
+                    return float(ix) if ix != -1 else np.nan
+
                 fig2, ax2 = plt.subplots(figsize=(14,4))
                 plt.subplots_adjust(top=0.86, right=0.995, left=0.06)
 
                 trend_color = "tab:green" if slope_h >= 0 else "tab:red"
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
 
-                ax2.plot(hc.index, hc, label="Price", linewidth=1.2)
-                ax2.plot(hc.index, he, "--", alpha=0.45, linewidth=0.9, label="_nolegend_")
-                # Thicker & darker intraday trend line
-                ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2.4, color=trend_color, alpha=0.95)
+                # Plot everything vs compressed x positions
+                ax2.plot(x_mt, hc.values, label="Price", linewidth=1.2)
+                ax2.plot(x_mt, he.reindex(idx_mt).values, "--", alpha=0.45, linewidth=0.9, label="_nolegend_")
+                ax2.plot(x_mt, trend_h, "--", label="Trend", linewidth=2.4, color=trend_color, alpha=0.95)
 
                 if show_hma and not hma_h.dropna().empty:
-                    ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.3, alpha=0.9, label="HMA")
+                    ax2.plot(x_mt, hma_h.reindex(idx_mt).values, "-", linewidth=1.3, alpha=0.9, label="HMA")
 
                 if show_ichi and not kijun_h.dropna().empty:
-                    ax2.plot(kijun_h.index, kijun_h.values, "-", linewidth=1.1, color="black", alpha=0.55, label="Kijun")
+                    ax2.plot(x_mt, kijun_h.reindex(idx_mt).values, "-", linewidth=1.1, color="black", alpha=0.55, label="Kijun")
 
                 if show_bbands and not bb_up_h.dropna().empty and not bb_lo_h.dropna().empty:
-                    ax2.fill_between(hc.index, bb_lo_h, bb_up_h, alpha=0.04, label="_nolegend_")
-                    ax2.plot(bb_mid_h.index, bb_mid_h.values, "-", linewidth=0.8, alpha=0.3, label="_nolegend_")
+                    ax2.fill_between(x_mt, bb_lo_h.reindex(idx_mt).values, bb_up_h.reindex(idx_mt).values, alpha=0.04, label="_nolegend_")
+                    ax2.plot(x_mt, bb_mid_h.reindex(idx_mt).values, "-", linewidth=0.8, alpha=0.3, label="_nolegend_")
 
                 res_val = sup_val = px_val = np.nan
                 try:
@@ -1474,33 +1518,38 @@ with tab1:
                 except Exception:
                     pass
 
-                # Hourly S/R lines thicker & darker
+                # Hourly S/R lines thicker & darker across x-range
                 if np.isfinite(res_val) and np.isfinite(sup_val):
-                    ax2.hlines(res_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:red",   linestyles="-", linewidth=2.0, alpha=0.95, label="_nolegend_")
-                    ax2.hlines(sup_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:green", linestyles="-", linewidth=2.0, alpha=0.95, label="_nolegend_")
+                    ax2.hlines(res_val, xmin=0, xmax=len(x_mt)-1, colors="tab:red",   linestyles="-", linewidth=2.0, alpha=0.95, label="_nolegend_")
+                    ax2.hlines(sup_val, xmin=0, xmax=len(x_mt)-1, colors="tab:green", linestyles="-", linewidth=2.0, alpha=0.95, label="_nolegend_")
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
-                # --- Signals to badges + stars/triangles (Hourly) ---
+                # --- Signals to badges + stars/triangles (Hourly, mapped to market-time) ---
                 badges_top_h = []
 
                 band_sig_h = last_band_reversal_signal(
                     price=hc, band_upper=upper_h, band_lower=lower_h,
                     trend_slope=m_h, prox=sr_prox_pct, confirm_bars=rev_bars_confirm
                 )
-                if band_sig_h is not None and band_sig_h.get("side") == "BUY":
-                    badges_top_h.append((f"▲ BUY Band REV @{fmt_price_val(band_sig_h['price'])}", "tab:green"))
-                    annotate_buy_triangle(ax2, band_sig_h["time"], band_sig_h["price"])
-                elif band_sig_h is not None and band_sig_h.get("side") == "SELL":
-                    annotate_band_rev_outside(ax2, band_sig_h["time"], band_sig_h["price"], band_sig_h["side"], note=band_sig_h.get("note",""))
+                if band_sig_h is not None:
+                    tpos = _pos(band_sig_h["time"])
+                    if np.isfinite(tpos):
+                        if band_sig_h.get("side") == "BUY":
+                            badges_top_h.append((f"▲ BUY Band REV @{fmt_price_val(band_sig_h['price'])}", "tab:green"))
+                            annotate_buy_triangle(ax2, tpos, band_sig_h["price"])
+                        else:
+                            annotate_band_rev_outside(ax2, tpos, band_sig_h["price"], band_sig_h["side"], note=band_sig_h.get("note",""))
 
                 star_h = last_reversal_star(hc, trend_slope=m_h, lookback=20, confirm_bars=rev_bars_confirm)
                 if star_h is not None:
-                    annotate_star(ax2, star_h["time"], star_h["price"], star_h["kind"], show_text=False)
-                    if star_h.get("kind") == "trough":
-                        badges_top_h.append((f"★ Trough REV @{fmt_price_val(star_h['price'])}", "tab:green"))
-                    elif star_h.get("kind") == "peak":
-                        badges_top_h.append((f"★ Peak REV @{fmt_price_val(star_h['price'])}", "tab:red"))
+                    tpos = _pos(star_h["time"])
+                    if np.isfinite(tpos):
+                        annotate_star(ax2, tpos, star_h["price"], star_h["kind"], show_text=False)
+                        if star_h.get("kind") == "trough":
+                            badges_top_h.append((f"★ Trough REV @{fmt_price_val(star_h['price'])}", "tab:green"))
+                        elif star_h.get("kind") == "peak":
+                            badges_top_h.append((f"★ Peak REV @{fmt_price_val(star_h['price'])}", "tab:red"))
 
                 # NEW: Breakout (Hourly) — ADDED
                 breakout_h = last_breakout_signal(
@@ -1508,16 +1557,18 @@ with tab1:
                     prox=sr_prox_pct, confirm_bars=rev_bars_confirm
                 )
                 if breakout_h is not None:
-                    if breakout_h["dir"] == "UP":
-                        annotate_breakout(ax2, breakout_h["time"], breakout_h["price"], "UP")
-                        badges_top_h.append((f"▲ BREAKOUT @{fmt_price_val(breakout_h['price'])}", "tab:green"))
-                    else:
-                        annotate_breakout(ax2, breakout_h["time"], breakout_h["price"], "DOWN")
-                        badges_top_h.append((f"▼ BREAKDOWN @{fmt_price_val(breakout_h['price'])}", "tab:red"))
+                    tpos = _pos(breakout_h["time"])
+                    if np.isfinite(tpos):
+                        if breakout_h["dir"] == "UP":
+                            annotate_breakout(ax2, tpos, breakout_h["price"], "UP")
+                            badges_top_h.append((f"▲ BREAKOUT @{fmt_price_val(breakout_h['price'])}", "tab:green"))
+                        else:
+                            annotate_breakout(ax2, tpos, breakout_h["price"], "DOWN")
+                            badges_top_h.append((f"▼ BREAKDOWN @{fmt_price_val(breakout_h['price'])}", "tab:red"))
 
                 draw_top_badges(ax2, badges_top_h)
 
-                # TOP instruction banner (Hourly) — CHANGED to use LOCAL slope (slope_sig_h)
+                # TOP instruction banner (Hourly) — uses LOCAL slope (slope_sig_h)
                 draw_instruction_ribbons(ax2, slope_sig_h, sup_val, res_val, px_val, sel)
 
                 # footer stats (bottom-right ONLY: merge price + R² + slope)
@@ -1541,27 +1592,28 @@ with tab1:
                              bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
                 if not st_line_intr.dropna().empty:
-                    ax2.plot(st_line_intr.index, st_line_intr.values, "-", alpha=0.6, label="_nolegend_")
+                    ax2.plot(x_mt, st_line_intr.reindex(idx_mt).values, "-", alpha=0.6, label="_nolegend_")
                 if not yhat_h.empty:
                     slope_col_h = "tab:green" if m_h >= 0 else "tab:red"
-                    # Thicker & darker slope-fit line
-                    ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2.6, color=slope_col_h, alpha=0.95, label="Slope Fit")
+                    ax2.plot(x_mt, yhat_h.reindex(idx_mt).values, "-", linewidth=2.6, color=slope_col_h, alpha=0.95, label="Slope Fit")
                 if not upper_h.empty and not lower_h.empty:
-                    ax2.plot(upper_h.index, upper_h.values, ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
-                    ax2.plot(lower_h.index, lower_h.index.map(lambda i: lower_h.loc[i]), ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
+                    ax2.plot(x_mt, upper_h.reindex(idx_mt).values, ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
+                    ax2.plot(x_mt, lower_h.reindex(idx_mt).values, ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
 
+                # Sessions on compressed axis
                 if mode == "Forex" and show_sessions_pst and not hc.empty:
-                    sess = compute_session_lines(hc.index)
-                    draw_session_lines(ax2, sess)
+                    sess_dt = compute_session_lines(idx_mt)
+                    sess_pos = map_session_lines_to_positions(sess_dt, idx_mt)
+                    draw_session_lines(ax2, sess_pos)
 
                 if show_fibs and not hc.empty:
                     fibs_h = fibonacci_levels(hc)
                     # Add thin, light Fibonacci level lines
                     for lbl, y in fibs_h.items():
-                        ax2.hlines(y, xmin=hc.index[0], xmax=hc.index[-1], linestyles="dotted", linewidth=0.6, alpha=0.35)
+                        ax2.hlines(y, xmin=0, xmax=len(x_mt)-1, linestyles="dotted", linewidth=0.6, alpha=0.35)
                     for lbl, y in fibs_h.items():
-                        # MAKE FIBONACCI LABELS BOLD (unchanged position at right edge)
-                        ax2.text(hc.index[-1], y, f" {lbl}", va="center", fontsize=8, alpha=0.6, fontweight="bold")
+                        # MAKE FIBONACCI LABELS BOLD (kept at right edge)
+                        ax2.text(len(x_mt)-1, y, f" {lbl}", va="center", fontsize=8, alpha=0.6, fontweight="bold")
 
                     # --- NEW: High-confidence Fibonacci extreme reversal markers (ADDED) ---
                     try:
@@ -1575,13 +1627,13 @@ with tab1:
                                 fib100_level=float(fib100),
                                 prox=sr_prox_pct,
                                 confirm_bars=rev_bars_confirm,
-                                lookback=max(20, int(sr_lb_hourly))  # re-use hourly S/R lookback as a sensible window
+                                lookback=max(20, int(sr_lb_hourly))
                             )
                             if fib_sig is not None:
                                 if fib_sig["dir"] == "DOWN":
                                     annotate_fib_reversal(
                                         ax2,
-                                        ts=hc.index[-1],
+                                        ts=len(x_mt)-1,
                                         y_level=float(fib0),
                                         direction="DOWN",
                                         label="Fib 0% REV → 100%"
@@ -1589,13 +1641,16 @@ with tab1:
                                 elif fib_sig["dir"] == "UP":
                                     annotate_fib_reversal(
                                         ax2,
-                                        ts=hc.index[-1],
+                                        ts=len(x_mt)-1,
                                         y_level=float(fib100),
                                         direction="UP",
                                         label="Fib 100% REV → 0%"
                                     )
                     except Exception:
                         pass
+
+                # Apply market-time axis formatter
+                market_time_axis(ax2, idx_mt)
 
                 _simplify_axes(ax2)
                 ax2.set_xlabel("Time (PST)")
