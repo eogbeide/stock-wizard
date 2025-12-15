@@ -777,7 +777,7 @@ def last_breakout_signal(price: pd.Series,
     """
     Detects a breakout above prior rolling resistance or below prior rolling support.
     Uses the *previous bar's* S/R (shifted) so the current candle can be the breakout.
-    Returns dict: {"time", "price", "dir": "UP"|"DOWN"} or None.
+    Returns dict: {"time": "price", "dir": "UP"|"DOWN"} or None.
     """
     p = _coerce_1d_series(price).dropna()
     if p.shape[0] < max(3, confirm_bars + 1):
@@ -967,6 +967,20 @@ def draw_top_badges(ax, badges):
             bbox=dict(boxstyle="round,pad=0.35", fc="white", ec=color, alpha=0.98),
             transform=fig.transFigure, zorder=200
         )
+
+# --- RIGHT-SIDE X-AXIS PADDING (NEW helper) ---
+def pad_right_xaxis(ax, frac: float = 0.05):
+    """
+    Add space after the last data point so the price line isn't flush
+    with the right frame. Works for both datetime and numeric axes.
+    """
+    try:
+        x0, x1 = ax.get_xlim()
+        if np.isfinite(x0) and np.isfinite(x1) and x1 > x0:
+            pad = (x1 - x0) * float(frac)
+            ax.set_xlim(left=x0, right=x1 + pad)
+    except Exception:
+        pass
 
 # --- Bands + single latest band-reversal trading signal ---
 def last_band_reversal_signal(price: pd.Series,
@@ -1420,6 +1434,10 @@ with tab1:
             _simplify_axes(ax)
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.4)
+
+            # --- add right-side breathing room ---
+            pad_right_xaxis(ax, frac=0.06)
+
             st.pyplot(fig)
 
         # ----- Hourly (Price only) -----
@@ -1655,6 +1673,10 @@ with tab1:
                 _simplify_axes(ax2)
                 ax2.set_xlabel("Time (PST)")
                 ax2.legend(loc="lower left", framealpha=0.4)
+
+                # --- add right-side breathing room (compressed numeric x-axis) ---
+                pad_right_xaxis(ax2, frac=0.06)
+
                 st.pyplot(fig2)
 
         # News table
@@ -1842,6 +1864,10 @@ with tab2:
             _simplify_axes(ax)
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.4)
+
+            # --- add right-side breathing room ---
+            pad_right_xaxis(ax, frac=0.06)
+
             st.pyplot(fig)
 
         if view in ("Intraday","Both"):
@@ -1917,6 +1943,10 @@ with tab4:
                 fontsize=9, color="black",
                 bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
         ax.legend()
+
+        # --- add right-side breathing room ---
+        pad_right_xaxis(ax, frac=0.06)
+
         st.pyplot(fig)
 
         st.markdown("---")
@@ -1958,6 +1988,10 @@ with tab4:
                      fontsize=9, color="black",
                      bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
             ax0.legend()
+
+            # --- add right-side breathing room ---
+            pad_right_xaxis(ax0, frac=0.06)
+
             st.pyplot(fig0)
 
             st.markdown("---")
@@ -2208,6 +2242,10 @@ with tab6:
             ax.set_xlabel("Date (PST)")
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.4)
+
+            # --- add right-side breathing room ---
+            pad_right_xaxis(ax, frac=0.06)
+
             st.pyplot(fig)
 
 # --- Tab 7: Upward Slope Stickers (UPDATED) ---
