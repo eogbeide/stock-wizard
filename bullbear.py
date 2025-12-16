@@ -1301,7 +1301,7 @@ with tab1:
         })
 
     # --- REQUIRED NOTE directly under the Forecast button (per request) ---
-    st.caption("The Slope Line is for Information only to show when a trend change is imminent, not for trading.")
+    st.caption("The Slope Line is for informational purposes only and indicates when a trend change may be imminent; it should for risk management and not for trading decisions.")
 
     # --- Caution placeholder positioned just below the Forecast button ---
     caution_below_btn = st.empty()
