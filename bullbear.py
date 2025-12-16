@@ -913,131 +913,6 @@ def annotate_fib_reversal(ax, ts, y_level: float, direction: str, label: str = "
         ax.text(ts, y_level, "Fib REV", color=("tab:red" if direction=="DOWN" else "tab:green"),
                 fontsize=9, fontweight="bold", zorder=14)
 
-# --- Cleaner axes + TOP instruction banner (outside the chart) ---
-def _simplify_axes(ax):
-    ax.grid(True, alpha=0.15, linestyle="--", linewidth=0.6)
-    for spine in ax.spines.values():
-        spine.set_alpha(0.3)
-    ax.tick_params(axis='both', labelsize=9)
-    ax.margins(x=0.01)
-
-def _instruction_pieces(trend_slope, buy_val, sell_val, close_val, symbol):
-    def _finite(x):
-        try:
-            return np.isfinite(float(x))
-        except Exception:
-            return False
-    buy_price  = float(buy_val)  if _finite(buy_val)  else float(close_val)
-    sell_price = float(sell_val) if _finite(sell_val) else float(close_val)
-    buy_txt  = f"▲ BUY @{fmt_price_val(buy_price)}"
-    sell_txt = f"▼ SELL @{fmt_price_val(sell_price)}"
-    # "PIPS" in caps for consistency
-    pips_txt = f"Value of PIPS: {_diff_text(sell_price, buy_price, symbol)}"
-    return buy_txt, sell_txt, pips_txt
-
-def draw_instruction_ribbons(ax, trend_slope, buy_val, sell_val, close_val, symbol):
-    if not np.isfinite(trend_slope):
-        return
-    combined = format_trade_instruction(trend_slope, buy_val, sell_val, close_val, symbol)
-    ribbon_color = "tab:green" if float(trend_slope) > 0 else "tab:red"
-    fig = ax.figure
-    fig.text(
-        0.5, 0.985, combined,
-        ha="center", va="top",
-        fontsize=11, fontweight="bold", color="white",
-        bbox=dict(boxstyle="round,pad=0.45", fc=ribbon_color, ec=ribbon_color, alpha=0.98),
-        zorder=100, transform=fig.transFigure
-    )
-
-# --- Compact top badges (legends) for Band REV & Star REVs ---
-def draw_top_badges(ax, badges):
-    """
-    badges: list of tuples [(text, color), ...]
-    Places compact rounded badges below the top ribbon, evenly spaced.
-    """
-    if not badges:
-        return
-    fig = ax.figure
-    n = len(badges)
-    xs = np.linspace(0.12, 0.88, n)
-    y = 0.955
-    for (text, color), x in zip(badges, xs):
-        fig.text(
-            x, y, f" {text} ",
-            ha="center", va="bottom",
-            fontsize=10, fontweight="bold", color=color,
-            bbox=dict(boxstyle="round,pad=0.35", fc="white", ec=color, alpha=0.98),
-            transform=fig.transFigure, zorder=200
-        )
-
-# --- RIGHT-SIDE X-AXIS PADDING (NEW helper) ---
-def pad_right_xaxis(ax, frac: float = 0.05):
-    """
-    Add space after the last data point so the price line isn't flush
-    with the right frame. Works for both datetime and numeric axes.
-    """
-    try:
-        x0, x1 = ax.get_xlim()
-        if np.isfinite(x0) and np.isfinite(x1) and x1 > x0:
-            pad = (x1 - x0) * float(frac)
-            ax.set_xlim(left=x0, right=x1 + pad)
-    except Exception:
-        pass
-
-# --- Bands + single latest band-reversal trading signal ---
-def last_band_reversal_signal(price: pd.Series,
-                              band_upper: pd.Series,
-                              band_lower: pd.Series,
-                              trend_slope: float,
-                              prox: float = 0.0025,
-                              confirm_bars: int = 1):
-    p = _coerce_1d_series(price).dropna()
-    up = _coerce_1d_series(band_upper).reindex(p.index)
-    lo = _coerce_1d_series(band_lower).reindex(p.index)
-
-    if p.shape[0] < 2 or up.dropna().empty or lo.dropna().empty:
-        return None
-    if not np.isfinite(trend_slope) or trend_slope == 0:
-        return None
-
-    mask = p.notna() & up.notna() & lo.notna()
-    p = p[mask]; up = up[mask]; lo = lo[mask]
-    if p.shape[0] < 2:
-        return None
-
-    def _inc_ok(series: pd.Series, n: int) -> bool:
-        s = _coerce_1d_series(series).dropna()
-        if len(s) < n+1:
-            return False
-        d = np.diff(s.iloc[-(n+1):])
-        return bool(np.all(d > 0))
-
-    def _dec_ok(series: pd.Series, n: int) -> bool:
-        s = _coerce_1d_series(series).dropna()
-        if len(s) < n+1:
-            return False
-        d = np.diff(s.iloc[-(n+1):])
-        return bool(np.all(d < 0))
-
-    t0 = p.index[-1]
-    c0, c1 = float(p.iloc[-1]), float(p.iloc[-2])
-    u0, u1 = float(up.iloc[-1]), float(up.iloc[-2])
-    l0, l1 = float(lo.iloc[-1]), float(lo.iloc[-2])
-
-    if trend_slope > 0:
-        prev_near_lower = (c1 <= l1 * (1.0 + prox))
-        bounced_above   = (c0 >= l0)
-        going_up        = _inc_ok(p, confirm_bars)
-        if prev_near_lower and bounced_above and going_up:
-            return {"time": t0, "price": c0, "side": "BUY", "note": "Band REV"}
-    else:
-        prev_near_upper = (c1 >= u1 * (1.0 - prox))
-        rolled_below    = (c0 <= u0)
-        going_down      = _dec_ok(p, confirm_bars)
-        if prev_near_upper and rolled_below and going_down:
-            return {"time": t0, "price": c0, "side": "SELL", "note": "Band REV"}
-    return None
-
 # --- NEW (Daily-only): 99% confidence SR reversal logic ---
 Z_FOR_99 = 2.576  # ≈ 99% two-sided (~2.58σ)
 
@@ -1113,6 +988,56 @@ def daily_sr_99_reversal_signal(price: pd.Series,
         going_down           = _dec_ok(p, confirm_bars)
         if prev_near_resistance and resistance_near_99 and going_down:
             return {"time": t0, "price": c0, "side": "SELL", "note": "ALERT 99% SR REV"}
+    return None
+
+# --- NEW: Daily support-touch + confirmed-up scanner helper ---
+def find_support_touch_confirmed_up(price: pd.Series,
+                                    support: pd.Series,
+                                    prox: float = 0.0025,
+                                    confirm_bars: int = 2,
+                                    lookback_bars: int = 30):
+    """
+    Finds the most-recent bar (within `lookback_bars`) where CLOSE was near/at support,
+    then checks that *after* that bar the next `confirm_bars` closes were strictly
+    increasing. Returns details or None.
+    """
+    p = _coerce_1d_series(price).dropna()
+    s = _coerce_1d_series(support).reindex(p.index).ffill().bfill()
+    if p.shape[0] < confirm_bars + 2 or s.dropna().empty:
+        return None
+
+    tail = p.iloc[-(lookback_bars + confirm_bars + 1):]
+    # iterate from most recent possible touch backward
+    for t in reversed(tail.iloc[:-confirm_bars].index.tolist()):
+        try:
+            pc = float(p.loc[t]); sc = float(s.loc[t])
+        except Exception:
+            continue
+        if not (np.isfinite(pc) and np.isfinite(sc)):
+            continue
+        # "Touch" if at/below support by relative proximity tolerance
+        touched = (pc <= sc * (1.0 + prox))
+        if not touched:
+            continue
+        # Confirm reversal: strictly increasing for the next confirm_bars closes
+        if _after_all_increasing(p, t, confirm_bars):
+            now_close = float(p.iloc[-1])
+            gain_pct = (now_close - pc) / pc if pc != 0 else np.nan
+            try:
+                loc = p.index.get_loc(t)
+                if isinstance(loc, slice):
+                    loc = loc.start
+                bars_since = int((len(p) - 1) - loc)
+            except Exception:
+                bars_since = np.nan
+            return {
+                "t_touch": t,
+                "touch_close": pc,
+                "support": sc,
+                "now_close": now_close,
+                "gain_pct": gain_pct,
+                "bars_since_touch": bars_since
+            }
     return None
 
 # --- Sessions & News ---
@@ -1232,14 +1157,15 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
     "NTD -0.75 Scanner",
     "Long-Term History",
-    "Upward Slope Stickers"
+    "Upward Slope Stickers",
+    "Daily Support Reversals"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -2224,7 +2150,7 @@ with tab6:
             if not upper_all.empty and not lower_all.empty:
                 ax.plot(upper_all.index, upper_all.values, ":", linewidth=3.0,
                         color="black", alpha=1.0, label="_nolegend_")
-                ax.plot(lower_all.index, lower_all.values, ":", linewidth=3.0,
+                ax.plot(lower_all.index, lower_all.index, ":", linewidth=3.0,
                         color="black", alpha=1.0, label="_nolegend_")
 
             # Bottom-right ONLY: combine current price + R² + slope
@@ -2301,3 +2227,67 @@ with tab7:
             st.dataframe(view[["Symbol","Timestamp","Close","Trendline","Gap","GapPct","Slope","R2"]]
                          .reset_index(drop=True),
                          use_container_width=True)
+
+# --- Tab 8: Daily Support Reversals (NEW) ---
+with tab8:
+    st.header("Daily Support Reversals")
+    st.caption(
+        "Scans for symbols that **touched daily Support** (rolling 30-bar **Close** min) within your "
+        "**S/R / Band proximity (%)** and then printed **consecutive higher closes** (uses your "
+        "**Consecutive bars to confirm** setting)."
+    )
+
+    if st.button("Scan Universe for Daily Support Reversals", key="btn_scan_support_rev"):
+        rows = []
+        for sym in universe:
+            try:
+                s = fetch_hist(sym)
+                if s is None or s.dropna().shape[0] < max(10, slope_lb_daily):
+                    continue
+                sup30 = s.rolling(30, min_periods=1).min()
+                sig = find_support_touch_confirmed_up(
+                    price=s,
+                    support=sup30,
+                    prox=sr_prox_pct,
+                    confirm_bars=rev_bars_confirm,
+                    lookback_bars=30
+                )
+                if sig is None:
+                    continue
+                # Enrich with slope & fit quality (optional diagnostics)
+                _, _, _, m_sym, r2_sym = regression_with_band(s, lookback=slope_lb_daily, z=Z_FOR_99)
+                rows.append({
+                    "Symbol": sym,
+                    "Touched": sig["t_touch"],
+                    "Close@Touch": sig["touch_close"],
+                    "Support@Touch": sig["support"],
+                    "Now": s.dropna().index[-1],
+                    "NowClose": sig["now_close"],
+                    "RisePct": sig["gain_pct"],
+                    "BarsSince": sig["bars_since_touch"],
+                    "Slope": m_sym,
+                    "R2": r2_sym
+                })
+            except Exception:
+                pass
+
+        if not rows:
+            st.info("No symbols met the **support-touch → confirmed up** criteria at this time.")
+        else:
+            df = pd.DataFrame(rows)
+            # Sort: biggest rise first, then most recent touches
+            df = df.sort_values(["RisePct","BarsSince"], ascending=[False, True])
+
+            view = df.copy()
+            view["Close@Touch"] = view["Close@Touch"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            view["Support@Touch"] = view["Support@Touch"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            view["NowClose"] = view["NowClose"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            view["RisePct"] = view["RisePct"].map(lambda v: fmt_pct(v, 2) if np.isfinite(v) else "n/a")
+            view["Slope"] = view["Slope"].map(lambda v: f"{v:+.5f}" if np.isfinite(v) else "n/a")
+            view["R2"] = view["R2"].map(lambda v: fmt_pct(v, 1) if np.isfinite(v) else "n/a")
+
+            st.dataframe(
+                view[["Symbol","Touched","Close@Touch","Support@Touch","Now","NowClose","RisePct","BarsSince","Slope","R2"]]
+                .reset_index(drop=True),
+                use_container_width=True
+            )
