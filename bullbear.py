@@ -34,7 +34,7 @@
 #   • NEW (Instruction ribbon): Aligns with the **LOCAL dashed slope** on intraday (dashed line).
 #   • NEW (QoL): BUY/SELL *and* Value of PIPS in the ribbon are computed from entry→exit.
 
-import streamlit as stb
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
