@@ -1677,15 +1677,17 @@ with tab1:
 
                 st.pyplot(fig2)
 
-        # News table
-        if mode == "Forex" and show_fx_news:
-            st.subheader("Recent Forex News (Yahoo Finance)")
-            if fx_news.empty:
-                st.write("No recent news available.")
-            else:
-                show_cols = fx_news.copy()
-                show_cols["time"] = show_cols["time"].dt.strftime("%Y-%m-%d %H:%M")
-                st.dataframe(show_cols[["time","publisher","title","link"]].reset_index(drop=True), use_container_width=True)
+        # --- Forex session overlaps (replaces "Recent Forex News") ---
+        if mode == "Forex":
+            st.subheader("Forex Session Overlaps (PST)")
+            st.markdown("""
+| Overlap | Time (PST) | Applies To |
+|---|---|---|
+| **New York & London** | **5:00 AM – 8:00 AM** | Any pair including **EUR**, **USD**, **GBP** |
+| **Tokyo & New York** | **4:00 PM – 7:00 PM** | Any pair including **USD**, **JPY** |
+| **London & Tokyo** | **12:00 AM – 1:00 AM** | Any pair including **EUR**, **GBP**, **JPY** |
+""")
+            st.caption("These windows often see higher liquidity and volatility.")
 
         # Forecast table
         st.write(pd.DataFrame({"Forecast": st.session_state.fc_vals,
