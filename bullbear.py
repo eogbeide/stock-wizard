@@ -214,6 +214,112 @@ def subset_by_daily_view(obj, view_label: str):
         start = end - pd.Timedelta(days=days_map.get(view_label, 365))
     return obj.loc[(idx >= start) & (idx <= end)]
 
+# --- New helper utilities added to fix NameError and UI polish ---
+
+def _simplify_axes(ax):
+    """Minimal, safe axis styling to avoid clutter."""
+    try:
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+    except Exception:
+        pass
+    ax.tick_params(axis='both', which='both', labelsize=9)
+    ax.grid(True, alpha=0.2)
+
+def pad_right_xaxis(ax, frac: float = 0.06):
+    """Add right-side breathing room for top badges/outside callouts."""
+    try:
+        left, right = ax.get_xlim()
+        span = right - left
+        ax.set_xlim(left, right + span * float(frac))
+    except Exception:
+        pass
+
+def draw_top_badges(ax, badges: list):
+    """
+    Draw a compact vertical stack of badges at the top-left inside the axes.
+    badges: list of (text, color)
+    """
+    if not badges:
+        return
+    y = 1.02
+    for text, color in badges:
+        ax.text(0.01, y, text,
+                transform=ax.transAxes,
+                ha="left", va="bottom",
+                fontsize=9, fontweight="bold",
+                color=color,
+                bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.95))
+        y += 0.055  # stack upwards
+
+def draw_instruction_ribbons(ax, trend_slope: float, sup_val: float, res_val: float, px_val: float, symbol: str):
+    """Single sentence, trend-aware instruction banner aligned with the local slope."""
+    slope_ok = np.isfinite(trend_slope)
+    color = "tab:green" if (slope_ok and trend_slope > 0) else "tab:red"
+    instr = format_trade_instruction(trend_slope, sup_val, res_val, px_val, symbol)
+    # put slightly above the plot; room is created by tight_layout adjustments elsewhere
+    ax.text(0.5, 1.08, instr,
+            transform=ax.transAxes, ha="center", va="bottom",
+            fontsize=10, fontweight="bold", color=color,
+            bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.95))
+
+def last_band_reversal_signal(price: pd.Series,
+                              band_upper: pd.Series,
+                              band_lower: pd.Series,
+                              trend_slope: float,
+                              prox: float = 0.0025,
+                              confirm_bars: int = 2):
+    """
+    Only the latest signal is returned.
+      • Uptrend  → BUY when a recent bar 'touched' lower band, and the next `confirm_bars`
+                   closes are strictly higher.
+      • Downtrend→ SELL when a recent bar 'touched' upper band, and the next `confirm_bars`
+                   closes are strictly lower.
+    Returns dict: {"time","price","side","note"} or None
+    """
+    p = _coerce_1d_series(price).dropna()
+    if p.shape[0] < confirm_bars + 2 or not np.isfinite(trend_slope) or trend_slope == 0:
+        return None
+    u = _coerce_1d_series(band_upper).reindex(p.index)
+    l = _coerce_1d_series(band_lower).reindex(p.index)
+
+    # helper to check strictly increasing/decreasing on the *next* confirm_bars
+    def _inc_after(idx):
+        # require p[idx+1]..p[idx+confirm_bars] strictly increasing
+        if idx + confirm_bars >= len(p):
+            return False
+        seg = p.iloc[idx:(idx + confirm_bars + 1)]
+        d = np.diff(seg)
+        return bool(np.all(d > 0))
+
+    def _dec_after(idx):
+        if idx + confirm_bars >= len(p):
+            return False
+        seg = p.iloc[idx:(idx + confirm_bars + 1)]
+        d = np.diff(seg)
+        return bool(np.all(d < 0))
+
+    rng = range(len(p) - confirm_bars - 1)  # last index we can start from
+    # search from most recent backwards
+    for i in reversed(list(rng)):
+        pc = float(p.iloc[i]); t = p.index[i]
+        up = float(u.iloc[i]) if i < len(u) and np.isfinite(u.iloc[i]) else np.nan
+        lo = float(l.iloc[i]) if i < len(l) and np.isfinite(l.iloc[i]) else np.nan
+
+        if trend_slope > 0:
+            # BUY: touch lower band (<= lower*(1+prox)) then confirm up
+            if np.isfinite(lo) and pc <= lo * (1.0 + prox) and _inc_after(i):
+                t_conf = p.index[i + confirm_bars]
+                px_conf = float(p.iloc[i + confirm_bars])
+                return {"time": t_conf, "price": px_conf, "side": "BUY", "note": "Band REV"}
+        else:
+            # SELL: touch upper band (>= upper*(1-prox)) then confirm down
+            if np.isfinite(up) and pc >= up * (1.0 - prox) and _dec_after(i):
+                t_conf = p.index[i + confirm_bars]
+                px_conf = float(p.iloc[i + confirm_bars])
+                return {"time": t_conf, "price": px_conf, "side": "SELL", "note": "Band REV"}
+    return None
+
 # --- Sidebar config (single, deduplicated) ---
 st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
@@ -633,13 +739,13 @@ def annotate_signal_box(ax, ts, px, side: str, note: str = "", ypad_frac: float 
             fontsize=10,
             fontweight="bold",
             color="tab:green" if side == "BUY" else "tab:red",
-            bbox=dict(boxstyle="round,pad=0.3", fc="white", ec="tab:green" if side=="BUY" else "tab:red", alpha=0.9),
-            arrowprops=dict(arrowstyle="->", color="tab:green" if side=="BUY" else "tab:red", lw=1.5),
+            bbox=dict(boxstyle="round,pad=0.3", fc="white", ec=("tab:green" if side=="BUY" else "tab:red"), alpha=0.9),
+            arrowprops=dict(arrowstyle="->", color=("tab:green" if side=="BUY" else "tab:red"), lw=1.5),
             zorder=9
         )
         ax.scatter([ts], [px], s=60, c=("tab:green" if side=="BUY" else "tab:red"), zorder=10)
     except Exception:
-        ax.text(ts, px, f" {text}", color="tab:green" if side=="BUY" else "tab:red",
+        ax.text(ts, px, f" {text}", color=("tab:green" if side=="BUY" else "tab:red"),
                 fontsize=10, fontweight="bold")
 
 def annotate_band_rev_outside(ax, ts, px, side: str, note: str = "Band REV"):
@@ -952,6 +1058,8 @@ def daily_sr_99_reversal_signal(price: pd.Series,
     lo99 = _coerce_1d_series(lower99).reindex(p.index)
 
     if sup.dropna().empty or res.dropna().empty or up99.dropna().empty or lo99.dropna().empty:
+        return None
+    if len(up99) < 2 or len(lo99) < 2:
         return None
 
     def _inc_ok(series: pd.Series, n: int) -> bool:
@@ -2150,7 +2258,7 @@ with tab6:
             if not upper_all.empty and not lower_all.empty:
                 ax.plot(upper_all.index, upper_all.values, ":", linewidth=3.0,
                         color="black", alpha=1.0, label="_nolegend_")
-                ax.plot(lower_all.index, lower_all.index, ":", linewidth=3.0,
+                ax.plot(lower_all.index, lower_all.values, ":", linewidth=3.0,
                         color="black", alpha=1.0, label="_nolegend_")
 
             # Bottom-right ONLY: combine current price + R² + slope
