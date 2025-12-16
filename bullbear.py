@@ -67,6 +67,23 @@ st.markdown("""
 # --- Top-of-page caution banner placeholder ---
 top_warn = st.empty()
 
+# --- NEW: Global red ribbon with Slope Line disclaimer (outside plots) ---
+top_warn.markdown(
+    """
+    <div style="
+         background-color:#b00020;
+         color:#ffffff;
+         padding:14px 18px;
+         border-radius:12px;
+         font-weight:700;
+         margin:8px 0 12px 0;
+         letter-spacing:.2px;">
+      The Slope Line is for Information only to show when a trend change is imminent, not for trading.
+    </div>
+    """,
+    unsafe_allow_html=True
+)
+
 # --- Auto-refresh ---
 REFRESH_INTERVAL = 120  # seconds
 PACIFIC = pytz.timezone("US/Pacific")
