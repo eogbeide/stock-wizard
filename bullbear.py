@@ -1268,6 +1268,9 @@ with tab1:
 
     # --- REQUIRED NOTE directly under the Forecast button (per request) ---
     st.caption("The Slope Line is for Information only to show when a trend change is imminent, not for trading.")
+    # --- ADDED: Also output the same statement inside a container ---
+    with st.container():
+        st.markdown("The Slope Line is for Information only to show when a trend change is imminent, not for trading.")
 
     # --- Caution placeholder positioned just below the Forecast button ---
     caution_below_btn = st.empty()
