@@ -1331,7 +1331,12 @@ with tab1:
 
             bb_mid_d, bb_up_d, bb_lo_d, _, _ = compute_bbands(df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
+            # --- NEW: Daily PSAR (for purple line) ---
+            psar_d_df = compute_psar_from_ohlc(df_ohlc, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
+            # map to the selected daily view
             df_show     = subset_by_daily_view(df, daily_view)
+            psar_d_show = psar_d_df["PSAR"].reindex(df_show.index) if (show_psar and not psar_d_df.empty and "PSAR" in psar_d_df) else pd.Series(index=df_show.index, dtype=float)
+
             ema30_show  = ema30.reindex(df_show.index)
             res30_show  = res30.reindex(df_show.index)
             sup30_show  = sup30.reindex(df_show.index)
@@ -1363,6 +1368,10 @@ with tab1:
 
             if show_hma and not hma_d_full.dropna().empty:
                 ax.plot(hma_d_full.index, hma_d_full.values, "-", linewidth=1.3, alpha=0.9, label="HMA")
+
+            # --- PLOT PSAR as a purple line (matches attached settings) ---
+            if show_psar and not psar_d_show.dropna().empty:
+                ax.plot(psar_d_show.index, psar_d_show.values, "-", linewidth=1.5, color="purple", alpha=0.95, label="SAR")
 
             if not yhat_d_show.empty:
                 slope_col_d = "tab:green" if m_d >= 0 else "tab:red"
@@ -1562,6 +1571,10 @@ with tab1:
                     ax2.fill_between(x_mt, bb_lo_h.reindex(idx_mt).values, bb_up_h.reindex(idx_mt).values, alpha=0.04, label="_nolegend_")
                     ax2.plot(x_mt, bb_mid_h.reindex(idx_mt).values, "-", linewidth=0.8, alpha=0.3, label="_nolegend_")
 
+                # --- PLOT PSAR as a purple line on HOURLY ---
+                if show_psar and isinstance(psar_h_df, pd.DataFrame) and "PSAR" in psar_h_df and not psar_h_df["PSAR"].dropna().empty:
+                    ax2.plot(x_mt, psar_h_df["PSAR"].reindex(idx_mt).values, "-", linewidth=1.5, color="purple", alpha=0.95, label="SAR")
+
                 res_val = sup_val = px_val = np.nan
                 try:
                     res_val = float(res_h.iloc[-1]); sup_val = float(sup_h.iloc[-1]); px_val = float(hc.iloc[-1])
@@ -1759,6 +1772,9 @@ with tab2:
 
             bb_mid_d2, bb_up_d2, bb_lo_d2 = compute_bbands(df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)[:3]
 
+            # --- NEW: Daily PSAR for Enhanced view ---
+            psar_d2_df = compute_psar_from_ohlc(df_ohlc, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
+
             df_show = subset_by_daily_view(df, daily_view)
             ema30_show = ema30.reindex(df_show.index)
             res30_show = res30.reindex(df_show.index)
@@ -1770,6 +1786,7 @@ with tab2:
             bb_mid_d2_show = bb_mid_d2.reindex(df_show.index)
             bb_up_d2_show  = bb_up_d2.reindex(df_show.index)
             bb_lo_d2_show  = bb_lo_d2.reindex(df_show.index)
+            psar_d2_show = psar_d2_df["PSAR"].reindex(df_show.index) if (show_psar and not psar_d2_df.empty and "PSAR" in psar_d2_df) else pd.Series(index=df_show.index, dtype=float)
 
             # HMA plotting (and HMA-cross star)
             hma_d2_full = compute_hma(df, period=hma_period).reindex(df_show.index)
@@ -1791,6 +1808,10 @@ with tab2:
 
             if show_hma and not hma_d2_full.dropna().empty:
                 ax.plot(hma_d2_full.index, hma_d2_full.values, "-", linewidth=1.3, alpha=0.9, label="HMA")
+
+            # --- PLOT PSAR (purple) on Enhanced Daily ---
+            if show_psar and not psar_d2_show.dropna().empty:
+                ax.plot(psar_d2_show.index, psar_d2_show.values, "-", linewidth=1.5, color="purple", alpha=0.95, label="SAR")
 
             if not yhat_d_show.empty:
                 slope_col_d2 = "tab:green" if m_d >= 0 else "tab:red"
