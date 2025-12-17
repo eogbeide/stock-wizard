@@ -205,7 +205,7 @@ def format_trade_instruction(trend_slope: float,
 
     # NEW DEFAULT: If no confirmed side provided, explicitly mark as Unconfirmed
     if cs not in ("BUY", "SELL"):
-        base_sentence = f"Unconfirmed - wait for Confirmed to place trade • {base_sentence}"
+        base_sentence = f"Unconfirmed - please wait for the CONFIRMED signal to place trade • {base_sentence}"
 
     return base_sentence
 
