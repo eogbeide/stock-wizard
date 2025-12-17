@@ -791,6 +791,43 @@ def annotate_band_rev_outside(ax, ts, px, side: str, note: str = "Band REV"):
     except Exception:
         annotate_signal_box(ax, ts, px, side, note=note)
 
+# --- NEW: Outside marker for confirmed reversals ("Price Reversed") ---
+def annotate_price_reversed_outside(ax, ts, px, side: str = None):
+    """
+    Adds a neutral, outside-of-plot box labeled 'Price Reversed' with an arrow
+    from the reversal point inside the chart. Color follows side if provided.
+    """
+    try:
+        fig = ax.figure
+        ax_bbox = ax.get_position()
+        # Map data x to figure x to place the label above the axes
+        x_disp, _ = ax.transData.transform((ts, px))
+        x_fig, _ = fig.transFigure.inverted().transform((x_disp, 0.0))
+        x_text = float(np.clip(x_fig, 0.08, 0.92))
+        # Place slightly higher than other outside callouts to avoid overlap
+        y_text = float(min(0.99, ax_bbox.y1 + 0.06))
+        color = "tab:green" if (isinstance(side, str) and side.upper() == "BUY") else ("tab:red" if (isinstance(side, str) and side.upper() == "SELL") else "black")
+        ax.annotate(
+            "Price Reversed",
+            xy=(ts, px),
+            xycoords='data',
+            xytext=(x_text, y_text),
+            textcoords=fig.transFigure,
+            ha='center',
+            va='bottom',
+            fontsize=10,
+            fontweight="bold",
+            color=color,
+            bbox=dict(boxstyle="round,pad=0.35", fc="white", ec=color, alpha=0.98),
+            arrowprops=dict(arrowstyle="->", color=color, lw=1.6),
+            annotation_clip=False,
+            zorder=1100
+        )
+        ax.scatter([ts], [px], s=60, c=color, zorder=1101)
+    except Exception:
+        # Quiet fallback: do nothing if transforms fail
+        pass
+
 def annotate_star(ax, ts, px, kind: str, show_text: bool = False, color_override: str = None):
     """
     Star at peak/trough (chart sign only by default).
@@ -1483,6 +1520,13 @@ with tab1:
                     annotate_signal_box(ax, sr99_sig["time"], sr99_sig["price"], side="SELL", note=sr99_sig["note"])
                     badges_top.append((f"▼ SELL ALERT 99% SR REV @{fmt_price_val(sr99_sig['price'])}", "tab:red"))
 
+            # --- NEW: Add outside "Price Reversed" marker (Daily) ---
+            if band_sig_d is not None:
+                annotate_price_reversed_outside(ax, band_sig_d["time"], band_sig_d["price"], side=band_sig_d.get("side"))
+            elif star_d is not None:
+                _side = "BUY" if star_d.get("kind") == "trough" else "SELL"
+                annotate_price_reversed_outside(ax, star_d["time"], star_d["price"], side=_side)
+
             # Draw compact badges
             draw_top_badges(ax, badges_top)
 
@@ -1627,9 +1671,9 @@ with tab1:
 
                 star_h = last_reversal_star(hc, trend_slope=m_h, lookback=20, confirm_bars=rev_bars_confirm)
                 if star_h is not None:
-                    tpos = _pos(star_h["time"])
-                    if np.isfinite(tpos):
-                        annotate_star(ax2, tpos, star_h["price"], star_h["kind"], show_text=False)
+                    tpos_star = _pos(star_h["time"])
+                    if np.isfinite(tpos_star):
+                        annotate_star(ax2, tpos_star, star_h["price"], star_h["kind"], show_text=False)
                         if star_h.get("kind") == "trough":
                             badges_top_h.append((f"★ Trough REV @{fmt_price_val(star_h['price'])}", "tab:green"))
                         elif star_h.get("kind") == "peak":
@@ -1641,14 +1685,25 @@ with tab1:
                     prox=sr_prox_pct, confirm_bars=rev_bars_confirm
                 )
                 if breakout_h is not None:
-                    tpos = _pos(breakout_h["time"])
-                    if np.isfinite(tpos):
+                    tpos_bo = _pos(breakout_h["time"])
+                    if np.isfinite(tpos_bo):
                         if breakout_h["dir"] == "UP":
-                            annotate_breakout(ax2, tpos, breakout_h["price"], "UP")
+                            annotate_breakout(ax2, tpos_bo, breakout_h["price"], "UP")
                             badges_top_h.append((f"▲ BREAKOUT @{fmt_price_val(breakout_h['price'])}", "tab:green"))
                         else:
-                            annotate_breakout(ax2, tpos, breakout_h["price"], "DOWN")
+                            annotate_breakout(ax2, tpos_bo, breakout_h["price"], "DOWN")
                             badges_top_h.append((f"▼ BREAKDOWN @{fmt_price_val(breakout_h['price'])}", "tab:red"))
+
+                # --- NEW: Add outside "Price Reversed" marker (Hourly) ---
+                if band_sig_h is not None:
+                    tpos = _pos(band_sig_h["time"])
+                    if np.isfinite(tpos):
+                        annotate_price_reversed_outside(ax2, tpos, band_sig_h["price"], side=band_sig_h.get("side"))
+                elif star_h is not None:
+                    tpos_star = _pos(star_h["time"])
+                    if np.isfinite(tpos_star):
+                        _side_h = "BUY" if star_h.get("kind") == "trough" else "SELL"
+                        annotate_price_reversed_outside(ax2, tpos_star, star_h["price"], side=_side_h)
 
                 draw_top_badges(ax2, badges_top_h)
 
@@ -1920,6 +1975,13 @@ with tab2:
                 else:
                     annotate_signal_box(ax, sr99_sig2["time"], sr99_sig2["price"], side="SELL", note=sr99_sig2["note"])
                     badges_top2.append((f"▼ SELL ALERT 99% SR REV @{fmt_price_val(sr99_sig2['price'])}", "tab:red"))
+
+            # --- NEW: Add outside "Price Reversed" marker (Enhanced Daily) ---
+            if band_sig_d2 is not None:
+                annotate_price_reversed_outside(ax, band_sig_d2["time"], band_sig_d2["price"], side=band_sig_d2.get("side"))
+            elif star_d2 is not None:
+                _side2 = "BUY" if star_d2.get("kind") == "trough" else "SELL"
+                annotate_price_reversed_outside(ax, star_d2["time"], star_d2["price"], side=_side2)
 
             draw_top_badges(ax, badges_top2)
 
