@@ -195,19 +195,12 @@ def format_trade_instruction(trend_slope: float,
     except Exception:
         tslope = 0.0
 
-    # Build the base sentence based on slope direction
     if np.isfinite(tslope) and tslope > 0:
         # Upward slope → Buy, Sell, Value of PIPS
-        base_sentence = f"{buy_txt} → {sell_txt}{pips_txt}"
+        return f"{buy_txt} → {sell_txt}{pips_txt}"
     else:
         # Downward slope → Sell, Buy, Value of PIPS
-        base_sentence = f"{sell_txt} → {buy_txt}{pips_txt}"
-
-    # NEW DEFAULT: If no confirmed side provided, explicitly mark as Unconfirmed
-    if cs not in ("BUY", "SELL"):
-        base_sentence = f"Unconfirmed - wait for Confirmed to place trade • {base_sentence}"
-
-    return base_sentence
+        return f"{sell_txt} → {buy_txt}{pips_txt}"
 
 def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
     trans = blended_transform_factory(ax.transAxes, ax.transData)
@@ -1149,8 +1142,6 @@ def find_support_touch_confirmed_up(price: pd.Series,
                 loc = p.index.get_loc(t)
                 if isinstance(loc, slice):
                     loc = loc.start
-                if isinstance(loc, (np.ndarray, list)):
-                    loc = int(loc[0]) if len(loc) else 0
                 bars_since = int((len(p) - 1) - loc)
             except Exception:
                 bars_since = np.nan
