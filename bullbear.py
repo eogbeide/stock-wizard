@@ -257,6 +257,12 @@ def draw_instruction_ribbons(ax, trend_slope: float, sup_val: float, res_val: fl
     slope_ok = np.isfinite(trend_slope)
     color = "tab:green" if (slope_ok and trend_slope > 0) else "tab:red"
     instr = format_trade_instruction(trend_slope, sup_val, res_val, px_val, symbol)
+    # --- NEW: append CONFIRMED when a 99% reversal was detected for this plot ---
+    try:
+        if st.session_state.get("sr99_confirmed", False):
+            instr = f"{instr} • CONFIRMED"  # kept as a single sentence
+    except Exception:
+        pass
     # put slightly above the plot; room is created by tight_layout adjustments elsewhere
     ax.text(0.5, 1.08, instr,
             transform=ax.transAxes, ha="center", va="bottom",
@@ -1414,6 +1420,9 @@ with tab1:
             # --- Signals to badges: Band REV, Reversal stars, NEW HMA-cross star ---
             badges_top = []
 
+            # Reset 99% confirmation flag for this plot
+            st.session_state['sr99_confirmed'] = False
+
             # Band REV (Daily)
             band_sig_d = last_band_reversal_signal(
                 price=df_show, band_upper=upper_d_show, band_lower=lower_d_show,
@@ -1469,6 +1478,8 @@ with tab1:
                 confirm_bars=rev_bars_confirm
             )
             if sr99_sig is not None:
+                # Mark this plot as confirmed for the instruction banner
+                st.session_state['sr99_confirmed'] = True
                 if sr99_sig["side"] == "BUY":
                     annotate_signal_box(ax, sr99_sig["time"], sr99_sig["price"], side="BUY", note=sr99_sig["note"])
                     badges_top.append((f"▲ BUY ALERT 99% SR REV @{fmt_price_val(sr99_sig['price'])}", "tab:green"))
@@ -1643,6 +1654,9 @@ with tab1:
                             badges_top_h.append((f"▼ BREAKDOWN @{fmt_price_val(breakout_h['price'])}", "tab:red"))
 
                 draw_top_badges(ax2, badges_top_h)
+
+                # Ensure CONFIRMED is never carried into intraday banner
+                st.session_state['sr99_confirmed'] = False
 
                 # TOP instruction banner (Hourly) — uses **DASHED** local slope (slope_h) per requirement
                 draw_instruction_ribbons(ax2, slope_h, sup_val, res_val, px_val, sel)
@@ -1840,6 +1854,9 @@ with tab2:
 
             # Band signal (Daily) — top badges + stars/triangle
             badges_top2 = []
+            # Reset 99% confirmation flag for this plot
+            st.session_state['sr99_confirmed'] = False
+
             band_sig_d2 = last_band_reversal_signal(price=df_show, band_upper=up_d_show, band_lower=lo_d_show,
                                                     trend_slope=m_d, prox=sr_prox_pct, confirm_bars=rev_bars_confirm)
             if band_sig_d2 is not None and band_sig_d2.get("side") == "BUY":
@@ -1906,6 +1923,8 @@ with tab2:
                 confirm_bars=rev_bars_confirm
             )
             if sr99_sig2 is not None:
+                # Mark this plot as confirmed for the instruction banner
+                st.session_state['sr99_confirmed'] = True
                 if sr99_sig2["side"] == "BUY":
                     annotate_signal_box(ax, sr99_sig2["time"], sr99_sig2["price"], side="BUY", note=sr99_sig2["note"])
                     badges_top2.append((f"▲ BUY ALERT 99% SR REV @{fmt_price_val(sr99_sig2['price'])}", "tab:green"))
