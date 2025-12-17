@@ -163,11 +163,13 @@ def format_trade_instruction(trend_slope: float,
                              buy_val: float,
                              sell_val: float,
                              close_val: float,
-                             symbol: str) -> str:
+                             symbol: str,
+                             confirm_side: str = None) -> str:
     """
     TREND-AWARE instruction order (SINGLE SENTENCE, uses LOCAL slope):
       • Uptrend (green / dashed on intraday) → BUY first, then SELL, then Value of PIPS
       • Downtrend (red)                      → SELL first, then BUY, then Value of PIPS
+    If `confirm_side` is "BUY" or "SELL", append " (CONFIRMED)" to that side's label.
     """
     def _finite(x):
         try:
@@ -178,8 +180,13 @@ def format_trade_instruction(trend_slope: float,
     entry_buy = float(buy_val) if _finite(buy_val) else float(close_val)
     exit_sell = float(sell_val) if _finite(sell_val) else float(close_val)
 
-    buy_txt  = f"▲ BUY @{fmt_price_val(entry_buy)}"
-    sell_txt = f"▼ SELL @{fmt_price_val(exit_sell)}"
+    # Build labels (add CONFIRMED if applicable)
+    cs = (confirm_side or "").upper()
+    buy_lbl  = "▲ BUY"  + (" (CONFIRMED)" if cs == "BUY"  else "")
+    sell_lbl = "▼ SELL" + (" (CONFIRMED)" if cs == "SELL" else "")
+
+    buy_txt  = f"{buy_lbl} @{fmt_price_val(entry_buy)}"
+    sell_txt = f"{sell_lbl} @{fmt_price_val(exit_sell)}"
     # "PIPS" in caps per requirement
     pips_txt = f" • Value of PIPS: {_diff_text(exit_sell, entry_buy, symbol)}"
 
@@ -252,17 +259,11 @@ def draw_top_badges(ax, badges: list):
                 bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.95))
         y += 0.055  # stack upwards
 
-def draw_instruction_ribbons(ax, trend_slope: float, sup_val: float, res_val: float, px_val: float, symbol: str):
+def draw_instruction_ribbons(ax, trend_slope: float, sup_val: float, res_val: float, px_val: float, symbol: str, confirm_side: str = None):
     """Single sentence, trend-aware instruction banner aligned with the local slope."""
     slope_ok = np.isfinite(trend_slope)
     color = "tab:green" if (slope_ok and trend_slope > 0) else "tab:red"
-    instr = format_trade_instruction(trend_slope, sup_val, res_val, px_val, symbol)
-    # --- NEW: append CONFIRMED when a 99% reversal was detected for this plot ---
-    try:
-        if st.session_state.get("sr99_confirmed", False):
-            instr = f"{instr} • CONFIRMED"  # kept as a single sentence
-    except Exception:
-        pass
+    instr = format_trade_instruction(trend_slope, sup_val, res_val, px_val, symbol, confirm_side=confirm_side)
     # put slightly above the plot; room is created by tight_layout adjustments elsewhere
     ax.text(0.5, 1.08, instr,
             transform=ax.transAxes, ha="center", va="bottom",
@@ -1420,9 +1421,6 @@ with tab1:
             # --- Signals to badges: Band REV, Reversal stars, NEW HMA-cross star ---
             badges_top = []
 
-            # Reset 99% confirmation flag for this plot
-            st.session_state['sr99_confirmed'] = False
-
             # Band REV (Daily)
             band_sig_d = last_band_reversal_signal(
                 price=df_show, band_upper=upper_d_show, band_lower=lower_d_show,
@@ -1478,8 +1476,6 @@ with tab1:
                 confirm_bars=rev_bars_confirm
             )
             if sr99_sig is not None:
-                # Mark this plot as confirmed for the instruction banner
-                st.session_state['sr99_confirmed'] = True
                 if sr99_sig["side"] == "BUY":
                     annotate_signal_box(ax, sr99_sig["time"], sr99_sig["price"], side="BUY", note=sr99_sig["note"])
                     badges_top.append((f"▲ BUY ALERT 99% SR REV @{fmt_price_val(sr99_sig['price'])}", "tab:green"))
@@ -1493,7 +1489,8 @@ with tab1:
             # TOP instruction banner (Daily) — uses LOCAL daily slope (m_d)
             try:
                 px_val_d  = float(df_show.iloc[-1])
-                draw_instruction_ribbons(ax, m_d, sup_val_d, res_val_d, px_val_d, sel)
+                confirm_side = sr99_sig["side"] if sr99_sig is not None else None
+                draw_instruction_ribbons(ax, m_d, sup_val_d, res_val_d, px_val_d, sel, confirm_side=confirm_side)
             except Exception:
                 pass
 
@@ -1654,9 +1651,6 @@ with tab1:
                             badges_top_h.append((f"▼ BREAKDOWN @{fmt_price_val(breakout_h['price'])}", "tab:red"))
 
                 draw_top_badges(ax2, badges_top_h)
-
-                # Ensure CONFIRMED is never carried into intraday banner
-                st.session_state['sr99_confirmed'] = False
 
                 # TOP instruction banner (Hourly) — uses **DASHED** local slope (slope_h) per requirement
                 draw_instruction_ribbons(ax2, slope_h, sup_val, res_val, px_val, sel)
@@ -1854,9 +1848,6 @@ with tab2:
 
             # Band signal (Daily) — top badges + stars/triangle
             badges_top2 = []
-            # Reset 99% confirmation flag for this plot
-            st.session_state['sr99_confirmed'] = False
-
             band_sig_d2 = last_band_reversal_signal(price=df_show, band_upper=up_d_show, band_lower=lo_d_show,
                                                     trend_slope=m_d, prox=sr_prox_pct, confirm_bars=rev_bars_confirm)
             if band_sig_d2 is not None and band_sig_d2.get("side") == "BUY":
@@ -1923,8 +1914,6 @@ with tab2:
                 confirm_bars=rev_bars_confirm
             )
             if sr99_sig2 is not None:
-                # Mark this plot as confirmed for the instruction banner
-                st.session_state['sr99_confirmed'] = True
                 if sr99_sig2["side"] == "BUY":
                     annotate_signal_box(ax, sr99_sig2["time"], sr99_sig2["price"], side="BUY", note=sr99_sig2["note"])
                     badges_top2.append((f"▲ BUY ALERT 99% SR REV @{fmt_price_val(sr99_sig2['price'])}", "tab:green"))
@@ -1937,7 +1926,8 @@ with tab2:
             # TOP instruction banner (Daily) — uses LOCAL daily slope (m_d)
             try:
                 px_val_d2  = float(df_show.iloc[-1])
-                draw_instruction_ribbons(ax, m_d, sup_val_d2, res_val_d2, px_val_d2, st.session_state.ticker)
+                confirm_side2 = sr99_sig2["side"] if sr99_sig2 is not None else None
+                draw_instruction_ribbons(ax, m_d, sup_val_d2, res_val_d2, px_val_d2, st.session_state.ticker, confirm_side=confirm_side2)
             except Exception:
                 pass
 
