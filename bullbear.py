@@ -36,8 +36,9 @@
 #   • NEW (Dec 2025): Instruction banner shows BUY/SELL **only if** Global Trendline and Local
 #       Slope are aligned. If opposed, show an **ALERT** (no trade instruction). Daily chart also
 #       includes the **Price Reversed** outside marker.
-#   • NEW (Hourly — Dec 2025): Remove the **local dashed slope** and **±2σ bands**
-#       from the chart area; keep the **global trendline** visible.
+#   • NEW (Hourly - Dec 2025): Removed **local dashed slope** and **±2σ regression band lines**
+#       from the chart area (kept global trendline). Signals still use bands internally.
+#   • BUGFIX (Hourly): Robust fallback for intercept avoids casting a pandas Series to float.
 
 import streamlit as st
 import pandas as pd
@@ -1503,20 +1504,26 @@ with tab1:
             if intraday is None or intraday.empty or "Close" not in intraday:
                 st.warning("No intraday data available.")
             else:
-                hc = intraday["Close"].astype(float).ffill()
+                # Ensure 1-D series for Close to avoid Series→float casting issues
+                hc = _coerce_1d_series(intraday["Close"]).astype(float).ffill()
+
                 xh = np.arange(len(hc), dtype=float)
                 if len(hc.dropna()) >= 2:
                     try:
-                        coef = np.polyfit(xh, hc.values.astype(float), 1)
+                        coef = np.polyfit(xh, hc.to_numpy(dtype=float), 1)
                         slope_h = float(coef[0]); intercept_h = float(coef[1])
                         trend_h = slope_h * xh + intercept_h
                     except Exception:
                         slope_h = 0.0
-                        intercept_h = float(hc.iloc[-1]) if len(hc) else 0.0
+                        intercept_h = _safe_last_float(hc)
+                        if not np.isfinite(intercept_h):
+                            intercept_h = 0.0
                         trend_h = np.full_like(xh, intercept_h, dtype=float)
                 else:
                     slope_h = 0.0
-                    intercept_h = float(hc.iloc[-1]) if len(hc) else 0.0
+                    intercept_h = _safe_last_float(hc)
+                    if not np.isfinite(intercept_h):
+                        intercept_h = 0.0
                     trend_h = np.full_like(xh, intercept_h, dtype=float)
 
                 he = hc.ewm(span=20).mean()
@@ -1562,7 +1569,8 @@ with tab1:
 
                 ax2.plot(x_mt, hc.values, label="Price", linewidth=1.2)
                 ax2.plot(x_mt, he.reindex(idx_mt).values, "--", alpha=0.45, linewidth=0.9, label="_nolegend_")
-                # REMOVED (Hourly): local dashed slope from chart area
+
+                # ✨ CHANGE: Remove LOCAL dashed slope from chart area (keep for ribbon logic)
                 # ax2.plot(x_mt, trend_h, "--", label="Trend", linewidth=2.4, color=trend_color, alpha=0.95)
 
                 if show_hma and not hma_h.dropna().empty:
@@ -1667,11 +1675,12 @@ with tab1:
 
                 if not st_line_intr.dropna().empty:
                     ax2.plot(x_mt, st_line_intr.reindex(idx_mt).values, "-", alpha=0.6, label="_nolegend_")
+
                 if not yhat_h.empty:
                     slope_col_h = "tab:green" if m_h >= 0 else "tab:red"
                     ax2.plot(x_mt, yhat_h.reindex(idx_mt).values, "-", linewidth=2.6, color=slope_col_h, alpha=0.95, label="Slope Fit")
 
-                # REMOVED (Hourly): ±2σ standard deviation bands from chart area
+                # ✨ CHANGE: Remove ±2σ regression band lines from chart area (keep for signals)
                 # if not upper_h.empty and not lower_h.empty:
                 #     ax2.plot(x_mt, upper_h.reindex(idx_mt).values, ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
                 #     ax2.plot(x_mt, lower_h.reindex(idx_mt).values, ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
@@ -2098,16 +2107,15 @@ with tab5:
                 ohlc = fetch_hist_ohlc(sym)
                 if ohlc is None or ohlc.empty or not {'High','Low','Close'}.issubset(ohlc.columns):
                     continue
+                _, _, _, m_sym, _ = regression_with_band(ohlc["Close"], slope_lb_daily)
+                if not np.isfinite(m_sym) or m_sym <= 0:
+                    continue
                 _, kijun, _, _, _ = ichimoku_lines(ohlc["High"], ohlc["Low"], ohlc["Close"],
                                                    conv=ichi_conv, base=ichi_base, span_b=ichi_spanb, shift_cloud=False)
-                kijun = kijun.ffill().bfill()
+                kijun = kijun.ffill().bfill().reindex(ohlc.index)
                 close = ohlc["Close"].astype(float).reindex(ohlc.index)
                 mask = close.notna() & kijun.notna()
                 if mask.sum() < 2:
-                    continue
-                # Upward daily slope agreement
-                _, _, _, m_sym, _ = regression_with_band(ohlc["Close"], slope_lb_daily)
-                if not np.isfinite(m_sym) or m_sym <= 0:
                     continue
                 c_prev, c_now = float(close[mask].iloc[-2]), float(close[mask].iloc[-1])
                 k_prev, k_now = float(kijun[mask].iloc[-2]), float(kijun[mask].iloc[-1])
