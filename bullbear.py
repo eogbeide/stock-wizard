@@ -37,8 +37,6 @@
 #       Slope are aligned. If opposed, show an **ALERT** (no trade instruction).
 
 import streamlit as st
-from streamlit_autorefresh import st_autorefresh
-
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -71,23 +69,21 @@ st.markdown("""
 # --- Top-of-page caution banner placeholder ---
 top_warn = st.empty()
 
-# --- Auto-refresh (client-side rerun every 2 minutes; preserves current view) ---
+# --- Auto-refresh ---
 REFRESH_INTERVAL = 120  # seconds
 PACIFIC = pytz.timezone("US/Pacific")
 
-_refresh_counter = st_autorefresh(
-    interval=REFRESH_INTERVAL * 1000,  # milliseconds
-    key="bb_autorefresh_counter"
-)
+def auto_refresh():
+    if 'last_refresh' not in st.session_state:
+        st.session_state.last_refresh = time.time()
+    elif time.time() - st.session_state.last_refresh > REFRESH_INTERVAL:
+        st.session_state.last_refresh = time.time()
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
 
-# Track last refresh time (so sidebar "Last/Next" stays accurate)
-if "last_refresh" not in st.session_state:
-    st.session_state.last_refresh = time.time()
-    st.session_state._refresh_counter = _refresh_counter
-elif _refresh_counter != st.session_state.get("_refresh_counter"):
-    st.session_state.last_refresh = time.time()
-    st.session_state._refresh_counter = _refresh_counter
-
+auto_refresh()
 elapsed = time.time() - st.session_state.last_refresh
 remaining = max(0, int(REFRESH_INTERVAL - elapsed))
 pst_dt = datetime.fromtimestamp(st.session_state.last_refresh, tz=PACIFIC)
@@ -260,6 +256,7 @@ def draw_top_badges(ax, badges: list):
                 color=color,
                 bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.95))
         y += 0.055  # stack upwards
+
 # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 # UPDATED: Instruction banner only when Global & Local slopes are aligned
 def draw_instruction_ribbons(ax,
@@ -508,6 +505,7 @@ def compute_sarimax_forecast(series_like):
     mean = fc.predicted_mean; mean.index = idx
     ci = fc.conf_int();       ci.index   = idx
     return idx, mean, ci
+
 def fibonacci_levels(series_like):
     s = _coerce_1d_series(series_like).dropna()
     hi = float(s.max()) if not s.empty else np.nan
@@ -727,6 +725,7 @@ def compute_hma(close: pd.Series, period: int = 55) -> pd.Series:
     diff = 2 * wma_half - wma_full
     hma = _wma(diff, sqrtp)
     return hma.reindex(s.index)
+
 # --- Reversal detection helpers ---
 def _after_all_increasing(series: pd.Series, start_ts, n: int) -> bool:
     s = _coerce_1d_series(series).dropna()
