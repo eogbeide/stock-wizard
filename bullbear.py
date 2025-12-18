@@ -1302,7 +1302,7 @@ with tab1:
             "hour_range": hour_range, "run_all": True
         })
 
-    st.caption("The Slope Line is for informational purposes only and indicates when a trend change may be imminent; it should for risk management and not for trading decisions.")
+    st.caption("The Slope Line serves as an informational tool that signals potential trend changes and should be used for risk management rather than trading decisions. Trading based on the slope should only occur when it aligns with the trend line.")
 
     caution_below_btn = st.empty()
 
