@@ -12,7 +12,7 @@
 #     - Peak REV: star (no label in chart) + TOP BADGE.
 #     - Trough REV: star (no label in chart) + TOP BADGE.
 #   • NEW: Buy Band REV shows an ▲ triangle marker INSIDE the chart
-#           and also a compact top badge; SELL Band REV remains an outside callout.
+#           and also a compact top badge; SELL Band REV outside callout removed.
 #   • Fibonacci default = ON (hourly only).
 #   • Fixed SARIMAX crash when history is empty/too short.
 #   • Included Supertrend/PSAR/Ichimoku/BB helpers.
@@ -34,8 +34,7 @@
 #   • NEW (Instruction ribbon): Aligns with the **LOCAL dashed slope** on intraday (dashed line).
 #   • NEW (QoL): BUY/SELL *and* Value of PIPS in the ribbon are computed from entry→exit.
 #   • NEW (Dec 2025): Instruction banner shows BUY/SELL **only if** Global Trendline and Local
-#       Slope are aligned. If opposed, show an **ALERT** (no trade instruction). Daily chart also
-#       includes the **Price Reversed** outside marker.
+#       Slope are aligned. If opposed, show an **ALERT** (no trade instruction).
 
 import streamlit as st
 import pandas as pd
@@ -354,6 +353,7 @@ def last_band_reversal_signal(price: pd.Series,
                 px_conf = float(p.iloc[i + confirm_bars])
                 return {"time": t_conf, "price": px_conf, "side": "SELL", "note": "Band REV"}
     return None
+
 # --- Sidebar config (single, deduplicated) ---
 st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
@@ -773,75 +773,6 @@ def annotate_signal_box(ax, ts, px, side: str, note: str = "", ypad_frac: float 
         ax.text(ts, px, f" {text}", color=("tab:green" if side=="BUY" else "tab:red"),
                 fontsize=10, fontweight="bold")
 
-def annotate_band_rev_outside(ax, ts, px, side: str, note: str = "Band REV"):
-    try:
-        fig = ax.figure
-        ax_bbox = ax.get_position()
-        x_disp, _ = ax.transData.transform((ts, px))
-        x_fig, _ = fig.transFigure.inverted().transform((x_disp, 0.0))
-        x_text = float(np.clip(x_fig, 0.08, 0.92))
-        y_text = float(min(0.955, ax_bbox.y1 + 0.02))
-        label = f"{'▲ BUY' if side=='BUY' else '▼ SELL'} {note}"
-
-        ax.annotate(
-            label,
-            xy=(ts, px),
-            xycoords='data',
-            xytext=(x_text, y_text),
-            textcoords=fig.transFigure,
-            ha='center',
-            va='bottom',
-            fontsize=10,
-            fontweight="bold",
-            color=("tab:green" if side == "BUY" else "tab:red"),
-            bbox=dict(boxstyle="round,pad=0.35",
-                      fc="white",
-                      ec=("tab:green" if side=="BUY" else "tab:red"),
-                      alpha=0.98),
-            arrowprops=dict(arrowstyle="->",
-                            color=("tab:green" if side=="BUY" else "tab:red"),
-                            lw=1.6),
-            annotation_clip=False,
-            zorder=1000
-        )
-        ax.scatter([ts], [px], s=60, c=("tab:green" if side=="BUY" else "tab:red"), zorder=1001)
-    except Exception:
-        annotate_signal_box(ax, ts, px, side, note=note)
-
-# --- NEW: Outside marker for confirmed reversals ("Price Reversed") ---
-def annotate_price_reversed_outside(ax, ts, px, side: str = None):
-    """
-    Adds a neutral, outside-of-plot box labeled 'Price Reversed' with an arrow
-    from the reversal point inside the chart. Color follows side if provided.
-    """
-    try:
-        fig = ax.figure
-        ax_bbox = ax.get_position()
-        x_disp, _ = ax.transData.transform((ts, px))
-        x_fig, _ = fig.transFigure.inverted().transform((x_disp, 0.0))
-        x_text = float(np.clip(x_fig, 0.08, 0.92))
-        y_text = float(min(0.99, ax_bbox.y1 + 0.06))
-        color = "tab:green" if (isinstance(side, str) and side.upper() == "BUY") else ("tab:red" if (isinstance(side, str) and side.upper() == "SELL") else "black")
-        ax.annotate(
-            "Price Reversed",
-            xy=(ts, px),
-            xycoords='data',
-            xytext=(x_text, y_text),
-            textcoords=fig.transFigure,
-            ha='center',
-            va='bottom',
-            fontsize=10,
-            fontweight="bold",
-            color=color,
-            bbox=dict(boxstyle="round,pad=0.35", fc="white", ec=color, alpha=0.98),
-            arrowprops=dict(arrowstyle="->", color=color, lw=1.6),
-            annotation_clip=False,
-            zorder=1100
-        )
-        ax.scatter([ts], [px], s=60, c=color, zorder=1101)
-    except Exception:
-        pass
-
 def annotate_star(ax, ts, px, kind: str, show_text: bool = False, color_override: str = None):
     color = color_override if color_override else ("tab:red" if kind == "peak" else "tab:green")
     label = "★ Peak REV" if kind == "peak" else "★ Trough REV"
@@ -916,7 +847,6 @@ def last_hma_cross_star(price: pd.Series,
         t = down_cross[down_cross].index[-1]
         return {"time": t, "price": float(p.loc[t]), "kind": "peak"}
     return None
-
 # --- NEW: Breakout detection (ADDED) ---
 def last_breakout_signal(price: pd.Series,
                          resistance: pd.Series,
@@ -1305,7 +1235,6 @@ with tab1:
     st.caption("The Slope Line serves as an informational tool that signals potential trend changes and should be used for risk management rather than trading decisions. Trading based on the slope should only occur when it aligns with the trend line.")
 
     caution_below_btn = st.empty()
-
     if st.session_state.run_all and st.session_state.ticker == sel:
         df = st.session_state.df_hist
         df_ohlc = st.session_state.df_ohlc
@@ -1404,11 +1333,10 @@ with tab1:
                 price=df_show, band_upper=upper_d_show, band_lower=lower_d_show,
                 trend_slope=m_d, prox=sr_prox_pct, confirm_bars=rev_bars_confirm
             )
+            # KEEP BUY Band REV (triangle + badge). REMOVE SELL Band REV callout.
             if band_sig_d is not None and band_sig_d.get("side") == "BUY":
                 badges_top.append((f"▲ BUY Band REV @{fmt_price_val(band_sig_d['price'])}", "tab:green"))
                 annotate_buy_triangle(ax, band_sig_d["time"], band_sig_d["price"])
-            elif band_sig_d is not None and band_sig_d.get("side") == "SELL":
-                annotate_band_rev_outside(ax, band_sig_d["time"], band_sig_d["price"], band_sig_d["side"], note=band_sig_d.get("note",""))
 
             # Star (Daily)
             star_d = last_reversal_star(df_show, trend_slope=m_d, lookback=20, confirm_bars=rev_bars_confirm)
@@ -1460,13 +1388,6 @@ with tab1:
                 else:
                     annotate_signal_box(ax, sr99_sig["time"], sr99_sig["price"], side="SELL", note=sr99_sig["note"])
                     badges_top.append((f"▼ SELL ALERT 99% SR REV @{fmt_price_val(sr99_sig['price'])}", "tab:red"))
-
-            # NEW: Add outside "Price Reversed" marker (Daily)
-            if band_sig_d is not None:
-                annotate_price_reversed_outside(ax, band_sig_d["time"], band_sig_d["price"], side=band_sig_d.get("side"))
-            elif star_d is not None:
-                _side = "BUY" if star_d.get("kind") == "trough" else "SELL"
-                annotate_price_reversed_outside(ax, star_d["time"], star_d["price"], side=_side)
 
             draw_top_badges(ax, badges_top)
 
@@ -1590,14 +1511,12 @@ with tab1:
                     price=hc, band_upper=upper_h, band_lower=lower_h,
                     trend_slope=m_h, prox=sr_prox_pct, confirm_bars=rev_bars_confirm
                 )
+                # KEEP BUY Band REV only. REMOVE SELL Band REV callout.
                 if band_sig_h is not None:
                     tpos = _pos(band_sig_h["time"])
-                    if np.isfinite(tpos):
-                        if band_sig_h.get("side") == "BUY":
-                            badges_top_h.append((f"▲ BUY Band REV @{fmt_price_val(band_sig_h['price'])}", "tab:green"))
-                            annotate_buy_triangle(ax2, tpos, band_sig_h["price"])
-                        else:
-                            annotate_band_rev_outside(ax2, tpos, band_sig_h["price"], band_sig_h["side"], note=band_sig_h.get("note",""))
+                    if np.isfinite(tpos) and band_sig_h.get("side") == "BUY":
+                        badges_top_h.append((f"▲ BUY Band REV @{fmt_price_val(band_sig_h['price'])}", "tab:green"))
+                        annotate_buy_triangle(ax2, tpos, band_sig_h["price"])
 
                 star_h = last_reversal_star(hc, trend_slope=m_h, lookback=20, confirm_bars=rev_bars_confirm)
                 if star_h is not None:
@@ -1622,17 +1541,6 @@ with tab1:
                         else:
                             annotate_breakout(ax2, tpos_bo, breakout_h["price"], "DOWN")
                             badges_top_h.append((f"▼ BREAKDOWN @{fmt_price_val(breakout_h['price'])}", "tab:red"))
-
-                # Price Reversed marker (Hourly)
-                if band_sig_h is not None:
-                    tpos = _pos(band_sig_h["time"])
-                    if np.isfinite(tpos):
-                        annotate_price_reversed_outside(ax2, tpos, band_sig_h["price"], side=band_sig_h.get("side"))
-                elif star_h is not None:
-                    tpos_star = _pos(star_h["time"])
-                    if np.isfinite(tpos_star):
-                        _side_h = "BUY" if star_h.get("kind") == "trough" else "SELL"
-                        annotate_price_reversed_outside(ax2, tpos_star, star_h["price"], side=_side_h)
 
                 draw_top_badges(ax2, badges_top_h)
 
@@ -1721,6 +1629,7 @@ with tab1:
         st.write(pd.DataFrame({"Forecast": st.session_state.fc_vals,
                                "Lower":    st.session_state.fc_ci.iloc[:,0],
                                "Upper":    st.session_state.fc_ci.iloc[:,1]}, index=st.session_state.fc_idx))
+
 # --- Tab 2: Enhanced Forecast ---
 with tab2:
     st.header("Enhanced Forecast")
@@ -1802,11 +1711,10 @@ with tab2:
             badges_top2 = []
             band_sig_d2 = last_band_reversal_signal(price=df_show, band_upper=up_d_show, band_lower=lo_d_show,
                                                     trend_slope=m_d, prox=sr_prox_pct, confirm_bars=rev_bars_confirm)
+            # KEEP BUY Band REV only. REMOVE SELL Band REV callout.
             if band_sig_d2 is not None and band_sig_d2.get("side") == "BUY":
                 badges_top2.append((f"▲ BUY Band REV @{fmt_price_val(band_sig_d2['price'])}", "tab:green"))
                 annotate_buy_triangle(ax, band_sig_d2["time"], band_sig_d2["price"])
-            elif band_sig_d2 is not None and band_sig_d2.get("side") == "SELL":
-                annotate_band_rev_outside(ax, band_sig_d2["time"], band_sig_d2["price"], band_sig_d2["side"], note=band_sig_d2.get("note",""))
 
             try:
                 res_val_d2 = float(res30_show.iloc[-1])
@@ -1867,13 +1775,6 @@ with tab2:
                 else:
                     annotate_signal_box(ax, sr99_sig2["time"], sr99_sig2["price"], side="SELL", note=sr99_sig2["note"])
                     badges_top2.append((f"▼ SELL ALERT 99% SR REV @{fmt_price_val(sr99_sig2['price'])}", "tab:red"))
-
-            # NEW: Add outside "Price Reversed" marker (Enhanced Daily)
-            if band_sig_d2 is not None:
-                annotate_price_reversed_outside(ax, band_sig_d2["time"], band_sig_d2["price"], side=band_sig_d2.get("side"))
-            elif star_d2 is not None:
-                _side2 = "BUY" if star_d2.get("kind") == "trough" else "SELL"
-                annotate_price_reversed_outside(ax, star_d2["time"], star_d2["price"], side=_side2)
 
             draw_top_badges(ax, badges_top2)
 
