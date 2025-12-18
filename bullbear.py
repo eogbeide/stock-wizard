@@ -38,6 +38,8 @@
 #       includes the **Price Reversed** outside marker.
 #   • NEW (Dec 2025): Hourly chart: removed ±2σ lines; added Buy/Sell signal when
 #       HMA(55) cross occurs AFTER support/resistance reversal in agreement with GLOBAL slope.
+#   • NEW (Dec 2025): **De-clutter HMA Buy signal** — for Daily charts, the HMA **Buy** cross
+#       is now shown as a **top badge only** (no in-chart star/marker). HMA **Sell** star remains.
 
 import streamlit as st
 import pandas as pd
@@ -273,7 +275,7 @@ def draw_instruction_ribbons(ax,
     """
     Single sentence, trend-aware instruction banner aligned with the *local* slope.
     NEW: If `global_slope` is provided and its sign disagrees with `trend_slope`,
-         we DO NOT show BUY/SELL instructions; instead we show an ALERT banner.
+         we DO NOT show BUY/SELL instructions; instead we show an **ALERT** banner.
     """
     def _finite(x):
         try: return np.isfinite(float(x))
@@ -915,10 +917,10 @@ def last_hma_cross_star(price: pd.Series,
 
     if trend_slope > 0 and up_cross.any():
         t = up_cross[up_cross].index[-1]
-        return {"time": t, "price": float(p.loc[t]), "kind": "trough"}
+        return {"time": t, "price": float(p.loc[t]), "kind": "trough"}  # BUY
     if trend_slope < 0 and down_cross.any():
         t = down_cross[down_cross].index[-1]
-        return {"time": t, "price": float(p.loc[t]), "kind": "peak"}
+        return {"time": t, "price": float(p.loc[t]), "kind": "peak"}    # SELL
     return None
 
 # --- NEW: Breakout detection (ADDED) ---
@@ -1507,13 +1509,14 @@ with tab1:
                 elif star_d.get("kind") == "peak":
                     badges_top.append((f"★ Peak REV @{fmt_price_val(star_d['price'])}", "tab:red"))
 
-            # HMA-cross star (Daily)
+            # HMA-cross star (Daily) — DE-CLUTTER: BUY shown as TOP BADGE ONLY, no in-chart star
             hma_cross_star = last_hma_cross_star(df_show, hma_d_full, trend_slope=m_d, lookback=30)
             if hma_cross_star is not None:
                 if hma_cross_star["kind"] == "trough":
-                    annotate_star(ax, hma_cross_star["time"], hma_cross_star["price"], hma_cross_star["kind"], show_text=False, color_override="black")
+                    # NO annotate_star here to avoid clutter; badge only
                     badges_top.append((f"★ Buy HMA Cross @{fmt_price_val(hma_cross_star['price'])}", "black"))
                 else:
+                    # SELL remains annotated in-chart (blue star) + badge
                     annotate_star(ax, hma_cross_star["time"], hma_cross_star["price"], hma_cross_star["kind"], show_text=False, color_override="tab:blue")
                     badges_top.append((f"★ Sell HMA Cross @{fmt_price_val(hma_cross_star['price'])}", "tab:blue"))
 
@@ -1773,9 +1776,6 @@ with tab1:
                     slope_col_h = "tab:green" if m_h >= 0 else "tab:red"
                     ax2.plot(x_mt, yhat_h.reindex(idx_mt).values, "-", linewidth=2.6, color=slope_col_h, alpha=0.95, label="Slope Fit")
                 # >>> REMOVED: ±2σ lines from HOURLY chart (per request)
-                # if not upper_h.empty and not lower_h.empty:
-                #     ax2.plot(x_mt, upper_h.reindex(idx_mt).values, ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
-                #     ax2.plot(x_mt, lower_h.reindex(idx_mt).values, ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
 
                 if mode == "Forex" and show_sessions_pst and not hc.empty:
                     sess_dt = compute_session_lines(idx_mt)
@@ -1939,10 +1939,11 @@ with tab2:
                 elif star_d2.get("kind") == "peak":
                     badges_top2.append((f"★ Peak REV @{fmt_price_val(star_d2['price'])}", "tab:red"))
 
+            # HMA-cross star (Enhanced Daily) — DE-CLUTTER BUY
             hma_cross_star2 = last_hma_cross_star(df_show, hma_d2_full, trend_slope=m_d, lookback=30)
             if hma_cross_star2 is not None:
                 if hma_cross_star2["kind"] == "trough":
-                    annotate_star(ax, hma_cross_star2["time"], hma_cross_star2["price"], hma_cross_star2["kind"], show_text=False, color_override="black")
+                    # Badge only to avoid clutter
                     badges_top2.append((f"★ Buy HMA Cross @{fmt_price_val(hma_cross_star2['price'])}", "black"))
                 else:
                     annotate_star(ax, hma_cross_star2["time"], hma_cross_star2["price"], hma_cross_star2["kind"], show_text=False, color_override="tab:blue")
