@@ -36,10 +36,8 @@
 #   • NEW (Dec 2025): Instruction banner shows BUY/SELL **only if** Global Trendline and Local
 #       Slope are aligned. If opposed, show an **ALERT** (no trade instruction). Daily chart also
 #       includes the **Price Reversed** outside marker.
-#   • NEW (Request): Hourly view shows **only the GLOBAL dashed trendline** (local dashed slope hidden),
-#       and prints **BUY/SELL** when **HMA 55** crosses **Support/Resistance** in the direction of the
-#       **GLOBAL** trend (BUY = uptrend + HMA55 crosses up through Support; SELL = downtrend + HMA55
-#       crosses down through Resistance).
+#   • NEW (This update): Removed ±2σ (regression band) **lines from the hourly chart** rendering,
+#       and added **HMA(55) × Support/Resistance cross signals** gated by the **global trendline**.
 
 import streamlit as st
 import pandas as pd
@@ -427,7 +425,7 @@ if mode == "Stock":
 else:
     universe = [
         'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X','NZDJPY=X',
-        'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF	X','EURGBP=X','EURCAD=X','NZDUSD=X',
+        'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','EURCAD=X','NZDUSD=X',
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
     ]
 
@@ -1265,40 +1263,35 @@ def _align_series_to_index(s: pd.Series, idx: pd.DatetimeIndex) -> pd.Series:
         out = out.ffill().bfill()
     return out.reindex(idx)
 
-# --- NEW: Hourly HMA55 vs Support/Resistance cross (global-trend qualified) ---
-def hma_sr_cross_signal(hma: pd.Series,
-                        support: pd.Series,
-                        resistance: pd.Series,
-                        global_slope: float) -> dict | None:
+# --- NEW: Hourly HMA(55) × S/R cross signal, gated by **global trendline** ---
+def last_hma_sr_cross_signal(hma: pd.Series,
+                             support: pd.Series,
+                             resistance: pd.Series,
+                             global_slope: float):
     """
-    Returns a signal at the latest bar if:
-      • BUY  when global_slope > 0 AND HMA crosses UP through Support AND HMA slope > 0
-      • SELL when global_slope < 0 AND HMA crosses DOWN through Resistance AND HMA slope < 0
-    Output: {"side": "BUY"/"SELL", "time": last_ts, "price": hma_now} or None
+    Returns the latest crossing signal where:
+      • BUY  when global_slope > 0 and HMA crosses **up** through Support with HMA rising.
+      • SELL when global_slope < 0 and HMA crosses **down** through Resistance with HMA falling.
+    Output: {"time","price","side","note"} or None
     """
     if not np.isfinite(global_slope) or global_slope == 0:
         return None
-    h = _coerce_1d_series(hma).astype(float)
-    s = _coerce_1d_series(support).astype(float).reindex(h.index).ffill().bfill()
-    r = _coerce_1d_series(resistance).astype(float).reindex(h.index).ffill().bfill()
-
-    if len(h.dropna()) < 2 or s.dropna().empty or r.dropna().empty:
-        return None
-    try:
-        h_prev, h_now = float(h.iloc[-2]), float(h.iloc[-1])
-        s_prev, s_now = float(s.iloc[-2]), float(s.iloc[-1])
-        r_prev, r_now = float(r.iloc[-2]), float(r.iloc[-1])
-    except Exception:
+    h = _coerce_1d_series(hma).astype(float).dropna()
+    s = _coerce_1d_series(support).reindex(h.index).astype(float)
+    r = _coerce_1d_series(resistance).reindex(h.index).astype(float)
+    if h.empty or (s.dropna().empty and r.dropna().empty):
         return None
 
-    dh = h_now - h_prev
-    up_cross   = (h_prev <= s_prev) and (h_now > s_now) and (dh > 0)
-    down_cross = (h_prev >= r_prev) and (h_now < r_now) and (dh < 0)
-
-    if global_slope > 0 and up_cross:
-        return {"side": "BUY", "time": h.index[-1], "price": h_now}
-    if global_slope < 0 and down_cross:
-        return {"side": "SELL", "time": h.index[-1], "price": h_now}
+    if global_slope > 0:
+        cond = (h.shift(1) <= s.shift(1)) & (h > s) & (h.diff() > 0)
+        if cond.any():
+            t = cond[cond].index[-1]
+            return {"time": t, "price": float(h.loc[t]), "side": "BUY", "note": "HMA55×Support"}
+    else:
+        cond = (h.shift(1) >= r.shift(1)) & (h < r) & (h.diff() < 0)
+        if cond.any():
+            t = cond[cond].index[-1]
+            return {"time": t, "price": float(h.loc[t]), "side": "SELL", "note": "HMA55×Resistance"}
     return None
 
 # --- Session init ---
@@ -1543,16 +1536,19 @@ with tab1:
             else:
                 hc = intraday["Close"].astype(float).ffill()
                 xh = np.arange(len(hc), dtype=float)
-                # Local slope is still computed for alignment checks, but NOT plotted
                 if len(hc.dropna()) >= 2:
                     try:
                         coef = np.polyfit(xh, hc.values.astype(float), 1)
                         slope_h = float(coef[0]); intercept_h = float(coef[1])
-                        _ = slope_h * xh + intercept_h  # keep for internal comparisons
+                        trend_h = slope_h * xh + intercept_h
                     except Exception:
                         slope_h = 0.0
+                        intercept_h = float(hc.iloc[-1]) if len(hc) else 0.0
+                        trend_h = np.full_like(xh, intercept_h, dtype=float)
                 else:
                     slope_h = 0.0
+                    intercept_h = float(hc.iloc[-1]) if len(hc) else 0.0
+                    trend_h = np.full_like(xh, intercept_h, dtype=float)
 
                 he = hc.ewm(span=20).mean()
                 res_h = hc.rolling(sr_lb_hourly, min_periods=1).max()
@@ -1572,7 +1568,7 @@ with tab1:
                 psar_h_df = compute_psar_from_ohlc(intraday, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
                 psar_h_aligned = _align_series_to_index(psar_h_df["PSAR"], hc.index) if (show_psar and not psar_h_df.empty and "PSAR" in psar_h_df) else pd.Series(index=hc.index, dtype=float)
 
-                # Hourly regression slope & bands (GLOBAL)
+                # Hourly regression slope (GLOBAL); we still compute bands but we will NOT draw them
                 yhat_h, upper_h, lower_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
 
                 # Show caution banner below button if LOCAL vs GLOBAL disagree
@@ -1592,16 +1588,12 @@ with tab1:
                 fig2, ax2 = plt.subplots(figsize=(14,4))
                 plt.subplots_adjust(top=0.86, right=0.995, left=0.06)
 
+                trend_color = "tab:green" if slope_h >= 0 else "tab:red"
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
 
-                # Price + helpers
                 ax2.plot(x_mt, hc.values, label="Price", linewidth=1.2)
                 ax2.plot(x_mt, he.reindex(idx_mt).values, "--", alpha=0.45, linewidth=0.9, label="_nolegend_")
-                # ❌ Removed LOCAL dashed slope line
-                # ✅ Show only GLOBAL trendline as dashed
-                if not yhat_h.empty:
-                    slope_col_h = "tab:green" if m_h >= 0 else "tab:red"
-                    ax2.plot(x_mt, yhat_h.reindex(idx_mt).values, "--", linewidth=2.6, color=slope_col_h, alpha=0.95, label="Global Trend")
+                ax2.plot(x_mt, trend_h, "--", label="Trend", linewidth=2.4, color=trend_color, alpha=0.95)
 
                 if show_hma and not hma_h.dropna().empty:
                     ax2.plot(x_mt, hma_h.reindex(idx_mt).values, "-", linewidth=1.3, alpha=0.9, label="HMA")
@@ -1630,6 +1622,7 @@ with tab1:
 
                 badges_top_h = []
 
+                # Band reversal (Hourly) — still computed, but band LINES are not drawn anymore
                 band_sig_h = last_band_reversal_signal(
                     price=hc, band_upper=upper_h, band_lower=lower_h,
                     trend_slope=m_h, prox=sr_prox_pct, confirm_bars=rev_bars_confirm
@@ -1643,6 +1636,7 @@ with tab1:
                         else:
                             annotate_band_rev_outside(ax2, tpos, band_sig_h["price"], band_sig_h["side"], note=band_sig_h.get("note",""))
 
+                # Star (Hourly)
                 star_h = last_reversal_star(hc, trend_slope=m_h, lookback=20, confirm_bars=rev_bars_confirm)
                 if star_h is not None:
                     tpos_star = _pos(star_h["time"])
@@ -1653,6 +1647,7 @@ with tab1:
                         elif star_h.get("kind") == "peak":
                             badges_top_h.append((f"★ Peak REV @{fmt_price_val(star_h['price'])}", "tab:red"))
 
+                # Breakout (Hourly)
                 breakout_h = last_breakout_signal(
                     price=hc, resistance=res_h, support=sup_h,
                     prox=sr_prox_pct, confirm_bars=rev_bars_confirm
@@ -1667,22 +1662,19 @@ with tab1:
                             annotate_breakout(ax2, tpos_bo, breakout_h["price"], "DOWN")
                             badges_top_h.append((f"▼ BREAKDOWN @{fmt_price_val(breakout_h['price'])}", "tab:red"))
 
-                # ✅ NEW: Hourly HMA55 vs S/R cross signal (qualified by GLOBAL trend)
-                try:
-                    hma_al = hma_h.reindex(idx_mt)
-                    cross_sig = hma_sr_cross_signal(hma_al, sup_h.reindex(idx_mt), res_h.reindex(idx_mt), m_h)
-                    if cross_sig is not None:
-                        tpos_last = float(len(x_mt) - 1)
-                        annotate_signal_box(ax2, tpos_last, float(hma_al.iloc[-1]),
-                                            side=cross_sig["side"],
-                                            note="HMA55 SR Cross")
-                        # Optional: show a compact top badge
-                        if cross_sig["side"] == "BUY":
-                            badges_top_h.append((f"▲ BUY HMA55↗ S Cross @{fmt_price_val(hma_al.iloc[-1])}", "tab:green"))
+                # --- NEW: HMA(55) × Support/Resistance Cross (Hourly), gated by GLOBAL trendline ---
+                hma_sr_sig_h = last_hma_sr_cross_signal(
+                    hma=hma_h, support=sup_h, resistance=res_h, global_slope=m_h
+                )
+                if hma_sr_sig_h is not None:
+                    tpos_cross = _pos(hma_sr_sig_h["time"])
+                    if np.isfinite(tpos_cross):
+                        annotate_signal_box(ax2, tpos_cross, hma_sr_sig_h["price"],
+                                            side=hma_sr_sig_h["side"], note=hma_sr_sig_h["note"])
+                        if hma_sr_sig_h["side"] == "BUY":
+                            badges_top_h.append((f"▲ HMA55 × Support @{fmt_price_val(hma_sr_sig_h['price'])}", "tab:green"))
                         else:
-                            badges_top_h.append((f"▼ SELL HMA55↘ R Cross @{fmt_price_val(hma_al.iloc[-1])}", "tab:red"))
-                except Exception:
-                    pass
+                            badges_top_h.append((f"▼ HMA55 × Resistance @{fmt_price_val(hma_sr_sig_h['price'])}", "tab:red"))
 
                 # Price Reversed marker (Hourly)
                 if band_sig_h is not None:
@@ -1697,7 +1689,7 @@ with tab1:
 
                 draw_top_badges(ax2, badges_top_h)
 
-                # TOP instruction banner (Hourly) — LOCAL=dashed slope_h (not shown) ; GLOBAL=m_h
+                # TOP instruction banner (Hourly) — LOCAL=dashed slope_h; GLOBAL=m_h
                 draw_instruction_ribbons(ax2, slope_h, sup_val, res_val, px_val, sel,
                                          confirm_side=None,
                                          global_slope=m_h)
@@ -1722,11 +1714,11 @@ with tab1:
 
                 if not st_line_intr.dropna().empty:
                     ax2.plot(x_mt, st_line_intr.reindex(idx_mt).values, "-", alpha=0.6, label="_nolegend_")
-                # ❌ Do not re-plot LOCAL trend
-                # ✅ Keep GLOBAL bands and show GLOBAL trend dashed (already plotted)
-                if not upper_h.empty and not lower_h.empty:
-                    ax2.plot(x_mt, upper_h.reindex(idx_mt).values, ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
-                    ax2.plot(x_mt, lower_h.reindex(idx_mt).values, ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
+                if not yhat_h.empty:
+                    slope_col_h = "tab:green" if m_h >= 0 else "tab:red"
+                    ax2.plot(x_mt, yhat_h.reindex(idx_mt).values, "-", linewidth=2.6, color=slope_col_h, alpha=0.95, label="Slope Fit")
+                # >>> REMOVED: ±2σ lines on the hourly chart <<<
+                # (upper_h / lower_h still computed for internal signals, but not drawn)
 
                 if mode == "Forex" and show_sessions_pst and not hc.empty:
                     sess_dt = compute_session_lines(idx_mt)
