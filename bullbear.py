@@ -39,6 +39,8 @@
 #   • NEW (Dec 2025): Instruction banner shows BUY/SELL **only if** Global Trendline and Local
 #       Slope are aligned. If opposed, show an **ALERT** (no trade instruction).
 #   • NEW (MACD): Added MACD panel (MACD/Signal/Histogram) beneath Daily + Intraday charts.
+#
+#   • UPDATE (This request): Add Parabolic SAR line and Supertrend line to the PRICE chart.
 
 import streamlit as st
 import pandas as pd
@@ -865,7 +867,7 @@ def last_hma_cross_star(price: pd.Series,
         return {"time": t, "price": float(p.loc[t]), "kind": "trough"}
     if trend_slope < 0 and down_cross.any():
         t = down_cross[down_cross].index[-1]
-        return {"time": t, "price": float(p.loc[t]), "kind": "peak"}
+        return {"time": t, "price": float(p.iloc[-1]), "kind": "peak"}
     return None
 # =========================
 # Part 3/5 — bullbear.py
@@ -1213,6 +1215,47 @@ def _align_series_to_index(s: pd.Series, idx: pd.DatetimeIndex) -> pd.Series:
         out = out.ffill().bfill()
     return out.reindex(idx)
 
+# --- NEW: Supertrend plotter (adds SuperTrend line to price charts) ---
+def plot_supertrend_line(ax, x_vals, st_df: pd.DataFrame, idx: pd.DatetimeIndex, use_positions: bool = False,
+                         lw: float = 1.8, alpha: float = 0.75):
+    """
+    Plots SuperTrend on the price chart (green when in_uptrend, red when not).
+    Works with datetime x (use_positions=False) and compressed numeric x (use_positions=True).
+    """
+    if st_df is None or st_df.empty:
+        return
+    if "ST" not in st_df.columns:
+        return
+
+    st_line = _coerce_1d_series(st_df["ST"]).reindex(idx)
+    st_line = _align_series_to_index(st_line, idx)
+
+    in_up = None
+    if "in_uptrend" in st_df.columns:
+        in_up = st_df["in_uptrend"].reindex(idx)
+        try:
+            in_up = in_up.ffill().bfill().astype(bool)
+        except Exception:
+            in_up = pd.Series(index=idx, dtype=bool)
+
+    if in_up is None or in_up.dropna().empty:
+        # fallback: plot single ST line
+        if use_positions:
+            ax.plot(x_vals, st_line.values, "-", linewidth=lw, alpha=alpha, label="SuperTrend")
+        else:
+            ax.plot(idx, st_line.values, "-", linewidth=lw, alpha=alpha, label="SuperTrend")
+        return
+
+    up_line = st_line.where(in_up == True)
+    dn_line = st_line.where(in_up == False)
+
+    if use_positions:
+        ax.plot(x_vals, up_line.values, "-", linewidth=lw, alpha=alpha, color="tab:green", label="SuperTrend")
+        ax.plot(x_vals, dn_line.values, "-", linewidth=lw, alpha=alpha, color="tab:red",   label="_nolegend_")
+    else:
+        ax.plot(idx, up_line.values, "-", linewidth=lw, alpha=alpha, color="tab:green", label="SuperTrend")
+        ax.plot(idx, dn_line.values, "-", linewidth=lw, alpha=alpha, color="tab:red",   label="_nolegend_")
+
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -1291,6 +1334,9 @@ with tab1:
             # --- Daily PSAR (purple) ---
             psar_d_df = compute_psar_from_ohlc(df_ohlc, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
 
+            # --- Daily SuperTrend (ATR 10, factor 3 by default sliders) ---
+            st_d_df = compute_supertrend(df_ohlc, atr_period=atr_period, atr_mult=atr_mult) if (df_ohlc is not None and not df_ohlc.empty) else pd.DataFrame()
+
             # map to the selected daily view
             df_show     = subset_by_daily_view(df, daily_view)
             psar_d_show = _align_series_to_index(psar_d_df["PSAR"], df_show.index) if (show_psar and not psar_d_df.empty and "PSAR" in psar_d_df) else pd.Series(index=df_show.index, dtype=float)
@@ -1336,6 +1382,10 @@ with tab1:
             # --- PLOT PSAR as a purple line (aligned & on top) ---
             if show_psar and not psar_d_show.dropna().empty:
                 ax.plot(psar_d_show.index, psar_d_show.values, "-", linewidth=1.8, color="purple", alpha=0.95, label="PSAR", zorder=6)
+
+            # --- PLOT SuperTrend line on Daily price chart ---
+            if st_d_df is not None and not st_d_df.empty:
+                plot_supertrend_line(ax, None, st_d_df, df_show.index, use_positions=False, lw=1.8, alpha=0.75)
 
             if not yhat_d_show.empty:
                 slope_col_d = "tab:green" if m_d >= 0 else "tab:red"
@@ -1547,6 +1597,11 @@ with tab1:
                     ax2.fill_between(x_mt, bb_lo_h.reindex(idx_mt).values, bb_up_h.reindex(idx_mt).values, alpha=0.04, label="_nolegend_")
                     ax2.plot(x_mt, bb_mid_h.reindex(idx_mt).values, "-", linewidth=0.8, alpha=0.3, label="_nolegend_")
 
+                # --- PLOT SuperTrend line on Intraday price chart (green/red) ---
+                if st_intraday is not None and not st_intraday.empty:
+                    plot_supertrend_line(ax2, x_mt, st_intraday, idx_mt, use_positions=True, lw=1.8, alpha=0.75)
+
+                # --- PLOT PSAR as a purple line (aligned) ---
                 if show_psar and not psar_h_aligned.dropna().empty:
                     ax2.plot(x_mt, psar_h_aligned.reindex(idx_mt).values, "-", linewidth=1.8, color="purple", alpha=0.95, label="PSAR", zorder=6)
 
@@ -1624,8 +1679,6 @@ with tab1:
                              fontsize=10, fontweight="bold",
                              bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-                if not st_line_intr.dropna().empty:
-                    ax2.plot(x_mt, st_line_intr.reindex(idx_mt).values, "-", alpha=0.6, label="_nolegend_")
                 if not yhat_h.empty:
                     slope_col_h = "tab:green" if m_h >= 0 else "tab:red"
                     ax2.plot(x_mt, yhat_h.reindex(idx_mt).values, "-", linewidth=2.6, color=slope_col_h, alpha=0.95, label="Slope Fit")
@@ -1734,6 +1787,9 @@ with tab2:
 
             psar_d2_df = compute_psar_from_ohlc(df_ohlc, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
 
+            # --- Enhanced Daily SuperTrend ---
+            st_d2_df = compute_supertrend(df_ohlc, atr_period=atr_period, atr_mult=atr_mult) if (df_ohlc is not None and not df_ohlc.empty) else pd.DataFrame()
+
             df_show = subset_by_daily_view(df, daily_view)
             ema30_show = ema30.reindex(df_show.index)
             res30_show = res30.reindex(df_show.index)
@@ -1775,6 +1831,10 @@ with tab2:
 
             if show_psar and not psar_d2_show.dropna().empty:
                 ax.plot(psar_d2_show.index, psar_d2_show.values, "-", linewidth=1.8, color="purple", alpha=0.95, label="PSAR", zorder=6)
+
+            # --- PLOT SuperTrend line on Enhanced Daily price chart ---
+            if st_d2_df is not None and not st_d2_df.empty:
+                plot_supertrend_line(ax, None, st_d2_df, df_show.index, use_positions=False, lw=1.8, alpha=0.75)
 
             if not yhat_d_show.empty:
                 slope_col_d2 = "tab:green" if m_d >= 0 else "tab:red"
