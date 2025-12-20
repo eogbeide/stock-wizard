@@ -816,6 +816,13 @@ def annotate_buy_triangle(ax, ts, px, size: int = 140):
     except Exception:
         ax.text(ts, px, "▲", color="tab:green", fontsize=12, fontweight="bold", zorder=12)
 
+# NEW (This request): Sell triangle helper (for MACD panel)
+def annotate_sell_triangle(ax, ts, px, size: int = 140):
+    try:
+        ax.scatter([ts], [px], marker="v", s=size, c="tab:red", edgecolors="none", zorder=12)
+    except Exception:
+        ax.text(ts, px, "▼", color="tab:red", fontsize=12, fontweight="bold", zorder=12)
+
 # --- Star: recent peak/trough + reversal (trend-aware) ---
 def last_reversal_star(price: pd.Series,
                        trend_slope: float,
@@ -988,6 +995,46 @@ def annotate_fib_reversal(ax, ts, y_level: float, direction: str, label: str = "
 
 # --- NEW (Daily-only): 99% confidence SR reversal logic ---
 Z_FOR_99 = 2.576  # ≈ 99% two-sided (~2.58σ)
+
+# NEW (This request): MACD zero-cross with 99% confidence (trend-filtered)
+def last_macd_zero_cross_confident(macd: pd.Series,
+                                   trend_slope: float,
+                                   z: float = Z_FOR_99,
+                                   vol_lookback: int = 60,
+                                   scan_back: int = 160):
+    """
+    Returns the latest MACD 0-line cross that is '99% confident' (|MACD| >= z * rolling_std)
+    and trend-filtered by GLOBAL trend slope sign:
+      • Uptrend (trend_slope > 0): BUY when MACD crosses up through 0 and MACD >= z*σ
+      • Downtrend (trend_slope < 0): SELL when MACD crosses down through 0 and -MACD >= z*σ
+    """
+    m = _coerce_1d_series(macd).dropna()
+    if m.shape[0] < 3 or not np.isfinite(trend_slope) or trend_slope == 0:
+        return None
+
+    k = int(max(10, vol_lookback // 3))
+    sig = m.rolling(int(vol_lookback), min_periods=k).std().replace(0, np.nan)
+
+    start = max(1, len(m) - int(scan_back))
+    for i in range(len(m) - 1, start - 1, -1):
+        prev = float(m.iloc[i - 1]) if np.isfinite(m.iloc[i - 1]) else np.nan
+        curr = float(m.iloc[i]) if np.isfinite(m.iloc[i]) else np.nan
+        sgm  = float(sig.iloc[i]) if np.isfinite(sig.iloc[i]) else np.nan
+        if not (np.isfinite(prev) and np.isfinite(curr) and np.isfinite(sgm) and sgm > 0):
+            continue
+
+        if float(trend_slope) > 0:
+            crossed = (prev <= 0.0) and (curr > 0.0)
+            confident = (curr >= float(z) * sgm)
+            if crossed and confident:
+                return {"time": m.index[i], "value": curr, "side": "BUY"}
+        else:
+            crossed = (prev >= 0.0) and (curr < 0.0)
+            confident = ((-curr) >= float(z) * sgm)
+            if crossed and confident:
+                return {"time": m.index[i], "value": curr, "side": "SELL"}
+
+    return None
 
 def _rel_near(a: float, b: float, tol: float) -> bool:
     try:
@@ -1491,15 +1538,23 @@ with tab1:
                     fontsize=9, color="black",
                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-            # MACD panel (Daily)
-            if not macd_d.dropna().empty or not macd_sig_d.dropna().empty:
+            # MACD panel (Daily)  — UPDATED (This request):
+            #   • Remove Signal line from MACD chart
+            #   • Add BUY/SELL triangles when MACD crosses 0 with 99% confidence, filtered by GLOBAL trend (m_d)
+            if not macd_d.dropna().empty:
                 axm.plot(df_show.index, macd_d.reindex(df_show.index).values, linewidth=1.1, label="MACD")
-                axm.plot(df_show.index, macd_sig_d.reindex(df_show.index).values, linewidth=1.1, label="Signal")
                 try:
                     axm.bar(df_show.index, macd_hist_d.reindex(df_show.index).values, width=1.0, alpha=0.25, label="Hist")
                 except Exception:
                     pass
                 axm.axhline(0, linewidth=0.9, alpha=0.6)
+
+                macd_cross_d = last_macd_zero_cross_confident(macd_d.reindex(df_show.index), trend_slope=m_d, z=Z_FOR_99)
+                if macd_cross_d is not None:
+                    if macd_cross_d["side"] == "BUY":
+                        annotate_buy_triangle(axm, macd_cross_d["time"], macd_cross_d["value"], size=120)
+                    else:
+                        annotate_sell_triangle(axm, macd_cross_d["time"], macd_cross_d["value"], size=120)
 
             _simplify_axes(ax)
             _simplify_axes(axm)
@@ -1718,15 +1773,25 @@ with tab1:
                     except Exception:
                         pass
 
-                # MACD panel (Hourly)
-                if not macd_h.dropna().empty or not macd_sig_h.dropna().empty:
+                # MACD panel (Hourly) — UPDATED (This request):
+                #   • Remove Signal line from MACD chart
+                #   • Add BUY/SELL triangles when MACD crosses 0 with 99% confidence, filtered by GLOBAL trend (m_h)
+                if not macd_h.dropna().empty:
                     ax2m.plot(x_mt, macd_h.reindex(idx_mt).values, linewidth=1.1, label="MACD")
-                    ax2m.plot(x_mt, macd_sig_h.reindex(idx_mt).values, linewidth=1.1, label="Signal")
                     try:
                         ax2m.bar(x_mt, macd_hist_h.reindex(idx_mt).values, width=0.8, alpha=0.25, label="Hist")
                     except Exception:
                         pass
                     ax2m.axhline(0, linewidth=0.9, alpha=0.6)
+
+                    macd_cross_h = last_macd_zero_cross_confident(macd_h.reindex(idx_mt), trend_slope=m_h, z=Z_FOR_99)
+                    if macd_cross_h is not None:
+                        x_cross = _pos(macd_cross_h["time"])
+                        if np.isfinite(x_cross):
+                            if macd_cross_h["side"] == "BUY":
+                                annotate_buy_triangle(ax2m, x_cross, macd_cross_h["value"], size=110)
+                            else:
+                                annotate_sell_triangle(ax2m, x_cross, macd_cross_h["value"], size=110)
 
                 market_time_axis(ax2m, idx_mt)
                 _simplify_axes(ax2)
@@ -1932,15 +1997,23 @@ with tab2:
                     fontsize=9, color="black",
                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-            # MACD panel (Enhanced Daily)
-            if not macd_d2.dropna().empty or not macd_sig_d2.dropna().empty:
+            # MACD panel (Enhanced Daily) — UPDATED (This request):
+            #   • Remove Signal line from MACD chart
+            #   • Add BUY/SELL triangles when MACD crosses 0 with 99% confidence, filtered by GLOBAL trend (m_d)
+            if not macd_d2.dropna().empty:
                 axm.plot(df_show.index, macd_d2.reindex(df_show.index).values, linewidth=1.1, label="MACD")
-                axm.plot(df_show.index, macd_sig_d2.reindex(df_show.index).values, linewidth=1.1, label="Signal")
                 try:
                     axm.bar(df_show.index, macd_hist_d2.reindex(df_show.index).values, width=1.0, alpha=0.25, label="Hist")
                 except Exception:
                     pass
                 axm.axhline(0, linewidth=0.9, alpha=0.6)
+
+                macd_cross_d2 = last_macd_zero_cross_confident(macd_d2.reindex(df_show.index), trend_slope=m_d, z=Z_FOR_99)
+                if macd_cross_d2 is not None:
+                    if macd_cross_d2["side"] == "BUY":
+                        annotate_buy_triangle(axm, macd_cross_d2["time"], macd_cross_d2["value"], size=120)
+                    else:
+                        annotate_sell_triangle(axm, macd_cross_d2["time"], macd_cross_d2["value"], size=120)
 
             _simplify_axes(ax)
             _simplify_axes(axm)
