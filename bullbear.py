@@ -1919,7 +1919,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "Metrics",
     "NTD -0.75 Scanner",
     "Long-Term History",
-    "Upward Slope Stickers",
+    "MACD Hot List",
     "Daily Support Reversals"
 ])
 
@@ -2312,45 +2312,163 @@ with tab6:
             pad_right_xaxis(ax, frac=0.06)
             st.pyplot(fig)
 
-# --- Tab 7: Upward Slope Stickers ---
+# --- Tab 7: MACD Hot List ---
 with tab7:
-    st.header("Upward Slope Stickers")
-    st.caption("Lists symbols whose Daily regression slope is upward (m>0) and latest close is below the trendline.")
+    st.header("MACD Hot List")
+    st.caption(
+        "Shows symbols where the **MACD line** recently crossed the **0.0** line and **price** recently crossed the **HMA(55)** line, "
+        "filtered by **Global Daily Trendline** direction (regression slope)."
+    )
 
-    run99 = st.button("Scan Universe for Upward Slope & Below-Slope", key="btn_scan_upslope_below")
+    recent_bars = int(st.slider("How recent is 'recent' (daily bars)?", 1, 30, 7, 1, key="macd_hot_recent_bars"))
+    run_hot = st.button("Scan Universe for MACD 0-Cross + HMA Cross", key="btn_scan_macd_hot")
 
-    if run99:
-        rows = []
+    if run_hot:
+        up_rows = []
+        dn_rows = []
+
         for sym in universe:
             try:
                 s = fetch_hist(sym)
-                if s is None or s.dropna().shape[0] < max(3, slope_lb_daily):
+                s = _coerce_1d_series(s).dropna()
+                if s is None or s.empty or s.shape[0] < max(30, slope_lb_daily, hma_period + 5):
                     continue
-                yhat_s, _up99, _lo99, m_sym, r2_sym = regression_with_band(s, lookback=slope_lb_daily, z=Z_FOR_99)
-                last_close = float(s.dropna().iloc[-1]) if s.dropna().shape[0] else np.nan
-                last_time = s.dropna().index[-1] if s.dropna().shape[0] else None
-                yhat_last = float(yhat_s.iloc[-1]) if not yhat_s.empty else np.nan
-                if np.isfinite(m_sym) and m_sym > 0 and np.isfinite(last_close) and np.isfinite(yhat_last) and (last_close < yhat_last):
-                    gap = yhat_last - last_close
-                    gap_pct = gap / yhat_last if yhat_last != 0 else np.nan
-                    rows.append({"Symbol": sym, "Timestamp": last_time, "Close": last_close, "Trendline": yhat_last,
-                                 "Gap": gap, "GapPct": gap_pct, "Slope": m_sym, "R2": r2_sym})
+
+                # Global daily trendline slope
+                _yhat, _u, _l, m_sym, r2_sym = regression_with_band(s, lookback=slope_lb_daily, z=Z_FOR_99)
+                if not np.isfinite(m_sym) or float(m_sym) == 0.0:
+                    continue
+
+                hma_s = compute_hma(s, period=hma_period)
+                macd_s, _sig_unused, _hist_unused = compute_macd(s)
+
+                # Align and clean
+                p = _coerce_1d_series(s).astype(float).dropna()
+                h = _coerce_1d_series(hma_s).astype(float).reindex(p.index)
+                m = _coerce_1d_series(macd_s).astype(float).reindex(p.index)
+                mask = p.notna() & h.notna() & m.notna()
+                p, h, m = p[mask], h[mask], m[mask]
+                if len(p) < 3:
+                    continue
+
+                # Find most recent MACD 0-cross and HMA cross (direction depends on global slope sign)
+                def _last_macd_cross_ix(direction: str):
+                    for i in range(len(m) - 1, 0, -1):
+                        prev = float(m.iloc[i - 1]); cur = float(m.iloc[i])
+                        if direction == "UP":
+                            if (prev <= 0.0) and (cur > 0.0):
+                                return i
+                        else:
+                            if (prev >= 0.0) and (cur < 0.0):
+                                return i
+                    return None
+
+                def _last_price_hma_cross_ix(direction: str):
+                    for i in range(len(p) - 1, 0, -1):
+                        p_prev = float(p.iloc[i - 1]); p_cur = float(p.iloc[i])
+                        h_prev = float(h.iloc[i - 1]); h_cur = float(h.iloc[i])
+                        if direction == "UP":
+                            if (p_prev < h_prev) and (p_cur >= h_cur):
+                                return i
+                        else:
+                            if (p_prev > h_prev) and (p_cur <= h_cur):
+                                return i
+                    return None
+
+                direction = "UP" if float(m_sym) > 0 else "DOWN"
+                ix_macd = _last_macd_cross_ix(direction)
+                ix_hma = _last_price_hma_cross_ix(direction)
+
+                if ix_macd is None or ix_hma is None:
+                    continue
+
+                bars_since_macd = (len(p) - 1) - int(ix_macd)
+                bars_since_hma = (len(p) - 1) - int(ix_hma)
+
+                # "Recently" gate (independent recency)
+                if bars_since_macd > recent_bars or bars_since_hma > recent_bars:
+                    continue
+
+                last_close = float(p.iloc[-1])
+                macd_val = float(m.iloc[ix_macd])
+                hma_val = float(h.iloc[ix_hma])
+
+                row = {
+                    "Symbol": sym,
+                    "Trend": ("Up" if direction == "UP" else "Down"),
+                    "Slope": float(m_sym),
+                    "R2": float(r2_sym),
+                    "Close": last_close,
+                    "MACD_Cross_Time": p.index[ix_macd],
+                    "MACD_At_Cross": macd_val,
+                    "MACD_Bars_Since": int(bars_since_macd),
+                    "HMA_Cross_Time": p.index[ix_hma],
+                    "HMA_At_Cross": hma_val,
+                    "HMA_Bars_Since": int(bars_since_hma),
+                }
+
+                if direction == "UP":
+                    up_rows.append(row)
+                else:
+                    dn_rows.append(row)
+
             except Exception:
                 pass
 
-        if not rows:
-            st.info("No symbols currently have an upward daily slope with price below the slope on the latest bar.")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Universe Size", len(universe))
+        c2.metric("Global Uptrend Hits", int(len(up_rows)))
+        c3.metric("Global Downtrend Hits", int(len(dn_rows)))
+
+        st.markdown("---")
+
+        st.subheader("Global Upward Trendline — MACD 0-Cross Up + Price Crossed Above HMA")
+        if not up_rows:
+            st.info("No symbols matched the Uptrend hot-list criteria in the selected recency window.")
         else:
-            out = pd.DataFrame(rows).sort_values(["GapPct", "Symbol"], ascending=[False, True])
-            view = out.copy()
-            view["Close"] = view["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-            view["Trendline"] = view["Trendline"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-            view["Gap"] = view["Gap"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-            view["GapPct"] = view["GapPct"].map(lambda v: fmt_pct(v, 2) if np.isfinite(v) else "n/a")
-            view["Slope"] = view["Slope"].map(lambda v: f"{v:+.5f}" if np.isfinite(v) else "n/a")
-            view["R2"] = view["R2"].map(lambda v: fmt_pct(v, 1) if np.isfinite(v) else "n/a")
-            st.dataframe(view[["Symbol", "Timestamp", "Close", "Trendline", "Gap", "GapPct", "Slope", "R2"]].reset_index(drop=True),
-                         use_container_width=True)
+            out_up = pd.DataFrame(up_rows).sort_values(
+                ["MACD_Bars_Since", "HMA_Bars_Since", "Symbol"],
+                ascending=[True, True, True]
+            )
+            view_up = out_up.copy()
+            view_up["Close"] = view_up["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            view_up["Slope"] = view_up["Slope"].map(lambda v: f"{v:+.5f}" if np.isfinite(v) else "n/a")
+            view_up["R2"] = view_up["R2"].map(lambda v: fmt_pct(v, 1) if np.isfinite(v) else "n/a")
+            view_up["MACD_At_Cross"] = view_up["MACD_At_Cross"].map(lambda v: f"{v:+.4f}" if np.isfinite(v) else "n/a")
+            view_up["HMA_At_Cross"] = view_up["HMA_At_Cross"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            st.dataframe(
+                view_up[[
+                    "Symbol", "MACD_Cross_Time", "MACD_At_Cross", "MACD_Bars_Since",
+                    "HMA_Cross_Time", "HMA_At_Cross", "HMA_Bars_Since",
+                    "Close", "Slope", "R2"
+                ]].reset_index(drop=True),
+                use_container_width=True
+            )
+
+        st.markdown("---")
+
+        st.subheader("Global Downward Trendline — MACD 0-Cross Down + Price Crossed Below HMA")
+        if not dn_rows:
+            st.info("No symbols matched the Downtrend hot-list criteria in the selected recency window.")
+        else:
+            out_dn = pd.DataFrame(dn_rows).sort_values(
+                ["MACD_Bars_Since", "HMA_Bars_Since", "Symbol"],
+                ascending=[True, True, True]
+            )
+            view_dn = out_dn.copy()
+            view_dn["Close"] = view_dn["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            view_dn["Slope"] = view_dn["Slope"].map(lambda v: f"{v:+.5f}" if np.isfinite(v) else "n/a")
+            view_dn["R2"] = view_dn["R2"].map(lambda v: fmt_pct(v, 1) if np.isfinite(v) else "n/a")
+            view_dn["MACD_At_Cross"] = view_dn["MACD_At_Cross"].map(lambda v: f"{v:+.4f}" if np.isfinite(v) else "n/a")
+            view_dn["HMA_At_Cross"] = view_dn["HMA_At_Cross"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            st.dataframe(
+                view_dn[[
+                    "Symbol", "MACD_Cross_Time", "MACD_At_Cross", "MACD_Bars_Since",
+                    "HMA_Cross_Time", "HMA_At_Cross", "HMA_Bars_Since",
+                    "Close", "Slope", "R2"
+                ]].reset_index(drop=True),
+                use_container_width=True
+            )
 
 # --- Tab 8: Daily Support Reversals ---
 with tab8:
