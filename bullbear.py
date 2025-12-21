@@ -2314,6 +2314,9 @@ with tab5:
                 showh["NTD_Last"] = showh["NTD_Last"].map(lambda v: f"{v:+.3f}" if np.isfinite(v) else "n/a")
                 showh["Close"] = showh["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
                 st.dataframe(showh[["Symbol", "Timestamp", "Close", "NTD_Last"]].reset_index(drop=True), use_container_width=True)
+# =========================
+# Part 6/6 — bullbear.py
+# =========================
 
 # --- Tab 6: Long-Term History ---
 with tab6:
@@ -2386,22 +2389,164 @@ with tab6:
             ax.legend(loc="lower left", framealpha=0.4)
             pad_right_xaxis(ax, frac=0.06)
             st.pyplot(fig)
-# =========================
-# Part 6/6 — bullbear.py
-# =========================
 
 # --- Tab 7: MACD Hot List ---
 with tab7:
     st.header("MACD Hot List")
     st.caption(
-        "Shows symbols where the **MACD line** recently crossed the **0.0** line and **price** recently crossed the **HMA(55)** line, "
-        "filtered by **Global Daily Trendline** direction (regression slope)."
+        "Shows symbols where the **MACD line** crossed the **0.0** line in the direction of the "
+        "**Global Daily Trendline** (regression slope).  \n"
+        "• Global Uptrend → MACD 0-cross **UP**  \n"
+        "• Global Downtrend → MACD 0-cross **DOWN**"
     )
 
-    recent_bars = int(st.slider("How recent is 'recent' (daily bars)?", 1, 30, 7, 1, key="macd_hot_recent_bars"))
-    run_hot = st.button("Scan Universe for MACD 0-Cross + HMA Cross", key="btn_scan_macd_hot")
+    # MACD-only hot list (this request)
+    recent_bars_macd = int(st.slider(
+        "Max bars since MACD 0-cross (daily bars)",
+        1, 252, 30, 1,
+        key="macd_hot_recent_bars"
+    ))
+    run_hot = st.button("Scan Universe for MACD 0-Cross (Trend-filtered)", key="btn_scan_macd_hot")
 
     if run_hot:
+        up_rows = []
+        dn_rows = []
+
+        for sym in universe:
+            try:
+                s = fetch_hist(sym)
+                s = _coerce_1d_series(s).dropna()
+                if s is None or s.empty or s.shape[0] < max(30, slope_lb_daily):
+                    continue
+
+                # Global daily trendline slope
+                _yhat, _u, _l, m_sym, r2_sym = regression_with_band(s, lookback=slope_lb_daily, z=Z_FOR_99)
+                if not np.isfinite(m_sym) or float(m_sym) == 0.0:
+                    continue
+
+                macd_s, _sig_unused, _hist_unused = compute_macd(s)
+
+                # Align and clean
+                p = _coerce_1d_series(s).astype(float).dropna()
+                m = _coerce_1d_series(macd_s).astype(float).reindex(p.index)
+                mask = p.notna() & m.notna()
+                p, m = p[mask], m[mask]
+                if len(m) < 3:
+                    continue
+
+                direction = "UP" if float(m_sym) > 0 else "DOWN"
+
+                # Find most recent MACD 0-cross in the direction of the global trend
+                ix_macd = None
+                for i in range(len(m) - 1, 0, -1):
+                    prev = float(m.iloc[i - 1]); cur = float(m.iloc[i])
+                    if direction == "UP":
+                        if (prev <= 0.0) and (cur > 0.0):
+                            ix_macd = i
+                            break
+                    else:
+                        if (prev >= 0.0) and (cur < 0.0):
+                            ix_macd = i
+                            break
+
+                if ix_macd is None:
+                    continue
+
+                bars_since_macd = (len(m) - 1) - int(ix_macd)
+                if bars_since_macd > recent_bars_macd:
+                    continue
+
+                last_close = float(p.iloc[-1])
+                macd_at_cross = float(m.iloc[ix_macd])
+                macd_last = float(m.iloc[-1])
+
+                row = {
+                    "Symbol": sym,
+                    "Trend": ("Up" if direction == "UP" else "Down"),
+                    "Slope": float(m_sym),
+                    "R2": float(r2_sym),
+                    "Close": last_close,
+                    "MACD_Cross_Time": p.index[ix_macd],
+                    "MACD_At_Cross": macd_at_cross,
+                    "MACD_Bars_Since": int(bars_since_macd),
+                    "MACD_Last": macd_last,
+                }
+
+                if direction == "UP":
+                    up_rows.append(row)
+                else:
+                    dn_rows.append(row)
+
+            except Exception:
+                pass
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Universe Size", len(universe))
+        c2.metric("Global Uptrend MACD 0↑ Hits", int(len(up_rows)))
+        c3.metric("Global Downtrend MACD 0↓ Hits", int(len(dn_rows)))
+
+        st.markdown("---")
+
+        st.subheader("Global Upward Trendline — MACD 0-Cross Up")
+        if not up_rows:
+            st.info("No symbols matched the Uptrend MACD 0-cross criteria in the selected recency window.")
+        else:
+            out_up = pd.DataFrame(up_rows).sort_values(
+                ["MACD_Bars_Since", "Symbol"],
+                ascending=[True, True]
+            )
+            view_up = out_up.copy()
+            view_up["Close"] = view_up["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            view_up["Slope"] = view_up["Slope"].map(lambda v: f"{v:+.5f}" if np.isfinite(v) else "n/a")
+            view_up["R2"] = view_up["R2"].map(lambda v: fmt_pct(v, 1) if np.isfinite(v) else "n/a")
+            view_up["MACD_At_Cross"] = view_up["MACD_At_Cross"].map(lambda v: f"{v:+.4f}" if np.isfinite(v) else "n/a")
+            view_up["MACD_Last"] = view_up["MACD_Last"].map(lambda v: f"{v:+.4f}" if np.isfinite(v) else "n/a")
+            st.dataframe(
+                view_up[[
+                    "Symbol", "MACD_Cross_Time", "MACD_At_Cross", "MACD_Bars_Since",
+                    "MACD_Last", "Close", "Slope", "R2"
+                ]].reset_index(drop=True),
+                use_container_width=True
+            )
+
+        st.markdown("---")
+
+        st.subheader("Global Downward Trendline — MACD 0-Cross Down")
+        if not dn_rows:
+            st.info("No symbols matched the Downtrend MACD 0-cross criteria in the selected recency window.")
+        else:
+            out_dn = pd.DataFrame(dn_rows).sort_values(
+                ["MACD_Bars_Since", "Symbol"],
+                ascending=[True, True]
+            )
+            view_dn = out_dn.copy()
+            view_dn["Close"] = view_dn["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            view_dn["Slope"] = view_dn["Slope"].map(lambda v: f"{v:+.5f}" if np.isfinite(v) else "n/a")
+            view_dn["R2"] = view_dn["R2"].map(lambda v: fmt_pct(v, 1) if np.isfinite(v) else "n/a")
+            view_dn["MACD_At_Cross"] = view_dn["MACD_At_Cross"].map(lambda v: f"{v:+.4f}" if np.isfinite(v) else "n/a")
+            view_dn["MACD_Last"] = view_dn["MACD_Last"].map(lambda v: f"{v:+.4f}" if np.isfinite(v) else "n/a")
+            st.dataframe(
+                view_dn[[
+                    "Symbol", "MACD_Cross_Time", "MACD_At_Cross", "MACD_Bars_Since",
+                    "MACD_Last", "Close", "Slope", "R2"
+                ]].reset_index(drop=True),
+                use_container_width=True
+            )
+
+    # OPTIONAL: keep the combined MACD+HMA scanner (AND logic) to match your prior intent
+    st.markdown("---")
+    st.subheader("Optional — MACD 0-Cross + HMA Cross (AND)")
+    st.caption(
+        "This combined scan requires **BOTH** conditions to be met (AND):  \n"
+        "• MACD crosses 0.0 in the direction of the global trend  \n"
+        "• Price crosses HMA(55) in the same direction  \n"
+        "Each must occur within the recency window (no OR)."
+    )
+
+    recent_bars = int(st.slider("How recent is 'recent' (daily bars)?", 1, 252, 7, 1, key="macd_hma_recent_bars"))
+    run_combo = st.button("Scan Universe for MACD 0-Cross + HMA Cross (AND)", key="btn_scan_macd_hma_hot")
+
+    if run_combo:
         up_rows = []
         dn_rows = []
 
@@ -2463,8 +2608,8 @@ with tab7:
                 bars_since_macd = (len(p) - 1) - int(ix_macd)
                 bars_since_hma = (len(p) - 1) - int(ix_hma)
 
-                # "Recently" gate (independent recency)
-                if bars_since_macd > recent_bars or bars_since_hma > recent_bars:
+                # AND gate: BOTH crosses must be within recency window
+                if (bars_since_macd > recent_bars) or (bars_since_hma > recent_bars):
                     continue
 
                 last_close = float(p.iloc[-1])
@@ -2495,14 +2640,14 @@ with tab7:
 
         c1, c2, c3 = st.columns(3)
         c1.metric("Universe Size", len(universe))
-        c2.metric("Global Uptrend Hits", int(len(up_rows)))
-        c3.metric("Global Downtrend Hits", int(len(dn_rows)))
+        c2.metric("Global Uptrend (MACD+HMA) Hits", int(len(up_rows)))
+        c3.metric("Global Downtrend (MACD+HMA) Hits", int(len(dn_rows)))
 
         st.markdown("---")
 
-        st.subheader("Global Upward Trendline — MACD 0-Cross Up + Price Crossed Above HMA")
+        st.subheader("Global Uptrend — MACD 0-Cross Up + Price Crossed Above HMA")
         if not up_rows:
-            st.info("No symbols matched the Uptrend hot-list criteria in the selected recency window.")
+            st.info("No symbols matched the Uptrend MACD+HMA criteria in the selected recency window.")
         else:
             out_up = pd.DataFrame(up_rows).sort_values(
                 ["MACD_Bars_Since", "HMA_Bars_Since", "Symbol"],
@@ -2525,9 +2670,9 @@ with tab7:
 
         st.markdown("---")
 
-        st.subheader("Global Downward Trendline — MACD 0-Cross Down + Price Crossed Below HMA")
+        st.subheader("Global Downtrend — MACD 0-Cross Down + Price Crossed Below HMA")
         if not dn_rows:
-            st.info("No symbols matched the Downtrend hot-list criteria in the selected recency window.")
+            st.info("No symbols matched the Downtrend MACD+HMA criteria in the selected recency window.")
         else:
             out_dn = pd.DataFrame(dn_rows).sort_values(
                 ["MACD_Bars_Since", "HMA_Bars_Since", "Symbol"],
