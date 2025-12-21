@@ -98,7 +98,8 @@ st.sidebar.markdown(
 # =============================================================================
 
 st.sidebar.markdown("---")
-mode = st.sidebar.radio("Mode", ["Stocks", "Forex"], index=0, key="mode")
+# UPDATE (1): Select Forex by default
+mode = st.sidebar.radio("Mode", ["Stocks", "Forex"], index=1, key="mode")
 
 def _dedup_keep_order(seq):
     seen = set()
@@ -910,7 +911,8 @@ def annotate_macd_star_callout(ax, ts_or_x, px, side: str, hma_period: int = 55,
         color = "tab:green" if side == "BUY" else "tab:red"
         ax.scatter([ts_or_x], [px], marker="*", s=170, c=color, edgecolors="none", zorder=14)
 
-        label = f"★ MACD {'Buy' if side=='BUY' else 'Sell'} — HMA{hma_period} Cross"
+        # UPDATE (3): Add the price value to the MACD-HMA cross callout label
+        label = f"★ MACD {'Buy' if side=='BUY' else 'Sell'} — HMA{hma_period} Cross @{fmt_price_val(px)}"
 
         # Place the box near the bottom of the chart (x in data coords, y in axes fraction)
         trans = blended_transform_factory(ax.transData, ax.transAxes)
@@ -1094,7 +1096,7 @@ def last_breakout_signal(price: pd.Series,
 
     dn_ok = (
         np.isfinite(s_prev.iloc[-1]) and np.isfinite(s_prev.iloc[-2])
-        and (p.iloc[-2] >= s_prev.iloc[-2] * (1.0 - prox))
+        and (p.iloc[-2] >= s_prev.iloc[-2] * (1.0 + prox))
         and (p.iloc[-1] < s_prev.iloc[-1] * (1.0 - prox))
         and _confirmed_down()
     )
@@ -1532,6 +1534,16 @@ def render_daily_price_macd(sel: str, df: pd.Series, df_ohlc: pd.DataFrame):
             label_on_left(ax, sup_val_d, f"S {fmt_price_val(sup_val_d)}", color="tab:green")
     except Exception:
         res_val_d = sup_val_d = np.nan
+
+    # UPDATE (2): Fibonacci on the DAILY chart (uses the same show_fibs toggle)
+    if show_fibs and not df_show.empty:
+        fibs_d = fibonacci_levels(df_show)
+        for _lbl, y in fibs_d.items():
+            ax.hlines(y, xmin=df_show.index[0], xmax=df_show.index[-1],
+                      linestyles="dotted", linewidth=0.6, alpha=0.35)
+        for lbl, y in fibs_d.items():
+            ax.text(df_show.index[-1], y, f" {lbl}", va="center",
+                    fontsize=8, alpha=0.6, fontweight="bold")
 
     badges_top = []
 
