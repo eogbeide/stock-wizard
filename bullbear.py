@@ -1,5 +1,5 @@
 # =========================
-# Part 1/5 — bullbear.py
+# Part 1/6 — bullbear.py
 # =========================
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # UPDATE: Single latest band-reversal signal for trading
@@ -7,7 +7,13 @@
 #   • Downtrend→ SELL when price reverses down from upper ±2σ band and is near it
 # Only the latest signal is shown at any time.
 #
-# FIX (This request): NameError crash at Tab 1 selectbox:
+# FIX (This request): Instruction banner now ALSO shows:
+#   • "MACD Sell — HMA55 Cross" when:
+#       - Global trend is DOWN
+#       - MACD crosses 0.0 DOWN
+#       - Price crosses HMA(55) DOWN
+#
+# FIX (prior): NameError crash at Tab 1 selectbox:
 #   sel = st.selectbox("Ticker:", universe, key="tab1_ticker")
 # → universe is now defined BEFORE tabs are created.
 #
@@ -163,7 +169,7 @@ bb_period = st.sidebar.selectbox("Lookback period (yfinance)", ["6mo", "1y", "2y
 # --- Top-of-page caution banner placeholder ---
 top_warn = st.empty()
 # =========================
-# Part 2/5 — bullbear.py
+# Part 2/6 — bullbear.py
 # =========================
 
 # ---------- Helpers ----------
@@ -327,7 +333,8 @@ def draw_instruction_ribbons(ax,
                             px_val: float,
                             symbol: str,
                             confirm_side: str = None,
-                            global_slope: float = None):
+                            global_slope: float = None,
+                            extra_note: str = None):
     def _finite(x):
         try:
             return np.isfinite(float(x))
@@ -355,6 +362,9 @@ def draw_instruction_ribbons(ax,
         return
 
     instr = format_trade_instruction(trend_slope, sup_val, res_val, px_val, symbol, confirm_side=confirm_side)
+    if extra_note:
+        instr = f"{instr}\n{extra_note}"
+
     ax.text(
         0.5, 1.08, instr,
         transform=ax.transAxes, ha="center", va="bottom",
@@ -961,6 +971,43 @@ def last_macd_hma_cross_star(price: pd.Series,
                 return {"time": t, "price": p_cur, "side": "SELL"}
     return None
 
+# NEW (This request):
+def last_macd_zero_and_hma_cross_sell(price: pd.Series,
+                                     hma: pd.Series,
+                                     macd: pd.Series,
+                                     lookback_bars: int = 3):
+    """
+    Trigger when (within the last lookback_bars):
+      - MACD crosses 0 DOWN (prev >= 0, curr < 0)
+      - Price crosses HMA DOWN (prev > HMA_prev, curr <= HMA_curr)
+    Returns dict with time/price/bars_since if found, else None.
+    """
+    p = _coerce_1d_series(price).astype(float).dropna()
+    if p.empty or len(p) < 2:
+        return None
+    h = _coerce_1d_series(hma).astype(float).reindex(p.index)
+    m = _coerce_1d_series(macd).astype(float).reindex(p.index)
+    mask = p.notna() & h.notna() & m.notna()
+    p, h, m = p[mask], h[mask], m[mask]
+    if len(p) < 2:
+        return None
+
+    lb = max(1, int(lookback_bars))
+    start = max(1, len(p) - lb)
+
+    for i in range(len(p) - 1, start - 1, -1):
+        p_prev, p_cur = float(p.iloc[i - 1]), float(p.iloc[i])
+        h_prev, h_cur = float(h.iloc[i - 1]), float(h.iloc[i])
+        m_prev, m_cur = float(m.iloc[i - 1]), float(m.iloc[i])
+
+        macd0_dn = (m_prev >= 0.0) and (m_cur < 0.0)
+        hma_dn = (p_prev > h_prev) and (p_cur <= h_cur)
+
+        if macd0_dn and hma_dn:
+            bars_since = (len(p) - 1) - i
+            return {"time": p.index[i], "price": p_cur, "bars_since": int(bars_since)}
+    return None
+
 # --- alignment helper ---
 def _align_series_to_index(s: pd.Series, idx: pd.DatetimeIndex) -> pd.Series:
     s = _coerce_1d_series(s)
@@ -1386,7 +1433,7 @@ def market_time_axis(ax, index: pd.DatetimeIndex):
     ax.xaxis.set_major_locator(MaxNLocator(nbins=8, integer=True))
     ax.xaxis.set_major_formatter(make_market_time_formatter(index))
 # =========================
-# Part 3/5 — bullbear.py
+# Part 3/6 — bullbear.py
 # =========================
 
 def render_daily_price_macd(sel: str, df: pd.Series, df_ohlc: pd.DataFrame):
@@ -1563,13 +1610,26 @@ def render_daily_price_macd(sel: str, df: pd.Series, df_ohlc: pd.DataFrame):
 
     draw_top_badges(ax, badges_top)
 
-    # instruction banner (daily local==global)
+    # instruction banner (daily local==global) + NEW MACD0↓ + HMA↓ note (global downtrend)
     try:
         px_val_d = float(df_show.iloc[-1])
         confirm_side = sr99_sig["side"] if sr99_sig is not None else None
+
+        extra_note = None
+        if np.isfinite(m_d) and float(m_d) < 0 and show_hma:
+            macd_hma0_dn = last_macd_zero_and_hma_cross_sell(
+                price=df_show,
+                hma=hma_d_full,
+                macd=macd_d.reindex(df_show.index),
+                lookback_bars=3
+            )
+            if macd_hma0_dn is not None and int(macd_hma0_dn.get("bars_since", 9999)) <= 1:
+                extra_note = f"▼ MACD Sell — HMA{hma_period} Cross (MACD 0↓ + Price<HMA)"
+
         draw_instruction_ribbons(ax, m_d, sup_val_d, res_val_d, px_val_d, sel,
                                  confirm_side=confirm_side,
-                                 global_slope=m_d)
+                                 global_slope=m_d,
+                                 extra_note=extra_note)
     except Exception:
         pass
 
@@ -1751,6 +1811,9 @@ def render_intraday_price_macd(sel: str, intraday: pd.DataFrame, p_up: float, p_
                                            hma_period=hma_period)
     except Exception:
         pass
+# =========================
+# Part 4/6 — bullbear.py
+# =========================
 
     breakout_h = last_breakout_signal(
         price=hc, resistance=res_h, support=sup_h,
@@ -1768,10 +1831,25 @@ def render_intraday_price_macd(sel: str, intraday: pd.DataFrame, p_up: float, p_
 
     draw_top_badges(ax2, badges_top_h)
 
-    # instruction banner: LOCAL = slope_h, GLOBAL = m_h
+    # instruction banner: LOCAL = slope_h, GLOBAL = m_h  (+ NEW MACD0↓ + HMA↓ note in global downtrend)
+    extra_note_h = None
+    try:
+        if np.isfinite(m_h) and float(m_h) < 0 and show_hma:
+            macd_hma0_dn_h = last_macd_zero_and_hma_cross_sell(
+                price=hc,
+                hma=hma_h.reindex(idx_mt),
+                macd=macd_h.reindex(idx_mt),
+                lookback_bars=3
+            )
+            if macd_hma0_dn_h is not None and int(macd_hma0_dn_h.get("bars_since", 9999)) <= 1:
+                extra_note_h = f"▼ MACD Sell — HMA{hma_period} Cross (MACD 0↓ + Price<HMA)"
+    except Exception:
+        extra_note_h = None
+
     draw_instruction_ribbons(ax2, slope_h, sup_val, res_val, px_val, sel,
                              confirm_side=None,
-                             global_slope=m_h)
+                             global_slope=m_h,
+                             extra_note=extra_note_h)
 
     if np.isfinite(px_val):
         nbb_txt = ""
@@ -1908,9 +1986,6 @@ if "run_all" not in st.session_state:
     st.session_state.hour_range = "24h"
 if "hist_years" not in st.session_state:
     st.session_state.hist_years = 10
-# =========================
-# Part 4/5 — bullbear.py
-# =========================
 
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "Original Forecast",
@@ -2055,7 +2130,7 @@ with tab2:
                 st.info("Intraday view uses the same logic as Tab 1.")
                 render_intraday_price_macd(st.session_state.ticker, intr, p_up, p_dn)
 # =========================
-# Part 5/5 — bullbear.py
+# Part 5/6 — bullbear.py
 # =========================
 
 # --- Tab 3: Bull vs Bear ---
@@ -2311,6 +2386,9 @@ with tab6:
             ax.legend(loc="lower left", framealpha=0.4)
             pad_right_xaxis(ax, frac=0.06)
             st.pyplot(fig)
+# =========================
+# Part 6/6 — bullbear.py
+# =========================
 
 # --- Tab 7: MACD Hot List ---
 with tab7:
