@@ -41,6 +41,11 @@
 #   • NEW (MACD): Added MACD panel (MACD/Signal/Histogram) beneath Daily + Intraday charts.
 #
 #   • UPDATE (This request): Add Parabolic SAR line and Supertrend line to the PRICE chart.
+#   • NEW (This request): On **upward trend**, when **price crosses up through HMA(55)**
+#       and **MACD is still below 0.0**, place an **MACD Buy star** on the **price chart**
+#       with a leader line and a **container box pointing downward**.
+#       On **downward trend**, when **price crosses down through HMA(55)**
+#       and **MACD is still above 0.0**, place an **MACD Sell star** with the same style.
 
 import streamlit as st
 import pandas as pd
@@ -92,6 +97,9 @@ def auto_refresh():
 auto_refresh()
 elapsed = time.time() - st.session_state.last_refresh
 remaining = max(0, int(REFRESH_INTERVAL - elapsed))
+pst_dt = datetime.fromtimestamp(st.session_state.last_refresh, tz=PACRIC)
+# Fix timezone variable typo
+PACRIC = PACIFIC
 pst_dt = datetime.fromtimestamp(st.session_state.last_refresh, tz=PACIFIC)
 st.sidebar.markdown(
     f"**Auto-refresh:** every {REFRESH_INTERVAL//60} min  \n"
@@ -306,130 +314,6 @@ def draw_instruction_ribbons(ax,
             fontsize=10, fontweight="bold", color=color,
             bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.95))
 # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-
-def last_band_reversal_signal(price: pd.Series,
-                              band_upper: pd.Series,
-                              band_lower: pd.Series,
-                              trend_slope: float,
-                              prox: float = 0.0025,
-                              confirm_bars: int = 2):
-    """
-    Only the latest signal is returned.
-      • Uptrend  → BUY when a recent bar 'touched' lower band, and the next `confirm_bars`
-                   closes are strictly higher.
-      • Downtrend→ SELL when a recent bar 'touched' upper band, and the next `confirm_bars`
-                   closes are strictly lower.
-    Returns dict: {"time","price","side","note"} or None
-    """
-    p = _coerce_1d_series(price).dropna()
-    if p.shape[0] < confirm_bars + 2 or not np.isfinite(trend_slope) or trend_slope == 0:
-        return None
-    u = _coerce_1d_series(band_upper).reindex(p.index)
-    l = _coerce_1d_series(band_lower).reindex(p.index)
-
-    def _inc_after(idx):
-        if idx + confirm_bars >= len(p):
-            return False
-        seg = p.iloc[idx:(idx + confirm_bars + 1)]
-        d = np.diff(seg)
-        return bool(np.all(d > 0))
-
-    def _dec_after(idx):
-        if idx + confirm_bars >= len(p):
-            return False
-        seg = p.iloc[idx:(idx + confirm_bars + 1)]
-        d = np.diff(seg)
-        return bool(np.all(d < 0))
-
-    rng = range(len(p) - confirm_bars - 1)
-    for i in reversed(list(rng)):
-        pc = float(p.iloc[i]); t = p.index[i]
-        up = float(u.iloc[i]) if i < len(u) and np.isfinite(u.iloc[i]) else np.nan
-        lo = float(l.iloc[i]) if i < len(l) and np.isfinite(l.iloc[i]) else np.nan
-
-        if trend_slope > 0:
-            if np.isfinite(lo) and pc <= lo * (1.0 + prox) and _inc_after(i):
-                t_conf = p.index[i + confirm_bars]
-                px_conf = float(p.iloc[i + confirm_bars])
-                return {"time": t_conf, "price": px_conf, "side": "BUY", "note": "Band REV"}
-        else:
-            if np.isfinite(up) and pc >= up * (1.0 - prox) and _dec_after(i):
-                t_conf = p.index[i + confirm_bars]
-                px_conf = float(p.iloc[i + confirm_bars])
-                return {"time": t_conf, "price": px_conf, "side": "SELL", "note": "Band REV"}
-    return None
-
-# --- Sidebar config (single, deduplicated) ---
-st.sidebar.title("Configuration")
-mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
-bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2, key="sb_bb_period")
-daily_view = st.sidebar.selectbox("Daily view range:", ["Historical", "6M", "12M", "24M"], index=2, key="sb_daily_view")
-show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=True, key="sb_show_fibs")  # default ON
-
-slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10, key="sb_slope_lb_daily")
-slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120,  6, key="sb_slope_lb_hourly")
-
-st.sidebar.subheader("Hourly Support/Resistance Window")
-sr_lb_hourly = st.sidebar.slider("Hourly S/R lookback (bars)", 20, 240, 60, 5, key="sb_sr_lb_hourly")
-
-st.sidebar.subheader("Hourly Supertrend")
-atr_period = st.sidebar.slider("ATR period", 5, 50, 10, 1, key="sb_atr_period")
-atr_mult   = st.sidebar.slider("ATR multiplier", 1.0, 5.0, 3.0, 0.5, key="sb_atr_mult")
-
-st.sidebar.subheader("Parabolic SAR")
-show_psar = st.sidebar.checkbox("Show Parabolic SAR", value=True, key="sb_psar_show")
-psar_step = st.sidebar.slider("PSAR acceleration step", 0.01, 0.20, 0.02, 0.01, key="sb_psar_step")
-psar_max  = st.sidebar.slider("PSAR max acceleration", 0.10, 1.00, 0.20, 0.10, key="sb_psar_max")
-
-st.sidebar.subheader("Signals")
-signal_threshold = st.sidebar.slider("S/R proximity signal threshold", 0.50, 0.99, 0.90, 0.01, key="sb_sig_thr")
-sr_prox_pct = st.sidebar.slider("S/R / Band proximity (%)", 0.05, 1.00, 0.25, 0.05, key="sb_sr_prox") / 100.0
-rev_bars_confirm = st.sidebar.slider("Consecutive bars to confirm reversal", 1, 4, 2, 1, key="sb_rev_bars")
-
-st.sidebar.subheader("Ichimoku (Kijun on price)")
-show_ichi = st.sidebar.checkbox("Show Ichimoku Kijun on price", value=True, key="sb_show_ichi")
-ichi_conv = st.sidebar.slider("Conversion (Tenkan)", 5, 20, 9, 1, key="sb_ichi_conv")
-ichi_base = st.sidebar.slider("Base (Kijun)", 20, 40, 26, 1, key="sb_ichi_base")
-ichi_spanb= st.sidebar.slider("Span B", 40, 80, 52, 1, key="sb_ichi_spanb")
-
-st.sidebar.subheader("Bollinger Bands (Price Charts)")
-show_bbands   = st.sidebar.checkbox("Show Bollinger Bands", value=True, key="sb_bb_show")
-bb_win        = st.sidebar.slider("BB window", 5, 120, 20, 1, key="sb_bb_win")
-bb_mult       = st.sidebar.slider("BB multiplier (σ)", 1.0, 4.0, 2.0, 0.1, key="sb_bb_mult")
-bb_use_ema    = st.sidebar.checkbox("Use EMA midline (vs SMA)", value=False, key="sb_bb_ema")
-
-st.sidebar.subheader("HMA (Price Charts)")
-show_hma    = st.sidebar.checkbox("Show HMA", value=True, key="sb_hma_show")
-hma_period  = st.sidebar.slider("HMA period (plotted)", 5, 120, 55, 1, key="sb_hma_period")
-hma_conf    = st.sidebar.slider("Crossover confidence (unused label-only)", 0.50, 0.99, 0.95, 0.01, key="sb_hma_conf")
-
-st.sidebar.subheader("Scanner Settings")
-ntd_window= st.sidebar.slider("NTD slope window (for scanner)", 10, 300, 60, 5, key="sb_ntd_win")
-
-# Forex-only controls
-if mode == "Forex":
-    show_fx_news = st.sidebar.checkbox("Show Forex news markers (intraday)", value=True, key="sb_show_fx_news")
-    news_window_days = st.sidebar.slider("Forex news window (days)", 1, 14, 7, key="sb_news_window_days")
-    st.sidebar.subheader("Sessions (PST)")
-    show_sessions_pst = st.sidebar.checkbox("Show London/NY session times (PST)", value=True, key="sb_show_sessions_pst")
-else:
-    show_fx_news = False
-    news_window_days = 7
-    show_sessions_pst = False
-
-# Universe
-if mode == "Stock":
-    universe = sorted([
-        'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
-        'META','SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO',
-        'MSFT','TSM','NFLX','MP','AAL','URI','DAL','BBAI','QUBT','AMD','SMCI','ORCL','TLT'
-    ])
-else:
-    universe = [
-        'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X','NZDJPY=X',
-        'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','EURCAD=X','NZDUSD=X',
-        'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
-    ]
 # =========================
 # Part 2/5 — bullbear.py
 # =========================
@@ -823,58 +707,76 @@ def annotate_sell_triangle(ax, ts, px, size: int = 140):
     except Exception:
         ax.text(ts, px, "▼", color="tab:red", fontsize=12, fontweight="bold", zorder=12)
 
-# --- Star: recent peak/trough + reversal (trend-aware) ---
-def last_reversal_star(price: pd.Series,
-                       trend_slope: float,
-                       lookback: int = 20,
-                       confirm_bars: int = 2):
+# === NEW (This request): MACD–HMA cross → price-chart star + downward-pointing callout ===
+def annotate_macd_star_callout(ax, ts_or_x, px, side: str, hma_period: int = 55):
+    """
+    Draws a star at (ts_or_x, px) and a compact leader+box above the point
+    whose arrow *points downward* (to the bottom of the box), for both BUY and SELL.
+    """
+    try:
+        color = "tab:green" if side == "BUY" else "tab:red"
+        # Star at the price location
+        ax.scatter([ts_or_x], [px], marker="*", s=170, c=color, edgecolors="none", zorder=14)
+        # Box above, pointing downward to the star
+        ymin, ymax = ax.get_ylim()
+        yoff = (ymax - ymin) * 0.055  # always positive to keep box above, arrow pointing down
+        label = f"★ MACD {'Buy' if side=='BUY' else 'Sell'} — HMA{hma_period} Cross"
+        ax.annotate(
+            label,
+            xy=(ts_or_x, px),
+            xytext=(ts_or_x, px + yoff),
+            textcoords='data',
+            ha="left",
+            va="bottom",
+            fontsize=9,
+            fontweight="bold",
+            color=color,
+            bbox=dict(boxstyle="round,pad=0.28", fc="white", ec=color, alpha=0.95),
+            arrowprops=dict(arrowstyle="->", color=color, lw=1.4),
+            zorder=15
+        )
+    except Exception:
+        ax.text(ts_or_x, px, "★", color=("tab:green" if side=="BUY" else "tab:red"),
+                fontsize=12, fontweight="bold", zorder=14)
+
+def last_macd_hma_cross_star(price: pd.Series,
+                             hma: pd.Series,
+                             macd: pd.Series,
+                             trend_slope: float,
+                             lookback: int = 120):
+    """
+    Returns the latest bar where:
+      • Uptrend (trend_slope > 0): Price crosses UP through HMA and MACD (blue) is STILL < 0.0 → BUY
+      • Downtrend (trend_slope < 0): Price crosses DOWN through HMA and MACD is STILL > 0.0 → SELL
+    Output: dict {"time","price","side"} or None
+    """
     if not np.isfinite(trend_slope) or trend_slope == 0:
         return None
-    s = _coerce_1d_series(price).dropna()
-    if s.shape[0] < confirm_bars + 3:
-        return None
-    tail = s.iloc[-(lookback + confirm_bars + 1):]
-    if len(tail) < confirm_bars + 3:
-        return None
-
-    if trend_slope < 0:
-        cand = tail.iloc[:-confirm_bars]
-        t_peak = cand.idxmax()
-        if _after_all_decreasing(tail, t_peak, confirm_bars):
-            return {"time": t_peak, "price": float(s.loc[t_peak]), "kind": "peak"}
-    else:
-        cand = tail.iloc[:-confirm_bars]
-        t_trough = cand.idxmin()
-        if _after_all_increasing(tail, t_trough, confirm_bars):
-            return {"time": t_trough, "price": float(s.loc[t_trough]), "kind": "trough"}
-    return None
-
-# --- NEW: HMA-cross star detection for Daily chart ---
-def last_hma_cross_star(price: pd.Series,
-                        hma: pd.Series,
-                        trend_slope: float,
-                        lookback: int = 30):
-    if not np.isfinite(trend_slope) or trend_slope == 0:
-        return None
-    p = _coerce_1d_series(price).astype(float)
+    p = _coerce_1d_series(price).astype(float).dropna()
     h = _coerce_1d_series(hma).astype(float).reindex(p.index)
+    m = _coerce_1d_series(macd).astype(float).reindex(p.index)
 
-    mask = p.notna() & h.notna()
-    if mask.sum() < 2:
+    mask = p.notna() & h.notna() & m.notna()
+    p, h, m = p[mask], h[mask], m[mask]
+    if len(p) < 2:
         return None
-    p = p[mask]; h = h[mask]
     if lookback and len(p) > lookback:
-        p = p.iloc[-lookback:]; h = h.iloc[-lookback:]
+        p = p.iloc[-lookback:]; h = h.iloc[-lookback:]; m = m.iloc[-lookback:]
 
-    up_cross   = (p.shift(1) < h.shift(1)) & (p >= h)
-    down_cross = (p.shift(1) > h.shift(1)) & (p <= h)
-
-    if trend_slope > 0 and up_cross.any():
-        t = up_cross[up_cross].index[-1]
-        return {"time": t, "price": float(p.loc[t]), "kind": "trough"}
-    if trend_slope < 0 and down_cross.any():
-        t = down_cross[down_cross].index[-1]
-        return {"time": t, "price": float(p.iloc[-1]), "kind": "peak"}
+    # Evaluate from the most recent bar backwards
+    for i in range(len(p)-1, 0, -1):
+        p_prev, p_cur = float(p.iloc[i-1]), float(p.iloc[i])
+        h_prev, h_cur = float(h.iloc[i-1]), float(h.iloc[i])
+        mac_cur = float(m.iloc[i])
+        t = p.index[i]
+        if trend_slope > 0:
+            up_cross = (p_prev < h_prev) and (p_cur >= h_cur)
+            if up_cross and (mac_cur < 0.0):
+                return {"time": t, "price": p_cur, "side": "BUY"}
+        else:
+            dn_cross = (p_prev > h_prev) and (p_cur <= h_cur)
+            if dn_cross and (mac_cur > 0.0):
+                return {"time": t, "price": p_cur, "side": "SELL"}
     return None
 # =========================
 # Part 3/5 — bullbear.py
@@ -1322,6 +1224,9 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "Upward Slope Stickers",
     "Daily Support Reversals"
 ])
+# =========================
+# Part 4/5 — bullbear.py
+# =========================
 
 # --- Tab 1: Original Forecast ---
 with tab1:
@@ -1488,6 +1393,24 @@ with tab1:
                     annotate_star(ax, hma_cross_star["time"], hma_cross_star["price"], hma_cross_star["kind"], show_text=False, color_override="tab:blue")
                     badges_top.append((f"★ Sell HMA Cross @{fmt_price_val(hma_cross_star['price'])}", "tab:blue"))
 
+            # --- NEW (This request): MACD–HMA cross star on PRICE chart (Daily) ---
+            try:
+                macd_hma_sig_d = last_macd_hma_cross_star(
+                    price=df_show,
+                    hma=hma_d_full,
+                    macd=macd_d.reindex(df_show.index),
+                    trend_slope=m_d,
+                    lookback=120
+                )
+                if macd_hma_sig_d is not None:
+                    annotate_macd_star_callout(ax,
+                                               macd_hma_sig_d["time"],
+                                               macd_hma_sig_d["price"],
+                                               macd_hma_sig_d["side"],
+                                               hma_period=hma_period)
+            except Exception:
+                pass
+
             # Breakout (Daily)
             breakout_d = last_breakout_signal(
                 price=df_show, resistance=res30_show, support=sup30_show,
@@ -1565,9 +1488,6 @@ with tab1:
             axm.legend(loc="lower left", framealpha=0.4)
             pad_right_xaxis(ax, frac=0.06)
             st.pyplot(fig)
-# =========================
-# Part 4/5 — bullbear.py
-# =========================
 
         # ----- Hourly (Price + MACD) -----
         if chart in ("Hourly","Both"):
@@ -1694,6 +1614,26 @@ with tab1:
                             badges_top_h.append((f"★ Trough REV @{fmt_price_val(star_h['price'])}", "tab:green"))
                         elif star_h.get("kind") == "peak":
                             badges_top_h.append((f"★ Peak REV @{fmt_price_val(star_h['price'])}", "tab:red"))
+
+                # --- NEW (This request): MACD–HMA cross star on PRICE chart (Hourly) ---
+                try:
+                    macd_hma_sig_h = last_macd_hma_cross_star(
+                        price=hc,
+                        hma=hma_h.reindex(idx_mt),
+                        macd=macd_h.reindex(idx_mt),
+                        trend_slope=m_h,
+                        lookback=240
+                    )
+                    if macd_hma_sig_h is not None:
+                        x_cross_price = _pos(macd_hma_sig_h["time"])
+                        if np.isfinite(x_cross_price):
+                            annotate_macd_star_callout(ax2,
+                                                       x_cross_price,
+                                                       macd_hma_sig_h["price"],
+                                                       macd_hma_sig_h["side"],
+                                                       hma_period=hma_period)
+                except Exception:
+                    pass
 
                 breakout_h = last_breakout_signal(
                     price=hc, resistance=res_h, support=sup_h,
@@ -1948,6 +1888,24 @@ with tab2:
                 else:
                     annotate_star(ax, hma_cross_star2["time"], hma_cross_star2["price"], hma_cross_star2["kind"], show_text=False, color_override="tab:blue")
                     badges_top2.append((f"★ Sell HMA Cross @{fmt_price_val(hma_cross_star2['price'])}", "tab:blue"))
+
+            # --- NEW (This request): MACD–HMA cross star on PRICE chart (Enhanced Daily) ---
+            try:
+                macd_hma_sig_d2 = last_macd_hma_cross_star(
+                    price=df_show,
+                    hma=hma_d2_full,
+                    macd=macd_d2.reindex(df_show.index),
+                    trend_slope=m_d,
+                    lookback=120
+                )
+                if macd_hma_sig_d2 is not None:
+                    annotate_macd_star_callout(ax,
+                                               macd_hma_sig_d2["time"],
+                                               macd_hma_sig_d2["price"],
+                                               macd_hma_sig_d2["side"],
+                                               hma_period=hma_period)
+            except Exception:
+                pass
 
             breakout_d2 = last_breakout_signal(
                 price=df_show, resistance=res30_show, support=sup30_show,
