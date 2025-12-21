@@ -94,41 +94,28 @@ st.sidebar.markdown(
 st.sidebar.markdown("---")
 mode = st.sidebar.radio("Mode", ["Stocks", "Forex"], index=0, key="mode")
 
-DEFAULT_STOCKS = [
-    "AAPL", "MSFT", "NVDA", "AMZN", "META", "TSLA", "GOOGL", "SPY", "QQQ"
-]
-DEFAULT_FOREX = [
-    "EURUSD=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "NZDUSD=X", "USDCAD=X", "USDCHF=X"
-]
-
-custom = st.sidebar.text_area(
-    "Custom tickers (comma/space separated)",
-    value="",
-    help="Example: AAPL, MSFT, SPY or EURUSD=X GBPUSD=X",
-    key="custom_universe"
-).strip()
-
-def _parse_universe(text: str):
-    if not text:
-        return []
-    parts = []
-    for chunk in text.replace("\n", " ").replace(";", ",").split(","):
-        chunk = chunk.strip()
-        if not chunk:
-            continue
-        parts.extend([p.strip() for p in chunk.split() if p.strip()])
-    # de-dup preserving order
+def _dedup_keep_order(seq):
     seen = set()
     out = []
-    for s in parts:
-        if s not in seen:
-            out.append(s)
-            seen.add(s)
+    for x in seq:
+        if x not in seen:
+            out.append(x)
+            seen.add(x)
     return out
 
-universe = _parse_universe(custom)
-if not universe:
-    universe = DEFAULT_FOREX if mode == "Forex" else DEFAULT_STOCKS
+# Universe (restored full lists; custom tickers removed)
+if mode == "Stocks":
+    universe = sorted(_dedup_keep_order([
+        'AAPL','SPY','AMZN','DIA','TSLA','SPGI','JPM','VTWG','PLTR','NVDA',
+        'META','SITM','MARA','GOOG','HOOD','BABA','IBM','AVGO','GUSH','VOO',
+        'MSFT','TSM','NFLX','MP','AAL','URI','DAL','BBAI','QUBT','AMD','SMCI','ORCL','TLT'
+    ]))
+else:
+    universe = _dedup_keep_order([
+        'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X','NZDJPY=X',
+        'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','EURCAD=X',
+        'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
+    ])
 
 # Sidebar chart/settings
 st.sidebar.markdown("---")
@@ -904,22 +891,26 @@ def annotate_sell_triangle(ax, ts, px, size: int = 140):
     except Exception:
         ax.text(ts, px, "▼", color="tab:red", fontsize=12, fontweight="bold", zorder=12)
 
-def annotate_macd_star_callout(ax, ts_or_x, px, side: str, hma_period: int = 55):
+def annotate_macd_star_callout(ax, ts_or_x, px, side: str, hma_period: int = 55, y_frac: float = 0.10):
     """
-    Star at (x, price) + label box ABOVE it with arrow pointing DOWN to the star.
+    Star at (x, price) + instruction box anchored at the bottom of the chart
+    with a leader line pointing to the star.
     """
     try:
         color = "tab:green" if side == "BUY" else "tab:red"
         ax.scatter([ts_or_x], [px], marker="*", s=170, c=color, edgecolors="none", zorder=14)
-        ymin, ymax = ax.get_ylim()
-        yoff = (ymax - ymin) * 0.055
+
         label = f"★ MACD {'Buy' if side=='BUY' else 'Sell'} — HMA{hma_period} Cross"
+
+        # Place the box near the bottom of the chart (x in data coords, y in axes fraction)
+        trans = blended_transform_factory(ax.transData, ax.transAxes)
         ax.annotate(
             label,
             xy=(ts_or_x, px),
-            xytext=(ts_or_x, px + yoff),
-            textcoords="data",
-            ha="left",
+            xycoords="data",
+            xytext=(ts_or_x, float(y_frac)),
+            textcoords=trans,
+            ha="center",
             va="bottom",
             fontsize=9,
             fontweight="bold",
@@ -927,6 +918,7 @@ def annotate_macd_star_callout(ax, ts_or_x, px, side: str, hma_period: int = 55)
             bbox=dict(boxstyle="round,pad=0.28", fc="white", ec=color, alpha=0.95),
             arrowprops=dict(arrowstyle="->", color=color, lw=1.4),
             zorder=15,
+            annotation_clip=False,
         )
     except Exception:
         ax.text(ts_or_x, px, "★", color=("tab:green" if side == "BUY" else "tab:red"),
@@ -1667,7 +1659,7 @@ def render_intraday_price_macd(sel: str, intraday: pd.DataFrame, p_up: float, p_
     psar_h_df = compute_psar_from_ohlc(intraday, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
     psar_h_aligned = _align_series_to_index(psar_h_df["PSAR"], hc.index) if (show_psar and not psar_h_df.empty and "PSAR" in psar_h_df) else pd.Series(index=hc.index, dtype=float)
 
-    # GLOBAL regression fit m_h (used by instructions + 99% band)
+    # GLOBAL regression fit m_h (used by instructions + ±2σ band)
     yhat_h, upper_h, lower_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
 
     fig2, (ax2, ax2m) = plt.subplots(
@@ -1801,7 +1793,7 @@ def render_intraday_price_macd(sel: str, intraday: pd.DataFrame, p_up: float, p_
             bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7)
         )
 
-    # regression fit + band
+    # regression fit + ±2σ band (GLOBAL)
     if not yhat_h.empty:
         slope_col_h = "tab:green" if m_h >= 0 else "tab:red"
         ax2.plot(x_mt, yhat_h.reindex(idx_mt).values, "-", linewidth=2.6, color=slope_col_h, alpha=0.95, label="Slope Fit (GLOBAL)")
@@ -1825,7 +1817,7 @@ def render_intraday_price_macd(sel: str, intraday: pd.DataFrame, p_up: float, p_
         for t in sess_pos.get("ny_open", []):
             ax2.axvline(t, linestyle="-", linewidth=1.0, color="tab:orange", alpha=0.35)
         for t in sess_pos.get("ny_close", []):
-            ax2.axvline(t, linestyle="--", linewidth=1.0, color="tab:orange", alpha=0.35)
+            ax2.axvline(t, linestyle="--", color="tab:orange", linewidth=1.0, alpha=0.35)
 
     # fibs (intraday)
     if show_fibs and not hc.empty:
