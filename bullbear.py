@@ -97,7 +97,7 @@ def auto_refresh():
 auto_refresh()
 elapsed = time.time() - st.session_state.last_refresh
 remaining = max(0, int(REFRESH_INTERVAL - elapsed))
-pst_dt = datetime.fromtimestamp(st.session_state.last_refresh, tz=PACRIC)
+pst_dt = datetime.fromtimestamp(st.session_state.last_refresh, tz=PACIFIC)
 # Fix timezone variable typo
 PACRIC = PACIFIC
 pst_dt = datetime.fromtimestamp(st.session_state.last_refresh, tz=PACIFIC)
