@@ -124,6 +124,11 @@ else:
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
     ])
 
+# UPDATE (1): When switching Mode, ensure selectbox states remain valid (prevents option mismatch issues).
+for _k in ("tab1_ticker", "hist_long_ticker"):
+    if _k in st.session_state and st.session_state[_k] not in universe:
+        st.session_state[_k] = universe[0]
+
 # Sidebar chart/settings
 st.sidebar.markdown("---")
 daily_view = st.sidebar.selectbox("Daily view window", ["6M", "12M", "24M", "Historical"], index=1, key="daily_view")
@@ -222,6 +227,9 @@ def fmt_r2(r2: float, digits: int = 1) -> str:
     except Exception:
         return "n/a"
     return fmt_pct(rv, digits=digits) if np.isfinite(rv) else "n/a"
+
+def is_forex_symbol(symbol: str) -> bool:
+    return "=X" in str(symbol).upper()
 
 # FX helpers
 def pip_size_for_symbol(symbol: str):
@@ -729,6 +737,9 @@ def _after_all_decreasing(series: pd.Series, start_ts, n: int) -> bool:
     if len(seg) < n + 1:
         return False
     return bool(np.all(np.diff(seg) < 0))
+# =========================
+# Part 3/6 — bullbear.py
+# =========================
 
 # --- Core signals used by the UI (these were referenced in your snippet) ---
 def last_band_reversal_signal(price: pd.Series,
@@ -1053,6 +1064,9 @@ def plot_supertrend_line(ax, x_vals, st_df: pd.DataFrame, idx: pd.DatetimeIndex,
     else:
         ax.plot(idx, up_line.values, "-", linewidth=lw, alpha=alpha, color="tab:green", label="SuperTrend")
         ax.plot(idx, dn_line.values, "-", linewidth=lw, alpha=alpha, color="tab:red", label="_nolegend_")
+# =========================
+# Part 4/6 — bullbear.py
+# =========================
 
 # --- Breakout detection (used in your snippet) ---
 def last_breakout_signal(price: pd.Series,
@@ -1434,9 +1448,6 @@ def market_time_axis(ax, index: pd.DatetimeIndex):
     ax.set_xlim(0, max(0, len(index) - 1))
     ax.xaxis.set_major_locator(MaxNLocator(nbins=8, integer=True))
     ax.xaxis.set_major_formatter(make_market_time_formatter(index))
-# =========================
-# Part 3/6 — bullbear.py
-# =========================
 
 def render_daily_price_macd(sel: str, df: pd.Series, df_ohlc: pd.DataFrame):
     """
@@ -1462,7 +1473,7 @@ def render_daily_price_macd(sel: str, df: pd.Series, df_ohlc: pd.DataFrame):
                                              conv=ichi_conv, base=ichi_base, span_b=ichi_spanb, shift_cloud=False)
         kijun_d = kijun_d.ffill().bfill()
 
-    bb_mid_d, bb_up_d, bb_lo_d, _, _ = compute_bbands(df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
+    bb_mid_d, bb_up_d, bb_lo_d, bb_pctb_d, bb_nbb_d = compute_bbands(df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
     psar_d_df = compute_psar_from_ohlc(df_ohlc, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
     st_d_df = compute_supertrend(df_ohlc, atr_period=atr_period, atr_mult=atr_mult) if (df_ohlc is not None and not df_ohlc.empty) else pd.DataFrame()
@@ -1480,6 +1491,8 @@ def render_daily_price_macd(sel: str, df: pd.Series, df_ohlc: pd.DataFrame):
     bb_mid_d_show = bb_mid_d.reindex(df_show.index)
     bb_up_d_show = bb_up_d.reindex(df_show.index)
     bb_lo_d_show = bb_lo_d.reindex(df_show.index)
+    bb_pctb_d_show = bb_pctb_d.reindex(df_show.index)
+    bb_nbb_d_show = bb_nbb_d.reindex(df_show.index)
 
     hma_d_full = compute_hma(df, period=hma_period).reindex(df_show.index)
 
@@ -1545,7 +1558,7 @@ def render_daily_price_macd(sel: str, df: pd.Series, df_ohlc: pd.DataFrame):
             ax.text(df_show.index[-1], y, f" {lbl}", va="center",
                     fontsize=8, alpha=0.6, fontweight="bold")
 
-        # UPDATE (Daily view — per request): Also show Fib 0%/100% extreme reversal marker + label (same as intraday)
+        # Also show Fib 0%/100% extreme reversal marker + label (same as intraday)
         try:
             fib0 = fibs_d.get("0%")
             fib100 = fibs_d.get("100%")
@@ -1669,11 +1682,26 @@ def render_daily_price_macd(sel: str, df: pd.Series, df_ohlc: pd.DataFrame):
     except Exception:
         pass
 
+    # UPDATE (2): Daily chart footer now includes Current Price (similar to intraday)
+    px_now_d = float(df_show.iloc[-1]) if len(df_show) else np.nan
+    nbb_txt_d = ""
+    try:
+        last_pct_d = float(bb_pctb_d_show.dropna().iloc[-1]) if show_bbands else np.nan
+        last_nbb_d = float(bb_nbb_d_show.dropna().iloc[-1]) if show_bbands else np.nan
+        if np.isfinite(last_nbb_d) and np.isfinite(last_pct_d):
+            nbb_txt_d = f"  |  NBB {last_nbb_d:+.2f}  •  %B {fmt_pct(last_pct_d, digits=0)}"
+    except Exception:
+        pass
+
+    footer_d = (
+        (f"Current price: {fmt_price_val(px_now_d)}{nbb_txt_d}\n" if np.isfinite(px_now_d) else "")
+        + f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}  •  Slope: {fmt_slope(m_d)}/bar"
+    )
     ax.text(
         0.99, 0.02,
-        f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}  •  Slope: {fmt_slope(m_d)}/bar",
+        footer_d,
         transform=ax.transAxes, ha="right", va="bottom",
-        fontsize=9, color="black",
+        fontsize=10, fontweight="bold", color="black",
         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7)
     )
 
@@ -1847,9 +1875,7 @@ def render_intraday_price_macd(sel: str, intraday: pd.DataFrame, p_up: float, p_
                                            hma_period=hma_period)
     except Exception:
         pass
-# =========================
-# Part 4/6 — bullbear.py
-# =========================
+
     breakout_h = last_breakout_signal(
         price=hc, resistance=res_h, support=sup_h,
         prox=sr_prox_pct, confirm_bars=rev_bars_confirm
@@ -1914,8 +1940,8 @@ def render_intraday_price_macd(sel: str, intraday: pd.DataFrame, p_up: float, p_
         ax2.plot(x_mt, upper_h.reindex(idx_mt).values, ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
         ax2.plot(x_mt, lower_h.reindex(idx_mt).values, ":", linewidth=2.5, color="black", alpha=1.0, label="_nolegend_")
 
-    # sessions (Forex)
-    if mode == "Forex" and show_sessions_pst and not hc.empty:
+    # sessions (Forex) — UPDATE (1): Tie to the *symbol* so last-run Forex still shows sessions even if Mode UI changes.
+    if is_forex_symbol(sel) and show_sessions_pst and not hc.empty:
         sess_dt = compute_session_lines(idx_mt)
         sess_pos = map_session_lines_to_positions(sess_dt, idx_mt)
         # draw session lines using numeric positions
@@ -2032,6 +2058,9 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "MACD Hot List",
     "Daily Support Reversals"
 ])
+# =========================
+# Part 5/6 — bullbear.py
+# =========================
 
 # --- Tab 1: Original Forecast ---
 with tab1:
@@ -2077,7 +2106,9 @@ with tab1:
 
     caution_below_btn = st.empty()
 
-    if st.session_state.run_all and st.session_state.ticker == sel:
+    # UPDATE (1): Once a symbol is RUN, keep charting that last-run symbol until another Run occurs.
+    if st.session_state.run_all and st.session_state.get("ticker") is not None:
+        active_sel = st.session_state.ticker  # last-run symbol (sticky)
         df = st.session_state.df_hist
         df_ohlc = st.session_state.df_ohlc
         last_price = _safe_last_float(df)
@@ -2085,11 +2116,12 @@ with tab1:
         p_up = np.mean(st.session_state.fc_vals.to_numpy() > last_price) if np.isfinite(last_price) else np.nan
         p_dn = (1 - p_up) if np.isfinite(p_up) else np.nan
 
-        fx_news = fetch_yf_news(sel, window_days=news_window_days) if (mode == "Forex" and show_fx_news) else pd.DataFrame()
+        # Forex news should follow the last-run symbol type (not the sidebar Mode toggle)
+        fx_news = fetch_yf_news(active_sel, window_days=news_window_days) if (is_forex_symbol(active_sel) and show_fx_news) else pd.DataFrame()
 
         # Daily
         if chart in ("Daily", "Both"):
-            render_daily_price_macd(sel, df, df_ohlc)
+            render_daily_price_macd(active_sel, df, df_ohlc)
 
         # Intraday
         if chart in ("Hourly", "Both"):
@@ -2113,9 +2145,9 @@ with tab1:
                 except Exception:
                     pass
 
-                render_intraday_price_macd(sel, intraday, p_up, p_dn)
+                render_intraday_price_macd(active_sel, intraday, p_up, p_dn)
 
-        if mode == "Forex":
+        if is_forex_symbol(active_sel):
             st.subheader("Forex Session Overlaps (PST)")
             st.markdown(
                 """
@@ -2165,10 +2197,6 @@ with tab2:
                 st.info("Intraday view uses the same logic as Tab 1.")
                 render_intraday_price_macd(st.session_state.ticker, intr, p_up, p_dn)
 
-# =========================
-# Part 5/6 — bullbear.py
-# =========================
-
 # --- Tab 3: Bull vs Bear ---
 with tab3:
     st.header("Bull vs Bear Summary")
@@ -2189,6 +2217,9 @@ with tab3:
             c2.metric("Bull Days", bull, f"{bull/total*100:.1f}%")
             c3.metric("Bear Days", bear, f"{bear/total*100:.1f}%")
             c4.metric("Lookback", bb_period)
+# =========================
+# Part 6/6 — bullbear.py
+# =========================
 
 # --- Tab 4: Metrics ---
 with tab4:
@@ -2350,10 +2381,6 @@ with tab5:
                 showh["NTD_Last"] = showh["NTD_Last"].map(lambda v: f"{v:+.3f}" if np.isfinite(v) else "n/a")
                 showh["Close"] = showh["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
                 st.dataframe(showh[["Symbol", "Timestamp", "Close", "NTD_Last"]].reset_index(drop=True), use_container_width=True)
-
-# =========================
-# Part 6/6 — bullbear.py
-# =========================
 
 # --- Tab 6: Long-Term History ---
 with tab6:
@@ -2570,7 +2597,6 @@ with tab7:
                 use_container_width=True
             )
 
-    # OPTIONAL: keep the combined MACD+HMA scanner (AND logic) to match your prior intent
     st.markdown("---")
     st.subheader("Optional — MACD 0-Cross + HMA Cross (AND)")
     st.caption(
@@ -2594,7 +2620,6 @@ with tab7:
                 if s is None or s.empty or s.shape[0] < max(30, slope_lb_daily, hma_period + 5):
                     continue
 
-                # Global daily trendline slope
                 _yhat, _u, _l, m_sym, r2_sym = regression_with_band(s, lookback=slope_lb_daily, z=Z_FOR_99)
                 if not np.isfinite(m_sym) or float(m_sym) == 0.0:
                     continue
@@ -2602,7 +2627,6 @@ with tab7:
                 hma_s = compute_hma(s, period=hma_period)
                 macd_s, _sig_unused, _hist_unused = compute_macd(s)
 
-                # Align and clean
                 p = _coerce_1d_series(s).astype(float).dropna()
                 h = _coerce_1d_series(hma_s).astype(float).reindex(p.index)
                 m = _coerce_1d_series(macd_s).astype(float).reindex(p.index)
@@ -2611,7 +2635,6 @@ with tab7:
                 if len(p) < 3:
                     continue
 
-                # Find most recent MACD 0-cross and HMA cross (direction depends on global slope sign)
                 def _last_macd_cross_ix(direction: str):
                     for i in range(len(m) - 1, 0, -1):
                         prev = float(m.iloc[i - 1]); cur = float(m.iloc[i])
@@ -2645,7 +2668,6 @@ with tab7:
                 bars_since_macd = (len(p) - 1) - int(ix_macd)
                 bars_since_hma = (len(p) - 1) - int(ix_hma)
 
-                # AND gate: BOTH crosses must be within recency window
                 if (bars_since_macd > recent_bars) or (bars_since_hma > recent_bars):
                     continue
 
