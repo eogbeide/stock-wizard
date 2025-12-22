@@ -1096,7 +1096,7 @@ def last_breakout_signal(price: pd.Series,
 
     dn_ok = (
         np.isfinite(s_prev.iloc[-1]) and np.isfinite(s_prev.iloc[-2])
-        and (p.iloc[-2] >= s_prev.iloc[-2] * (1.0 + prox))
+        and (p.iloc[-2] >= s_prev.iloc[-2] * (1.0 - prox))
         and (p.iloc[-1] < s_prev.iloc[-1] * (1.0 - prox))
         and _confirmed_down()
     )
@@ -1545,6 +1545,30 @@ def render_daily_price_macd(sel: str, df: pd.Series, df_ohlc: pd.DataFrame):
             ax.text(df_show.index[-1], y, f" {lbl}", va="center",
                     fontsize=8, alpha=0.6, fontweight="bold")
 
+        # UPDATE (Daily view — per request): Also show Fib 0%/100% extreme reversal marker + label (same as intraday)
+        try:
+            fib0 = fibs_d.get("0%")
+            fib100 = fibs_d.get("100%")
+            if np.isfinite(fib0) and np.isfinite(fib100):
+                fib_sig_d = last_fib_extreme_reversal(
+                    price=df_show,
+                    slope=m_d,  # daily uses global regression slope
+                    fib0_level=float(fib0),
+                    fib100_level=float(fib100),
+                    prox=sr_prox_pct,
+                    confirm_bars=rev_bars_confirm,
+                    lookback=max(40, int(slope_lb_daily))
+                )
+                if fib_sig_d is not None:
+                    if fib_sig_d["dir"] == "DOWN":
+                        annotate_fib_reversal(ax, ts=df_show.index[-1], y_level=float(fib0),
+                                              direction="DOWN", label="Fib 0% REV → 100%")
+                    elif fib_sig_d["dir"] == "UP":
+                        annotate_fib_reversal(ax, ts=df_show.index[-1], y_level=float(fib100),
+                                              direction="UP", label="Fib 100% REV → 0%")
+        except Exception:
+            pass
+
     badges_top = []
 
     band_sig_d = last_band_reversal_signal(
@@ -1826,7 +1850,6 @@ def render_intraday_price_macd(sel: str, intraday: pd.DataFrame, p_up: float, p_
 # =========================
 # Part 4/6 — bullbear.py
 # =========================
-
     breakout_h = last_breakout_signal(
         price=hc, resistance=res_h, support=sup_h,
         prox=sr_prox_pct, confirm_bars=rev_bars_confirm
@@ -2141,6 +2164,7 @@ with tab2:
             else:
                 st.info("Intraday view uses the same logic as Tab 1.")
                 render_intraday_price_macd(st.session_state.ticker, intr, p_up, p_dn)
+
 # =========================
 # Part 5/6 — bullbear.py
 # =========================
@@ -2326,6 +2350,7 @@ with tab5:
                 showh["NTD_Last"] = showh["NTD_Last"].map(lambda v: f"{v:+.3f}" if np.isfinite(v) else "n/a")
                 showh["Close"] = showh["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
                 st.dataframe(showh[["Symbol", "Timestamp", "Close", "NTD_Last"]].reset_index(drop=True), use_container_width=True)
+
 # =========================
 # Part 6/6 — bullbear.py
 # =========================
