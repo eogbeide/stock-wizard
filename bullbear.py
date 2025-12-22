@@ -2051,20 +2051,11 @@ with tab1:
     period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
     auto_run = st.session_state.run_all
 
-    # =========================
-    # CHANGE (This request):
-    # - Keep showing the LAST-RUN symbol on reruns/auto-refresh.
-    # - Only switch the active symbol when the user clicks "Run Forecast".
-    # =========================
-    clicked_run = st.button("Run Forecast", key="btn_run_forecast")
-
-    run_symbol = sel if clicked_run else st.session_state.get("ticker", None)
-
-    if clicked_run or (auto_run and run_symbol is not None):
-        df_hist = fetch_hist(run_symbol)
-        df_ohlc = fetch_hist_ohlc(run_symbol)
+    if st.button("Run Forecast", key="btn_run_forecast") or auto_run:
+        df_hist = fetch_hist(sel)
+        df_ohlc = fetch_hist_ohlc(sel)
         fc_idx, fc_vals, fc_ci = compute_sarimax_forecast(df_hist)
-        intraday = fetch_intraday(run_symbol, period=period_map[hour_range])
+        intraday = fetch_intraday(sel, period=period_map[hour_range])
 
         st.session_state.update({
             "df_hist": df_hist,
@@ -2073,7 +2064,7 @@ with tab1:
             "fc_vals": fc_vals,
             "fc_ci": fc_ci,
             "intraday": intraday,
-            "ticker": run_symbol,
+            "ticker": sel,
             "chart": chart,
             "hour_range": hour_range,
             "run_all": True
@@ -2086,13 +2077,7 @@ with tab1:
 
     caution_below_btn = st.empty()
 
-    # UPDATED (This request): Render based on LAST-RUN ticker, not current selectbox selection
-    if st.session_state.run_all and st.session_state.get("ticker") is not None:
-        active_ticker = st.session_state.ticker
-
-        if sel != active_ticker:
-            st.info(f"Currently displaying **{active_ticker}**. Click **Run Forecast** to load **{sel}**.")
-
+    if st.session_state.run_all and st.session_state.ticker == sel:
         df = st.session_state.df_hist
         df_ohlc = st.session_state.df_ohlc
         last_price = _safe_last_float(df)
@@ -2100,11 +2085,11 @@ with tab1:
         p_up = np.mean(st.session_state.fc_vals.to_numpy() > last_price) if np.isfinite(last_price) else np.nan
         p_dn = (1 - p_up) if np.isfinite(p_up) else np.nan
 
-        fx_news = fetch_yf_news(active_ticker, window_days=news_window_days) if (mode == "Forex" and show_fx_news) else pd.DataFrame()
+        fx_news = fetch_yf_news(sel, window_days=news_window_days) if (mode == "Forex" and show_fx_news) else pd.DataFrame()
 
         # Daily
         if chart in ("Daily", "Both"):
-            render_daily_price_macd(active_ticker, df, df_ohlc)
+            render_daily_price_macd(sel, df, df_ohlc)
 
         # Intraday
         if chart in ("Hourly", "Both"):
@@ -2128,7 +2113,7 @@ with tab1:
                 except Exception:
                     pass
 
-                render_intraday_price_macd(active_ticker, intraday, p_up, p_dn)
+                render_intraday_price_macd(sel, intraday, p_up, p_dn)
 
         if mode == "Forex":
             st.subheader("Forex Session Overlaps (PST)")
@@ -2179,6 +2164,7 @@ with tab2:
             else:
                 st.info("Intraday view uses the same logic as Tab 1.")
                 render_intraday_price_macd(st.session_state.ticker, intr, p_up, p_dn)
+
 # =========================
 # Part 5/6 — bullbear.py
 # =========================
@@ -2364,6 +2350,7 @@ with tab5:
                 showh["NTD_Last"] = showh["NTD_Last"].map(lambda v: f"{v:+.3f}" if np.isfinite(v) else "n/a")
                 showh["Close"] = showh["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
                 st.dataframe(showh[["Symbol", "Timestamp", "Close", "NTD_Last"]].reset_index(drop=True), use_container_width=True)
+
 # =========================
 # Part 6/6 — bullbear.py
 # =========================
