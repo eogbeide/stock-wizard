@@ -927,7 +927,7 @@ def annotate_macd_star_callout(ax, ts_or_x, px, side: str, hma_period: int = 55,
         ax.scatter([ts_or_x], [px], marker="*", s=170, c=color, edgecolors="none", zorder=14)
 
         # UPDATE (3): Add the price value to the MACD-HMA cross callout label
-        label = f"★ MACD {'Buy' if side=='BUY' else 'Sell'} — HMA{hma_period} Cross @{fmt_price_val(px)}"
+        label = f"★ MACD {'Buy' if side=='BUY' else 'Sell'} — 0-Cross @{fmt_price_val(px)}"
 
         # Place the box near the bottom of the chart (x in data coords, y in axes fraction)
         trans = blended_transform_factory(ax.transData, ax.transAxes)
@@ -957,35 +957,31 @@ def last_macd_hma_cross_star(price: pd.Series,
                              trend_slope: float,
                              lookback: int = 120):
     """
-    Uptrend:  price crosses UP through HMA and MACD is still < 0 → BUY
-    Downtrend:price crosses DOWN through HMA and MACD is still > 0 → SELL
+    Uptrend:  BUY when MACD crosses UP through 0
+    Downtrend:SELL when MACD crosses DOWN through 0
     """
     if not np.isfinite(trend_slope) or trend_slope == 0:
         return None
     p = _coerce_1d_series(price).astype(float).dropna()
-    h = _coerce_1d_series(hma).astype(float).reindex(p.index)
     m = _coerce_1d_series(macd).astype(float).reindex(p.index)
-    mask = p.notna() & h.notna() & m.notna()
-    p, h, m = p[mask], h[mask], m[mask]
+    mask = p.notna() & m.notna()
+    p, m = p[mask], m[mask]
     if len(p) < 2:
         return None
     if lookback and len(p) > lookback:
-        p = p.iloc[-lookback:]; h = h.iloc[-lookback:]; m = m.iloc[-lookback:]
+        p = p.iloc[-lookback:]; m = m.iloc[-lookback:]
 
     for i in range(len(p) - 1, 0, -1):
-        p_prev, p_cur = float(p.iloc[i - 1]), float(p.iloc[i])
-        h_prev, h_cur = float(h.iloc[i - 1]), float(h.iloc[i])
-        mac_cur = float(m.iloc[i])
+        m_prev, m_cur = float(m.iloc[i - 1]), float(m.iloc[i])
         t = p.index[i]
+        px = float(p.iloc[i])
 
         if trend_slope > 0:
-            up_cross = (p_prev < h_prev) and (p_cur >= h_cur)
-            if up_cross and (mac_cur < 0.0):
-                return {"time": t, "price": p_cur, "side": "BUY"}
+            if (m_prev <= 0.0) and (m_cur > 0.0):
+                return {"time": t, "price": px, "side": "BUY"}
         else:
-            dn_cross = (p_prev > h_prev) and (p_cur <= h_cur)
-            if dn_cross and (mac_cur > 0.0):
-                return {"time": t, "price": p_cur, "side": "SELL"}
+            if (m_prev >= 0.0) and (m_cur < 0.0):
+                return {"time": t, "price": px, "side": "SELL"}
     return None
 
 # NEW (This request):
@@ -996,16 +992,14 @@ def last_macd_zero_and_hma_cross_sell(price: pd.Series,
     """
     Trigger when (within the last lookback_bars):
       - MACD crosses 0 DOWN (prev >= 0, curr < 0)
-      - Price crosses HMA DOWN (prev > HMA_prev, curr <= HMA_curr)
     Returns dict with time/price/bars_since if found, else None.
     """
     p = _coerce_1d_series(price).astype(float).dropna()
     if p.empty or len(p) < 2:
         return None
-    h = _coerce_1d_series(hma).astype(float).reindex(p.index)
     m = _coerce_1d_series(macd).astype(float).reindex(p.index)
-    mask = p.notna() & h.notna() & m.notna()
-    p, h, m = p[mask], h[mask], m[mask]
+    mask = p.notna() & m.notna()
+    p, m = p[mask], m[mask]
     if len(p) < 2:
         return None
 
@@ -1013,14 +1007,12 @@ def last_macd_zero_and_hma_cross_sell(price: pd.Series,
     start = max(1, len(p) - lb)
 
     for i in range(len(p) - 1, start - 1, -1):
-        p_prev, p_cur = float(p.iloc[i - 1]), float(p.iloc[i])
-        h_prev, h_cur = float(h.iloc[i - 1]), float(h.iloc[i])
+        p_cur = float(p.iloc[i])
         m_prev, m_cur = float(m.iloc[i - 1]), float(m.iloc[i])
 
         macd0_dn = (m_prev >= 0.0) and (m_cur < 0.0)
-        hma_dn = (p_prev > h_prev) and (p_cur <= h_cur)
 
-        if macd0_dn and hma_dn:
+        if macd0_dn:
             bars_since = (len(p) - 1) - i
             return {"time": p.index[i], "price": p_cur, "bars_since": int(bars_since)}
     return None
@@ -1455,6 +1447,19 @@ def market_time_axis(ax, index: pd.DatetimeIndex):
     ax.xaxis.set_major_locator(MaxNLocator(nbins=8, integer=True))
     ax.xaxis.set_major_formatter(make_market_time_formatter(index))
 
+# (The remainder of the script is unchanged from your original except for the MACD-only alignment changes above.)
+# =========================
+# Part 4/6 continues…
+# =========================
+
+# --- Daily & Intraday renderers, tabs, and remaining code ---
+# NOTE: Everything below is identical to your provided code except:
+#   1) annotate_macd_star_callout label now references only MACD 0-Cross
+#   2) last_macd_hma_cross_star now triggers on MACD 0-Cross (trend-filtered)
+#   3) last_macd_zero_and_hma_cross_sell now triggers on MACD 0-Cross down only
+#   4) extra_note strings/conditions no longer depend on HMA cross
+
+# --- Daily renderer (unchanged except extra_note) ---
 def render_daily_price_macd(sel: str, df: pd.Series, df_ohlc: pd.DataFrame):
     """
     Daily: price + MACD panel.
@@ -1665,13 +1670,13 @@ def render_daily_price_macd(sel: str, df: pd.Series, df_ohlc: pd.DataFrame):
 
     draw_top_badges(ax, badges_top)
 
-    # instruction banner (daily local==global) + NEW MACD0↓ + HMA↓ note (global downtrend)
+    # instruction banner (daily local==global) + NEW MACD0↓ note (global downtrend)
     try:
         px_val_d = float(df_show.iloc[-1])
         confirm_side = sr99_sig["side"] if sr99_sig is not None else None
 
         extra_note = None
-        if np.isfinite(m_d) and float(m_d) < 0 and show_hma:
+        if np.isfinite(m_d) and float(m_d) < 0:
             macd_hma0_dn = last_macd_zero_and_hma_cross_sell(
                 price=df_show,
                 hma=hma_d_full,
@@ -1679,7 +1684,7 @@ def render_daily_price_macd(sel: str, df: pd.Series, df_ohlc: pd.DataFrame):
                 lookback_bars=3
             )
             if macd_hma0_dn is not None and int(macd_hma0_dn.get("bars_since", 9999)) <= 1:
-                extra_note = f"▼ MACD Sell — HMA{hma_period} Cross (MACD 0↓ + Price<HMA)"
+                extra_note = f"▼ MACD Sell — 0-Cross (MACD 0↓)"
 
         draw_instruction_ribbons(ax, m_d, sup_val_d, res_val_d, px_val_d, sel,
                                  confirm_side=confirm_side,
@@ -1738,6 +1743,7 @@ def render_daily_price_macd(sel: str, df: pd.Series, df_ohlc: pd.DataFrame):
 
     st.pyplot(fig)
 
+# --- Intraday renderer (unchanged except extra_note_h) ---
 def render_intraday_price_macd(sel: str, intraday: pd.DataFrame, p_up: float, p_dn: float):
     """
     Intraday: price plotted on compressed numeric axis, MACD panel beneath.
@@ -1898,10 +1904,10 @@ def render_intraday_price_macd(sel: str, intraday: pd.DataFrame, p_up: float, p_
 
     draw_top_badges(ax2, badges_top_h)
 
-    # instruction banner: LOCAL = slope_h, GLOBAL = m_h  (+ NEW MACD0↓ + HMA↓ note in global downtrend)
+    # instruction banner: LOCAL = slope_h, GLOBAL = m_h  (+ NEW MACD0↓ note in global downtrend)
     extra_note_h = None
     try:
-        if np.isfinite(m_h) and float(m_h) < 0 and show_hma:
+        if np.isfinite(m_h) and float(m_h) < 0:
             macd_hma0_dn_h = last_macd_zero_and_hma_cross_sell(
                 price=hc,
                 hma=hma_h.reindex(idx_mt),
@@ -1909,7 +1915,7 @@ def render_intraday_price_macd(sel: str, intraday: pd.DataFrame, p_up: float, p_
                 lookback_bars=3
             )
             if macd_hma0_dn_h is not None and int(macd_hma0_dn_h.get("bars_since", 9999)) <= 1:
-                extra_note_h = f"▼ MACD Sell — HMA{hma_period} Cross (MACD 0↓ + Price<HMA)"
+                extra_note_h = f"▼ MACD Sell — 0-Cross (MACD 0↓)"
     except Exception:
         extra_note_h = None
 
@@ -2064,7 +2070,6 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "MACD Hot List",
     "Daily Support Reversals"
 ])
-
 
 # =========================
 # Part 5/6 — bullbear.py
@@ -2229,7 +2234,6 @@ with tab3:
             c2.metric("Bull Days", bull, f"{bull/total*100:.1f}%")
             c3.metric("Bear Days", bear, f"{bear/total*100:.1f}%")
             c4.metric("Lookback", bb_period)
-
 
 # =========================
 # Part 6/6 — bullbear.py
