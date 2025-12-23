@@ -119,7 +119,7 @@ if mode == "Stocks":
     ]))
 else:
     universe = _dedup_keep_order([
-        'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X','NZDJPY=X',
+        'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X','NZDJPY=X','NZDJPY=X',
         'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','EURCAD=X',
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
     ])
@@ -174,6 +174,8 @@ bb_period = st.sidebar.selectbox("Lookback period (yfinance)", ["6mo", "1y", "2y
 
 # --- Top-of-page caution banner placeholder ---
 top_warn = st.empty()
+
+
 # =========================
 # Part 2/6 — bullbear.py
 # =========================
@@ -737,6 +739,8 @@ def _after_all_decreasing(series: pd.Series, start_ts, n: int) -> bool:
     if len(seg) < n + 1:
         return False
     return bool(np.all(np.diff(seg) < 0))
+
+
 # =========================
 # Part 3/6 — bullbear.py
 # =========================
@@ -1064,6 +1068,8 @@ def plot_supertrend_line(ax, x_vals, st_df: pd.DataFrame, idx: pd.DatetimeIndex,
     else:
         ax.plot(idx, up_line.values, "-", linewidth=lw, alpha=alpha, color="tab:green", label="SuperTrend")
         ax.plot(idx, dn_line.values, "-", linewidth=lw, alpha=alpha, color="tab:red", label="_nolegend_")
+
+
 # =========================
 # Part 4/6 — bullbear.py
 # =========================
@@ -2058,6 +2064,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "MACD Hot List",
     "Daily Support Reversals"
 ])
+
+
 # =========================
 # Part 5/6 — bullbear.py
 # =========================
@@ -2080,11 +2088,15 @@ with tab1:
     period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
     auto_run = st.session_state.run_all
 
-    if st.button("Run Forecast", key="btn_run_forecast") or auto_run:
-        df_hist = fetch_hist(sel)
-        df_ohlc = fetch_hist_ohlc(sel)
+    # FIX (This request): keep the last RUN symbol sticky during auto-reruns until the user clicks Run Forecast again.
+    btn_run = st.button("Run Forecast", key="btn_run_forecast")
+    if btn_run or auto_run:
+        run_ticker = sel if btn_run else st.session_state.get("ticker", sel)
+
+        df_hist = fetch_hist(run_ticker)
+        df_ohlc = fetch_hist_ohlc(run_ticker)
         fc_idx, fc_vals, fc_ci = compute_sarimax_forecast(df_hist)
-        intraday = fetch_intraday(sel, period=period_map[hour_range])
+        intraday = fetch_intraday(run_ticker, period=period_map[hour_range])
 
         st.session_state.update({
             "df_hist": df_hist,
@@ -2093,7 +2105,7 @@ with tab1:
             "fc_vals": fc_vals,
             "fc_ci": fc_ci,
             "intraday": intraday,
-            "ticker": sel,
+            "ticker": run_ticker,
             "chart": chart,
             "hour_range": hour_range,
             "run_all": True
@@ -2217,6 +2229,8 @@ with tab3:
             c2.metric("Bull Days", bull, f"{bull/total*100:.1f}%")
             c3.metric("Bear Days", bear, f"{bear/total*100:.1f}%")
             c4.metric("Lookback", bb_period)
+
+
 # =========================
 # Part 6/6 — bullbear.py
 # =========================
