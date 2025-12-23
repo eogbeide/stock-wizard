@@ -1382,7 +1382,7 @@ def draw_session_lines(ax, lines: dict):
     for t in lines.get("ldn_close", []):
         ax.axvline(t, linestyle="--", linewidth=1.0, color="tab:blue", alpha=0.35)
     for t in lines.get("ny_open", []):
-        ax.axvline(t, linestyle="-", linewidth=1.0, color="tab:orange", alpha=0.35)
+        ax.axvline(t, linestyle="-", color="tab:orange", linewidth=1.0, alpha=0.35)
     for t in lines.get("ny_close", []):
         ax.axvline(t, linestyle="--", color="tab:orange", linewidth=1.0, alpha=0.35)
     ax.text(
@@ -2078,7 +2078,7 @@ with tab1:
     # ✅ FIXED: universe is defined above tabs now
     sel = st.selectbox("Ticker:", universe, key="tab1_ticker")
 
-    chart = st.radio("Chart View:", ["Daily", "Hourly", "Both"], key="orig_chart")
+    chart = st.radio("Chart View:", ["Daily", "Hourly", "Both"], index=(1 if mode == "Forex" else 0), key="orig_chart")
     hour_range = st.selectbox(
         "Hourly lookback:",
         ["24h", "48h", "96h"],
@@ -2196,7 +2196,7 @@ with tab2:
         p_dn = (1 - p_up) if np.isfinite(p_up) else np.nan
 
         st.caption(f"Intraday lookback: **{st.session_state.get('hour_range', '24h')}**")
-        view = st.radio("View:", ["Daily", "Intraday", "Both"], key="enh_view")
+        view = st.radio("View:", ["Daily", "Intraday", "Both"], index=(1 if is_forex_symbol(st.session_state.ticker) else 0), key="enh_view")
 
         if view in ("Daily", "Both"):
             render_daily_price_macd(st.session_state.ticker, df, df_ohlc)
