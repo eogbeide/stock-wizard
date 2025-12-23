@@ -113,7 +113,7 @@ if mode == "Stocks":
 else:
     universe = _dedup_keep_order([
         'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X','NZDJPY=X','NZDJPY=X',
-        'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','EURCAD=X', 'CADJPY=X',
+        'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','EURCAD=X','CADJPY=X',
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
     ])
 
@@ -906,10 +906,10 @@ def annotate_sell_triangle(ax, ts, px, size: int = 140):
     except Exception:
         ax.text(ts, px, "▼", color="tab:red", fontsize=12, fontweight="bold", zorder=12)
 
-def annotate_macd_star_callout(ax, ts_or_x, px, side: str, hma_period: int = 55, y_frac: float = 0.10):
+def annotate_macd_star_callout(ax, ts_or_x, px, side: str, hma_period: int = 55, y_frac: float = -0.14):
     """
-    Star at (x, price) + instruction box anchored at the bottom of the chart
-    with a leader line pointing to the star.
+    Star at (x, price) + instruction box placed BELOW the chart (outside the price area)
+    with a leader line pointing to the star/entry point.
     """
     try:
         color = "tab:green" if side == "BUY" else "tab:red"
@@ -918,7 +918,7 @@ def annotate_macd_star_callout(ax, ts_or_x, px, side: str, hma_period: int = 55,
         # UPDATE (3): Add the price value to the MACD-HMA cross callout label
         label = f"★ MACD {'Buy' if side=='BUY' else 'Sell'} — HMA{hma_period} Cross @{fmt_price_val(px)}"
 
-        # Place the box near the bottom of the chart (x in data coords, y in axes fraction)
+        # Place the box below the chart (x in data coords, y in axes fraction; negative y = below axes)
         trans = blended_transform_factory(ax.transData, ax.transAxes)
         ax.annotate(
             label,
@@ -927,7 +927,7 @@ def annotate_macd_star_callout(ax, ts_or_x, px, side: str, hma_period: int = 55,
             xytext=(ts_or_x, float(y_frac)),
             textcoords=trans,
             ha="center",
-            va="bottom",
+            va="top",
             fontsize=9,
             fontweight="bold",
             color=color,
