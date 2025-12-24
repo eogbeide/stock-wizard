@@ -17,7 +17,7 @@
 #   • MACD 0-cross triangles (trend + S/R reversal filtered)
 #   • Tabs: Forecast, Enhanced, Bull/Bear, Metrics, Scanners, Long-Term, Stickers, Support Reversals
 
-import streamlit as st
+import streamlit as str
 import pandas as pd
 import numpy as np
 import yfinance as yf
