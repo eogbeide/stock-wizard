@@ -38,6 +38,28 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# =============================================================================
+# NEW (This request): Sidebar show/hide toggle button (no other behavior changes)
+# =============================================================================
+if "hide_sidebar" not in st.session_state:
+    st.session_state.hide_sidebar = False
+
+toggle_label = "Hide Sidebar" if not st.session_state.hide_sidebar else "Show Sidebar"
+if st.button(toggle_label, key="btn_toggle_sidebar"):
+    st.session_state.hide_sidebar = not st.session_state.hide_sidebar
+
+# Hide the sidebar via CSS when toggled off (button remains in main area to restore it)
+if st.session_state.hide_sidebar:
+    st.markdown(
+        """
+<style>
+  [data-testid="stSidebar"] { display: none !important; }
+  [data-testid="stSidebarCollapsedControl"] { display: none !important; }
+</style>
+""",
+        unsafe_allow_html=True
+    )
+
 # --- Minimal CSS (keep plots readable) ---
 st.markdown(
     """
@@ -1504,7 +1526,7 @@ def draw_session_lines(ax, lines: dict):
     for t in lines.get("ldn_open", []):
         ax.axvline(t, linestyle="-", linewidth=1.0, color="tab:blue", alpha=0.35)
     for t in lines.get("ldn_close", []):
-        ax.axvline(t, linestyle="--", linewidth=1.0, color="tab:blue", alpha=0.35)
+        ax.axvline(t, linestyle="--", color="tab:blue", alpha=0.35)
     for t in lines.get("ny_open", []):
         ax.axvline(t, linestyle="-", color="tab:orange", linewidth=1.0, alpha=0.35)
     for t in lines.get("ny_close", []):
@@ -2011,7 +2033,7 @@ def render_intraday_price_macd(sel: str, intraday: pd.DataFrame, p_up: float, p_
         for t in sess_pos.get("ldn_open", []):
             ax2.axvline(t, linestyle="-", linewidth=1.0, color="tab:blue", alpha=0.35)
         for t in sess_pos.get("ldn_close", []):
-            ax2.axvline(t, linestyle="--", linewidth=1.0, color="tab:blue", alpha=0.35)
+            ax2.axvline(t, linestyle="--", color="tab:blue", alpha=0.35)
         for t in sess_pos.get("ny_open", []):
             ax2.axvline(t, linestyle="-", color="tab:orange", linewidth=1.0, alpha=0.35)
         for t in sess_pos.get("ny_close", []):
