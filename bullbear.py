@@ -17,7 +17,7 @@
 #   • NEW: Slope reversal probability for daily & hourly price charts.
 #   • Green dashed global trendline restored on daily & hourly price charts.
 
-import streamlit as st
+import streamlit as stf
 import pandas as pd
 import numpy as np
 import yfinance as yf
