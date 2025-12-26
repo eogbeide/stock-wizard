@@ -14,7 +14,7 @@ import math
 from dataclasses import dataclass
 from typing import Optional, Tuple, Dict, List
 
-import numpy as np
+import numpy as npt
 import pandas as pd
 import yfinance as yf
 import streamlit as st
