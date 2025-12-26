@@ -18,6 +18,11 @@
 #                        with horizontal lines at the latest Support & Resistance.
 #   • NEW (this update): Daily chart TITLE now shows the same BUY/SELL instruction as Hourly,
 #                        derived from slope sign + latest S/R + current price.
+#   • NEW (this update): Two sidebar buttons:
+#        (1) Clear cache
+#        (2) Toggle Stocks/Forex
+#   • NEW (this update): Remove closed-market data so price is continuous (no forward-filled
+#                        non-trading daily bars; drop zero-volume intraday bars for stocks).
 
 import streamlit as st
 import pandas as pd
@@ -207,6 +212,34 @@ def subset_by_daily_view(obj, view_label: str):
 
 # ---------- Sidebar configuration ----------
 st.sidebar.title("Configuration")
+
+# --- NEW: two buttons (clear cache + toggle Stock/Forex) ---
+_btn1, _btn2 = st.sidebar.columns(2)
+
+if _btn1.button("🧹 Clear cache", key="btn_clear_cache"):
+    try:
+        st.cache_data.clear()
+    except Exception:
+        pass
+    for k in ["df_hist", "df_ohlc", "fc_idx", "fc_vals", "fc_ci", "intraday"]:
+        st.session_state.pop(k, None)
+    st.session_state.run_all = False
+    st.session_state.ticker = None
+    try:
+        st.experimental_rerun()
+    except Exception:
+        pass
+
+if _btn2.button("↔ Stocks / Forex", key="btn_toggle_mode"):
+    curr = st.session_state.get("sb_mode", "Stock")
+    st.session_state.sb_mode = "Forex" if curr == "Stock" else "Stock"
+    st.session_state.run_all = False
+    st.session_state.ticker = None
+    try:
+        st.experimental_rerun()
+    except Exception:
+        pass
+
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2, key="sb_bb_period")
 daily_view = st.sidebar.selectbox("Daily view range:", ["Historical", "6M", "12M", "24M"],
@@ -317,11 +350,13 @@ else:
         'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','EURCAD=X',
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
     ]
+
 # ---------- Data fetchers ----------
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
-    s = (yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
-         .asfreq("D").fillna(method="ffill"))
+    # NEW: remove closed-market (non-trading) daily bars by NOT forward-filling asfreq("D")
+    s = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close'].dropna()
+    s = s[~s.index.duplicated(keep="last")]
     try:
         s = s.tz_localize(PACIFIC)
     except TypeError:
@@ -330,8 +365,10 @@ def fetch_hist(ticker: str) -> pd.Series:
 
 @st.cache_data(ttl=120)
 def fetch_hist_max(ticker: str) -> pd.Series:
+    # NEW: remove closed-market (non-trading) daily bars by NOT forward-filling asfreq("D")
     df = yf.download(ticker, period="max")[['Close']].dropna()
-    s = df['Close'].asfreq("D").fillna(method="ffill")
+    s = df['Close'].dropna()
+    s = s[~s.index.duplicated(keep="last")]
     try:
         s = s.tz_localize(PACIFIC)
     except TypeError:
@@ -356,7 +393,21 @@ def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
         df = df.tz_localize('UTC')
     except TypeError:
         pass
-    return df.tz_convert(PACIFIC)
+    df = df.tz_convert(PACIFIC)
+
+    # NEW: remove closed-market intraday bars (stocks often show zero-volume bars)
+    if df is not None and not df.empty:
+        if "Close" in df.columns:
+            df = df.dropna(subset=["Close"])
+        # Only apply volume-based filtering to stocks (not FX "=X")
+        if "=X" not in str(ticker).upper() and "Volume" in df.columns:
+            v = pd.to_numeric(df["Volume"], errors="coerce")
+            if v.notna().any():
+                pos = v > 0
+                if pos.any():
+                    df = df.loc[pos]
+
+    return df
 
 @st.cache_data(ttl=120)
 def compute_sarimax_forecast(series_like):
@@ -964,6 +1015,7 @@ def compute_psar_from_ohlc(df: pd.DataFrame,
                 in_uptrend.iloc[i] = False
 
     return pd.DataFrame({"PSAR": psar, "in_uptrend": in_uptrend})
+
 # ---------- HMA reversal markers on NTD panel ----------
 def detect_hma_reversal_masks(price: pd.Series, hma: pd.Series,
                               lookback: int = 3):
@@ -1781,6 +1833,7 @@ def render_hourly_views(sel: str,
         ax2m.legend(loc="lower left", framealpha=0.5)
         ax2m.set_xlim(xlim_price)
         st.pyplot(fig2m)
+
 # ==================== TAB 1: ORIGINAL FORECAST ====================
 with tab1:
     st.header("Original Forecast")
@@ -2135,6 +2188,7 @@ with tab1:
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
+
 # ==================== TAB 2: ENHANCED FORECAST ====================
 with tab2:
     st.header("Enhanced Forecast")
