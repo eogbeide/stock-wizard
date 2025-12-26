@@ -24,7 +24,7 @@
 #   • NEW (this update): Remove closed-market data so price is continuous (no forward-filled
 #                        non-trading daily bars; drop zero-volume intraday bars for stocks).
 
-import streamlit as stff
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
