@@ -13,7 +13,7 @@
 #     - Resets run state when switching modes to avoid stale ticker/data key conflicts
 #   • Keeps ALL prior features exactly as-is.
 
-import streamlit as stf
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
