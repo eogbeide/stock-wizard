@@ -22,6 +22,12 @@
 #     - Lists symbols where NPX (normalized price) recently crossed ABOVE the NTD line (green circle condition)
 #     - Only when the DAILY chart's global trendline slope (in the chart area) is UP (positive)
 #     - “Recent” is controlled by Max bars since cross (default 2)
+#
+# UPDATE (this request - ONLY instruction text changed):
+#   • Show BUY instruction only when Global Trendline slope and Local Slope agree (both UP)
+#   • Show SELL instruction only when Global Trendline slope and Local Slope agree (both DOWN)
+#   • Otherwise show:
+#       "ALERT: Trend may be changing - Open trade position with caution while still following the signals on the chat."
 
 import streamlit as st
 import pandas as pd
@@ -244,12 +250,16 @@ def format_trade_instruction(trend_slope: float,
                              buy_val: float,
                              sell_val: float,
                              close_val: float,
-                             symbol: str) -> str:
+                             symbol: str,
+                             global_trend_slope: float = None) -> str:
     """
-    BUY/SELL text uses the SIGN of `trend_slope`:
+    UPDATED (this request):
+      - Show BUY instruction only when Global Trendline slope and Local Slope agree (both UP)
+      - Show SELL instruction only when Global Trendline slope and Local Slope agree (both DOWN)
+      - Otherwise show an alert message.
 
-      • slope > 0  →  BUY first, then SELL, then pips
-      • slope < 0  →  SELL first, then BUY, then pips
+    Backward-compatibility:
+      - If global_trend_slope is None, falls back to the prior behavior (uses only trend_slope).
     """
     def _finite(x):
         try:
@@ -260,21 +270,60 @@ def format_trade_instruction(trend_slope: float,
     entry_buy = float(buy_val) if _finite(buy_val) else float(close_val)
     exit_sell = float(sell_val) if _finite(sell_val) else float(close_val)
 
-    uptrend = False
-    try:
-        uptrend = float(trend_slope) >= 0.0
-    except Exception:
-        pass
+    # Prior behavior if no global slope provided
+    if global_trend_slope is None:
+        uptrend = False
+        try:
+            uptrend = float(trend_slope) >= 0.0
+        except Exception:
+            pass
 
-    if uptrend:
+        if uptrend:
+            leg_a_val, leg_b_val = entry_buy, exit_sell
+            text = f"▲ BUY @{fmt_price_val(leg_a_val)} → ▼ SELL @{fmt_price_val(leg_b_val)}"
+        else:
+            leg_a_val, leg_b_val = exit_sell, entry_buy
+            text = f"▼ SELL @{fmt_price_val(leg_a_val)} → ▲ BUY @{fmt_price_val(leg_b_val)}"
+
+        text += f" • {_diff_text(leg_a_val, leg_b_val, symbol)}"
+        return text
+
+    # New behavior: require agreement between global trendline and local slope
+    try:
+        g = float(global_trend_slope)
+        l = float(trend_slope)
+    except Exception:
+        g = np.nan
+        l = np.nan
+
+    alert_txt = "ALERT: Trend may be changing - Open trade position with caution while still following the signals on the chat."
+
+    if (not np.isfinite(g)) or (not np.isfinite(l)):
+        return alert_txt
+
+    sg = float(np.sign(g))
+    sl = float(np.sign(l))
+
+    # Treat 0 as "no clear trend" => alert
+    if sg == 0.0 or sl == 0.0:
+        return alert_txt
+
+    # Agreement UP
+    if sg > 0 and sl > 0:
         leg_a_val, leg_b_val = entry_buy, exit_sell
         text = f"▲ BUY @{fmt_price_val(leg_a_val)} → ▼ SELL @{fmt_price_val(leg_b_val)}"
-    else:
+        text += f" • {_diff_text(leg_a_val, leg_b_val, symbol)}"
+        return text
+
+    # Agreement DOWN
+    if sg < 0 and sl < 0:
         leg_a_val, leg_b_val = exit_sell, entry_buy
         text = f"▼ SELL @{fmt_price_val(leg_a_val)} → ▲ BUY @{fmt_price_val(leg_b_val)}"
+        text += f" • {_diff_text(leg_a_val, leg_b_val, symbol)}"
+        return text
 
-    text += f" • {_diff_text(leg_a_val, leg_b_val, symbol)}"
-    return text
+    # Disagreement
+    return alert_txt
 
 # ---------------------------
 # Gapless (continuous) intraday prices
@@ -1874,13 +1923,14 @@ def render_hourly_views(sel: str,
         if news_pos:
             draw_news_markers(ax2, news_pos, label="News")
 
-    # Existing slope-based instruction
+    # UPDATED instruction (this request): requires global trend & local slope agreement
     instr_txt = format_trade_instruction(
         trend_slope=slope_sig_h,
         buy_val=sup_val,
         sell_val=res_val,
         close_val=px_val,
-        symbol=sel
+        symbol=sel,
+        global_trend_slope=global_m_h
     )
 
     # NEW (this request): MACD/HMA55 instruction shown on PRICE chart as a legend
