@@ -16,6 +16,12 @@
 #   (2) Global trendline styling:
 #       - Uptrend: DASH GREEN
 #       - Downtrend: DASH RED
+#
+# UPDATE (this request - ONLY Recent BUY Scanner changed):
+#   • Recent BUY Scanner now works for BOTH Stocks and Forex, DAILY view:
+#     - Lists symbols where NPX (normalized price) recently crossed ABOVE the NTD line (green circle condition)
+#     - Only when the DAILY chart's global trendline slope (in the chart area) is UP (positive)
+#     - “Recent” is controlled by Max bars since cross (default 2)
 
 import streamlit as st
 import pandas as pd
@@ -1636,6 +1642,78 @@ def last_band_bounce_signal_hourly(symbol: str, period: str, slope_lb: int):
         return None
 
 # ---------------------------
+# NEW (this request): Daily NPX↑NTD cross (green circle) + Upward GLOBAL trendline in DAILY chart area
+#   - Works for BOTH Stocks + Forex
+#   - Uses current sidebar daily_view range (Historical/6M/12M/24M) for "chart area"
+# ---------------------------
+@st.cache_data(ttl=120)
+def last_daily_npx_cross_up_in_uptrend(symbol: str, ntd_win: int, daily_view_label: str):
+    """
+    Returns a dict row if:
+      (1) DAILY global trendline slope (on the selected daily view range) is > 0
+      (2) NPX recently crossed ABOVE NTD (this is the green circle condition in the NTD panel)
+    Otherwise returns None.
+
+    Note: NTD/NPX are computed on full history (like charts), then sliced to daily_view for cross detection.
+    """
+    try:
+        s_full = fetch_hist(symbol)
+        close_full = _coerce_1d_series(s_full).dropna()
+        if close_full.empty:
+            return None
+
+        # chart-area subset (same as daily price plot uses)
+        close_show = subset_by_daily_view(close_full, daily_view_label)
+        close_show = _coerce_1d_series(close_show).dropna()
+        if close_show.empty or len(close_show) < 2:
+            return None
+
+        # Global trend slope over the *chart area* (daily_view)
+        x = np.arange(len(close_show), dtype=float)
+        m, b = np.polyfit(x, close_show.to_numpy(dtype=float), 1)
+        if not np.isfinite(m) or float(m) <= 0.0:
+            return None  # must be upward global trendline
+
+        # Compute indicators on full history, then slice to chart area
+        ntd_full = compute_normalized_trend(close_full, window=ntd_win)
+        npx_full = compute_normalized_price(close_full, window=ntd_win)
+
+        ntd_show = _coerce_1d_series(ntd_full).reindex(close_show.index)
+        npx_show = _coerce_1d_series(npx_full).reindex(close_show.index)
+
+        cross_up, _ = _cross_series(npx_show, ntd_show)
+        cross_up = cross_up.reindex(close_show.index, fill_value=False)
+        if not cross_up.any():
+            return None
+
+        t = cross_up[cross_up].index[-1]
+        loc = int(close_show.index.get_loc(t))
+        bars_since = int((len(close_show) - 1) - loc)
+
+        curr_px = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
+        ntd_at = float(ntd_show.loc[t]) if (t in ntd_show.index and np.isfinite(ntd_show.loc[t])) else np.nan
+        npx_at = float(npx_show.loc[t]) if (t in npx_show.index and np.isfinite(npx_show.loc[t])) else np.nan
+
+        ntd_last = float(ntd_show.dropna().iloc[-1]) if len(ntd_show.dropna()) else np.nan
+        npx_last = float(npx_show.dropna().iloc[-1]) if len(npx_show.dropna()) else np.nan
+
+        return {
+            "Symbol": symbol,
+            "Frame": "Daily",
+            "Signal": "NPX↑NTD (Uptrend)",
+            "Bars Since": bars_since,
+            "Cross Time": t,
+            "Global Slope": float(m),
+            "Current Price": curr_px,
+            "NTD@Cross": ntd_at,
+            "NPX@Cross": npx_at,
+            "NTD (last)": ntd_last,
+            "NPX (last)": npx_last,
+        }
+    except Exception:
+        return None
+
+# ---------------------------
 # Session state init
 # ---------------------------
 if "run_all" not in st.session_state:
@@ -2518,30 +2596,34 @@ with tab6:
         st.pyplot(fig)
 
 # ---------------------------
-# TAB 7: RECENT BUY SCANNER (Stocks-only)
+# TAB 7: RECENT BUY SCANNER (UPDATED per request)
 # ---------------------------
 with tab7:
-    st.header("Recent BUY Scanner (Stocks-only)")
-    if mode != "Stock":
-        st.info("Switch to **Stocks** mode to use this scanner.")
-    else:
-        st.caption("Shows stocks whose most recent band-bounce BUY happened within the last 0–2 bars (daily or hourly).")
-        scan_period = st.selectbox("Hourly lookback period:", ["1d", "2d", "4d"], index=0, key="buy_scan_period")
-        max_bars = st.slider("Max bars since BUY", 0, 10, 2, 1, key="buy_scan_max_bars")
+    st.header("Recent BUY Scanner — Daily NPX↑NTD in Uptrend (Stocks + Forex)")
+    st.caption(
+        "Lists symbols (in the current mode's universe) where **NPX (normalized price)** most recently crossed "
+        "**ABOVE** the **NTD** line (the green circle condition) **AND** the DAILY chart-area global trendline "
+        "(in the selected Daily view range) is **upward**."
+    )
 
-        run_buy_scan = st.button("Run Recent BUY Scan", key="btn_run_recent_buy_scan")
-        if run_buy_scan:
-            rows = []
-            for sym in universe:
-                # hourly
-                h = last_band_bounce_signal_hourly(sym, period=scan_period, slope_lb=slope_lb_hourly)
-                if h and h.get("Side") == "BUY" and int(h.get("Bars Since", 999)) <= int(max_bars):
-                    rows.append(h)
+    max_bars = st.slider("Max bars since NPX↑NTD cross", 0, 20, 2, 1, key="buy_scan_npx_max_bars")
+    run_buy_scan = st.button("Run Recent BUY Scan", key="btn_run_recent_buy_scan_npx")
 
-            if not rows:
-                st.info("No recent BUY signals found.")
-            else:
-                out = pd.DataFrame(rows)
-                out["DeltaPct"] = out["DeltaPct"].astype(float)
-                out = out.sort_values(["Bars Since", "DeltaPct"], ascending=[True, False])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
+    if run_buy_scan:
+        rows = []
+        for sym in universe:
+            r = last_daily_npx_cross_up_in_uptrend(sym, ntd_win=ntd_window, daily_view_label=daily_view)
+            if r is not None and int(r.get("Bars Since", 9999)) <= int(max_bars):
+                rows.append(r)
+
+        if not rows:
+            st.info("No recent NPX↑NTD crosses found in an upward daily global trend (within the selected bar window).")
+        else:
+            out = pd.DataFrame(rows)
+            # Sort: most recent first, then strongest trend
+            if "Bars Since" in out.columns:
+                out["Bars Since"] = out["Bars Since"].astype(int)
+            if "Global Slope" in out.columns:
+                out["Global Slope"] = out["Global Slope"].astype(float)
+            out = out.sort_values(["Bars Since", "Global Slope"], ascending=[True, False])
+            st.dataframe(out.reset_index(drop=True), use_container_width=True)
