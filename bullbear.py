@@ -17,7 +17,7 @@
 #       - Uptrend: DASH GREEN
 #       - Downtrend: DASH RED
 
-import streamlit as stb
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
