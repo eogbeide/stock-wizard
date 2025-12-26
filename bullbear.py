@@ -1,3 +1,6 @@
+# =========================
+# Part 1/6 — bullbear.py
+# =========================
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # UPDATED — per request:
 #   (1) Remove price gaps so price is continuous (gapless intraday prices)
@@ -258,7 +261,7 @@ def make_gapless_ohlc(df: pd.DataFrame,
                       min_gap_seconds: float = 3600.0) -> pd.DataFrame:
     """
     Remove *price gaps* at session breaks by applying a cumulative offset so that
-    the first bar after a large time-gap starts at the previous bar's close.
+    the first bar after a large time-gap STARTS (Open) at the previous bar's Close.
 
     This keeps the charted price continuous (gapless) while preserving intrabar shape.
     Only applied to intraday data (5m).
@@ -274,7 +277,12 @@ def make_gapless_ohlc(df: pd.DataFrame,
     if "Close" not in df.columns:
         return df
 
+    # Use Open (preferred) to stitch to previous Close; fallback to Close if Open missing.
+    ref_col = "Open" if "Open" in df.columns else "Close"
+
     close = pd.to_numeric(df["Close"], errors="coerce")
+    refp  = pd.to_numeric(df[ref_col], errors="coerce")
+
     idx = close.index
     diffs = idx.to_series().diff().dt.total_seconds().dropna()
     if diffs.empty:
@@ -292,11 +300,14 @@ def make_gapless_ohlc(df: pd.DataFrame,
             dt_sec = float((idx[i] - idx[i-1]).total_seconds())
         except Exception:
             dt_sec = 0.0
+
         if dt_sec >= thr:
-            prev = float(close.iloc[i-1]) if np.isfinite(close.iloc[i-1]) else np.nan
-            curr = float(close.iloc[i])   if np.isfinite(close.iloc[i])   else np.nan
-            if np.isfinite(prev) and np.isfinite(curr):
-                offset += (curr - prev)
+            prev_close = float(close.iloc[i-1]) if np.isfinite(close.iloc[i-1]) else np.nan
+            curr_ref   = float(refp.iloc[i])    if np.isfinite(refp.iloc[i])    else np.nan
+            if np.isfinite(prev_close) and np.isfinite(curr_ref):
+                # amount to subtract from the new segment so that curr_ref becomes prev_close
+                offset += (curr_ref - prev_close)
+
         offsets[i] = offset
 
     offs = pd.Series(offsets, index=idx)
@@ -306,6 +317,45 @@ def make_gapless_ohlc(df: pd.DataFrame,
             out[c] = pd.to_numeric(out[c], errors="coerce") - offs
     return out
 
+def _apply_compact_time_ticks(ax, real_times: pd.DatetimeIndex, n_ticks: int = 8):
+    """
+    Hourly chart x-axis is a continuous bar index (0..N-1).
+    This labels ticks using the real timestamp index (PST) to keep readable time context.
+    """
+    if not isinstance(real_times, pd.DatetimeIndex) or real_times.empty:
+        return
+    n = len(real_times)
+    n_ticks = int(max(2, min(n_ticks, n)))
+    pos = np.linspace(0, n - 1, n_ticks, dtype=int)
+    labels = []
+    for i in pos:
+        try:
+            labels.append(real_times[i].strftime("%m-%d %H:%M"))
+        except Exception:
+            labels.append(str(real_times[i]))
+    ax.set_xticks(pos.tolist())
+    ax.set_xticklabels(labels, rotation=0, fontsize=8)
+
+def _map_times_to_bar_positions(real_times: pd.DatetimeIndex, times_list):
+    if not isinstance(real_times, pd.DatetimeIndex) or real_times.empty:
+        return []
+    if times_list is None:
+        return []
+    try:
+        t = pd.to_datetime(list(times_list))
+    except Exception:
+        return []
+    if len(t) == 0:
+        return []
+    try:
+        idxer = real_times.get_indexer(t, method="nearest")
+    except Exception:
+        return []
+    pos = [int(i) for i in idxer if int(i) >= 0]
+    return pos
+# =========================
+# Part 2/6 — bullbear.py
+# =========================
 # ---------------------------
 # Sidebar configuration
 # ---------------------------
@@ -550,7 +600,9 @@ def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
     R1 = 2 * P - L; S1 = 2 * P - H
     R2 = P + (H - L); S2 = P - (H - L)
     return {"P": P, "R1": R1, "S1": S1, "R2": R2, "S2": S2}
-
+# =========================
+# Part 3/6 — bullbear.py
+# =========================
 # ---------------------------
 # Regression & ±2σ band
 # ---------------------------
@@ -911,7 +963,9 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     pctb = ((s - lower) / width).clip(0.0, 1.0)
     nbb = pctb * 2.0 - 1.0
     return (mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index))
-
+# =========================
+# Part 4/6 — bullbear.py
+# =========================
 # ---------------------------
 # Ichimoku, Supertrend, PSAR
 # ---------------------------
@@ -1374,7 +1428,9 @@ def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
         return float(ntd.iloc[-1]), ntd.index[-1]
     except Exception:
         return np.nan, None
-
+# =========================
+# Part 5/6 — bullbear.py
+# =========================
 def _price_above_kijun_from_df(df: pd.DataFrame, base: int = 26):
     if df is None or df.empty or not {"High","Low","Close"}.issubset(df.columns):
         return False, None, np.nan, np.nan
@@ -1498,10 +1554,21 @@ def render_hourly_views(sel: str,
     """
     Single hourly layout used for BOTH stocks and forex.
     Forex-only: session lines + (optional) news markers + (optional) volume panel.
+
+    GAP FIX:
+      • price is stitched via make_gapless_ohlc() in fetch_intraday()
+      • time axis is compressed to remove empty overnight/weekend spacing
+        (plots use a continuous bar index; ticks show real PST timestamps)
     """
     if intraday is None or intraday.empty or "Close" not in intraday:
         st.warning("No intraday data available.")
         return
+
+    # --- GAP FIX: compress time gaps (no empty spaces on x-axis) ---
+    real_times = intraday.index if isinstance(intraday.index, pd.DatetimeIndex) else None
+    intr_plot = intraday.copy()
+    intr_plot.index = pd.RangeIndex(len(intr_plot))  # continuous bars (0..N-1)
+    intraday = intr_plot
 
     hc = intraday["Close"].ffill()
     he = hc.ewm(span=20).mean()
@@ -1618,9 +1685,11 @@ def render_hourly_views(sel: str,
         if bounce_sig_h is not None:
             annotate_crossover(ax2, bounce_sig_h["time"], bounce_sig_h["price"], bounce_sig_h["side"])
 
-    # News markers
-    if is_forex and show_fx_news and (not fx_news.empty):
-        draw_news_markers(ax2, fx_news["time"].tolist(), label="News")
+    # News markers (mapped to bar positions)
+    if is_forex and show_fx_news and (not fx_news.empty) and isinstance(real_times, pd.DatetimeIndex):
+        news_pos = _map_times_to_bar_positions(real_times, fx_news["time"].tolist())
+        if news_pos:
+            draw_news_markers(ax2, news_pos, label="News")
 
     # Instruction text
     instr_txt = format_trade_instruction(
@@ -1666,10 +1735,16 @@ def render_hourly_views(sel: str,
              fontsize=9, color="black",
              bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-    # Session lines
-    if is_forex and show_sessions_pst and not hc.empty:
-        sess = compute_session_lines(hc.index)
-        draw_session_lines(ax2, sess)
+    # Session lines (mapped to bar positions)
+    if is_forex and show_sessions_pst and isinstance(real_times, pd.DatetimeIndex) and not real_times.empty:
+        sess = compute_session_lines(real_times)
+        sess_pos = {
+            "ldn_open": _map_times_to_bar_positions(real_times, sess.get("ldn_open", [])),
+            "ldn_close": _map_times_to_bar_positions(real_times, sess.get("ldn_close", [])),
+            "ny_open": _map_times_to_bar_positions(real_times, sess.get("ny_open", [])),
+            "ny_close": _map_times_to_bar_positions(real_times, sess.get("ny_close", [])),
+        }
+        draw_session_lines(ax2, sess_pos)
 
     # Fibonacci (hourly only)
     if show_fibs and not hc.empty:
@@ -1681,6 +1756,11 @@ def render_hourly_views(sel: str,
 
     ax2.set_xlabel("Time (PST)")
     ax2.legend(loc="lower left", framealpha=0.5)
+
+    # GAP FIX: label x ticks with real timestamps
+    if isinstance(real_times, pd.DatetimeIndex):
+        _apply_compact_time_ticks(ax2, real_times, n_ticks=8)
+
     xlim_price = ax2.get_xlim()
     st.pyplot(fig2)
 
@@ -1709,6 +1789,8 @@ def render_hourly_views(sel: str,
         ax2v.set_xlim(xlim_price)
         ax2v.set_xlabel("Time (PST)")
         ax2v.legend(loc="lower left", framealpha=0.5)
+        if isinstance(real_times, pd.DatetimeIndex):
+            _apply_compact_time_ticks(ax2v, real_times, n_ticks=8)
         st.pyplot(fig2v)
 
     # Hourly NTD panel
@@ -1753,6 +1835,8 @@ def render_hourly_views(sel: str,
         ax2r.set_xlim(xlim_price)
         ax2r.legend(loc="lower left", framealpha=0.5)
         ax2r.set_xlabel("Time (PST)")
+        if isinstance(real_times, pd.DatetimeIndex):
+            _apply_compact_time_ticks(ax2r, real_times, n_ticks=8)
         st.pyplot(fig2r)
 
     # Optional momentum panel
@@ -1774,8 +1858,12 @@ def render_hourly_views(sel: str,
         ax2m.set_xlabel("Time (PST)")
         ax2m.legend(loc="lower left", framealpha=0.5)
         ax2m.set_xlim(xlim_price)
+        if isinstance(real_times, pd.DatetimeIndex):
+            _apply_compact_time_ticks(ax2m, real_times, n_ticks=8)
         st.pyplot(fig2m)
-
+# =========================
+# Part 6/6 — bullbear.py
+# =========================
 # ---------------------------
 # Tabs
 # ---------------------------
