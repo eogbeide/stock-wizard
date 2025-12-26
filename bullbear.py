@@ -17,7 +17,7 @@
 #   • NEW (this update): Daily chart now uses configurable S/R (rolling highs/lows) like hourly,
 #                        with horizontal lines at the latest Support & Resistance.
 
-import streamlit as st
+import streamlit as sth
 import pandas as pd
 import numpy as np
 import yfinance as yf
