@@ -17,7 +17,7 @@
 #       - Uptrend: DASH GREEN
 #       - Downtrend: DASH RED
 
-import streamlit as stc
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -511,8 +511,8 @@ if mode == "Stock":
     ])
 else:
     universe = [
-        "EURUSD=X","EURJPY=X","GBPUSD=X","USDJPY=X","AUDUSD=X","NZDUSD=X",,"CADJPY=X",
-        "HKDJPY=X","USDCAD=X","USDCNY=X","USDCHF=X","EURGBP=X","EURCAD=X",,"NZDJPY=X",
+        "EURUSD=X","EURJPY=X","GBPUSD=X","USDJPY=X","AUDUSD=X","NZDUSD=X","CADJPY=X",
+        "HKDJPY=X","USDCAD=X","USDCNY=X","USDCHF=X","EURGBP=X","EURCAD=X","NZDJPY=X",
         "USDHKD=X","EURHKD=X","GBPHKD=X","GBPJPY=X","CNHJPY=X","AUDJPY=X","GBPCAD=X"
     ]
 
