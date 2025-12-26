@@ -10,7 +10,7 @@
 #     - Resets run state when switching modes to avoid stale ticker/data key conflicts
 #   • Keeps ALL prior features (Supertrend, PSAR, BBands, HMA, NTD/NPX panel, S/R, slope ±2σ bands, scanner, etc.)
 
-import streamlit as sty
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
