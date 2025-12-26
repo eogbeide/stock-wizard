@@ -2,16 +2,9 @@
 # Part 1/6 — bullbear.py
 # =========================
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
-# UPDATED — per request:
-#   (1) Remove price gaps so price is continuous (gapless intraday prices)
-#   (2) Add a clear cache button
-#   (3) Select Fibonacci by default
-#   (4) Hide Momentum by default
-#   • Adds TWO CLICK BUTTONS (Forex / Stocks) to switch the displayed asset class.
-#     - Removes the sidebar "Forecast Mode" selectbox
-#     - Uses session_state.asset_mode (default = Forex)
-#     - Resets run state when switching modes to avoid stale ticker/data key conflicts
-#   • Keeps ALL prior features (Supertrend, PSAR, BBands, HMA, NTD/NPX panel, S/R, slope ±2σ bands, scanner, etc.)
+# UPDATED — aesthetics-only:
+#   • Session (market open/close) legend moved to bottom OUTSIDE the chart
+#   • Cleaner chart styling (grid, cleaner spines) without changing logic/data
 
 import streamlit as st
 import pandas as pd
@@ -23,6 +16,7 @@ import matplotlib.pyplot as plt
 import time
 import pytz
 from matplotlib.transforms import blended_transform_factory
+from matplotlib.lines import Line2D
 
 # ---------------------------
 # Page config + UI CSS
@@ -123,6 +117,19 @@ if mcol2.button("📈 Stocks", use_container_width=True, key="btn_mode_stock"):
 
 mode = st.session_state.asset_mode
 st.caption(f"**Current mode:** {mode}")
+
+# ---------------------------
+# Aesthetic helper (no logic change)
+# ---------------------------
+def style_axes(ax):
+    """Simple, consistent, user-friendly chart styling."""
+    try:
+        ax.grid(True, alpha=0.22, linewidth=0.8)
+        ax.set_axisbelow(True)
+        for spine in ["top", "right"]:
+            ax.spines[spine].set_visible(False)
+    except Exception:
+        pass
 
 # ---------------------------
 # Core helpers
@@ -277,7 +284,6 @@ def make_gapless_ohlc(df: pd.DataFrame,
     if "Close" not in df.columns:
         return df
 
-    # Use Open (preferred) to stitch to previous Close; fallback to Close if Open missing.
     ref_col = "Open" if "Open" in df.columns else "Close"
 
     close = pd.to_numeric(df["Close"], errors="coerce")
@@ -305,7 +311,6 @@ def make_gapless_ohlc(df: pd.DataFrame,
             prev_close = float(close.iloc[i-1]) if np.isfinite(close.iloc[i-1]) else np.nan
             curr_ref   = float(refp.iloc[i])    if np.isfinite(refp.iloc[i])    else np.nan
             if np.isfinite(prev_close) and np.isfinite(curr_ref):
-                # amount to subtract from the new segment so that curr_ref becomes prev_close
                 offset += (curr_ref - prev_close)
 
         offsets[i] = offset
@@ -369,7 +374,6 @@ if st.sidebar.button("🧹 Clear cache (data + run state)", use_container_width=
     except Exception:
         pass
     _reset_run_state_for_mode_switch()
-    # reset requested defaults keys (so they take effect immediately after rerun)
     for k in ["sb_show_fibs", "sb_show_mom_hourly"]:
         if k in st.session_state:
             try:
@@ -1256,22 +1260,28 @@ def compute_session_lines(idx: pd.DatetimeIndex):
     ny_open, ny_close   = session_markers_for_index(idx, NY_TZ, 8, 17)
     return {"ldn_open": ldn_open, "ldn_close": ldn_close, "ny_open": ny_open, "ny_close": ny_close}
 
-def draw_session_lines(ax, lines: dict):
-    ax.plot([], [], linestyle="-",  color="tab:blue",   label="London Open (PST)")
-    ax.plot([], [], linestyle="--", color="tab:blue",   label="London Close (PST)")
-    ax.plot([], [], linestyle="-",  color="tab:orange", label="New York Open (PST)")
-    ax.plot([], [], linestyle="--", color="tab:orange", label="New York Close (PST)")
+def draw_session_lines(ax, lines: dict, alpha: float = 0.35):
+    """
+    Draw session open/close vertical lines.
+    Returns (handles, labels) so we can place the session legend *below* the chart.
+    """
     for t in lines.get("ldn_open", []):
-        ax.axvline(t, linestyle="-", linewidth=1.0, color="tab:blue", alpha=0.35)
+        ax.axvline(t, linestyle="-", linewidth=1.0, color="tab:blue", alpha=alpha)
     for t in lines.get("ldn_close", []):
-        ax.axvline(t, linestyle="--", linewidth=1.0, color="tab:blue", alpha=0.35)
+        ax.axvline(t, linestyle="--", linewidth=1.0, color="tab:blue", alpha=alpha)
     for t in lines.get("ny_open", []):
-        ax.axvline(t, linestyle="-", linewidth=1.0, color="tab:orange", alpha=0.35)
+        ax.axvline(t, linestyle="-", linewidth=1.0, color="tab:orange", alpha=alpha)
     for t in lines.get("ny_close", []):
-        ax.axvline(t, linestyle="--", linewidth=1.0, color="tab:orange", alpha=0.35)
-    ax.text(0.99, 0.98, "Session times in PST", transform=ax.transAxes,
-            ha="right", va="top", fontsize=8, color="black",
-            bbox=dict(boxstyle="round,pad=0.22", fc="white", ec="grey", alpha=0.7))
+        ax.axvline(t, linestyle="--", linewidth=1.0, color="tab:orange", alpha=alpha)
+
+    handles = [
+        Line2D([0], [0], color="tab:blue",   linestyle="-",  linewidth=1.6, label="London Open"),
+        Line2D([0], [0], color="tab:blue",   linestyle="--", linewidth=1.6, label="London Close"),
+        Line2D([0], [0], color="tab:orange", linestyle="-",  linewidth=1.6, label="New York Open"),
+        Line2D([0], [0], color="tab:orange", linestyle="--", linewidth=1.6, label="New York Close"),
+    ]
+    labels = [h.get_label() for h in handles]
+    return handles, labels
 
 # ---------------------------
 # News (Yahoo Finance)
@@ -1624,7 +1634,8 @@ def render_hourly_views(sel: str,
 
     # Price chart
     fig2, ax2 = plt.subplots(figsize=(14, 4))
-    plt.subplots_adjust(top=0.85, right=0.93)
+    # extra bottom padding so the session legend can sit *below* the plot area (inside figure margin)
+    plt.subplots_adjust(top=0.85, right=0.93, bottom=0.24)
 
     ax2.plot(hc.index, hc, label="Intraday")
     ax2.plot(he.index, he.values, "--", label="20 EMA")
@@ -1680,7 +1691,6 @@ def render_hourly_views(sel: str,
         ax2.plot(upper_h.index, upper_h.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Slope +2σ")
         ax2.plot(lower_h.index, lower_h.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Slope -2σ")
 
-        # Bounce signal on ±2σ
         bounce_sig_h = find_band_bounce_signal(hc, upper_h, lower_h, slope_sig_h)
         if bounce_sig_h is not None:
             annotate_crossover(ax2, bounce_sig_h["time"], bounce_sig_h["price"], bounce_sig_h["side"])
@@ -1735,7 +1745,9 @@ def render_hourly_views(sel: str,
              fontsize=9, color="black",
              bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-    # Session lines (mapped to bar positions)
+    # Session lines (mapped to bar positions) + legend placed below chart (outside plot area)
+    session_handles = None
+    session_labels = None
     if is_forex and show_sessions_pst and isinstance(real_times, pd.DatetimeIndex) and not real_times.empty:
         sess = compute_session_lines(real_times)
         sess_pos = {
@@ -1744,7 +1756,7 @@ def render_hourly_views(sel: str,
             "ny_open": _map_times_to_bar_positions(real_times, sess.get("ny_open", [])),
             "ny_close": _map_times_to_bar_positions(real_times, sess.get("ny_close", [])),
         }
-        draw_session_lines(ax2, sess_pos)
+        session_handles, session_labels = draw_session_lines(ax2, sess_pos)
 
     # Fibonacci (hourly only)
     if show_fibs and not hc.empty:
@@ -1755,11 +1767,29 @@ def render_hourly_views(sel: str,
             ax2.text(hc.index[-1], y, f" {lbl}", va="center")
 
     ax2.set_xlabel("Time (PST)")
-    ax2.legend(loc="lower left", framealpha=0.5)
+
+    # Main legend stays in-chart for indicators
+    ax2.legend(loc="lower left", framealpha=0.5, fontsize=9)
+
+    # Session legend (market open/close) goes to bottom, outside plot area (but within figure margin)
+    if session_handles and session_labels:
+        fig2.legend(
+            handles=session_handles,
+            labels=session_labels,
+            loc="lower center",
+            bbox_to_anchor=(0.5, 0.01),
+            ncol=2,
+            frameon=True,
+            fontsize=9,
+            title="Sessions (PST)",
+            title_fontsize=9
+        )
 
     # GAP FIX: label x ticks with real timestamps
     if isinstance(real_times, pd.DatetimeIndex):
         _apply_compact_time_ticks(ax2, real_times, n_ticks=8)
+
+    style_axes(ax2)
 
     xlim_price = ax2.get_xlim()
     st.pyplot(fig2)
@@ -1788,9 +1818,10 @@ def render_hourly_views(sel: str,
                   bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
         ax2v.set_xlim(xlim_price)
         ax2v.set_xlabel("Time (PST)")
-        ax2v.legend(loc="lower left", framealpha=0.5)
+        ax2v.legend(loc="lower left", framealpha=0.5, fontsize=9)
         if isinstance(real_times, pd.DatetimeIndex):
             _apply_compact_time_ticks(ax2v, real_times, n_ticks=8)
+        style_axes(ax2v)
         st.pyplot(fig2v)
 
     # Hourly NTD panel
@@ -1833,10 +1864,11 @@ def render_hourly_views(sel: str,
 
         ax2r.set_ylim(-1.1, 1.1)
         ax2r.set_xlim(xlim_price)
-        ax2r.legend(loc="lower left", framealpha=0.5)
+        ax2r.legend(loc="lower left", framealpha=0.5, fontsize=9)
         ax2r.set_xlabel("Time (PST)")
         if isinstance(real_times, pd.DatetimeIndex):
             _apply_compact_time_ticks(ax2r, real_times, n_ticks=8)
+        style_axes(ax2r)
         st.pyplot(fig2r)
 
     # Optional momentum panel
@@ -1856,10 +1888,11 @@ def render_hourly_views(sel: str,
         ax2m.plot(sup_m.index, sup_m, ":", label="Mom Support")
         ax2m.axhline(0, linestyle="--", linewidth=1)
         ax2m.set_xlabel("Time (PST)")
-        ax2m.legend(loc="lower left", framealpha=0.5)
+        ax2m.legend(loc="lower left", framealpha=0.5, fontsize=9)
         ax2m.set_xlim(xlim_price)
         if isinstance(real_times, pd.DatetimeIndex):
             _apply_compact_time_ticks(ax2m, real_times, n_ticks=8)
+        style_axes(ax2m)
         st.pyplot(fig2m)
 # =========================
 # Part 6/6 — bullbear.py
@@ -2086,7 +2119,7 @@ with tab1:
                     transform=ax.transAxes, ha="center", va="bottom",
                     fontsize=9, color="black",
                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-            ax.legend(loc="lower left", framealpha=0.5)
+            ax.legend(loc="lower left", framealpha=0.5, fontsize=9)
 
             # Daily NTD panel
             axdw.set_title(f"Daily Indicator Panel — NTD + NPX + Trend (S/R w={sr_lb_daily})")
@@ -2113,7 +2146,10 @@ with tab1:
             axdw.axhline(-0.75, linestyle="-", linewidth=1.0, color="black", label="-0.75")
             axdw.set_ylim(-1.1, 1.1)
             axdw.set_xlabel("Date (PST)")
-            axdw.legend(loc="lower left", framealpha=0.5)
+            axdw.legend(loc="lower left", framealpha=0.5, fontsize=9)
+
+            style_axes(ax)
+            style_axes(axdw)
 
             st.pyplot(fig)
 
@@ -2253,7 +2289,7 @@ with tab2:
                     transform=ax.transAxes, ha="center", va="bottom",
                     fontsize=9, color="black",
                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-            ax.legend(loc="lower left", framealpha=0.5)
+            ax.legend(loc="lower left", framealpha=0.5, fontsize=9)
 
             axdw.set_title(f"Daily Indicator Panel — NTD + NPX + Trend (S/R w={sr_lb_daily})")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
@@ -2276,7 +2312,10 @@ with tab2:
             axdw.axhline(-0.75, linestyle="-", linewidth=1.0, color="black", label="-0.75")
             axdw.set_ylim(-1.1, 1.1)
             axdw.set_xlabel("Date (PST)")
-            axdw.legend(loc="lower left", framealpha=0.5)
+            axdw.legend(loc="lower left", framealpha=0.5, fontsize=9)
+
+            style_axes(ax)
+            style_axes(axdw)
 
             st.pyplot(fig)
 
@@ -2304,7 +2343,6 @@ with tab3:
     sel3 = st.selectbox("Ticker:", universe, key=f"bb_ticker_{mode}")
     df3 = fetch_hist(sel3)
 
-    # Map bb_period to days
     days = {"1mo": 30, "3mo": 90, "6mo": 182, "1y": 365}.get(bb_period, 182)
     df3_win = df3.dropna().iloc[-days:] if df3.dropna().shape[0] else df3
 
@@ -2341,8 +2379,9 @@ with tab3:
                  transform=axb.transAxes, ha="right", va="bottom",
                  fontsize=11, fontweight="bold",
                  bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-        axb.legend(loc="lower left", framealpha=0.5)
+        axb.legend(loc="lower left", framealpha=0.5, fontsize=9)
         axb.set_xlabel("Date (PST)")
+        style_axes(axb)
         st.pyplot(figb)
 
 # ---------------------------
@@ -2354,7 +2393,6 @@ with tab4:
 
     sel4 = st.selectbox("Ticker:", universe, key=f"metrics_ticker_{mode}")
 
-    # Prefer last-run data if matches ticker and mode
     use_last = (st.session_state.get("run_all", False) and st.session_state.get("mode_at_run") == mode and st.session_state.get("ticker") == sel4)
     if use_last:
         dfm = st.session_state.df_hist
@@ -2376,7 +2414,6 @@ with tab4:
     c3.metric("Daily R²", fmt_r2(r2_d, 1))
     c4.metric(f"P(slope rev≤{rev_horizon})", fmt_pct(rev_p_d, 0))
 
-    # Hourly snapshot
     if intr is not None and not intr.empty and "Close" in intr:
         hc = intr["Close"].ffill()
         yhat_h, up_h, lo_h, m_h, r2_h = regression_with_band(hc.dropna(), lookback=min(len(hc.dropna()), max(10, slope_lb_hourly)))
@@ -2416,12 +2453,9 @@ with tab5:
     if scan_btn:
         rows = []
         for sym in universe:
-            # Hourly NTD
             ntd_h_val, ntd_h_ts = last_hourly_ntd_value(sym, ntd_window, period=scan_period_map[scan_period])
-            # Daily NTD
             ntd_d_val, ntd_d_ts = last_daily_ntd_value(sym, ntd_window)
 
-            # Optional filters/extra info
             gd_h, ntd_h_last, gd_h_ts, npx_h_last, close_h_last = last_green_dot_hourly(sym, ntd_window, period=scan_period_map[scan_period], level=-0.75)
             gd_d, ntd_d_last, gd_d_ts, npx_d_last, close_d_last = last_green_dot_daily(sym, ntd_window, level=-0.75)
 
@@ -2441,7 +2475,6 @@ with tab5:
             })
 
         dfscan = pd.DataFrame(rows)
-        # Primary selection: hourly below -0.75
         dfhit = dfscan[np.isfinite(dfscan["Hourly NTD"]) & (dfscan["Hourly NTD"] < -0.75)].copy()
         dfhit = dfhit.sort_values(["Hourly NTD", "Daily NTD"], ascending=[True, True])
 
@@ -2495,6 +2528,7 @@ with tab6:
                  fontsize=11, fontweight="bold",
                  bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-        axl.legend(loc="lower left", framealpha=0.5)
+        axl.legend(loc="lower left", framealpha=0.5, fontsize=9)
         axl.set_xlabel("Date (PST)")
+        style_axes(axl)
         st.pyplot(figl)
