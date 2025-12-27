@@ -28,6 +28,9 @@
 #   • Show SELL instruction only when Global Trendline slope and Local Slope agree (both DOWN)
 #   • Otherwise show:
 #       "ALERT: Trend may be changing - Open trade position with caution while still following the signals on the chat."
+#
+# UPDATE (this request - ONLY NTD chart lines changed):
+#   • Draw red straight lines on NTD charts at +0.5 and -0.5 (Daily + Hourly NTD panels)
 
 import streamlit as st
 import pandas as pd
@@ -2106,8 +2109,11 @@ def render_hourly_views(sel: str,
         if show_hma_rev_ntd and not hma_h.dropna().empty and not hc.dropna().empty:
             overlay_hma_reversal_on_ntd(ax2r, hc, hma_h, lookback=hma_rev_lb, period=hma_period, ntd=ntd_h)
 
+        # UPDATED (this request): add red straight lines at ±0.5
         for yv, lab, lw, col in [
             (0.0, "0.00", 1.0, "black"),
+            (0.5, "+0.50", 1.2, "red"),
+            (-0.5, "-0.50", 1.2, "red"),
             (0.75, "+0.75", 1.0, "black"),
             (-0.75, "-0.75", 1.0, "black"),
         ]:
@@ -2401,9 +2407,13 @@ with tab1:
                 overlay_hma_reversal_on_ntd(axdw, df_show, hma_d_show, lookback=hma_rev_lb,
                                             period=hma_period, ntd=ntd_d_show)
 
+            # UPDATED (this request): add red straight lines at ±0.5
             axdw.axhline(0.0, linestyle="--", linewidth=1.0, color="black", label="0.00")
+            axdw.axhline(0.5, linestyle="-", linewidth=1.2, color="red", label="+0.50")
+            axdw.axhline(-0.5, linestyle="-", linewidth=1.2, color="red", label="-0.50")
             axdw.axhline(0.75, linestyle="-", linewidth=1.0, color="black", label="+0.75")
             axdw.axhline(-0.75, linestyle="-", linewidth=1.0, color="black", label="-0.75")
+
             axdw.set_ylim(-1.1, 1.1)
             axdw.set_xlabel("Date (PST)")
             axdw.legend(loc="lower left", framealpha=0.5, fontsize=9)
