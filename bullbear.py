@@ -31,6 +31,10 @@
 #
 # UPDATE (this request - ONLY NTD chart lines changed):
 #   • Draw red straight lines on NTD charts at +0.5 and -0.5 (Daily + Hourly NTD panels)
+#
+# FIX (this request - ONLY):
+#   • Move ALERT out of the hourly chart title and show it in a red Streamlit box
+#     placed directly below the "Run Forecast" button so chart layouts stay aligned.
 
 import streamlit as st
 import pandas as pd
@@ -249,6 +253,8 @@ def _diff_text(a: float, b: float, symbol: str) -> str:
         return f"{diff/ps:.1f} pips"
     return f"Δ {diff:.3f}"
 
+ALERT_TEXT = "ALERT: Trend may be changing - Open trade position with caution while still following the signals on the chat."
+
 def format_trade_instruction(trend_slope: float,
                              buy_val: float,
                              sell_val: float,
@@ -299,7 +305,7 @@ def format_trade_instruction(trend_slope: float,
         g = np.nan
         l = np.nan
 
-    alert_txt = "ALERT: Trend may be changing - Open trade position with caution while still following the signals on the chat."
+    alert_txt = ALERT_TEXT
 
     if (not np.isfinite(g)) or (not np.isfinite(l)):
         return alert_txt
@@ -427,6 +433,7 @@ def _map_times_to_bar_positions(real_times: pd.DatetimeIndex, times_list):
         return []
     pos = [int(i) for i in idxer if int(i) >= 0]
     return pos
+
 # =========================
 # Part 2/7 — bullbear.py
 # =========================
@@ -677,6 +684,7 @@ def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
     R1 = 2 * P - L; S1 = 2 * P - H
     R2 = P + (H - L); S2 = P - (H - L)
     return {"P": P, "R1": R1, "S1": S1, "R2": R2, "S2": S2}
+
 # =========================
 # Part 3/7 — bullbear.py
 # =========================
@@ -1121,6 +1129,7 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     pctb = ((s - lower) / width).clip(0.0, 1.0)
     nbb = pctb * 2.0 - 1.0
     return (mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index))
+
 # =========================
 # Part 4/7 — bullbear.py
 # =========================
@@ -1592,6 +1601,7 @@ def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
         return float(ntd.iloc[-1]), ntd.index[-1]
     except Exception:
         return np.nan, None
+
 # =========================
 # Part 5/7 — bullbear.py
 # =========================
@@ -1783,7 +1793,8 @@ def render_hourly_views(sel: str,
                         p_up: float,
                         p_dn: float,
                         hour_range_label: str,
-                        is_forex: bool):
+                        is_forex: bool,
+                        alert_placeholder=None):
     """
     Single hourly layout used for BOTH stocks and forex.
     Forex-only: session lines + (optional) news markers + (optional) volume panel.
@@ -1792,6 +1803,11 @@ def render_hourly_views(sel: str,
       • price is stitched via make_gapless_ohlc() in fetch_intraday()
       • time axis is compressed to remove empty overnight/weekend spacing
         (plots use a continuous bar index; ticks show real PST timestamps)
+
+    ALERT FIX (this request):
+      • If instr_txt is an ALERT and alert_placeholder is provided, show it in a red
+        Streamlit box (below Run button) and remove it from the chart title to keep
+        chart layouts aligned.
     """
     if intraday is None or intraday.empty or "Close" not in intraday:
         st.warning("No intraday data available.")
@@ -1936,6 +1952,19 @@ def render_hourly_views(sel: str,
         global_trend_slope=global_m_h
     )
 
+    # ---- FIX (this request): show ALERT below Run button in red box, not in title ----
+    is_alert = isinstance(instr_txt, str) and instr_txt.startswith("ALERT:")
+    if alert_placeholder is not None:
+        if is_alert:
+            alert_placeholder.error(instr_txt)
+        else:
+            alert_placeholder.empty()
+
+    # If we have a placeholder, remove the ALERT from the plot title (prevents title wrapping/layout shifts)
+    title_instr = instr_txt
+    if alert_placeholder is not None and is_alert:
+        title_instr = ""
+
     # NEW (this request): MACD/HMA55 instruction shown on PRICE chart as a legend
     macd_sig = find_macd_hma_sr_signal(
         close=hc, hma=hma_h, macd=macd_h, sup=sup_h, res=res_h,
@@ -1957,9 +1986,11 @@ def render_hourly_views(sel: str,
     )
 
     rev_txt_h = fmt_pct(rev_prob_h) if np.isfinite(rev_prob_h) else "n/a"
+
+    instr_part = f" — {title_instr} " if isinstance(title_instr, str) and title_instr.strip() else " "
     ax2.set_title(
         f"{sel} Intraday ({hour_range_label})  "
-        f"↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)} — {instr_txt}  "
+        f"↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{instr_part}"
         f"[P(slope rev≤{rev_horizon} bars)={rev_txt_h}]"
     )
 
@@ -2151,6 +2182,7 @@ def render_hourly_views(sel: str,
             _apply_compact_time_ticks(ax2m, real_times, n_ticks=8)
         style_axes(ax2m)
         st.pyplot(fig2m)
+
 # =========================
 # Part 6/7 — bullbear.py
 # =========================
@@ -2188,6 +2220,9 @@ with tab1:
 
     run_clicked = st.button("Run Forecast", key=f"btn_run_forecast_{mode}")
 
+    # FIX (this request): ALERT box placeholder directly below the Run button
+    alert_box = st.empty()
+
     if run_clicked:
         df_hist = fetch_hist(sel)
         df_ohlc = fetch_hist_ohlc(sel)
@@ -2209,6 +2244,12 @@ with tab1:
         })
 
     if st.session_state.get("run_all", False) and st.session_state.get("ticker") is not None and st.session_state.get("mode_at_run") == mode:
+        # Clear alert box by default (hourly renderer will fill it if needed)
+        try:
+            alert_box.empty()
+        except Exception:
+            pass
+
         disp_ticker = st.session_state.ticker
         df = st.session_state.df_hist
         df_ohlc = st.session_state.df_ohlc
@@ -2442,8 +2483,15 @@ with tab1:
                 p_up=p_up,
                 p_dn=p_dn,
                 hour_range_label=st.session_state.hour_range,
-                is_forex=(mode == "Forex")
+                is_forex=(mode == "Forex"),
+                alert_placeholder=alert_box  # FIX: show ALERT below Run button
             )
+        else:
+            # If not showing hourly, ensure alert box is cleared
+            try:
+                alert_box.empty()
+            except Exception:
+                pass
 
         # News table (optional)
         if mode == "Forex" and show_fx_news:
@@ -2541,6 +2589,7 @@ with tab2:
             "Lower":    ci.iloc[:, 0],
             "Upper":    ci.iloc[:, 1]
         }, index=idx))
+
 # =========================
 # Part 7/7 — bullbear.py
 # =========================
