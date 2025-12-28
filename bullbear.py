@@ -36,7 +36,7 @@
 #   • Move ALERT out of the hourly chart title and show it in a red Streamlit box
 #     placed directly below the "Run Forecast" button so chart layouts stay aligned.
 
-import streamlit as st
+import streamlit as std
 import pandas as pd
 import numpy as np
 import yfinance as yf
