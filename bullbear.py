@@ -35,6 +35,11 @@
 # FIX (this request - ONLY):
 #   • Move ALERT out of the hourly chart title and show it in a red Streamlit box
 #     placed directly below the "Run Forecast" button so chart layouts stay aligned.
+#
+# ADDITION (this request - ONLY):
+#   • Add a NEW tab that scans symbols where **NPX crosses 0.0 (near zero)**:
+#       (1) NPX 0-cross UP during a local UP slope on the price chart
+#       (2) NPX 0-cross DOWN during a local DOWN slope on the price chart
 
 import streamlit as st
 import pandas as pd
@@ -1776,6 +1781,100 @@ def last_daily_npx_cross_up_in_uptrend(symbol: str, ntd_win: int, daily_view_lab
         return None
 
 # ---------------------------
+# ADDITION (this request): Daily NPX 0.0-cross near zero + Local price slope confirmation
+#   (1) NPX crosses UP through 0.0 (|NPX| small) AND local price slope > 0
+#   (2) NPX crosses DOWN through 0.0 (|NPX| small) AND local price slope < 0
+#   Uses DAILY chart-area subset (daily_view) for "recent" & slope context (matches how you view the daily chart).
+# ---------------------------
+@st.cache_data(ttl=120)
+def last_daily_npx_zero_cross_with_local_slope(symbol: str,
+                                               ntd_win: int,
+                                               daily_view_label: str,
+                                               local_slope_lb: int,
+                                               max_abs_npx_at_cross: float,
+                                               direction: str = "up"):
+    """
+    Returns a dict row if the symbol meets the condition; otherwise None.
+    direction: "up" (cross - -> +) or "down" (cross + -> -)
+    """
+    try:
+        s_full = fetch_hist(symbol)
+        close_full = _coerce_1d_series(s_full).dropna()
+        if close_full.empty:
+            return None
+
+        close_show = subset_by_daily_view(close_full, daily_view_label)
+        close_show = _coerce_1d_series(close_show).dropna()
+        if close_show.empty or len(close_show) < 3:
+            return None
+
+        npx_full = compute_normalized_price(close_full, window=ntd_win)
+        npx_show = _coerce_1d_series(npx_full).reindex(close_show.index)
+
+        # Identify 0-cross (NPX vs horizontal 0.0)
+        prev = npx_show.shift(1)
+        if str(direction).lower().startswith("up"):
+            cross_mask = (npx_show >= 0.0) & (prev < 0.0)
+            sig_label = "NPX 0↑"
+        else:
+            cross_mask = (npx_show <= 0.0) & (prev > 0.0)
+            sig_label = "NPX 0↓"
+
+        cross_mask = cross_mask.fillna(False)
+        if not cross_mask.any():
+            return None
+
+        # Enforce "very close to 0.0" at the cross (both sides)
+        eps = float(max_abs_npx_at_cross)
+        near0 = (npx_show.abs() <= eps) & (prev.abs() <= eps)
+        cross_mask = cross_mask & near0.fillna(False)
+        if not cross_mask.any():
+            return None
+
+        t = cross_mask[cross_mask].index[-1]
+        loc = int(close_show.index.get_loc(t))
+        bars_since = int((len(close_show) - 1) - loc)
+
+        # Local slope on price chart around the cross time (ending at t)
+        seg = close_show.loc[:t].tail(int(local_slope_lb))
+        seg = _coerce_1d_series(seg).dropna()
+        if len(seg) < 2:
+            return None
+        x = np.arange(len(seg), dtype=float)
+        m, b = np.polyfit(x, seg.to_numpy(dtype=float), 1)
+        if not np.isfinite(m) or float(m) == 0.0:
+            return None
+
+        # Require local slope direction to agree
+        if sig_label.endswith("↑") and float(m) <= 0.0:
+            return None
+        if sig_label.endswith("↓") and float(m) >= 0.0:
+            return None
+
+        curr_px = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
+        npx_at = float(npx_show.loc[t]) if (t in npx_show.index and np.isfinite(npx_show.loc[t])) else np.nan
+        npx_prev = float(prev.loc[t]) if (t in prev.index and np.isfinite(prev.loc[t])) else np.nan
+        npx_last = float(npx_show.dropna().iloc[-1]) if len(npx_show.dropna()) else np.nan
+
+        return {
+            "Symbol": symbol,
+            "Frame": "Daily",
+            "Daily View": daily_view_label,
+            "Signal": sig_label,
+            "Bars Since": bars_since,
+            "Cross Time": t,
+            "Local Slope": float(m),
+            "Current Price": curr_px,
+            "NPX@Cross": npx_at,
+            "NPX(prev)": npx_prev,
+            "NPX (last)": npx_last,
+            "Zero-Eps": float(eps),
+            "Slope LB": int(local_slope_lb),
+        }
+    except Exception:
+        return None
+
+# ---------------------------
 # Session state init
 # ---------------------------
 if "run_all" not in st.session_state:
@@ -2189,14 +2288,15 @@ def render_hourly_views(sel: str,
 # ---------------------------
 # Tabs
 # ---------------------------
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
     "NTD -0.75 Scanner",
     "Long-Term History",
-    "Recent BUY Scanner"
+    "Recent BUY Scanner",
+    "NPX 0-Cross Scanner"  # ADDITION (this request)
 ])
 
 # ---------------------------
@@ -2736,3 +2836,63 @@ with tab7:
                 out["Global Slope"] = out["Global Slope"].astype(float)
             out = out.sort_values(["Bars Since", "Global Slope"], ascending=[True, False])
             st.dataframe(out.reset_index(drop=True), use_container_width=True)
+
+# ---------------------------
+# TAB 8: NPX 0-CROSS SCANNER (ADDITION per request)
+# ---------------------------
+with tab8:
+    st.header("NPX 0-Cross Scanner — Local Slope Confirmed (Daily)")
+    st.caption(
+        "Scans the current universe for symbols where **NPX (normalized price)** has **recently crossed 0.0** "
+        "(with NPX very close to 0.0 at the crossing) and the **local price slope** agrees:\n"
+        "• **UP list:** NPX crosses **up** through 0.0 AND local price slope is **up**\n"
+        "• **DOWN list:** NPX crosses **down** through 0.0 AND local price slope is **down**"
+    )
+
+    c1, c2, c3 = st.columns(3)
+    max_bars0 = c1.slider("Max bars since NPX 0-cross", 0, 30, 2, 1, key="npx0_max_bars")
+    eps0 = c2.slider("Max |NPX| at cross (near 0.0)", 0.01, 0.30, 0.08, 0.01, key="npx0_eps")
+    lb_local = c3.slider("Local slope lookback (bars)", 10, 360, int(slope_lb_daily), 10, key="npx0_slope_lb")
+
+    run0 = st.button("Run NPX 0-Cross Scan", key="btn_run_npx0_scan")
+
+    if run0:
+        rows_up, rows_dn = [], []
+        for sym in universe:
+            r_up = last_daily_npx_zero_cross_with_local_slope(
+                sym, ntd_win=ntd_window, daily_view_label=daily_view,
+                local_slope_lb=lb_local, max_abs_npx_at_cross=eps0, direction="up"
+            )
+            if r_up is not None and int(r_up.get("Bars Since", 9999)) <= int(max_bars0):
+                rows_up.append(r_up)
+
+            r_dn = last_daily_npx_zero_cross_with_local_slope(
+                sym, ntd_win=ntd_window, daily_view_label=daily_view,
+                local_slope_lb=lb_local, max_abs_npx_at_cross=eps0, direction="down"
+            )
+            if r_dn is not None and int(r_dn.get("Bars Since", 9999)) <= int(max_bars0):
+                rows_dn.append(r_dn)
+
+        left, right = st.columns(2)
+
+        with left:
+            st.subheader("NPX 0↑ with Local UP Slope")
+            if not rows_up:
+                st.info("No matches.")
+            else:
+                out_up = pd.DataFrame(rows_up)
+                out_up["Bars Since"] = out_up["Bars Since"].astype(int)
+                out_up["Local Slope"] = out_up["Local Slope"].astype(float)
+                out_up = out_up.sort_values(["Bars Since", "Local Slope"], ascending=[True, False])
+                st.dataframe(out_up.reset_index(drop=True), use_container_width=True)
+
+        with right:
+            st.subheader("NPX 0↓ with Local DOWN Slope")
+            if not rows_dn:
+                st.info("No matches.")
+            else:
+                out_dn = pd.DataFrame(rows_dn)
+                out_dn["Bars Since"] = out_dn["Bars Since"].astype(int)
+                out_dn["Local Slope"] = out_dn["Local Slope"].astype(float)
+                out_dn = out_dn.sort_values(["Bars Since", "Local Slope"], ascending=[True, True])
+                st.dataframe(out_dn.reset_index(drop=True), use_container_width=True)
