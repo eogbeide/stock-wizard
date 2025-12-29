@@ -41,7 +41,7 @@
 #       (1) NPX 0-cross UP during a local UP slope on the price chart
 #       (2) NPX 0-cross DOWN during a local DOWN slope on the price chart
 
-import streamlit as stvv
+import streamlit as stx
 import pandas as pd
 import numpy as np
 import yfinance as yf
