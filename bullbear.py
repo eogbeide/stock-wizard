@@ -2282,7 +2282,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "Long-Term History",
     "Recent BUY Scanner",
     "NPX 0-Cross Scanner",
-    "Daily Slope+BB Reversal Scanner"  # NEW (THIS REQUEST)
+    "Daily Slope+BB Reversal Scanner"
 ])
 
 # ---------------------------
@@ -2384,7 +2384,7 @@ with tab1:
             bb_mid_d_show = bb_mid_d.reindex(df_show.index)
             bb_up_d_show = bb_up_d.reindex(df_show.index)
             bb_lo_d_show = bb_lo_d.reindex(df_show.index)
-            bb_pctb_d_show = bb_pctb_d.reindex(df_show.index)
+            bb_pctb_d_show = bb_pctb.reindex(df_show.index) if 'bb_pctb' in globals() else bb_pctb_d.reindex(df_show.index)
             bb_nbb_d_show = bb_nbb_d.reindex(df_show.index)
 
             hma_d_show = compute_hma(df, period=hma_period).reindex(df_show.index)
