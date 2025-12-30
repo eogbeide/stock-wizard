@@ -505,7 +505,8 @@ signal_threshold = st.sidebar.slider("S/R proximity signal threshold", 0.50, 0.9
 sr_prox_pct = st.sidebar.slider("S/R proximity (%)", 0.05, 1.00, 0.25, 0.05, key="sb_sr_prox") / 100.0
 
 st.sidebar.subheader("NTD (Daily/Hourly)")
-show_ntd = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd")
+# UPDATED (THIS REQUEST): use a new key so Daily NTD displays ON by default again
+show_ntd = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd_v2")
 ntd_window = st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
 shade_ntd = st.sidebar.checkbox("Shade NTD (green=up, red=down)", value=True, key="sb_ntd_shade")
 show_npx_ntd = st.sidebar.checkbox("Overlay normalized price (NPX) on NTD", value=True, key="sb_show_npx_ntd")
@@ -2294,7 +2295,8 @@ with tab1:
             "Charts stay on the last RUN ticker until you run again.")
 
     sel = st.selectbox("Ticker:", universe, key=f"orig_ticker_{mode}")
-    chart = st.radio("Chart View:", ["Daily", "Hourly", "Both"], key=f"orig_chart_{mode}")
+    # UPDATED (THIS REQUEST): use a new key so "Daily" view (and Daily NTD panel) is default again
+    chart = st.radio("Chart View:", ["Daily", "Hourly", "Both"], key=f"orig_chart_{mode}_v2")
 
     hour_range = st.selectbox(
         "Hourly lookback:",
