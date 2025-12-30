@@ -1,55 +1,3 @@
-# =========================
-# Part 1/8 — bullbear.py
-# =========================
-# bullbear.py — Stocks/Forex Dashboard + Forecasts
-# UPDATED — aesthetics-only:
-#   • Session (market open/close) legend moved to bottom OUTSIDE the chart
-#   • Cleaner chart styling (grid, cleaner spines) without changing logic/data
-# NEW (prior):
-#   • Added a new tab: "Recent BUY Scanner" (Stocks-only)
-#     - Lists stocks whose most recent BUY (band-bounce) signal happened within the last 0–2 bars
-#     - Uses the SAME BUY logic as the price chart (find_band_bounce_signal)
-# NEW (prior request):
-#   (1) MACD chart (optional; OFF by default) + MACD/HMA55 Buy/Sell instruction shown on PRICE chart as a legend
-#       - Uptrend (global) + MACD<0 + Price crosses ABOVE HMA55 near/away from Support → BUY
-#       - Downtrend (global) + MACD>0 + Price crosses BELOW HMA55 near/away from Resistance → SELL
-#   (2) Global trendline styling:
-#       - Uptrend: DASH GREEN
-#       - Downtrend: DASH RED
-#
-# UPDATE (prior request - ONLY Recent BUY Scanner changed):
-#   • Recent BUY Scanner now works for BOTH Stocks and Forex, DAILY view:
-#     - Lists symbols where NPX (normalized price) recently crossed ABOVE the NTD line (green circle condition)
-#     - Only when the DAILY chart's global trendline slope (in the chart area) is UP (positive)
-#     - “Recent” is controlled by Max bars since cross (default 2)
-#
-# UPDATE (prior request - ONLY instruction text changed):
-#   • Show BUY instruction only when Global Trendline slope and Local Slope agree (both UP)
-#   • Show SELL instruction only when Global Trendline slope and Local Slope agree (both DOWN)
-#   • Otherwise show:
-#       "ALERT: Trend may be changing - Open trade position with caution while still following the signals on the chat."
-#
-# UPDATE (prior request - ONLY NTD chart lines changed):
-#   • Draw red straight lines on NTD charts at +0.5 and -0.5 (Daily + Hourly NTD panels)
-#
-# FIX (prior request - ONLY):
-#   • Move ALERT out of the hourly chart title and show it in a red Streamlit box
-#     placed directly below the "Run Forecast" button so chart layouts stay aligned.
-#
-# ADDITION (prior request - ONLY):
-#   • Add a NEW tab that scans symbols where **NPX crosses 0.5 (near 0.5)**:
-#       (1) NPX 0.5-cross UP during a local UP slope on the price chart
-#       (2) NPX 0.5-cross DOWN during a local DOWN slope on the price chart
-#
-# NEW (THIS REQUEST):
-#   (1) Add a NEW tab (Daily) that shows:
-#       (a) BUY list: slope regression is UP and price reversed from Support with 99% confidence (R²>=0.99)
-#           AND crossed BB midline.
-#       (b) SELL list: slope regression is DOWN and price reversed from Resistance with 99% confidence (R²>=0.99)
-#           AND crossed BB midline.
-#   (2) Add "Slope BUY/SELL Trigger" leaderline + legend:
-#       When price reverses from regression ±σ bands (upper/lower) AND crosses the regression slope line.
-
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -1833,7 +1781,7 @@ def last_daily_npx_zero_cross_with_local_slope(symbol: str,
         npx_full = compute_normalized_price(close_full, window=ntd_win)
         npx_show = _coerce_1d_series(npx_full).reindex(close_show.index)
 
-        # UPDATED (THIS REQUEST): use 0.5 cross level instead of 0.0
+        # UPDATED (prior request): use 0.5 cross level instead of 0.0
         level = 0.5
 
         prev = npx_show.shift(1)
@@ -2095,8 +2043,19 @@ def render_hourly_views(sel: str,
     if is_forex and show_fx_news:
         fx_news = fetch_yf_news(sel, window_days=news_window_days)
 
-    fig2, ax2 = plt.subplots(figsize=(14, 4))
-    plt.subplots_adjust(top=0.85, right=0.93, bottom=0.24)
+    # ---------------------------
+    # UPDATED (THIS REQUEST): show Hourly NTD panel by default (like Daily)
+    # ---------------------------
+    ax2w = None
+    if show_nrsi:
+        fig2, (ax2, ax2w) = plt.subplots(
+            2, 1, sharex=True, figsize=(14, 7),
+            gridspec_kw={"height_ratios": [3.2, 1.3]}
+        )
+        plt.subplots_adjust(hspace=0.05, top=0.90, right=0.93, bottom=0.22)
+    else:
+        fig2, ax2 = plt.subplots(figsize=(14, 4))
+        plt.subplots_adjust(top=0.85, right=0.93, bottom=0.24)
 
     ax2.plot(hc.index, hc, label="Intraday")
     ax2.plot(he.index, he.values, "--", label="20 EMA")
@@ -2151,7 +2110,7 @@ def render_hourly_views(sel: str,
         if bounce_sig_h is not None:
             annotate_crossover(ax2, bounce_sig_h["time"], bounce_sig_h["price"], bounce_sig_h["side"])
 
-        # NEW (THIS REQUEST): leaderline + legend
+        # leaderline + legend
         trig_h = find_slope_trigger_after_band_reversal(hc, yhat_h, upper_h, lower_h, horizon=rev_horizon)
         annotate_slope_trigger(ax2, trig_h)
 
@@ -2252,7 +2211,52 @@ def render_hourly_views(sel: str,
         for lbl, y in fibs_h.items():
             ax2.text(hc.index[-1], y, f" {lbl}", va="center")
 
-    ax2.set_xlabel("Time (PST)")
+    # ---------------------------
+    # UPDATED (THIS REQUEST): render hourly NTD panel (default ON)
+    # ---------------------------
+    if ax2w is not None:
+        ax2w.set_title(f"Hourly Indicator Panel — NTD + NPX + Trend (S/R w={sr_lb_hourly})")
+        ntd_h = compute_normalized_trend(hc, window=ntd_window) if show_ntd else pd.Series(index=hc.index, dtype=float)
+        npx_h = compute_normalized_price(hc, window=ntd_window) if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
+
+        if show_ntd and shade_ntd and not _coerce_1d_series(ntd_h).dropna().empty:
+            shade_ntd_regions(ax2w, ntd_h)
+
+        if show_ntd and not _coerce_1d_series(ntd_h).dropna().empty:
+            ax2w.plot(ntd_h.index, ntd_h.values, "-", linewidth=1.6, label=f"NTD (win={ntd_window})")
+            ntd_trend_h, ntd_m_h = slope_line(ntd_h, slope_lb_hourly)
+            if not ntd_trend_h.empty:
+                ax2w.plot(ntd_trend_h.index, ntd_trend_h.values, "--", linewidth=2,
+                          label=f"NTD Trend {slope_lb_hourly} ({fmt_slope(ntd_m_h)}/bar)")
+
+            overlay_ntd_triangles_by_trend(ax2w, ntd_h, trend_slope=m_h, upper=0.75, lower=-0.75)
+            overlay_ntd_sr_reversal_stars(
+                ax2w, price=hc, sup=sup_h, res=res_h,
+                trend_slope=m_h, ntd=ntd_h, prox=sr_prox_pct,
+                bars_confirm=rev_bars_confirm
+            )
+
+        if show_ntd_channel:
+            overlay_inrange_on_ntd(ax2w, price=hc, sup=sup_h, res=res_h)
+
+        if show_npx_ntd and not _coerce_1d_series(npx_h).dropna().empty and not _coerce_1d_series(ntd_h).dropna().empty:
+            overlay_npx_on_ntd(ax2w, npx_h, ntd_h, mark_crosses=mark_npx_cross)
+
+        if show_hma_rev_ntd and not hma_h.dropna().empty and not hc.dropna().empty:
+            overlay_hma_reversal_on_ntd(ax2w, hc, hma_h, lookback=hma_rev_lb,
+                                        period=hma_period, ntd=ntd_h)
+
+        ax2w.axhline(0.0, linestyle="--", linewidth=1.0, color="black", label="0.00")
+        ax2w.axhline(0.5, linestyle="-", linewidth=1.2, color="red", label="+0.50")
+        ax2w.axhline(-0.5, linestyle="-", linewidth=1.2, color="red", label="-0.50")
+        ax2w.axhline(0.75, linestyle="-", linewidth=1.0, color="black", label="+0.75")
+        ax2w.axhline(-0.75, linestyle="-", linewidth=1.0, color="black", label="-0.75")
+        ax2w.set_ylim(-1.1, 1.1)
+        ax2w.legend(loc="lower left", framealpha=0.5, fontsize=9)
+        ax2w.set_xlabel("Time (PST)")
+    else:
+        ax2.set_xlabel("Time (PST)")
+
     ax2.legend(loc="lower left", framealpha=0.5, fontsize=9)
 
     if session_handles and session_labels:
@@ -2268,10 +2272,13 @@ def render_hourly_views(sel: str,
             title_fontsize=9
         )
 
+    # ticks on bottom axis if we have the NTD panel
     if isinstance(real_times, pd.DatetimeIndex):
-        _apply_compact_time_ticks(ax2, real_times, n_ticks=8)
+        _apply_compact_time_ticks(ax2w if ax2w is not None else ax2, real_times, n_ticks=8)
 
     style_axes(ax2)
+    if ax2w is not None:
+        style_axes(ax2w)
     xlim_price = ax2.get_xlim()
     st.pyplot(fig2)
 
@@ -2312,7 +2319,7 @@ with tab1:
             "Charts stay on the last RUN ticker until you run again.")
 
     sel = st.selectbox("Ticker:", universe, key=f"orig_ticker_{mode}")
-    # UPDATED (THIS REQUEST): use a new key so "Daily" view (and Daily NTD panel) is default again
+    # UPDATED (prior request): use a new key so "Daily" view (and Daily NTD panel) is default again
     chart = st.radio("Chart View:", ["Daily", "Hourly", "Both"], key=f"orig_chart_{mode}_v2")
 
     hour_range = st.selectbox(
@@ -2477,7 +2484,6 @@ with tab1:
                 if bounce_sig_d is not None:
                     annotate_crossover(ax, bounce_sig_d["time"], bounce_sig_d["price"], bounce_sig_d["side"])
 
-                # NEW (THIS REQUEST): leaderline + legend
                 trig_d = find_slope_trigger_after_band_reversal(df_show, yhat_d_show, upper_d_show, lower_d_show, horizon=rev_horizon)
                 annotate_slope_trigger(ax, trig_d)
 
