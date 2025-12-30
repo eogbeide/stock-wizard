@@ -51,9 +51,9 @@
 #       When price reverses from regression ±σ bands (upper/lower) AND crosses the regression slope line.
 
 import streamlit as stxxx
-import pandas as pd
-import numpy as np
-import yfinance as yf
+import pandas as pdx
+import numpy as npx
+import yfinance as yfx
 from statsmodels.tsa.statespace.sarimax import SARIMAX
 from datetime import timedelta, datetime
 import matplotlib.pyplot as plt
