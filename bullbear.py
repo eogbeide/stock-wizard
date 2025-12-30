@@ -37,9 +37,9 @@
 #     placed directly below the "Run Forecast" button so chart layouts stay aligned.
 #
 # ADDITION (prior request - ONLY):
-#   • Add a NEW tab that scans symbols where **NPX crosses 0.0 (near zero)**:
-#       (1) NPX 0-cross UP during a local UP slope on the price chart
-#       (2) NPX 0-cross DOWN during a local DOWN slope on the price chart
+#   • Add a NEW tab that scans symbols where **NPX crosses 0.5 (near 0.5)**:
+#       (1) NPX 0.5-cross UP during a local UP slope on the price chart
+#       (2) NPX 0.5-cross DOWN during a local DOWN slope on the price chart
 #
 # NEW (THIS REQUEST):
 #   (1) Add a NEW tab (Daily) that shows:
@@ -50,7 +50,7 @@
 #   (2) Add "Slope BUY/SELL Trigger" leaderline + legend:
 #       When price reverses from regression ±σ bands (upper/lower) AND crosses the regression slope line.
 
-import streamlit as st
+import streamlit as stx
 import pandas as pd
 import numpy as np
 import yfinance as yf
@@ -341,6 +341,8 @@ def format_trade_instruction(trend_slope: float,
         return text
 
     return alert_txt
+
+
 # =========================
 # Part 2/8 — bullbear.py
 # =========================
@@ -659,6 +661,8 @@ def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
     R1 = 2 * P - L; S1 = 2 * P - H
     R2 = P + (H - L); S2 = P - (H - L)
     return {"P": P, "R1": R1, "S1": S1, "R2": R2, "S2": S2}
+
+
 # =========================
 # Part 3/8 — bullbear.py
 # =========================
@@ -948,6 +952,8 @@ def annotate_slope_trigger(ax, trig: dict):
         va="bottom" if side == "BUY" else "top",
         zorder=10
     )
+
+
 # =========================
 # Part 4/8 — bullbear.py
 # =========================
@@ -1184,6 +1190,8 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     pctb = ((s - lower) / width).clip(0.0, 1.0)
     nbb = pctb * 2.0 - 1.0
     return (mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index))
+
+
 # =========================
 # Part 5/8 — bullbear.py
 # =========================
@@ -1432,6 +1440,8 @@ def overlay_ntd_sr_reversal_stars(ax,
         ax.scatter([t], [ntd0], marker="*", s=170, color="tab:green", zorder=12, label="BUY ★ (Support reversal)")
     if sell_cond:
         ax.scatter([t], [ntd0], marker="*", s=170, color="tab:red", zorder=12, label="SELL ★ (Resistance reversal)")
+
+
 # =========================
 # Part 6/8 — bullbear.py
 # =========================
@@ -1643,6 +1653,8 @@ def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
         return float(ntd.iloc[-1]), ntd.index[-1]
     except Exception:
         return np.nan, None
+
+
 # =========================
 # Part 7/8 — bullbear.py
 # =========================
@@ -1821,21 +1833,24 @@ def last_daily_npx_zero_cross_with_local_slope(symbol: str,
         npx_full = compute_normalized_price(close_full, window=ntd_win)
         npx_show = _coerce_1d_series(npx_full).reindex(close_show.index)
 
+        # UPDATED (THIS REQUEST): use 0.5 cross level instead of 0.0
+        level = 0.5
+
         prev = npx_show.shift(1)
         if str(direction).lower().startswith("up"):
-            cross_mask = (npx_show >= 0.0) & (prev < 0.0)
-            sig_label = "NPX 0↑"
+            cross_mask = (npx_show >= level) & (prev < level)
+            sig_label = "NPX 0.5↑"
         else:
-            cross_mask = (npx_show <= 0.0) & (prev > 0.0)
-            sig_label = "NPX 0↓"
+            cross_mask = (npx_show <= level) & (prev > level)
+            sig_label = "NPX 0.5↓"
 
         cross_mask = cross_mask.fillna(False)
         if not cross_mask.any():
             return None
 
         eps = float(max_abs_npx_at_cross)
-        near0 = (npx_show.abs() <= eps) & (prev.abs() <= eps)
-        cross_mask = cross_mask & near0.fillna(False)
+        near_level = ((npx_show - level).abs() <= eps) & ((prev - level).abs() <= eps)
+        cross_mask = cross_mask & near_level.fillna(False)
         if not cross_mask.any():
             return None
 
@@ -2002,6 +2017,8 @@ def last_daily_sr_reversal_bbmid(symbol: str,
         }
     except Exception:
         return None
+
+
 # =========================
 # Part 8/8 — bullbear.py
 # =========================
@@ -2282,7 +2299,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "NTD -0.75 Scanner",
     "Long-Term History",
     "Recent BUY Scanner",
-    "NPX 0-Cross Scanner",
+    "NPX 0.5-Cross Scanner",
     "Daily Slope+BB Reversal Scanner"
 ])
 
@@ -2808,23 +2825,23 @@ with tab7:
             st.dataframe(out.reset_index(drop=True), use_container_width=True)
 
 # ---------------------------
-# TAB 8: NPX 0-CROSS SCANNER
+# TAB 8: NPX 0.5-CROSS SCANNER
 # ---------------------------
 with tab8:
-    st.header("NPX 0-Cross Scanner — Local Slope Confirmed (Daily)")
+    st.header("NPX 0.5-Cross Scanner — Local Slope Confirmed (Daily)")
     st.caption(
-        "Scans the current universe for symbols where **NPX (normalized price)** has **recently crossed 0.0** "
-        "(with NPX very close to 0.0 at the crossing) and the **local price slope** agrees:\n"
-        "• **UP list:** NPX crosses **up** through 0.0 AND local price slope is **up**\n"
-        "• **DOWN list:** NPX crosses **down** through 0.0 AND local price slope is **down**"
+        "Scans the current universe for symbols where **NPX (normalized price)** has **recently crossed 0.5** "
+        "(with NPX very close to 0.5 at the crossing) and the **local price slope** agrees:\n"
+        "• **UP list:** NPX crosses **up** through 0.5 AND local price slope is **up**\n"
+        "• **DOWN list:** NPX crosses **down** through 0.5 AND local price slope is **down**"
     )
 
     c1, c2, c3 = st.columns(3)
-    max_bars0 = c1.slider("Max bars since NPX 0-cross", 0, 30, 2, 1, key="npx0_max_bars")
-    eps0 = c2.slider("Max |NPX| at cross (near 0.0)", 0.01, 0.30, 0.08, 0.01, key="npx0_eps")
+    max_bars0 = c1.slider("Max bars since NPX 0.5-cross", 0, 30, 2, 1, key="npx0_max_bars")
+    eps0 = c2.slider("Max |NPX-0.5| at cross (near 0.5)", 0.01, 0.30, 0.08, 0.01, key="npx0_eps")
     lb_local = c3.slider("Local slope lookback (bars)", 10, 360, int(slope_lb_daily), 10, key="npx0_slope_lb")
 
-    run0 = st.button("Run NPX 0-Cross Scan", key="btn_run_npx0_scan")
+    run0 = st.button("Run NPX 0.5-Cross Scan", key="btn_run_npx0_scan")
 
     if run0:
         rows_up, rows_dn = [], []
@@ -2846,7 +2863,7 @@ with tab8:
         left, right = st.columns(2)
 
         with left:
-            st.subheader("NPX 0↑ with Local UP Slope")
+            st.subheader("NPX 0.5↑ with Local UP Slope")
             if not rows_up:
                 st.info("No matches.")
             else:
@@ -2857,7 +2874,7 @@ with tab8:
                 st.dataframe(out_up.reset_index(drop=True), use_container_width=True)
 
         with right:
-            st.subheader("NPX 0↓ with Local DOWN Slope")
+            st.subheader("NPX 0.5↓ with Local DOWN Slope")
             if not rows_dn:
                 st.info("No matches.")
             else:
