@@ -189,7 +189,7 @@ def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: i
     )
 
 def subset_by_daily_view(obj, view_label: str):
-    if obj is None or len(obj.index) == 0:
+    if obj is None or len(getattr(obj, "index", [])) == 0:
         return obj
     idx = obj.index
     end = idx.max()
@@ -227,13 +227,8 @@ def format_trade_instruction(trend_slope: float,
                              symbol: str,
                              global_trend_slope: float = None) -> str:
     """
-    UPDATED (prior request):
-      - Show BUY instruction only when Global Trendline slope and Local Slope agree (both UP)
-      - Show SELL instruction only when Global Trendline slope and Local Slope agree (both DOWN)
-      - Otherwise show an alert message.
-
-    Backward-compatibility:
-      - If global_trend_slope is None, falls back to the prior behavior (uses only trend_slope).
+    Shows BUY/SELL instruction only when Global Trendline slope and Local Slope agree.
+    Otherwise shows an alert.
     """
     def _finite(x):
         try:
@@ -268,16 +263,14 @@ def format_trade_instruction(trend_slope: float,
         g = np.nan
         l = np.nan
 
-    alert_txt = ALERT_TEXT
-
     if (not np.isfinite(g)) or (not np.isfinite(l)):
-        return alert_txt
+        return ALERT_TEXT
 
     sg = float(np.sign(g))
     sl = float(np.sign(l))
 
     if sg == 0.0 or sl == 0.0:
-        return alert_txt
+        return ALERT_TEXT
 
     if sg > 0 and sl > 0:
         leg_a_val, leg_b_val = entry_buy, exit_sell
@@ -291,7 +284,7 @@ def format_trade_instruction(trend_slope: float,
         text += f" • {_diff_text(leg_a_val, leg_b_val, symbol)}"
         return text
 
-    return alert_txt
+    return ALERT_TEXT
 # =========================
 # Part 2/9 — bullbear.py
 # =========================
@@ -410,7 +403,8 @@ if st.sidebar.button("🧹 Clear cache (data + run state)", use_container_width=
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2, key="sb_bb_period")
 daily_view = st.sidebar.selectbox("Daily view range:", ["Historical", "6M", "12M", "24M"], index=2, key="sb_daily_view")
 
-show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=True, key="sb_show_fibs")
+# UPDATED (THIS REQUEST): Fibonacci applies to DAILY too (default ON)
+show_fibs = st.sidebar.checkbox("Show Fibonacci (daily + hourly)", value=True, key="sb_show_fibs")
 
 slope_lb_daily  = st.sidebar.slider("Daily slope lookback (bars)", 10, 360, 90, 10, key="sb_slope_lb_daily")
 slope_lb_hourly = st.sidebar.slider("Hourly slope lookback (bars)", 12, 480, 120, 6, key="sb_slope_lb_hourly")
@@ -722,7 +716,7 @@ def find_band_bounce_signal(price: pd.Series,
                             lower_band: pd.Series,
                             slope_val: float):
     """
-    Detect the most recent BUY/SELL signal based on a 'bounce' off the ±2σ band.
+    Detect the most recent BUY/SELL signal based on a 'bounce' off the ±2σ regression band.
     """
     p = _coerce_1d_series(price)
     u = _coerce_1d_series(upper_band).reindex(p.index)
@@ -789,73 +783,107 @@ def annotate_crossover(ax, ts, px, side: str, note: str = ""):
                 color="tab:red", fontweight="bold")
 
 # ---------------------------
-# Slope BUY/SELL Trigger (leaderline + legend)
+# UPDATED (THIS REQUEST): REMOVE Slope Buy/Sell signals
+# and REPLACE with BB Mid Cross signals:
+#   • BB Buy Cross: Price reverses from 100% (i.e., near LOWER band / %B≈0)
+#                  then crosses ABOVE BB midline (SMA, w=20) going upward
+#   • BB Sell Cross: Price reverses from 0% (i.e., near UPPER band / %B≈1)
+#                   then crosses BELOW BB midline (SMA, w=20) going downward
 # ---------------------------
-def find_slope_trigger_after_band_reversal(price: pd.Series,
-                                          yhat: pd.Series,
-                                          upper_band: pd.Series,
-                                          lower_band: pd.Series,
-                                          horizon: int = 15):
-    """
-    BUY trigger:
-      - price touches/breaches LOWER band, then crosses ABOVE the slope line (yhat)
-    SELL trigger:
-      - price touches/breaches UPPER band, then crosses BELOW the slope line (yhat)
-    Returns the most recent trigger dict or None.
-    """
-    p = _coerce_1d_series(price)
-    y = _coerce_1d_series(yhat).reindex(p.index)
-    u = _coerce_1d_series(upper_band).reindex(p.index)
-    l = _coerce_1d_series(lower_band).reindex(p.index)
+def _n_consecutive_increasing(series: pd.Series, n: int = 2) -> bool:
+    s = _coerce_1d_series(series).dropna()
+    if len(s) < n + 1:
+        return False
+    deltas = np.diff(s.iloc[-(n+1):])
+    return bool(np.all(deltas > 0))
 
-    ok = p.notna() & y.notna() & u.notna() & l.notna()
+def _n_consecutive_decreasing(series: pd.Series, n: int = 2) -> bool:
+    s = _coerce_1d_series(series).dropna()
+    if len(s) < n + 1:
+        return False
+    deltas = np.diff(s.iloc[-(n+1):])
+    return bool(np.all(deltas < 0))
+
+def find_bb_mid_cross_after_extreme(close: pd.Series,
+                                   bb_mid: pd.Series,
+                                   bb_pctb: pd.Series,
+                                   horizon: int = 15,
+                                   eps: float = 0.05,
+                                   bars_confirm: int = 2):
+    """
+    Returns most recent BB Cross trigger dict (BUY or SELL) or None.
+
+    BUY:
+      - last cross UP of close over bb_mid
+      - within prior `horizon` bars, %B <= eps (near LOWER band; interpreted as "100%")
+      - confirm reversal via `bars_confirm` consecutive increasing closes (ending at cross)
+
+    SELL:
+      - last cross DOWN of close under bb_mid
+      - within prior `horizon` bars, %B >= 1-eps (near UPPER band; interpreted as "0%")
+      - confirm reversal via `bars_confirm` consecutive decreasing closes (ending at cross)
+    """
+    c = _coerce_1d_series(close)
+    mid = _coerce_1d_series(bb_mid).reindex(c.index)
+    pctb = _coerce_1d_series(bb_pctb).reindex(c.index)
+
+    ok = c.notna() & mid.notna() & pctb.notna()
     if ok.sum() < 3:
         return None
-    p = p[ok]; y = y[ok]; u = u[ok]; l = l[ok]
 
-    cross_up, cross_dn = _cross_series(p, y)
-    below = (p <= l)
-    above = (p >= u)
+    c = c[ok]; mid = mid[ok]; pctb = pctb[ok]
+    cross_up, cross_dn = _cross_series(c, mid)
 
     hz = max(1, int(horizon))
+    eps = float(max(0.0, min(0.49, eps)))
 
-    def _last_touch_before(t_idx, touch_mask: pd.Series):
+    def _touch_before(t_cross, want_buy: bool):
         try:
-            loc = int(p.index.get_loc(t_idx))
+            loc = int(c.index.get_loc(t_cross))
         except Exception:
             return None
         j0 = max(0, loc - hz)
-        window = touch_mask.iloc[j0:loc+1]
-        if not window.any():
+        w = pctb.iloc[j0:loc+1]
+        if want_buy:
+            touch_mask = (w <= eps)
+        else:
+            touch_mask = (w >= (1.0 - eps))
+        if not touch_mask.any():
             return None
-        return window[window].index[-1]
-
-    last_buy_cross = cross_up[cross_up].index[-1] if cross_up.any() else None
-    last_sell_cross = cross_dn[cross_dn].index[-1] if cross_dn.any() else None
+        t_touch = touch_mask[touch_mask].index[-1]
+        return t_touch
 
     buy_tr = None
-    if last_buy_cross is not None:
-        t_touch = _last_touch_before(last_buy_cross, below)
+    if cross_up.any():
+        t_cross = cross_up[cross_up].index[-1]
+        t_touch = _touch_before(t_cross, want_buy=True)
         if t_touch is not None:
-            buy_tr = {
-                "side": "BUY",
-                "touch_time": t_touch,
-                "touch_price": float(p.loc[t_touch]),
-                "cross_time": last_buy_cross,
-                "cross_price": float(p.loc[last_buy_cross]),
-            }
+            seg = c.loc[:t_cross]
+            if _n_consecutive_increasing(seg, int(max(1, bars_confirm))):
+                buy_tr = {
+                    "side": "BUY",
+                    "touch_time": t_touch,
+                    "touch_pctb": float(pctb.loc[t_touch]),
+                    "cross_time": t_cross,
+                    "cross_price": float(c.loc[t_cross]),
+                    "mid_at_cross": float(mid.loc[t_cross])
+                }
 
     sell_tr = None
-    if last_sell_cross is not None:
-        t_touch = _last_touch_before(last_sell_cross, above)
+    if cross_dn.any():
+        t_cross = cross_dn[cross_dn].index[-1]
+        t_touch = _touch_before(t_cross, want_buy=False)
         if t_touch is not None:
-            sell_tr = {
-                "side": "SELL",
-                "touch_time": t_touch,
-                "touch_price": float(p.loc[t_touch]),
-                "cross_time": last_sell_cross,
-                "cross_price": float(p.loc[last_sell_cross]),
-            }
+            seg = c.loc[:t_cross]
+            if _n_consecutive_decreasing(seg, int(max(1, bars_confirm))):
+                sell_tr = {
+                    "side": "SELL",
+                    "touch_time": t_touch,
+                    "touch_pctb": float(pctb.loc[t_touch]),
+                    "cross_time": t_cross,
+                    "cross_price": float(c.loc[t_cross]),
+                    "mid_at_cross": float(mid.loc[t_cross])
+                }
 
     if buy_tr is None and sell_tr is None:
         return None
@@ -863,32 +891,34 @@ def find_slope_trigger_after_band_reversal(price: pd.Series,
         return sell_tr
     if sell_tr is None:
         return buy_tr
-
     return buy_tr if buy_tr["cross_time"] >= sell_tr["cross_time"] else sell_tr
 
-def annotate_slope_trigger(ax, trig: dict):
+def annotate_bb_cross(ax, trig: dict):
     if trig is None:
         return
     side = trig.get("side", "")
     t0 = trig.get("touch_time")
-    p0 = trig.get("touch_price")
     t1 = trig.get("cross_time")
     p1 = trig.get("cross_price")
-    if t0 is None or t1 is None:
-        return
-    if not (np.isfinite(p0) and np.isfinite(p1)):
+    if t0 is None or t1 is None or (not np.isfinite(p1)):
         return
 
     col = "tab:green" if side == "BUY" else "tab:red"
-    lbl = f"Slope {side} Trigger"
-    ax.annotate(
-        "",
-        xy=(t1, p1),
-        xytext=(t0, p0),
-        arrowprops=dict(arrowstyle="->", color=col, lw=2.0, alpha=0.85),
-        zorder=9
-    )
-    ax.scatter([t1], [p1], marker="o", s=90, color=col, zorder=10, label=lbl)
+    lbl = "BB Buy Cross" if side == "BUY" else "BB Sell Cross"
+
+    # Leaderline from touch to cross (vertical placement uses cross_price)
+    try:
+        ax.annotate(
+            "",
+            xy=(t1, p1),
+            xytext=(t0, p1),
+            arrowprops=dict(arrowstyle="->", color=col, lw=2.0, alpha=0.85),
+            zorder=9
+        )
+    except Exception:
+        pass
+
+    ax.scatter([t1], [p1], marker="o", s=95, color=col, zorder=10, label=lbl)
     ax.text(
         t1, p1,
         f"  {lbl}",
@@ -1327,20 +1357,6 @@ def overlay_ntd_triangles_by_trend(ax, ntd: pd.Series, trend_slope: float, upper
         if idx_hi:
             ax.scatter(idx_hi, s.loc[idx_hi], marker="v", s=85, color="tab:red", zorder=10, label="NTD > +0.75")
 
-def _n_consecutive_increasing(series: pd.Series, n: int = 2) -> bool:
-    s = _coerce_1d_series(series).dropna()
-    if len(s) < n+1:
-        return False
-    deltas = np.diff(s.iloc[-(n+1):])
-    return bool(np.all(deltas > 0))
-
-def _n_consecutive_decreasing(series: pd.Series, n: int = 2) -> bool:
-    s = _coerce_1d_series(series).dropna()
-    if len(s) < n+1:
-        return False
-    deltas = np.diff(s.iloc[-(n+1):])
-    return bool(np.all(deltas < 0))
-
 def overlay_ntd_sr_reversal_stars(ax,
                                  price: pd.Series,
                                  sup: pd.Series,
@@ -1772,8 +1788,8 @@ def last_daily_npx_zero_cross_with_local_slope(symbol: str,
         npx_show = _coerce_1d_series(npx_full).reindex(close_show.index)
 
         level = 0.5
-
         prev = npx_show.shift(1)
+
         if str(direction).lower().startswith("up"):
             cross_mask = (npx_show >= level) & (prev < level)
             sig_label = "NPX 0.5↑"
@@ -1833,32 +1849,21 @@ def last_daily_npx_zero_cross_with_local_slope(symbol: str,
         return None
 
 # ---------------------------
-# Daily Slope + Support/Resistance reversal + BB mid cross scanner (R²>=0.99)
+# NEW (THIS REQUEST): Daily BB Buy Cross / BB Sell Cross scanner helper
 # ---------------------------
 @st.cache_data(ttl=120)
-def last_daily_sr_reversal_bbmid(symbol: str,
-                                 daily_view_label: str,
-                                 slope_lb: int,
-                                 sr_lb: int,
-                                 bb_window: int,
-                                 bb_sigma: float,
-                                 bb_ema: bool,
-                                 prox: float,
-                                 bars_confirm: int,
-                                 horizon: int,
-                                 side: str = "BUY",
-                                 min_r2: float = 0.99):
+def last_daily_bb_cross(symbol: str,
+                        daily_view_label: str,
+                        bb_window: int,
+                        bb_sigma: float,
+                        bb_ema: bool,
+                        horizon: int,
+                        eps: float,
+                        bars_confirm: int,
+                        side: str = "BUY"):
     """
-    BUY:
-      - regression slope (lookback) > 0 and R² >= min_r2
-      - touched Support within last `horizon` bars before BB mid cross UP
-      - BB mid cross UP occurs after touch
-      - confirms reversal via consecutive increasing closes
-    SELL:
-      - regression slope (lookback) < 0 and R² >= min_r2
-      - touched Resistance within last `horizon` bars before BB mid cross DOWN
-      - BB mid cross DOWN occurs after touch
-      - confirms reversal via consecutive decreasing closes
+    Uses BB mid cross logic (see find_bb_mid_cross_after_extreme) on DAILY close.
+    Returns dict or None.
     """
     try:
         close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
@@ -1866,91 +1871,39 @@ def last_daily_sr_reversal_bbmid(symbol: str,
             return None
 
         close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
-        if close_show.empty or len(close_show) < max(10, int(slope_lb), int(sr_lb)):
+        if close_show.empty or len(close_show) < max(10, int(bb_window), int(horizon) + 3):
             return None
 
-        yhat, up, lo, m, r2 = regression_with_band(close_show, lookback=int(slope_lb))
-        if not (np.isfinite(m) and np.isfinite(r2)):
+        bb_mid, bb_up, bb_lo, bb_pctb, bb_nbb = compute_bbands(
+            close_show, window=int(bb_window), mult=float(bb_sigma), use_ema=bool(bb_ema)
+        )
+        trig = find_bb_mid_cross_after_extreme(
+            close_show, bb_mid, bb_pctb,
+            horizon=int(horizon),
+            eps=float(eps),
+            bars_confirm=int(bars_confirm)
+        )
+        if trig is None:
             return None
-        if float(r2) < float(min_r2):
-            return None
-
-        want_buy = str(side).upper().startswith("B")
-        if want_buy and float(m) <= 0.0:
-            return None
-        if (not want_buy) and float(m) >= 0.0:
-            return None
-
-        res = close_show.rolling(int(sr_lb), min_periods=1).max()
-        sup = close_show.rolling(int(sr_lb), min_periods=1).min()
-
-        bb_mid, bb_up, bb_lo, _, _ = compute_bbands(close_show, window=int(bb_window), mult=float(bb_sigma), use_ema=bool(bb_ema))
-        if bb_mid.dropna().empty:
+        if str(trig.get("side", "")).upper() != str(side).upper():
             return None
 
-        cross_up, cross_dn = _cross_series(close_show, bb_mid)
-        hz = max(1, int(horizon))
-
-        if want_buy:
-            if not cross_up.any():
-                return None
-            t_cross = cross_up[cross_up].index[-1]
-
-            try:
-                loc = int(close_show.index.get_loc(t_cross))
-            except Exception:
-                return None
-            j0 = max(0, loc - hz)
-            touch_mask = close_show.iloc[j0:loc+1] <= (sup.iloc[j0:loc+1] * (1.0 + float(prox)))
-            if not touch_mask.any():
-                return None
-            t_touch = touch_mask[touch_mask].index[-1]
-
-            seg = close_show.loc[:t_cross]
-            if not _n_consecutive_increasing(seg, int(bars_confirm)):
-                return None
-
-        else:
-            if not cross_dn.any():
-                return None
-            t_cross = cross_dn[cross_dn].index[-1]
-
-            try:
-                loc = int(close_show.index.get_loc(t_cross))
-            except Exception:
-                return None
-            j0 = max(0, loc - hz)
-            touch_mask = close_show.iloc[j0:loc+1] >= (res.iloc[j0:loc+1] * (1.0 - float(prox)))
-            if not touch_mask.any():
-                return None
-            t_touch = touch_mask[touch_mask].index[-1]
-
-            seg = close_show.loc[:t_cross]
-            if not _n_consecutive_decreasing(seg, int(bars_confirm)):
-                return None
-
-        bars_since_cross = int((len(close_show) - 1) - int(close_show.index.get_loc(t_cross)))
-
-        curr_px = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
-        cross_px = float(close_show.loc[t_cross]) if np.isfinite(close_show.loc[t_cross]) else np.nan
-        mid_px = float(bb_mid.loc[t_cross]) if (t_cross in bb_mid.index and np.isfinite(bb_mid.loc[t_cross])) else np.nan
-        sup_px = float(sup.loc[t_touch]) if (t_touch in sup.index and np.isfinite(sup.loc[t_touch])) else np.nan
-        res_px = float(res.loc[t_touch]) if (t_touch in res.index and np.isfinite(res.loc[t_touch])) else np.nan
+        t_cross = trig["cross_time"]
+        if t_cross not in close_show.index:
+            return None
+        bars_since = int((len(close_show) - 1) - int(close_show.index.get_loc(t_cross)))
 
         return {
             "Symbol": symbol,
-            "Side": "BUY" if want_buy else "SELL",
+            "Side": trig["side"],
             "Daily View": daily_view_label,
-            "Bars Since Cross": bars_since_cross,
-            "Touch Time": t_touch,
+            "Bars Since Cross": int(bars_since),
+            "Touch Time": trig.get("touch_time"),
             "Cross Time": t_cross,
-            "Slope": float(m),
-            "R2": float(r2),
-            "Support@Touch": sup_px,
-            "Resistance@Touch": res_px,
-            "BB Mid@Cross": mid_px,
-            "Price@Cross": cross_px,
-            "Current Price": curr_px,
+            "Price@Cross": float(trig.get("cross_price", np.nan)),
+            "BB Mid@Cross": float(trig.get("mid_at_cross", np.nan)),
+            "%B@Touch": float(trig.get("touch_pctb", np.nan)),
+            "Current Price": float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan,
         }
     except Exception:
         return None
@@ -2094,8 +2047,14 @@ def render_hourly_views(sel: str,
         if bounce_sig_h is not None:
             annotate_crossover(ax2, bounce_sig_h["time"], bounce_sig_h["price"], bounce_sig_h["side"])
 
-        trig_h = find_slope_trigger_after_band_reversal(hc, yhat_h, upper_h, lower_h, horizon=rev_horizon)
-        annotate_slope_trigger(ax2, trig_h)
+    # NEW (THIS REQUEST): BB Buy/Sell Cross markers (replaces removed Slope Buy/Sell signals)
+    bb_trig_h = find_bb_mid_cross_after_extreme(
+        hc, bb_mid_h, bb_pctb_h,
+        horizon=rev_horizon,
+        eps=0.05,
+        bars_confirm=rev_bars_confirm
+    )
+    annotate_bb_cross(ax2, bb_trig_h)
 
     if is_forex and show_fx_news and (not fx_news.empty) and isinstance(real_times, pd.DatetimeIndex):
         news_pos = _map_times_to_bar_positions(real_times, fx_news["time"].tolist())
@@ -2286,9 +2245,11 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "Long-Term History",
     "Recent BUY Scanner",
     "NPX 0.5-Cross Scanner",
-    "Daily Slope+BB Reversal Scanner"
+    "BB Mid Cross Scanner"
 ])
-
+# =========================
+# Part 9/9 — bullbear.py
+# =========================
 # ---------------------------
 # TAB 1: ORIGINAL FORECAST
 # ---------------------------
@@ -2399,9 +2360,6 @@ with tab1:
                 x0, x1 = df_show.index[0], df_show.index[-1]
                 psar_d_df = psar_d_df.loc[(psar_d_df.index >= x0) & (psar_d_df.index <= x1)]
 
-            # ---------------------------
-            # NEW (THIS REQUEST): Daily Supertrend overlay
-            # ---------------------------
             st_line_daily = pd.Series(dtype=float)
             if df_ohlc is not None and not df_ohlc.empty and {"High","Low","Close"}.issubset(df_ohlc.columns) and len(df_show.index) > 0:
                 x0, x1 = df_show.index[0], df_show.index[-1]
@@ -2476,8 +2434,23 @@ with tab1:
                 if bounce_sig_d is not None:
                     annotate_crossover(ax, bounce_sig_d["time"], bounce_sig_d["price"], bounce_sig_d["side"])
 
-                trig_d = find_slope_trigger_after_band_reversal(df_show, yhat_d_show, upper_d_show, lower_d_show, horizon=rev_horizon)
-                annotate_slope_trigger(ax, trig_d)
+            # NEW (THIS REQUEST): BB Buy/Sell Cross markers on DAILY (replaces removed Slope Buy/Sell signals)
+            bb_trig_d = find_bb_mid_cross_after_extreme(
+                df_show, bb_mid_d_show, bb_pctb_d_show,
+                horizon=rev_horizon,
+                eps=0.05,
+                bars_confirm=rev_bars_confirm
+            )
+            annotate_bb_cross(ax, bb_trig_d)
+
+            # UPDATED (THIS REQUEST): Fibonacci on DAILY too (default ON)
+            if show_fibs and not df_show.dropna().empty:
+                fibs_d = fibonacci_levels(df_show)
+                x0, x1 = df_show.index[0], df_show.index[-1]
+                for lbl, y in fibs_d.items():
+                    ax.hlines(y, xmin=x0, xmax=x1, linestyles="dotted", linewidth=1.0)
+                for lbl, y in fibs_d.items():
+                    ax.text(x1, y, f" {lbl}", va="center")
 
             macd_sig_d = find_macd_hma_sr_signal(
                 close=df_show, hma=hma_d_show, macd=macd_d, sup=sup_d_show, res=res_d_show,
@@ -2603,9 +2576,7 @@ with tab1:
         }, index=st.session_state.fc_idx))
     else:
         st.info("Click **Run Forecast** to display charts and forecast.")
-# =========================
-# Part 9/9 — bullbear.py
-# =========================
+
 # ---------------------------
 # TAB 2: ENHANCED FORECAST
 # ---------------------------
@@ -2631,7 +2602,6 @@ with tab2:
             hma_d_show = compute_hma(df_show, period=hma_period)
             macd_d, macd_sig_d, _ = compute_macd(df_show)
 
-            # NEW: supertrend on enhanced daily too
             st_line_daily_enh = pd.Series(dtype=float)
             if df_ohlc is not None and not df_ohlc.empty and {"High","Low","Close"}.issubset(df_ohlc.columns) and len(df_show.index) > 0:
                 x0, x1 = df_show.index[0], df_show.index[-1]
@@ -2654,6 +2624,15 @@ with tab2:
             if not res_d_show.empty and not sup_d_show.empty:
                 ax.hlines(float(res_d_show.iloc[-1]), xmin=df_show.index[0], xmax=df_show.index[-1], colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance")
                 ax.hlines(float(sup_d_show.iloc[-1]), xmin=df_show.index[0], xmax=df_show.index[-1], colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
+
+            # Fibonacci on Daily (default ON)
+            if show_fibs and not df_show.dropna().empty:
+                fibs_d = fibonacci_levels(df_show)
+                x0, x1 = df_show.index[0], df_show.index[-1]
+                for lbl, y in fibs_d.items():
+                    ax.hlines(y, xmin=x0, xmax=x1, linestyles="dotted", linewidth=1.0)
+                for lbl, y in fibs_d.items():
+                    ax.text(x1, y, f" {lbl}", va="center")
 
             macd_sig = find_macd_hma_sr_signal(df_show, hma_d_show, macd_d, sup_d_show, res_d_show, global_m_d, prox=sr_prox_pct)
             macd_txt = "MACD/HMA55: n/a"
@@ -2899,86 +2878,60 @@ with tab8:
                 st.dataframe(out_dn.reset_index(drop=True), use_container_width=True)
 
 # ---------------------------
-# TAB 9: Daily Slope + S/R reversal + BB mid cross scanner
+# TAB 9: BB Mid Cross Scanner (THIS REQUEST)
 # ---------------------------
 with tab9:
-    st.header("Daily Slope + S/R Reversal + BB Midline Scanner (R² ≥ 0.99)")
+    st.header("BB Mid Cross Scanner — BB Buy Cross / BB Sell Cross (Daily)")
     st.caption(
-        "BUY list:\n"
-        "• Daily regression slope is UP and **R² ≥ 0.99** (99% confidence)\n"
-        "• Price reversed from Support (touch within horizon + confirmed reversal)\n"
-        "• Price crossed ABOVE BB midline\n\n"
-        "SELL list:\n"
-        "• Daily regression slope is DOWN and **R² ≥ 0.99** (99% confidence)\n"
-        "• Price reversed from Resistance (touch within horizon + confirmed reversal)\n"
-        "• Price crossed BELOW BB midline"
+        "Lists symbols where:\n"
+        "• **BB Buy Cross**: Price reverses from **100%** (near LOWER band; %B≈0) and crosses **ABOVE** BB mid (SMA, w=20)\n"
+        "• **BB Sell Cross**: Price reverses from **0%** (near UPPER band; %B≈1) and crosses **BELOW** BB mid (SMA, w=20)\n"
+        "Uses the current BB settings (midline SMA/EMA toggle + window) and a small tolerance for the band extreme."
     )
 
     c1, c2 = st.columns(2)
-    max_bars_since = c1.slider("Max bars since BB mid cross", 0, 60, 10, 1, key="srbb_max_bars_since")
-    r2_thr = c2.slider("Min R² (confidence)", 0.80, 0.99, 0.99, 0.01, key="srbb_r2_thr")
+    max_bars_bb = c1.slider("Max bars since BB mid cross", 0, 30, 3, 1, key="bbx_max_bars")
+    eps_bb = c2.slider("Extreme tolerance (near band)", 0.01, 0.20, 0.05, 0.01, key="bbx_eps")
 
-    run_scan_srbb = st.button("Run Daily Slope+BB Scan", key="btn_run_daily_slope_bb_scan")
+    run_bb = st.button("Run BB Cross Scan", key=f"btn_run_bb_cross_{mode}")
 
-    if run_scan_srbb:
-        buy_rows, sell_rows = [], []
+    if run_bb:
+        rows_buy, rows_sell = [], []
         for sym in universe:
-            rb = last_daily_sr_reversal_bbmid(
-                symbol=sym,
-                daily_view_label=daily_view,
-                slope_lb=slope_lb_daily,
-                sr_lb=sr_lb_daily,
-                bb_window=bb_win,
-                bb_sigma=bb_mult,
-                bb_ema=bb_use_ema,
-                prox=sr_prox_pct,
-                bars_confirm=rev_bars_confirm,
-                horizon=rev_horizon,
-                side="BUY",
-                min_r2=float(r2_thr),
+            r_buy = last_daily_bb_cross(
+                sym, daily_view_label=daily_view,
+                bb_window=bb_win, bb_sigma=bb_mult, bb_ema=bb_use_ema,
+                horizon=rev_horizon, eps=eps_bb, bars_confirm=rev_bars_confirm, side="BUY"
             )
-            if rb is not None and int(rb.get("Bars Since Cross", 9999)) <= int(max_bars_since):
-                buy_rows.append(rb)
+            if r_buy is not None and int(r_buy.get("Bars Since Cross", 9999)) <= int(max_bars_bb):
+                rows_buy.append(r_buy)
 
-            rs = last_daily_sr_reversal_bbmid(
-                symbol=sym,
-                daily_view_label=daily_view,
-                slope_lb=slope_lb_daily,
-                sr_lb=sr_lb_daily,
-                bb_window=bb_win,
-                bb_sigma=bb_mult,
-                bb_ema=bb_use_ema,
-                prox=sr_prox_pct,
-                bars_confirm=rev_bars_confirm,
-                horizon=rev_horizon,
-                side="SELL",
-                min_r2=float(r2_thr),
+            r_sell = last_daily_bb_cross(
+                sym, daily_view_label=daily_view,
+                bb_window=bb_win, bb_sigma=bb_mult, bb_ema=bb_use_ema,
+                horizon=rev_horizon, eps=eps_bb, bars_confirm=rev_bars_confirm, side="SELL"
             )
-            if rs is not None and int(rs.get("Bars Since Cross", 9999)) <= int(max_bars_since):
-                sell_rows.append(rs)
+            if r_sell is not None and int(r_sell.get("Bars Since Cross", 9999)) <= int(max_bars_bb):
+                rows_sell.append(r_sell)
 
         left, right = st.columns(2)
 
         with left:
-            st.subheader("BUY (Slope UP, R² OK, Support reversal + BB mid cross UP)")
-            if not buy_rows:
+            st.subheader("BB Buy Cross")
+            if not rows_buy:
                 st.info("No matches.")
             else:
-                outb = pd.DataFrame(buy_rows)
+                outb = pd.DataFrame(rows_buy)
                 outb["Bars Since Cross"] = outb["Bars Since Cross"].astype(int)
-                outb["Slope"] = outb["Slope"].astype(float)
-                outb["R2"] = outb["R2"].astype(float)
-                outb = outb.sort_values(["Bars Since Cross", "R2"], ascending=[True, False])
+                outb = outb.sort_values(["Bars Since Cross", "Symbol"], ascending=[True, True])
                 st.dataframe(outb.reset_index(drop=True), use_container_width=True)
 
         with right:
-            st.subheader("SELL (Slope DOWN, R² OK, Resistance reversal + BB mid cross DOWN)")
-            if not sell_rows:
+            st.subheader("BB Sell Cross")
+            if not rows_sell:
                 st.info("No matches.")
             else:
-                outs = pd.DataFrame(sell_rows)
+                outs = pd.DataFrame(rows_sell)
                 outs["Bars Since Cross"] = outs["Bars Since Cross"].astype(int)
-                outs["Slope"] = outs["Slope"].astype(float)
-                outs["R2"] = outs["R2"].astype(float)
-                outs = outs.sort_values(["Bars Since Cross", "R2"], ascending=[True, False])
+                outs = outs.sort_values(["Bars Since Cross", "Symbol"], ascending=[True, True])
                 st.dataframe(outs.reset_index(drop=True), use_container_width=True)
