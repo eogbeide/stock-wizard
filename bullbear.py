@@ -1,3 +1,6 @@
+# =========================
+# Part 1/9 — bullbear.py
+# =========================
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -289,10 +292,8 @@ def format_trade_instruction(trend_slope: float,
         return text
 
     return alert_txt
-
-
 # =========================
-# Part 2/8 — bullbear.py
+# Part 2/9 — bullbear.py
 # =========================
 # ---------------------------
 # Gapless (continuous) intraday prices
@@ -455,7 +456,6 @@ signal_threshold = st.sidebar.slider("S/R proximity signal threshold", 0.50, 0.9
 sr_prox_pct = st.sidebar.slider("S/R proximity (%)", 0.05, 1.00, 0.25, 0.05, key="sb_sr_prox") / 100.0
 
 st.sidebar.subheader("NTD (Daily/Hourly)")
-# UPDATED (THIS REQUEST): use a new key so Daily NTD displays ON by default again
 show_ntd = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd_v2")
 ntd_window = st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
 shade_ntd = st.sidebar.checkbox("Shade NTD (green=up, red=down)", value=True, key="sb_ntd_shade")
@@ -609,10 +609,8 @@ def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
     R1 = 2 * P - L; S1 = 2 * P - H
     R2 = P + (H - L); S2 = P - (H - L)
     return {"P": P, "R1": R1, "S1": S1, "R2": R2, "S2": S2}
-
-
 # =========================
-# Part 3/8 — bullbear.py
+# Part 3/9 — bullbear.py
 # =========================
 # ---------------------------
 # Regression & ±2σ band
@@ -791,7 +789,7 @@ def annotate_crossover(ax, ts, px, side: str, note: str = ""):
                 color="tab:red", fontweight="bold")
 
 # ---------------------------
-# NEW (THIS REQUEST): Slope BUY/SELL Trigger (leaderline + legend)
+# Slope BUY/SELL Trigger (leaderline + legend)
 # ---------------------------
 def find_slope_trigger_after_band_reversal(price: pd.Series,
                                           yhat: pd.Series,
@@ -900,10 +898,8 @@ def annotate_slope_trigger(ax, trig: dict):
         va="bottom" if side == "BUY" else "top",
         zorder=10
     )
-
-
 # =========================
-# Part 4/8 — bullbear.py
+# Part 4/9 — bullbear.py
 # =========================
 # ---------------------------
 # Other indicators
@@ -1138,10 +1134,8 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     pctb = ((s - lower) / width).clip(0.0, 1.0)
     nbb = pctb * 2.0 - 1.0
     return (mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index))
-
-
 # =========================
-# Part 5/8 — bullbear.py
+# Part 5/9 — bullbear.py
 # =========================
 # ---------------------------
 # Ichimoku, Supertrend, PSAR
@@ -1388,10 +1382,8 @@ def overlay_ntd_sr_reversal_stars(ax,
         ax.scatter([t], [ntd0], marker="*", s=170, color="tab:green", zorder=12, label="BUY ★ (Support reversal)")
     if sell_cond:
         ax.scatter([t], [ntd0], marker="*", s=170, color="tab:red", zorder=12, label="SELL ★ (Resistance reversal)")
-
-
 # =========================
-# Part 6/8 — bullbear.py
+# Part 6/9 — bullbear.py
 # =========================
 # ---------------------------
 # Sessions (PST)
@@ -1601,10 +1593,8 @@ def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
         return float(ntd.iloc[-1]), ntd.index[-1]
     except Exception:
         return np.nan, None
-
-
 # =========================
-# Part 7/8 — bullbear.py
+# Part 7/9 — bullbear.py
 # =========================
 # ---------------------------
 # Recent BUY scanner helpers (uses SAME band-bounce logic as the chart)
@@ -1781,7 +1771,6 @@ def last_daily_npx_zero_cross_with_local_slope(symbol: str,
         npx_full = compute_normalized_price(close_full, window=ntd_win)
         npx_show = _coerce_1d_series(npx_full).reindex(close_show.index)
 
-        # UPDATED (prior request): use 0.5 cross level instead of 0.0
         level = 0.5
 
         prev = npx_show.shift(1)
@@ -1844,7 +1833,7 @@ def last_daily_npx_zero_cross_with_local_slope(symbol: str,
         return None
 
 # ---------------------------
-# NEW (THIS REQUEST): Daily Slope + Support/Resistance reversal + BB mid cross scanner (R²>=0.99)
+# Daily Slope + Support/Resistance reversal + BB mid cross scanner (R²>=0.99)
 # ---------------------------
 @st.cache_data(ttl=120)
 def last_daily_sr_reversal_bbmid(symbol: str,
@@ -1965,10 +1954,8 @@ def last_daily_sr_reversal_bbmid(symbol: str,
         }
     except Exception:
         return None
-
-
 # =========================
-# Part 8/8 — bullbear.py
+# Part 8/9 — bullbear.py
 # =========================
 # ---------------------------
 # Session state init
@@ -2043,9 +2030,6 @@ def render_hourly_views(sel: str,
     if is_forex and show_fx_news:
         fx_news = fetch_yf_news(sel, window_days=news_window_days)
 
-    # ---------------------------
-    # UPDATED (THIS REQUEST): show Hourly NTD panel by default (like Daily)
-    # ---------------------------
     ax2w = None
     if show_nrsi:
         fig2, (ax2, ax2w) = plt.subplots(
@@ -2110,7 +2094,6 @@ def render_hourly_views(sel: str,
         if bounce_sig_h is not None:
             annotate_crossover(ax2, bounce_sig_h["time"], bounce_sig_h["price"], bounce_sig_h["side"])
 
-        # leaderline + legend
         trig_h = find_slope_trigger_after_band_reversal(hc, yhat_h, upper_h, lower_h, horizon=rev_horizon)
         annotate_slope_trigger(ax2, trig_h)
 
@@ -2211,9 +2194,6 @@ def render_hourly_views(sel: str,
         for lbl, y in fibs_h.items():
             ax2.text(hc.index[-1], y, f" {lbl}", va="center")
 
-    # ---------------------------
-    # UPDATED (THIS REQUEST): render hourly NTD panel (default ON)
-    # ---------------------------
     if ax2w is not None:
         ax2w.set_title(f"Hourly Indicator Panel — NTD + NPX + Trend (S/R w={sr_lb_hourly})")
         ntd_h = compute_normalized_trend(hc, window=ntd_window) if show_ntd else pd.Series(index=hc.index, dtype=float)
@@ -2272,7 +2252,6 @@ def render_hourly_views(sel: str,
             title_fontsize=9
         )
 
-    # ticks on bottom axis if we have the NTD panel
     if isinstance(real_times, pd.DatetimeIndex):
         _apply_compact_time_ticks(ax2w if ax2w is not None else ax2, real_times, n_ticks=8)
 
@@ -2319,7 +2298,6 @@ with tab1:
             "Charts stay on the last RUN ticker until you run again.")
 
     sel = st.selectbox("Ticker:", universe, key=f"orig_ticker_{mode}")
-    # UPDATED (prior request): use a new key so "Daily" view (and Daily NTD panel) is default again
     chart = st.radio("Chart View:", ["Daily", "Hourly", "Both"], key=f"orig_chart_{mode}_v2")
 
     hour_range = st.selectbox(
@@ -2410,7 +2388,7 @@ with tab1:
             bb_mid_d_show = bb_mid_d.reindex(df_show.index)
             bb_up_d_show = bb_up_d.reindex(df_show.index)
             bb_lo_d_show = bb_lo_d.reindex(df_show.index)
-            bb_pctb_d_show = bb_pctb.reindex(df_show.index) if 'bb_pctb' in globals() else bb_pctb_d.reindex(df_show.index)
+            bb_pctb_d_show = bb_pctb_d.reindex(df_show.index)
             bb_nbb_d_show = bb_nbb_d.reindex(df_show.index)
 
             hma_d_show = compute_hma(df, period=hma_period).reindex(df_show.index)
@@ -2420,6 +2398,17 @@ with tab1:
             if not psar_d_df.empty and len(df_show.index) > 0:
                 x0, x1 = df_show.index[0], df_show.index[-1]
                 psar_d_df = psar_d_df.loc[(psar_d_df.index >= x0) & (psar_d_df.index <= x1)]
+
+            # ---------------------------
+            # NEW (THIS REQUEST): Daily Supertrend overlay
+            # ---------------------------
+            st_line_daily = pd.Series(dtype=float)
+            if df_ohlc is not None and not df_ohlc.empty and {"High","Low","Close"}.issubset(df_ohlc.columns) and len(df_show.index) > 0:
+                x0, x1 = df_show.index[0], df_show.index[-1]
+                ohlc_show = df_ohlc.loc[(df_ohlc.index >= x0) & (df_ohlc.index <= x1)].copy()
+                st_d = compute_supertrend(ohlc_show, atr_period=atr_period, atr_mult=atr_mult)
+                if st_d is not None and (not st_d.empty) and ("ST" in st_d.columns):
+                    st_line_daily = st_d["ST"].reindex(df_show.index).ffill()
 
             fig, (ax, axdw) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
@@ -2437,6 +2426,9 @@ with tab1:
             ax.plot(ema30_show, "--", label="30 EMA")
 
             global_m_d = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
+
+            if not st_line_daily.empty:
+                ax.plot(st_line_daily.index, st_line_daily.values, "-", linewidth=1.5, label=f"Supertrend ({atr_period},{atr_mult})")
 
             if show_hma and not hma_d_show.dropna().empty:
                 ax.plot(hma_d_show.index, hma_d_show.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
@@ -2611,9 +2603,11 @@ with tab1:
         }, index=st.session_state.fc_idx))
     else:
         st.info("Click **Run Forecast** to display charts and forecast.")
-
+# =========================
+# Part 9/9 — bullbear.py
+# =========================
 # ---------------------------
-# TAB 2: ENHANCED FORECAST (unchanged)
+# TAB 2: ENHANCED FORECAST
 # ---------------------------
 with tab2:
     st.header("Enhanced Forecast")
@@ -2621,6 +2615,7 @@ with tab2:
         st.info("Run Tab 1 first (in the current mode).")
     else:
         df = st.session_state.df_hist
+        df_ohlc = st.session_state.df_ohlc
         idx, vals, ci = st.session_state.fc_idx, st.session_state.fc_vals, st.session_state.fc_ci
         last_price = _safe_last_float(df)
         p_up = np.mean(vals.to_numpy() > last_price) if np.isfinite(last_price) else np.nan
@@ -2636,10 +2631,23 @@ with tab2:
             hma_d_show = compute_hma(df_show, period=hma_period)
             macd_d, macd_sig_d, _ = compute_macd(df_show)
 
+            # NEW: supertrend on enhanced daily too
+            st_line_daily_enh = pd.Series(dtype=float)
+            if df_ohlc is not None and not df_ohlc.empty and {"High","Low","Close"}.issubset(df_ohlc.columns) and len(df_show.index) > 0:
+                x0, x1 = df_show.index[0], df_show.index[-1]
+                ohlc_show = df_ohlc.loc[(df_ohlc.index >= x0) & (df_ohlc.index <= x1)].copy()
+                st_d = compute_supertrend(ohlc_show, atr_period=atr_period, atr_mult=atr_mult)
+                if st_d is not None and (not st_d.empty) and ("ST" in st_d.columns):
+                    st_line_daily_enh = st_d["ST"].reindex(df_show.index).ffill()
+
             fig, ax = plt.subplots(figsize=(14, 5))
             ax.set_title(f"{st.session_state.ticker} Daily (Enhanced) — {daily_view}")
             ax.plot(df_show.index, df_show.values, label="History")
             global_m_d = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
+
+            if not st_line_daily_enh.empty:
+                ax.plot(st_line_daily_enh.index, st_line_daily_enh.values, "-", linewidth=1.5, label=f"Supertrend ({atr_period},{atr_mult})")
+
             if show_hma and not hma_d_show.dropna().empty:
                 ax.plot(hma_d_show.index, hma_d_show.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
 
@@ -2754,9 +2762,9 @@ with tab5:
     st.caption("Lists symbols where the latest NTD is below -0.75 (using latest intraday for hourly; daily uses daily close).")
 
     scan_frame = st.radio("Frame:", ["Hourly (intraday)", "Daily"], index=0, key=f"ntd_scan_frame_{mode}")
-    run_scan = st.button("Run Scanner", key=f"btn_run_ntd_scan_{mode}")
+    run_scan_ntd = st.button("Run Scanner", key=f"btn_run_ntd_scan_{mode}")
 
-    if run_scan:
+    if run_scan_ntd:
         rows = []
         if scan_frame.startswith("Hourly"):
             period = "1d"
@@ -2891,7 +2899,7 @@ with tab8:
                 st.dataframe(out_dn.reset_index(drop=True), use_container_width=True)
 
 # ---------------------------
-# TAB 9: Daily Slope + S/R reversal + BB mid cross scanner (NEW)
+# TAB 9: Daily Slope + S/R reversal + BB mid cross scanner
 # ---------------------------
 with tab9:
     st.header("Daily Slope + S/R Reversal + BB Midline Scanner (R² ≥ 0.99)")
@@ -2910,9 +2918,9 @@ with tab9:
     max_bars_since = c1.slider("Max bars since BB mid cross", 0, 60, 10, 1, key="srbb_max_bars_since")
     r2_thr = c2.slider("Min R² (confidence)", 0.80, 0.99, 0.99, 0.01, key="srbb_r2_thr")
 
-    run_scan = st.button("Run Daily Slope+BB Scan", key="btn_run_daily_slope_bb_scan")
+    run_scan_srbb = st.button("Run Daily Slope+BB Scan", key="btn_run_daily_slope_bb_scan")
 
-    if run_scan:
+    if run_scan_srbb:
         buy_rows, sell_rows = [], []
         for sym in universe:
             rb = last_daily_sr_reversal_bbmid(
@@ -2952,25 +2960,25 @@ with tab9:
         left, right = st.columns(2)
 
         with left:
-            st.subheader("BUY — Up Slope + Support Reversal + BB Mid Cross")
+            st.subheader("BUY (Slope UP, R² OK, Support reversal + BB mid cross UP)")
             if not buy_rows:
                 st.info("No matches.")
             else:
-                out = pd.DataFrame(buy_rows)
-                out["Bars Since Cross"] = out["Bars Since Cross"].astype(int)
-                out["Slope"] = out["Slope"].astype(float)
-                out["R2"] = out["R2"].astype(float)
-                out = out.sort_values(["Bars Since Cross", "Slope"], ascending=[True, False])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
+                outb = pd.DataFrame(buy_rows)
+                outb["Bars Since Cross"] = outb["Bars Since Cross"].astype(int)
+                outb["Slope"] = outb["Slope"].astype(float)
+                outb["R2"] = outb["R2"].astype(float)
+                outb = outb.sort_values(["Bars Since Cross", "R2"], ascending=[True, False])
+                st.dataframe(outb.reset_index(drop=True), use_container_width=True)
 
         with right:
-            st.subheader("SELL — Down Slope + Resistance Reversal + BB Mid Cross")
+            st.subheader("SELL (Slope DOWN, R² OK, Resistance reversal + BB mid cross DOWN)")
             if not sell_rows:
                 st.info("No matches.")
             else:
-                out = pd.DataFrame(sell_rows)
-                out["Bars Since Cross"] = out["Bars Since Cross"].astype(int)
-                out["Slope"] = out["Slope"].astype(float)
-                out["R2"] = out["R2"].astype(float)
-                out = out.sort_values(["Bars Since Cross", "Slope"], ascending=[True, True])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
+                outs = pd.DataFrame(sell_rows)
+                outs["Bars Since Cross"] = outs["Bars Since Cross"].astype(int)
+                outs["Slope"] = outs["Slope"].astype(float)
+                outs["R2"] = outs["R2"].astype(float)
+                outs = outs.sort_values(["Bars Since Cross", "R2"], ascending=[True, False])
+                st.dataframe(outs.reset_index(drop=True), use_container_width=True)
