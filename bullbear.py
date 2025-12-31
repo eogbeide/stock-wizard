@@ -341,11 +341,6 @@ st.sidebar.subheader("Hourly Supertrend")
 atr_period = st.sidebar.slider("ATR period", 5, 50, 10, 1, key="sb_atr_period")
 atr_mult = st.sidebar.slider("ATR multiplier", 1.0, 5.0, 3.0, 0.5, key="sb_atr_mult")
 
-st.sidebar.subheader("Parabolic SAR")
-show_psar = st.sidebar.checkbox("Show Parabolic SAR", value=True, key="sb_psar_show")
-psar_step = st.sidebar.slider("PSAR step", 0.01, 0.20, 0.02, 0.01, key="sb_psar_step")
-psar_max = st.sidebar.slider("PSAR max", 0.10, 1.00, 0.20, 0.10, key="sb_psar_max")
-
 st.sidebar.subheader("Signal Logic")
 signal_threshold = st.sidebar.slider("Confidence threshold (R²)", 0.50, 0.999, 0.90, 0.01, key="sb_sig_thr")
 sr_prox_pct = st.sidebar.slider("S/R proximity (%)", 0.05, 1.00, 0.25, 0.05, key="sb_sr_prox") / 100.0
@@ -882,7 +877,7 @@ def _cross_level(series: pd.Series, level: float = 0.0):
 # Part 5/7 — bullbear.py
 # =========================
 # ---------------------------
-# Supertrend + PSAR + Ichimoku + NTD helpers + Stars + Sessions
+# Supertrend + Ichimoku + NTD helpers + Stars + Sessions
 # ---------------------------
 
 def _compute_atr_from_ohlc(df: pd.DataFrame, period: int = 10) -> pd.Series:
@@ -933,53 +928,36 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
     return pd.DataFrame({"ST": st_line, "in_uptrend": in_uptrend})
 
 
-def compute_psar_from_ohlc(df: pd.DataFrame, step: float = 0.02, max_step: float = 0.2) -> pd.DataFrame:
-    if df is None or df.empty or not {"High", "Low"}.issubset(df.columns):
-        return pd.DataFrame(columns=["PSAR", "in_uptrend"])
-    high = _coerce_1d_series(df["High"])
-    low = _coerce_1d_series(df["Low"])
-    idx = high.index.union(low.index)
-    high = high.reindex(idx)
-    low = low.reindex(idx)
+def supertrend_star_masks(price: pd.Series, st_line: pd.Series, slope_m: float):
+    """
+    Requested change:
+      BLUE ★  = price crosses ABOVE Supertrend, price is rising, and slope is UP
+      PURPLE ★= price crosses BELOW Supertrend, price is falling, and slope is DOWN
+    """
+    p = _coerce_1d_series(price).astype(float)
+    stl = _coerce_1d_series(st_line).reindex(p.index)
 
-    psar = pd.Series(index=idx, dtype=float)
-    in_uptrend = pd.Series(index=idx, dtype=bool)
+    idx = p.index
+    if p.dropna().shape[0] < 4 or stl.dropna().shape[0] < 4:
+        return pd.Series(False, index=idx), pd.Series(False, index=idx)
 
-    in_uptrend.iloc[0] = True
-    psar.iloc[0] = float(low.iloc[0])
-    ep = float(high.iloc[0])
-    af = step
+    cross_up, cross_dn = _cross_series(p, stl)
+    cross_up = cross_up.reindex(idx, fill_value=False)
+    cross_dn = cross_dn.reindex(idx, fill_value=False)
 
-    for i in range(1, len(idx)):
-        prev_psar = psar.iloc[i - 1]
-        if in_uptrend.iloc[i - 1]:
-            psar.iloc[i] = prev_psar + af * (ep - prev_psar)
-            psar.iloc[i] = min(psar.iloc[i], float(low.iloc[i - 1]), float(low.iloc[i - 2]) if i >= 2 else float(low.iloc[i - 1]))
-            if high.iloc[i] > ep:
-                ep = float(high.iloc[i])
-                af = min(af + step, max_step)
-            if low.iloc[i] < psar.iloc[i]:
-                in_uptrend.iloc[i] = False
-                psar.iloc[i] = ep
-                ep = float(low.iloc[i])
-                af = step
-            else:
-                in_uptrend.iloc[i] = True
-        else:
-            psar.iloc[i] = prev_psar + af * (ep - prev_psar)
-            psar.iloc[i] = max(psar.iloc[i], float(high.iloc[i - 1]), float(high.iloc[i - 2]) if i >= 2 else float(high.iloc[i - 1]))
-            if low.iloc[i] < ep:
-                ep = float(low.iloc[i])
-                af = min(af + step, max_step)
-            if high.iloc[i] > psar.iloc[i]:
-                in_uptrend.iloc[i] = True
-                psar.iloc[i] = ep
-                ep = float(high.iloc[i])
-                af = step
-            else:
-                in_uptrend.iloc[i] = False
+    price_up = (p.diff() > 0).fillna(False)
+    price_dn = (p.diff() < 0).fillna(False)
 
-    return pd.DataFrame({"PSAR": psar, "in_uptrend": in_uptrend})
+    try:
+        m = float(slope_m)
+    except Exception:
+        m = np.nan
+    if not np.isfinite(m):
+        return pd.Series(False, index=idx), pd.Series(False, index=idx)
+
+    buy_mask = cross_up & price_up & (m > 0)
+    sell_mask = cross_dn & price_dn & (m < 0)
+    return buy_mask, sell_mask
 
 
 def ichimoku_kijun(high: pd.Series, low: pd.Series, base: int = 26):
@@ -1048,43 +1026,6 @@ def overlay_npx_zero_cross_triangles(ax, npx: pd.Series, trend_slope: float):
         ax.scatter(idx_dn0, s.loc[idx_dn0], marker="v", s=85, color="tab:green", zorder=10, label="NPX 0↓ (Uptrend)")
     if downtrend and idx_up0:
         ax.scatter(idx_up0, s.loc[idx_up0], marker="^", s=85, color="tab:red", zorder=10, label="NPX 0↑ (Downtrend)")
-
-
-def hma_npx_star_masks(close: pd.Series, hma: pd.Series, npx: pd.Series, max_bar_gap: int = 2):
-    c = _coerce_1d_series(close).astype(float)
-    h = _coerce_1d_series(hma).reindex(c.index)
-    x = _coerce_1d_series(npx).reindex(c.index)
-    ok = c.notna() & h.notna() & x.notna()
-    if ok.sum() < 4:
-        idx = c.index
-        return pd.Series(False, index=idx), pd.Series(False, index=idx)
-
-    c = c[ok]
-    h = h[ok]
-    x = x[ok]
-    cross_hma_up, cross_hma_dn = _cross_series(c, h)
-
-    npx_up_m05, _ = _cross_level(x, -0.5)
-    _, npx_dn_p05 = _cross_level(x, +0.5)
-
-    npx_up_m05 = npx_up_m05 & (x.diff() > 0)
-    npx_dn_p05 = npx_dn_p05 & (x.diff() < 0)
-
-    w = int(2 * max(1, int(max_bar_gap)) + 1)
-    near_npx_up = npx_up_m05.rolling(w, center=True, min_periods=1).max().fillna(False).astype(bool)
-    near_npx_dn = npx_dn_p05.rolling(w, center=True, min_periods=1).max().fillna(False).astype(bool)
-
-    price_up = (c.diff() > 0).fillna(False)
-    price_dn = (c.diff() < 0).fillna(False)
-    npx_up_now = (x.diff() > 0).fillna(False)
-    npx_dn_now = (x.diff() < 0).fillna(False)
-
-    buy_mask = cross_hma_up & near_npx_up & price_up & npx_up_now
-    sell_mask = cross_hma_dn & near_npx_dn & price_dn & npx_dn_now
-
-    buy_mask = buy_mask.reindex(_coerce_1d_series(close).index, fill_value=False)
-    sell_mask = sell_mask.reindex(_coerce_1d_series(close).index, fill_value=False)
-    return buy_mask, sell_mask
 
 
 def find_slope_trigger_after_band_reversal(
@@ -1254,20 +1195,14 @@ def render_daily(sel: str, show_forecast: bool = True):
         if not st_df.empty and "ST" in st_df.columns:
             st_line = st_df["ST"].reindex(close.index)
 
-    psar_df = pd.DataFrame()
-    if show_psar and {"High", "Low"}.issubset(ohlc_show.columns):
-        psar_df = compute_psar_from_ohlc(ohlc_show, step=psar_step, max_step=psar_max)
-        if not psar_df.empty:
-            psar_df = psar_df.reindex(close.index)
-
     kijun = pd.Series(index=close.index, dtype=float)
     if show_ichi and {"High", "Low"}.issubset(ohlc_show.columns):
         kijun = ichimoku_kijun(ohlc_show["High"], ohlc_show["Low"], base=ichi_base).reindex(close.index)
 
     yhat, up2, lo2, m, r2 = regression_with_band(close, lookback=slope_lb_daily, z=2.0)
 
-    npx_star = compute_normalized_price(close, window=ntd_window)
-    buy_star, sell_star = hma_npx_star_masks(close, hma, npx_star, max_bar_gap=2)
+    # Requested change: stars now come from Supertrend-cross logic (NOT PSAR, NOT HMA/NPX)
+    buy_star, sell_star = supertrend_star_masks(close, st_line, m)
 
     if show_ntd:
         fig, (ax, ax_ntd) = plt.subplots(2, 1, sharex=True, figsize=(14, 7), gridspec_kw={"height_ratios": [3.2, 1.3]})
@@ -1295,14 +1230,6 @@ def render_daily(sel: str, show_forecast: bool = True):
     if not st_line.dropna().empty:
         ax.plot(st_line.index, st_line.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
 
-    if show_psar and (not psar_df.empty) and ("PSAR" in psar_df.columns):
-        up_mask = psar_df["in_uptrend"] == True
-        dn_mask = ~up_mask
-        if up_mask.any():
-            ax.scatter(psar_df.index[up_mask], psar_df["PSAR"][up_mask], s=15, color="tab:green", zorder=6, label="PSAR")
-        if dn_mask.any():
-            ax.scatter(psar_df.index[dn_mask], psar_df["PSAR"][dn_mask], s=15, color="tab:red", zorder=6)
-
     res_val = float(res.iloc[-1])
     sup_val = float(sup.iloc[-1])
     px_val = float(close.iloc[-1])
@@ -1319,12 +1246,13 @@ def render_daily(sel: str, show_forecast: bool = True):
         trig = find_slope_trigger_after_band_reversal(close, yhat, up2, lo2, horizon=rev_horizon)
         annotate_slope_trigger(ax, trig)
 
+    # Requested change: BLUE/PURPLE stars are Supertrend crosses gated by slope + price direction
     if buy_star.any():
         idxb = list(buy_star[buy_star].index)
-        ax.scatter(idxb, close.loc[idxb], marker="*", s=220, color="blue", zorder=14, label="BLUE ★ (HMA↑ + NPX -0.5↑)")
+        ax.scatter(idxb, close.loc[idxb], marker="*", s=220, color="blue", zorder=14, label="BLUE ★ (ST cross ↑, slope ↑, price ↑)")
     if sell_star.any():
         idxs = list(sell_star[sell_star].index)
-        ax.scatter(idxs, close.loc[idxs], marker="*", s=220, color="purple", zorder=14, label="PURPLE ★ (HMA↓ + NPX +0.5↓)")
+        ax.scatter(idxs, close.loc[idxs], marker="*", s=220, color="purple", zorder=14, label="PURPLE ★ (ST cross ↓, slope ↓, price ↓)")
 
     if show_fibs_daily:
         fibs = fibonacci_levels(close)
@@ -1418,7 +1346,6 @@ def render_hourly(sel: str, hour_range_label: str):
     res = hc.rolling(sr_lb_hourly, min_periods=1).max()
     sup = hc.rolling(sr_lb_hourly, min_periods=1).min()
     hma = compute_hma(hc, period=hma_period)
-    npx_star = compute_normalized_price(hc, window=ntd_window)
 
     bb_mid, bb_up, bb_lo, bb_pctb, bb_nbb = compute_bbands(hc, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
 
@@ -1428,16 +1355,11 @@ def render_hourly(sel: str, hour_range_label: str):
         if not st_df.empty and "ST" in st_df.columns:
             st_line = st_df["ST"].reindex(hc.index)
 
-    psar_df = pd.DataFrame()
-    if show_psar and {"High", "Low"}.issubset(intr.columns):
-        psar_df = compute_psar_from_ohlc(intr, step=psar_step, max_step=psar_max)
-        if not psar_df.empty:
-            psar_df = psar_df.reindex(hc.index)
-
     yhat, up2, lo2, m, r2 = regression_with_band(hc, lookback=slope_lb_hourly, z=2.0)
     rev_prob = slope_reversal_probability(hc, m, hist_window=rev_hist_lb, slope_window=slope_lb_hourly, horizon=rev_horizon)
 
-    buy_star, sell_star = hma_npx_star_masks(hc, hma, npx_star, max_bar_gap=2)
+    # Requested change: stars now come from Supertrend-cross logic (NOT PSAR, NOT HMA/NPX)
+    buy_star, sell_star = supertrend_star_masks(hc, st_line, m)
 
     if show_ntd_panel:
         fig, (ax, ax_ntd) = plt.subplots(2, 1, sharex=True, figsize=(14, 7), gridspec_kw={"height_ratios": [3.2, 1.3]})
@@ -1462,14 +1384,6 @@ def render_hourly(sel: str, hour_range_label: str):
     if not st_line.dropna().empty:
         ax.plot(st_line.index, st_line.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
 
-    if show_psar and (not psar_df.empty) and ("PSAR" in psar_df.columns):
-        up_mask = psar_df["in_uptrend"] == True
-        dn_mask = ~up_mask
-        if up_mask.any():
-            ax.scatter(psar_df.index[up_mask], psar_df["PSAR"][up_mask], s=15, color="tab:green", zorder=6, label="PSAR")
-        if dn_mask.any():
-            ax.scatter(psar_df.index[dn_mask], psar_df["PSAR"][dn_mask], s=15, color="tab:red", zorder=6)
-
     res_val = float(res.iloc[-1])
     sup_val = float(sup.iloc[-1])
     px_val = float(hc.iloc[-1])
@@ -1488,10 +1402,10 @@ def render_hourly(sel: str, hour_range_label: str):
 
     if buy_star.any():
         idxb = list(buy_star[buy_star].index)
-        ax.scatter(idxb, hc.loc[idxb], marker="*", s=220, color="blue", zorder=14, label="BLUE ★ (HMA↑ + NPX -0.5↑)")
+        ax.scatter(idxb, hc.loc[idxb], marker="*", s=220, color="blue", zorder=14, label="BLUE ★ (ST cross ↑, slope ↑, price ↑)")
     if sell_star.any():
         idxs = list(sell_star[sell_star].index)
-        ax.scatter(idxs, hc.loc[idxs], marker="*", s=220, color="purple", zorder=14, label="PURPLE ★ (HMA↓ + NPX +0.5↓)")
+        ax.scatter(idxs, hc.loc[idxs], marker="*", s=220, color="purple", zorder=14, label="PURPLE ★ (ST cross ↓, slope ↓, price ↓)")
 
     if show_fibs:
         fibs = fibonacci_levels(hc)
@@ -1599,31 +1513,48 @@ def render_hourly(sel: str, hour_range_label: str):
 # ---------------------------
 
 @st.cache_data(ttl=120)
-def scan_star_daily(symbol: str, max_gap: int = 2):
+def scan_star_daily(symbol: str):
+    """
+    Requested change: scanner aligns with BLUE/PURPLE ★ logic from Supertrend crosses.
+      BLUE ★  = price crosses ABOVE Supertrend, price ↑, slope ↑
+      PURPLE ★= price crosses BELOW Supertrend, price ↓, slope ↓
+    """
     try:
         ohlc = fetch_hist_ohlc(symbol)
         if ohlc is None or ohlc.empty:
             return None
         ohlc_show = subset_by_daily_view(ohlc, daily_view)
         close = _coerce_1d_series(ohlc_show.get("Close")).dropna()
-        if len(close) < 10:
+        if len(close) < 20:
             return None
-        hma = compute_hma(close, period=hma_period)
-        npx = compute_normalized_price(close, window=ntd_window)
-        buy_mask, sell_mask = hma_npx_star_masks(close, hma, npx, max_bar_gap=max_gap)
+
+        # slope (same as charts)
+        yhat, up2, lo2, m, r2 = regression_with_band(close, lookback=slope_lb_daily, z=2.0)
+
+        # supertrend line
+        st_line = pd.Series(index=close.index, dtype=float)
+        if {"High", "Low", "Close"}.issubset(ohlc_show.columns):
+            st_df = compute_supertrend(ohlc_show, atr_period=atr_period, atr_mult=atr_mult)
+            if not st_df.empty and "ST" in st_df.columns:
+                st_line = st_df["ST"].reindex(close.index)
+
+        buy_mask, sell_mask = supertrend_star_masks(close, st_line, m)
+
         last_buy = buy_mask[buy_mask].index[-1] if buy_mask.any() else None
         last_sell = sell_mask[sell_mask].index[-1] if sell_mask.any() else None
         if last_buy is None and last_sell is None:
             return None
+
         if last_sell is None:
             t = last_buy
-            side = "BLUE ★ (Buy)"
+            side = "BLUE ★ (ST Buy)"
         elif last_buy is None:
             t = last_sell
-            side = "PURPLE ★ (Sell)"
+            side = "PURPLE ★ (ST Sell)"
         else:
             t = last_buy if last_buy >= last_sell else last_sell
-            side = "BLUE ★ (Buy)" if t == last_buy else "PURPLE ★ (Sell)"
+            side = "BLUE ★ (ST Buy)" if t == last_buy else "PURPLE ★ (ST Sell)"
+
         bars_since = int((len(close) - 1) - int(close.index.get_loc(t)))
         return {
             "Symbol": symbol,
@@ -1632,6 +1563,7 @@ def scan_star_daily(symbol: str, max_gap: int = 2):
             "Signal Time": t,
             "Signal Price": float(close.loc[t]),
             "Current Price": float(close.iloc[-1]),
+            "Slope (m)": float(m) if np.isfinite(m) else np.nan,
         }
     except Exception:
         return None
@@ -1756,7 +1688,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs(
         "Recent BUY Scanner",
         "NPX 0.5-Cross Scanner",
         "Daily Slope+BB Reversal Scanner",
-        "HMA55+NPX Stars Scanner",
+        "Supertrend Stars Scanner",
     ]
 )
 
@@ -2032,18 +1964,17 @@ with tab9:
                 st.dataframe(out.reset_index(drop=True), use_container_width=True)
 
 # ---------------------------
-# Tab 10 — HMA55 + NPX Stars Scanner (Daily)
+# Tab 10 — Supertrend Stars Scanner (Daily)
 # ---------------------------
 with tab10:
-    st.header("HMA55+NPX Stars Scanner (Daily)")
-    st.caption("BLUE ★: HMA cross UP + NPX -0.5 cross UP within ±2 bars. PURPLE ★: HMA cross DOWN + NPX +0.5 cross DOWN within ±2 bars.")
+    st.header("Supertrend Stars Scanner (Daily)")
+    st.caption("BLUE ★: Price crosses ABOVE Supertrend while slope is UP and price is rising. PURPLE ★: Price crosses BELOW Supertrend while slope is DOWN and price is falling.")
     max_bars = st.slider("Max bars since last ★", 0, 60, 10, 1, key="tab10_max_bars")
-    max_gap = st.slider("Max bar gap (HMA↔NPX)", 1, 3, 2, 1, key="tab10_max_gap")
     run_scan = st.button("Run ★ Stars Scan", key="tab10_run")
     if run_scan:
         blue_rows, purple_rows = [], []
         for sym in universe:
-            r = scan_star_daily(sym, max_gap=max_gap)
+            r = scan_star_daily(sym)
             if r is None:
                 continue
             if int(r.get("Bars Since", 9999)) > int(max_bars):
