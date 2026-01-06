@@ -1,5 +1,6 @@
+# app.py
 # =========================
-# Part 1/10 — bullbear.py
+# Part 1/10
 # =========================
 import streamlit as st
 import pandas as pd
@@ -293,7 +294,7 @@ def format_trade_instruction(trend_slope: float,
 
     return alert_txt
 # =========================
-# Part 2/10 — bullbear.py
+# Part 2/10
 # =========================
 # ---------------------------
 # Gapless (continuous) intraday prices
@@ -410,7 +411,8 @@ if st.sidebar.button("🧹 Clear cache (data + run state)", use_container_width=
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2, key="sb_bb_period")
 daily_view = st.sidebar.selectbox("Daily view range:", ["Historical", "6M", "12M", "24M"], index=2, key="sb_daily_view")
 
-show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=True, key="sb_show_fibs")
+# UPDATED (THIS REQUEST): fibs now used on Daily + Hourly
+show_fibs = st.sidebar.checkbox("Show Fibonacci (daily + hourly)", value=True, key="sb_show_fibs")
 
 slope_lb_daily  = st.sidebar.slider("Daily slope lookback (bars)", 10, 360, 90, 10, key="sb_slope_lb_daily")
 slope_lb_hourly = st.sidebar.slider("Hourly slope lookback (bars)", 12, 480, 120, 6, key="sb_slope_lb_hourly")
@@ -510,7 +512,9 @@ else:
         "HKDJPY=X","USDCAD=X","USDCNY=X","USDCHF=X","EURGBP=X","EURCAD=X","NZDJPY=X","USDKRW=X",
         "USDHKD=X","EURHKD=X","GBPHKD=X","GBPJPY=X","CNHJPY=X","AUDJPY=X","GBPCAD=X"
     ]
-
+# =========================
+# Part 3/10
+# =========================
 # ---------------------------
 # Data fetchers
 # ---------------------------
@@ -583,6 +587,8 @@ def compute_sarimax_forecast(series_like):
     idx = pd.date_range(series.index[-1] + timedelta(days=1), periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
 
+# UPDATED (THIS REQUEST): Fibonacci definition aligned with requested instruction:
+#   0% = LOW (buy closer to 0%), 100% = HIGH (sell closer to 100%)
 def fibonacci_levels(series_like):
     s = _coerce_1d_series(series_like).dropna()
     hi = float(s.max()) if not s.empty else np.nan
@@ -591,13 +597,13 @@ def fibonacci_levels(series_like):
         return {}
     diff = hi - lo
     return {
-        "0%": hi,
-        "23.6%": hi - 0.236*diff,
-        "38.2%": hi - 0.382*diff,
-        "50%": hi - 0.5*diff,
-        "61.8%": hi - 0.618*diff,
-        "78.6%": hi - 0.786*diff,
-        "100%": lo
+        "0%": lo,
+        "23.6%": lo + 0.236*diff,
+        "38.2%": lo + 0.382*diff,
+        "50%": lo + 0.5*diff,
+        "61.8%": lo + 0.618*diff,
+        "78.6%": lo + 0.786*diff,
+        "100%": hi
     }
 
 def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
@@ -610,8 +616,157 @@ def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
     R1 = 2 * P - L; S1 = 2 * P - H
     R2 = P + (H - L); S2 = P - (H - L)
     return {"P": P, "R1": R1, "S1": S1, "R2": R2, "S2": S2}
+
+# ---------------------------
+# NEW (THIS REQUEST): Fibonacci position helpers + confirmation trigger logic
+# ---------------------------
+FIB_CONFIRM_R2 = 0.999  # 99.9% confidence
+
+def fib_position_percent(price_val: float, fibs: dict) -> float:
+    """
+    Returns current position in [0..100], where:
+      0% is fib low, 100% is fib high.
+    """
+    try:
+        px = float(price_val)
+    except Exception:
+        return float("nan")
+
+    if not isinstance(fibs, dict):
+        return float("nan")
+
+    lo = fibs.get("0%")
+    hi = fibs.get("100%")
+    try:
+        lo = float(lo); hi = float(hi)
+    except Exception:
+        return float("nan")
+
+    if not np.isfinite(px) or not np.isfinite(lo) or not np.isfinite(hi) or hi == lo:
+        return float("nan")
+
+    pct = (px - lo) / (hi - lo) * 100.0
+    return float(np.clip(pct, 0.0, 100.0))
+
+def _find_last_confirm_index_after_touch(p: pd.Series, touch_loc: int, side: str, bars_confirm: int, tol: float):
+    """
+    side='BUY' for low-touch then reversal up,
+    side='SELL' for high-touch then reversal down.
+    Returns the last confirm index (int) or None.
+    """
+    n = len(p)
+    if n < 3:
+        return None
+    bc = max(1, int(bars_confirm))
+
+    last_i = None
+    for i in range(touch_loc + bc, n):
+        seg = p.iloc[i - bc:i + 1]
+        if side == "BUY":
+            if (np.all(np.diff(seg.to_numpy(dtype=float)) > 0.0)
+                and float(p.iloc[i]) >= float(p.iloc[touch_loc]) + float(tol)):
+                last_i = i
+        else:
+            if (np.all(np.diff(seg.to_numpy(dtype=float)) < 0.0)
+                and float(p.iloc[i]) <= float(p.iloc[touch_loc]) - float(tol)):
+                last_i = i
+    return last_i
+
+def find_fib_confirmation_trigger(price: pd.Series,
+                                 fibs: dict,
+                                 r2: float,
+                                 horizon: int = 15,
+                                 prox: float = 0.0025,
+                                 bars_confirm: int = 2,
+                                 r2_thr: float = FIB_CONFIRM_R2):
+    """
+    CONFIRMATION TRIGGER (THIS REQUEST):
+      - If price touches 0% (low) and then reverses up => BUY confirmation
+      - If price touches 100% (high) and then reverses down => SELL confirmation
+      - Requires R² >= 0.999 (99.9% confidence) using the chart regression R².
+
+    Returns dict or None.
+    """
+    try:
+        r2v = float(r2)
+    except Exception:
+        r2v = np.nan
+    if not np.isfinite(r2v) or r2v < float(r2_thr):
+        return None
+
+    p = _coerce_1d_series(price).dropna()
+    if p.empty or len(p) < 5:
+        return None
+
+    if not isinstance(fibs, dict) or ("0%" not in fibs) or ("100%" not in fibs):
+        return None
+
+    try:
+        lo = float(fibs["0%"])
+        hi = float(fibs["100%"])
+    except Exception:
+        return None
+    if not np.isfinite(lo) or not np.isfinite(hi) or hi == lo:
+        return None
+
+    hz = max(1, int(horizon))
+    tol = abs(hi - lo) * float(max(0.0001, prox))
+    n = len(p)
+    end = n - 1
+    start = max(0, end - hz)
+
+    window = p.iloc[start:end + 1]
+
+    touch_low = window <= (lo + tol)
+    touch_high = window >= (hi - tol)
+
+    best = None
+
+    if touch_low.any():
+        t_touch = touch_low[touch_low].index[-1]
+        try:
+            loc = int(p.index.get_loc(t_touch))
+        except Exception:
+            loc = None
+        if loc is not None:
+            ci = _find_last_confirm_index_after_touch(p, loc, side="BUY", bars_confirm=bars_confirm, tol=tol)
+            if ci is not None:
+                best = {
+                    "side": "BUY",
+                    "touch_time": p.index[loc],
+                    "touch_price": float(p.iloc[loc]),
+                    "confirm_time": p.index[ci],
+                    "confirm_price": float(p.iloc[ci]),
+                    "r2": float(r2v),
+                    "level": "0%",
+                }
+
+    if touch_high.any():
+        t_touch = touch_high[touch_high].index[-1]
+        try:
+            loc = int(p.index.get_loc(t_touch))
+        except Exception:
+            loc = None
+        if loc is not None:
+            ci = _find_last_confirm_index_after_touch(p, loc, side="SELL", bars_confirm=bars_confirm, tol=tol)
+            if ci is not None:
+                cand = {
+                    "side": "SELL",
+                    "touch_time": p.index[loc],
+                    "touch_price": float(p.iloc[loc]),
+                    "confirm_time": p.index[ci],
+                    "confirm_price": float(p.iloc[ci]),
+                    "r2": float(r2v),
+                    "level": "100%",
+                }
+                if best is None:
+                    best = cand
+                else:
+                    best = cand if cand["confirm_time"] >= best["confirm_time"] else best
+
+    return best
 # =========================
-# Part 3/10 — bullbear.py
+# Part 4/10
 # =========================
 # ---------------------------
 # Regression & ±2σ band
@@ -901,89 +1056,47 @@ def annotate_slope_trigger(ax, trig: dict):
     )
 
 # ---------------------------
-# FIX (THIS REQUEST): Backward-compatible fib confirmation trigger signature
+# NEW (THIS REQUEST): Fibonacci CONFIRMATION TRIGGER annotation
 # ---------------------------
-def find_fib_confirmation_trigger(price: pd.Series,
-                                  fib0: float,
-                                  fib100: float,
-                                  r2: float,
-                                  conf_r2: float = 0.999,
-                                  prox: float = 0.0025,
-                                  bars_confirm: int = 2,
-                                  horizon: int = 15,
-                                  **_ignored_kwargs):
-    """
-    Fixes the Streamlit TypeError caused by newer callers passing:
-      - bars_confirm=
-      - horizon=
-    Older versions of this helper often did not include those kwargs.
+def annotate_fib_confirmation_trigger(ax, trig: dict):
+    if trig is None:
+        return
+    side = trig.get("side", "")
+    t0 = trig.get("touch_time")
+    p0 = trig.get("touch_price")
+    t1 = trig.get("confirm_time")
+    p1 = trig.get("confirm_price")
+    r2v = trig.get("r2", np.nan)
+    lvl = trig.get("level", "")
 
-    This function is intentionally conservative:
-      - returns None unless r2 >= conf_r2
-      - performs a lightweight 'touch near fib' check within the last `horizon` bars
-      - returns a dict describing the latest touch (BUY if near fib100, SELL if near fib0)
-    """
-    try:
-        r2v = float(r2)
-    except Exception:
-        return None
-    if not np.isfinite(r2v) or r2v < float(conf_r2):
-        return None
+    if t0 is None or t1 is None:
+        return
+    if not (np.isfinite(p0) and np.isfinite(p1)):
+        return
 
-    p = _coerce_1d_series(price).dropna()
-    if p.empty:
-        return None
+    col = "tab:green" if side == "BUY" else "tab:red"
+    lbl = f"CONFIRMATION TRIGGER ({side})"
+    note = f"{lvl} fib • R²≥99.9%"
 
-    try:
-        f0 = float(fib0)
-    except Exception:
-        f0 = np.nan
-    try:
-        f100 = float(fib100)
-    except Exception:
-        f100 = np.nan
-    if not (np.isfinite(f0) and np.isfinite(f100)):
-        return None
-
-    hz = max(1, int(horizon))
-    tail = p.iloc[-hz:] if len(p) > hz else p
-
-    def _tol(level: float, prx: float) -> float:
-        lv = float(level)
-        pr = float(prx)
-        if np.isfinite(lv) and abs(lv) > 0:
-            return abs(lv) * pr
-        return pr
-
-    tol0 = _tol(f0, prox)
-    tol100 = _tol(f100, prox)
-
-    near0 = (tail - f0).abs() <= tol0
-    near100 = (tail - f100).abs() <= tol100
-
-    t0 = near0[near0].index[-1] if near0.any() else None
-    t100 = near100[near100].index[-1] if near100.any() else None
-    if t0 is None and t100 is None:
-        return None
-
-    if t0 is None:
-        t_touch, level, side = t100, f100, "BUY"
-    elif t100 is None:
-        t_touch, level, side = t0, f0, "SELL"
-    else:
-        if t0 >= t100:
-            t_touch, level, side = t0, f0, "SELL"
-        else:
-            t_touch, level, side = t100, f100, "BUY"
-
-    return {
-        "side": side,
-        "time": t_touch,
-        "level": float(level),
-        "r2": float(r2v),
-    }
+    ax.annotate(
+        "",
+        xy=(t1, p1),
+        xytext=(t0, p0),
+        arrowprops=dict(arrowstyle="->", color=col, lw=2.2, alpha=0.9),
+        zorder=11
+    )
+    ax.scatter([t1], [p1], marker="*", s=220, color=col, zorder=12, label=lbl)
+    ax.text(
+        t1, p1,
+        f"  {lbl} • {note}",
+        color=col,
+        fontsize=9,
+        fontweight="bold",
+        va="bottom" if side == "BUY" else "top",
+        zorder=12
+    )
 # =========================
-# Part 4/10 — bullbear.py
+# Part 5/10
 # =========================
 # ---------------------------
 # Other indicators
@@ -1219,7 +1332,7 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     nbb = pctb * 2.0 - 1.0
     return (mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index))
 # =========================
-# Part 5/10 — bullbear.py
+# Part 6/10
 # =========================
 # ---------------------------
 # Ichimoku, Supertrend, PSAR
@@ -1467,7 +1580,7 @@ def overlay_ntd_sr_reversal_stars(ax,
     if sell_cond:
         ax.scatter([t], [ntd0], marker="*", s=170, color="tab:red", zorder=12, label="SELL ★ (Resistance reversal)")
 # =========================
-# Part 6/10 — bullbear.py
+# Part 7/10
 # =========================
 # ---------------------------
 # Sessions (PST)
@@ -1677,178 +1790,68 @@ def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
         return float(ntd.iloc[-1]), ntd.index[-1]
     except Exception:
         return np.nan, None
-# =========================
-# Part 7/10 — bullbear.py
-# =========================
+
 # ---------------------------
-# NEW (THIS REQUEST): R² Trend scanner helpers (Daily + Hourly)
+# NEW (THIS REQUEST): Fibonacci proximity scan helpers
 # ---------------------------
 @st.cache_data(ttl=120)
-def last_daily_r2_trend(symbol: str, daily_view_label: str, slope_lb: int):
+def last_daily_fib_position(symbol: str, daily_view_label: str):
     try:
         s_full = fetch_hist(symbol)
-        close_full = _coerce_1d_series(s_full).dropna()
-        if close_full.empty:
+        s_show = subset_by_daily_view(s_full, daily_view_label)
+        s_show = _coerce_1d_series(s_show).dropna()
+        if s_show.empty:
             return None
-        close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
-        if len(close_show) < max(3, int(slope_lb)):
+        fibs = fibonacci_levels(s_show)
+        if not fibs:
             return None
-        yhat, up, lo, m, r2 = regression_with_band(close_show, lookback=int(slope_lb))
-        if not (np.isfinite(m) and np.isfinite(r2)):
+        px = float(s_show.iloc[-1]) if np.isfinite(s_show.iloc[-1]) else np.nan
+        pct = fib_position_percent(px, fibs)
+        if not np.isfinite(pct):
             return None
-        return {"Symbol": symbol, "Frame": "Daily", "Slope": float(m), "R2": float(r2)}
+        return {
+            "Symbol": symbol,
+            "Frame": "Daily",
+            "Fib%": float(pct),
+            "Price": float(px),
+            "Fib0": float(fibs.get("0%", np.nan)),
+            "Fib100": float(fibs.get("100%", np.nan)),
+            "Time": s_show.index[-1],
+        }
     except Exception:
         return None
 
 @st.cache_data(ttl=120)
-def last_hourly_r2_trend(symbol: str, period: str, slope_lb: int):
+def last_hourly_fib_position(symbol: str, period: str = "1d"):
     try:
         df = fetch_intraday(symbol, period=period)
         if df is None or df.empty or "Close" not in df.columns:
             return None
-        df2 = df.copy()
-        df2.index = pd.RangeIndex(len(df2))
-        close = _coerce_1d_series(df2["Close"]).ffill().dropna()
-        if len(close) < max(3, int(slope_lb)):
+        s = _coerce_1d_series(df["Close"]).ffill().dropna()
+        if s.empty:
             return None
-        yhat, up, lo, m, r2 = regression_with_band(close, lookback=int(slope_lb))
-        if not (np.isfinite(m) and np.isfinite(r2)):
+        fibs = fibonacci_levels(s)
+        if not fibs:
             return None
-        return {"Symbol": symbol, "Frame": f"Hourly ({period})", "Slope": float(m), "R2": float(r2)}
+        px = float(s.iloc[-1]) if np.isfinite(s.iloc[-1]) else np.nan
+        pct = fib_position_percent(px, fibs)
+        if not np.isfinite(pct):
+            return None
+        t = df.index[-1] if isinstance(df.index, pd.DatetimeIndex) and len(df.index) else None
+        return {
+            "Symbol": symbol,
+            "Frame": f"Hourly ({period})",
+            "Fib%": float(pct),
+            "Price": float(px),
+            "Fib0": float(fibs.get("0%", np.nan)),
+            "Fib100": float(fibs.get("100%", np.nan)),
+            "Time": t,
+        }
     except Exception:
         return None
-
-# ---------------------------
-# NEW (THIS REQUEST): NTX trigger (NPX crosses 0.0 on NTD panel) + band reversal filter
-# ---------------------------
-def find_ntx_trigger(price: pd.Series,
-                     npx: pd.Series,
-                     upper_band: pd.Series,
-                     lower_band: pd.Series,
-                     global_slope: float,
-                     local_slope: float,
-                     horizon: int = 15):
-    """
-    NTX BUY:
-      - NPX crosses UP through 0.0
-      - global_slope > 0 AND local_slope > 0
-      - price touched/breached LOWER 2σ band within last `horizon` bars before the cross
-    NTX SELL:
-      - NPX crosses DOWN through 0.0
-      - global_slope < 0 AND local_slope < 0
-      - price touched/breached UPPER 2σ band within last `horizon` bars before the cross
-    Returns the most recent trigger dict or None.
-    """
-    p = _coerce_1d_series(price)
-    x = _coerce_1d_series(npx).reindex(p.index)
-    u = _coerce_1d_series(upper_band).reindex(p.index)
-    l = _coerce_1d_series(lower_band).reindex(p.index)
-
-    ok = p.notna() & x.notna() & u.notna() & l.notna()
-    if ok.sum() < 3:
-        return None
-    p = p[ok]; x = x[ok]; u = u[ok]; l = l[ok]
-
-    try:
-        gs = float(global_slope)
-        ls = float(local_slope)
-    except Exception:
-        return None
-    if not (np.isfinite(gs) and np.isfinite(ls)):
-        return None
-
-    cross_up0 = (x >= 0.0) & (x.shift(1) < 0.0)
-    cross_dn0 = (x <= 0.0) & (x.shift(1) > 0.0)
-
-    hz = max(1, int(horizon))
-
-    def _touched_within(t_idx, touch_mask: pd.Series):
-        try:
-            loc = int(p.index.get_loc(t_idx))
-        except Exception:
-            return False
-        j0 = max(0, loc - hz)
-        return bool(touch_mask.iloc[j0:loc+1].any())
-
-    trig_buy = None
-    if gs > 0 and ls > 0 and cross_up0.any():
-        t = cross_up0[cross_up0].index[-1]
-        touched = _touched_within(t, (p <= l))
-        if touched:
-            trig_buy = {"side": "BUY", "time": t, "price": float(p.loc[t]), "npx": float(x.loc[t])}
-
-    trig_sell = None
-    if gs < 0 and ls < 0 and cross_dn0.any():
-        t = cross_dn0[cross_dn0].index[-1]
-        touched = _touched_within(t, (p >= u))
-        if touched:
-            trig_sell = {"side": "SELL", "time": t, "price": float(p.loc[t]), "npx": float(x.loc[t])}
-
-    if trig_buy is None and trig_sell is None:
-        return None
-    if trig_buy is None:
-        return trig_sell
-    if trig_sell is None:
-        return trig_buy
-
-    return trig_buy if trig_buy["time"] >= trig_sell["time"] else trig_sell
-
-def annotate_ntx_trigger(ax, trig: dict, y_axes: float = 0.86):
-    """
-    Draw:
-      - marker at trigger time on price chart
-      - leader line to an outside 'legend' text on the right
-    """
-    if trig is None:
-        return
-    side = trig.get("side", "")
-    t = trig.get("time", None)
-    px = trig.get("price", None)
-    if t is None or px is None or (not np.isfinite(px)):
-        return
-
-    col = "tab:green" if side == "BUY" else "tab:red"
-    lbl = f"NTX {side} (NPX 0.0 cross + 2σ reversal)"
-
-    ax.scatter([t], [px], marker="o", s=90, color=col, zorder=20)
-
-    ax.annotate(
-        lbl,
-        xy=(t, px),
-        xycoords="data",
-        xytext=(1.02, float(y_axes)),
-        textcoords="axes fraction",
-        ha="left",
-        va="center",
-        fontsize=9,
-        fontweight="bold",
-        color=col,
-        bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=col, alpha=0.9),
-        arrowprops=dict(arrowstyle="->", color=col, lw=2.0, alpha=0.85),
-        zorder=30,
-        annotation_clip=False
-    )
-
-# ---------------------------
-# NEW (THIS REQUEST): mark slope start + slope end on the price chart
-# ---------------------------
-def annotate_slope_start_end(ax, yhat: pd.Series, label_prefix: str = "Slope"):
-    y = _coerce_1d_series(yhat).dropna()
-    if y.empty:
-        return
-    t0 = y.index[0]; y0 = float(y.iloc[0]) if np.isfinite(y.iloc[0]) else np.nan
-    t1 = y.index[-1]; y1 = float(y.iloc[-1]) if np.isfinite(y.iloc[-1]) else np.nan
-    if not (np.isfinite(y0) and np.isfinite(y1)):
-        return
-
-    ax.scatter([t0], [y0], marker="^", s=85, color="black", zorder=12)
-    ax.scatter([t1], [y1], marker="v", s=85, color="black", zorder=12)
-
-    ax.text(t0, y0, f"  {label_prefix} Start", fontsize=9, fontweight="bold",
-            va="bottom", color="black", zorder=13)
-    ax.text(t1, y1, f"  {label_prefix} End", fontsize=9, fontweight="bold",
-            va="top", color="black", zorder=13)
-
+# =========================
+# Part 8/10
+# =========================
 # ---------------------------
 # Recent BUY scanner helpers (uses SAME band-bounce logic as the chart)
 # ---------------------------
@@ -2024,7 +2027,6 @@ def last_daily_npx_zero_cross_with_local_slope(symbol: str,
         npx_full = compute_normalized_price(close_full, window=ntd_win)
         npx_show = _coerce_1d_series(npx_full).reindex(close_show.index)
 
-        # (kept as-is): this scanner remains NPX 0.5-cross
         level = 0.5
 
         prev = npx_show.shift(1)
@@ -2086,9 +2088,6 @@ def last_daily_npx_zero_cross_with_local_slope(symbol: str,
     except Exception:
         return None
 
-# ---------------------------
-# Daily Slope + S/R reversal + BB mid cross scanner
-# ---------------------------
 @st.cache_data(ttl=120)
 def last_daily_sr_reversal_bbmid(symbol: str,
                                  daily_view_label: str,
@@ -2137,6 +2136,7 @@ def last_daily_sr_reversal_bbmid(symbol: str,
             if not cross_up.any():
                 return None
             t_cross = cross_up[cross_up].index[-1]
+
             try:
                 loc = int(close_show.index.get_loc(t_cross))
             except Exception:
@@ -2146,13 +2146,16 @@ def last_daily_sr_reversal_bbmid(symbol: str,
             if not touch_mask.any():
                 return None
             t_touch = touch_mask[touch_mask].index[-1]
+
             seg = close_show.loc[:t_cross]
             if not _n_consecutive_increasing(seg, int(bars_confirm)):
                 return None
+
         else:
             if not cross_dn.any():
                 return None
             t_cross = cross_dn[cross_dn].index[-1]
+
             try:
                 loc = int(close_show.index.get_loc(t_cross))
             except Exception:
@@ -2162,6 +2165,7 @@ def last_daily_sr_reversal_bbmid(symbol: str,
             if not touch_mask.any():
                 return None
             t_touch = touch_mask[touch_mask].index[-1]
+
             seg = close_show.loc[:t_cross]
             if not _n_consecutive_decreasing(seg, int(bars_confirm)):
                 return None
@@ -2192,7 +2196,7 @@ def last_daily_sr_reversal_bbmid(symbol: str,
     except Exception:
         return None
 # =========================
-# Part 8/10 — bullbear.py
+# Part 9/10
 # =========================
 # ---------------------------
 # Session state init
@@ -2203,6 +2207,11 @@ if "run_all" not in st.session_state:
     st.session_state.hour_range = "24h"
 if "hist_years" not in st.session_state:
     st.session_state.hist_years = 10
+
+# ---------------------------
+# NOTE (THIS REQUEST)
+# ---------------------------
+st.sidebar.caption("📝 Note: Place Buy Trade Closer to 0% Fibonnaci and Sell trade closer to 100% Fibonacci.")
 
 # ---------------------------
 # Shared hourly renderer (Stock & Forex)
@@ -2252,9 +2261,6 @@ def render_hourly_views(sel: str,
     if not psar_h_df.empty:
         psar_h_df = psar_h_df.reindex(hc.index)
 
-    # for NTX trigger (NPX crosses 0.0 on NTD panel)
-    npx_for_trig_h = compute_normalized_price(hc, window=ntd_window) if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
-
     yhat_h, upper_h, lower_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
     slope_sig_h = m_h
 
@@ -2276,11 +2282,10 @@ def render_hourly_views(sel: str,
             2, 1, sharex=True, figsize=(14, 7),
             gridspec_kw={"height_ratios": [3.2, 1.3]}
         )
-        # UPDATED (THIS REQUEST): give right margin for outside legend text (NTX leaderline)
-        plt.subplots_adjust(hspace=0.05, top=0.90, right=0.80, bottom=0.22)
+        plt.subplots_adjust(hspace=0.05, top=0.90, right=0.93, bottom=0.22)
     else:
         fig2, ax2 = plt.subplots(figsize=(14, 4))
-        plt.subplots_adjust(top=0.85, right=0.80, bottom=0.24)
+        plt.subplots_adjust(top=0.85, right=0.93, bottom=0.24)
 
     ax2.plot(hc.index, hc, label="Intraday")
     ax2.plot(he.index, he.values, "--", label="20 EMA")
@@ -2322,14 +2327,11 @@ def render_hourly_views(sel: str,
         label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
         label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
-    # Supertrend (already default ON)
     if not st_line_intr.empty:
         ax2.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
 
     if not yhat_h.empty:
         ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2, label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
-        # NEW: slope start/end triggers
-        annotate_slope_start_end(ax2, yhat_h, label_prefix="Slope")
     if not upper_h.empty and not lower_h.empty:
         ax2.plot(upper_h.index, upper_h.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Slope +2σ")
         ax2.plot(lower_h.index, lower_h.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Slope -2σ")
@@ -2338,22 +2340,23 @@ def render_hourly_views(sel: str,
         if bounce_sig_h is not None:
             annotate_crossover(ax2, bounce_sig_h["time"], bounce_sig_h["price"], bounce_sig_h["side"])
 
-        # slope trigger (leaderline on-chart)
         trig_h = find_slope_trigger_after_band_reversal(hc, yhat_h, upper_h, lower_h, horizon=rev_horizon)
         annotate_slope_trigger(ax2, trig_h)
 
-        # NEW (THIS REQUEST): NTX trigger (NPX 0.0 cross + 2σ reversal + trend alignment)
-        ntx_h = find_ntx_trigger(
-            price=hc,
-            npx=npx_for_trig_h,
-            upper_band=upper_h,
-            lower_band=lower_h,
-            global_slope=global_m_h,
-            local_slope=m_h,
-            horizon=rev_horizon
-        )
-        # place outside labels at different heights for BUY vs SELL
-        annotate_ntx_trigger(ax2, ntx_h, y_axes=(0.86 if (ntx_h and ntx_h.get("side") == "BUY") else 0.76))
+    # NEW (THIS REQUEST): Fibonacci levels + Confirmation Trigger (R² >= 0.999) on hourly price chart
+    fibs_h = fibonacci_levels(hc)
+    if show_fibs and fibs_h:
+        for lbl, y in fibs_h.items():
+            ax2.hlines(y, xmin=hc.index[0], xmax=hc.index[-1], linestyles="dotted", linewidth=1)
+        for lbl, y in fibs_h.items():
+            ax2.text(hc.index[-1], y, f" {lbl}", va="center")
+
+    fib_conf_h = find_fib_confirmation_trigger(
+        price=hc, fibs=fibs_h, r2=r2_h,
+        horizon=rev_horizon, prox=sr_prox_pct, bars_confirm=rev_bars_confirm,
+        r2_thr=FIB_CONFIRM_R2
+    )
+    annotate_fib_confirmation_trigger(ax2, fib_conf_h)
 
     if is_forex and show_fx_news and (not fx_news.empty) and isinstance(real_times, pd.DatetimeIndex):
         news_pos = _map_times_to_bar_positions(real_times, fx_news["time"].tolist())
@@ -2445,13 +2448,6 @@ def render_hourly_views(sel: str,
         }
         session_handles, session_labels = draw_session_lines(ax2, sess_pos)
 
-    if show_fibs and not hc.empty:
-        fibs_h = fibonacci_levels(hc)
-        for lbl, y in fibs_h.items():
-            ax2.hlines(y, xmin=hc.index[0], xmax=hc.index[-1], linestyles="dotted", linewidth=1)
-        for lbl, y in fibs_h.items():
-            ax2.text(hc.index[-1], y, f" {lbl}", va="center")
-
     if ax2w is not None:
         ax2w.set_title(f"Hourly Indicator Panel — NTD + NPX + Trend (S/R w={sr_lb_hourly})")
         ntd_h = compute_normalized_trend(hc, window=ntd_window) if show_ntd else pd.Series(index=hc.index, dtype=float)
@@ -2532,22 +2528,22 @@ def render_hourly_views(sel: str,
         style_axes(axm)
         st.pyplot(figm)
 # =========================
-# Part 9/10 — bullbear.py
+# Part 10/10
 # =========================
 # ---------------------------
-# Tabs (UPDATED: now 10 tabs including R² Trend Scanner)
+# Tabs
 # ---------------------------
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
-    "R² Trend Scanner (≥45%)",
     "NTD -0.75 Scanner",
     "Long-Term History",
     "Recent BUY Scanner",
     "NPX 0.5-Cross Scanner",
-    "Daily Slope+BB Reversal Scanner"
+    "Daily Slope+BB Reversal Scanner",
+    "Fibonacci Proximity Scanner"
 ])
 
 # ---------------------------
@@ -2557,6 +2553,8 @@ with tab1:
     st.header("Original Forecast")
     st.info("Pick a ticker; data is cached for ~2 minutes after first fetch. "
             "Charts stay on the last RUN ticker until you run again.")
+
+    st.caption("📝 Place Buy Trade Closer to 0% Fibonnaci and Sell trade closer to 100% Fibonacci.")
 
     sel = st.selectbox("Ticker:", universe, key=f"orig_ticker_{mode}")
     chart = st.radio("Chart View:", ["Daily", "Hourly", "Both"], key=f"orig_chart_{mode}_v2")
@@ -2649,7 +2647,7 @@ with tab1:
             bb_mid_d_show = bb_mid_d.reindex(df_show.index)
             bb_up_d_show = bb_up_d.reindex(df_show.index)
             bb_lo_d_show = bb_lo_d.reindex(df_show.index)
-            bb_pctb_d_show = bb_pctb_d.reindex(df_show.index)
+            bb_pctb_d_show = bb_pctb.reindex(df_show.index) if 'bb_pctb' in globals() else bb_pctb_d.reindex(df_show.index)
             bb_nbb_d_show = bb_nbb_d.reindex(df_show.index)
 
             hma_d_show = compute_hma(df, period=hma_period).reindex(df_show.index)
@@ -2660,23 +2658,23 @@ with tab1:
                 x0, x1 = df_show.index[0], df_show.index[-1]
                 psar_d_df = psar_d_df.loc[(psar_d_df.index >= x0) & (psar_d_df.index <= x1)]
 
-            # NEW (THIS REQUEST): Daily Supertrend (default ON)
-            st_d_df = pd.DataFrame()
-            st_line_d = pd.Series(dtype=float)
+            # NEW (THIS REQUEST): Daily Supertrend ON by default
+            st_d_line = pd.Series(index=df_show.index, dtype=float)
             try:
                 if df_ohlc is not None and not df_ohlc.empty and {"High","Low","Close"}.issubset(df_ohlc.columns):
-                    st_d_df = compute_supertrend(df_ohlc[["High","Low","Close"]], atr_period=atr_period, atr_mult=atr_mult)
-                    if (not st_d_df.empty) and ("ST" in st_d_df.columns):
-                        st_line_d = st_d_df["ST"].reindex(df_show.index)
+                    x0, x1 = df_show.index[0], df_show.index[-1]
+                    ohlc_show = df_ohlc.loc[(df_ohlc.index >= x0) & (df_ohlc.index <= x1)]
+                    st_d = compute_supertrend(ohlc_show, atr_period=atr_period, atr_mult=atr_mult)
+                    if "ST" in st_d.columns:
+                        st_d_line = _coerce_1d_series(st_d["ST"]).reindex(df_show.index).ffill().bfill()
             except Exception:
-                st_line_d = pd.Series(dtype=float)
+                pass
 
             fig, (ax, axdw) = plt.subplots(
                 2, 1, sharex=True, figsize=(14, 8),
                 gridspec_kw={"height_ratios": [3.2, 1.3]}
             )
-            # UPDATED (THIS REQUEST): right margin for outside NTX leaderline label
-            plt.subplots_adjust(hspace=0.05, top=0.92, right=0.80)
+            plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93)
 
             rev_txt_d = fmt_pct(rev_prob_d) if np.isfinite(rev_prob_d) else "n/a"
             ax.set_title(
@@ -2725,20 +2723,16 @@ with tab1:
                 label_on_left(ax, res_val_d, f"R {fmt_price_val(res_val_d)}", color="tab:red")
                 label_on_left(ax, sup_val_d, f"S {fmt_price_val(sup_val_d)}", color="tab:green")
 
-            # Daily Supertrend line (default ON)
-            if not st_line_d.empty:
-                ax.plot(st_line_d.index, st_line_d.values, "-", linewidth=1.6, label=f"Supertrend ({atr_period},{atr_mult})")
+            # NEW (THIS REQUEST): plot Daily Supertrend by default
+            if not _coerce_1d_series(st_d_line).dropna().empty:
+                ax.plot(st_d_line.index, st_d_line.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
 
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
                         label=f"Daily Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
-                # NEW: slope start/end triggers
-                annotate_slope_start_end(ax, yhat_d_show, label_prefix="Slope")
-
             if not upper_d_show.empty and not lower_d_show.empty:
                 ax.plot(upper_d_show.index, upper_d_show.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Daily Trend +2σ")
                 ax.plot(lower_d_show.index, lower_d_show.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Daily Trend -2σ")
-
                 bounce_sig_d = find_band_bounce_signal(df_show, upper_d_show, lower_d_show, m_d)
                 if bounce_sig_d is not None:
                     annotate_crossover(ax, bounce_sig_d["time"], bounce_sig_d["price"], bounce_sig_d["side"])
@@ -2746,17 +2740,20 @@ with tab1:
                 trig_d = find_slope_trigger_after_band_reversal(df_show, yhat_d_show, upper_d_show, lower_d_show, horizon=rev_horizon)
                 annotate_slope_trigger(ax, trig_d)
 
-                # NEW (THIS REQUEST): NTX trigger (NPX crosses 0.0 + 2σ reversal + global+local aligned)
-                ntx_d = find_ntx_trigger(
-                    price=df_show,
-                    npx=npx_d_show,
-                    upper_band=upper_d_show,
-                    lower_band=lower_d_show,
-                    global_slope=global_m_d,
-                    local_slope=m_d,
-                    horizon=rev_horizon
-                )
-                annotate_ntx_trigger(ax, ntx_d, y_axes=(0.86 if (ntx_d and ntx_d.get("side") == "BUY") else 0.76))
+            # NEW (THIS REQUEST): Daily Fibonacci + Confirmation Trigger (R² >= 0.999) on daily price chart
+            fibs_d = fibonacci_levels(df_show)
+            if show_fibs and fibs_d:
+                for lbl, y in fibs_d.items():
+                    ax.hlines(y, xmin=df_show.index[0], xmax=df_show.index[-1], linestyles="dotted", linewidth=1)
+                for lbl, y in fibs_d.items():
+                    ax.text(df_show.index[-1], y, f" {lbl}", va="center")
+
+            fib_conf_d = find_fib_confirmation_trigger(
+                price=df_show, fibs=fibs_d, r2=r2_d,
+                horizon=rev_horizon, prox=sr_prox_pct, bars_confirm=rev_bars_confirm,
+                r2_thr=FIB_CONFIRM_R2
+            )
+            annotate_fib_confirmation_trigger(ax, fib_conf_d)
 
             macd_sig_d = find_macd_hma_sr_signal(
                 close=df_show, hma=hma_d_show, macd=macd_d, sup=sup_d_show, res=res_d_show,
@@ -2882,11 +2879,9 @@ with tab1:
         }, index=st.session_state.fc_idx))
     else:
         st.info("Click **Run Forecast** to display charts and forecast.")
-# =========================
-# Part 10/10 — bullbear.py
-# =========================
+
 # ---------------------------
-# TAB 2: ENHANCED FORECAST (unchanged)
+# TAB 2: ENHANCED FORECAST
 # ---------------------------
 with tab2:
     st.header("Enhanced Forecast")
@@ -2894,6 +2889,7 @@ with tab2:
         st.info("Run Tab 1 first (in the current mode).")
     else:
         df = st.session_state.df_hist
+        df_ohlc = st.session_state.df_ohlc
         idx, vals, ci = st.session_state.fc_idx, st.session_state.fc_vals, st.session_state.fc_ci
         last_price = _safe_last_float(df)
         p_up = np.mean(vals.to_numpy() > last_price) if np.isfinite(last_price) else np.nan
@@ -2909,16 +2905,50 @@ with tab2:
             hma_d_show = compute_hma(df_show, period=hma_period)
             macd_d, macd_sig_d, _ = compute_macd(df_show)
 
+            # NEW (THIS REQUEST): Supertrend ON by default in Enhanced Daily
+            st_d_line = pd.Series(index=df_show.index, dtype=float)
+            try:
+                if df_ohlc is not None and not df_ohlc.empty and len(df_show.index) > 0:
+                    x0, x1 = df_show.index[0], df_show.index[-1]
+                    ohlc_show = df_ohlc.loc[(df_ohlc.index >= x0) & (df_ohlc.index <= x1)]
+                    st_d = compute_supertrend(ohlc_show, atr_period=atr_period, atr_mult=atr_mult)
+                    if "ST" in st_d.columns:
+                        st_d_line = _coerce_1d_series(st_d["ST"]).reindex(df_show.index).ffill().bfill()
+            except Exception:
+                pass
+
+            # NEW (THIS REQUEST): compute R² for confirmation trigger on enhanced daily chart
+            _, _, _, _, r2_enh = regression_with_band(df_show, lookback=int(slope_lb_daily))
+
             fig, ax = plt.subplots(figsize=(14, 5))
             ax.set_title(f"{st.session_state.ticker} Daily (Enhanced) — {daily_view}")
             ax.plot(df_show.index, df_show.values, label="History")
             global_m_d = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
+
             if show_hma and not hma_d_show.dropna().empty:
                 ax.plot(hma_d_show.index, hma_d_show.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
+
+            if not _coerce_1d_series(st_d_line).dropna().empty:
+                ax.plot(st_d_line.index, st_d_line.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
 
             if not res_d_show.empty and not sup_d_show.empty:
                 ax.hlines(float(res_d_show.iloc[-1]), xmin=df_show.index[0], xmax=df_show.index[-1], colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance")
                 ax.hlines(float(sup_d_show.iloc[-1]), xmin=df_show.index[0], xmax=df_show.index[-1], colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
+
+            # NEW (THIS REQUEST): Daily Fibonacci + Confirmation Trigger
+            fibs_d = fibonacci_levels(df_show)
+            if show_fibs and fibs_d:
+                for lbl, y in fibs_d.items():
+                    ax.hlines(y, xmin=df_show.index[0], xmax=df_show.index[-1], linestyles="dotted", linewidth=1)
+                for lbl, y in fibs_d.items():
+                    ax.text(df_show.index[-1], y, f" {lbl}", va="center")
+
+            fib_conf = find_fib_confirmation_trigger(
+                price=df_show, fibs=fibs_d, r2=r2_enh,
+                horizon=rev_horizon, prox=sr_prox_pct, bars_confirm=rev_bars_confirm,
+                r2_thr=FIB_CONFIRM_R2
+            )
+            annotate_fib_confirmation_trigger(ax, fib_conf)
 
             macd_sig = find_macd_hma_sr_signal(df_show, hma_d_show, macd_d, sup_d_show, res_d_show, global_m_d, prox=sr_prox_pct)
             macd_txt = "MACD/HMA55: n/a"
@@ -3020,66 +3050,9 @@ with tab4:
             })
 
 # ---------------------------
-# TAB 5: R² Trend Scanner (NEW)
+# TAB 5: NTD -0.75 Scanner
 # ---------------------------
 with tab5:
-    st.header("R² Trend Scanner (Daily + Hourly)")
-    st.caption(
-        "Lists symbols where **R² ≥ 45%** and trend direction is **Up** or **Down** "
-        "for both **Daily** and **Hourly** frames."
-    )
-
-    c1, c2, c3 = st.columns(3)
-    r2_thr_scan = c1.slider("Min R² threshold", 0.00, 1.00, 0.45, 0.01, key=f"r2_thr_scan_{mode}")
-    hourly_period = c2.selectbox("Hourly period", ["1d", "2d", "4d"], index=0, key=f"r2_hour_period_{mode}")
-    run_r2 = c3.button("Run R² Scan", use_container_width=True, key=f"btn_run_r2_scan_{mode}")
-
-    if run_r2:
-        daily_up, daily_dn, hourly_up, hourly_dn = [], [], [], []
-        for sym in universe:
-            rd = last_daily_r2_trend(sym, daily_view_label=daily_view, slope_lb=slope_lb_daily)
-            if rd is not None and np.isfinite(rd["R2"]) and float(rd["R2"]) >= float(r2_thr_scan) and np.isfinite(rd["Slope"]):
-                (daily_up if float(rd["Slope"]) > 0 else daily_dn).append(rd)
-
-            rh = last_hourly_r2_trend(sym, period=hourly_period, slope_lb=slope_lb_hourly)
-            if rh is not None and np.isfinite(rh["R2"]) and float(rh["R2"]) >= float(r2_thr_scan) and np.isfinite(rh["Slope"]):
-                (hourly_up if float(rh["Slope"]) > 0 else hourly_dn).append(rh)
-
-        a, b = st.columns(2)
-        with a:
-            st.subheader("Daily — Uptrend (Slope > 0)")
-            if not daily_up:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(daily_up).sort_values(["R2","Slope"], ascending=[False, False])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-            st.subheader("Hourly — Uptrend (Slope > 0)")
-            if not hourly_up:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(hourly_up).sort_values(["R2","Slope"], ascending=[False, False])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-        with b:
-            st.subheader("Daily — Downtrend (Slope < 0)")
-            if not daily_dn:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(daily_dn).sort_values(["R2","Slope"], ascending=[False, True])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-            st.subheader("Hourly — Downtrend (Slope < 0)")
-            if not hourly_dn:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(hourly_dn).sort_values(["R2","Slope"], ascending=[False, True])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-# ---------------------------
-# TAB 6: NTD -0.75 Scanner
-# ---------------------------
-with tab6:
     st.header("NTD -0.75 Scanner")
     st.caption("Lists symbols where the latest NTD is below -0.75 (using latest intraday for hourly; daily uses daily close).")
 
@@ -3107,9 +3080,9 @@ with tab6:
             st.dataframe(out.reset_index(drop=True), use_container_width=True)
 
 # ---------------------------
-# TAB 7: LONG-TERM HISTORY
+# TAB 6: LONG-TERM HISTORY
 # ---------------------------
-with tab7:
+with tab6:
     st.header("Long-Term History")
     sel_lt = st.selectbox("Ticker:", universe, key=f"lt_ticker_{mode}")
     try:
@@ -3129,9 +3102,9 @@ with tab7:
         st.pyplot(fig)
 
 # ---------------------------
-# TAB 8: RECENT BUY SCANNER
+# TAB 7: RECENT BUY SCANNER
 # ---------------------------
-with tab8:
+with tab7:
     st.header("Recent BUY Scanner — Daily NPX↑NTD in Uptrend (Stocks + Forex)")
     st.caption(
         "Lists symbols (in the current mode's universe) where **NPX (normalized price)** most recently crossed "
@@ -3161,9 +3134,9 @@ with tab8:
             st.dataframe(out.reset_index(drop=True), use_container_width=True)
 
 # ---------------------------
-# TAB 9: NPX 0.5-CROSS SCANNER
+# TAB 8: NPX 0.5-CROSS SCANNER
 # ---------------------------
-with tab9:
+with tab8:
     st.header("NPX 0.5-Cross Scanner — Local Slope Confirmed (Daily)")
     st.caption(
         "Scans the current universe for symbols where **NPX (normalized price)** has **recently crossed 0.5** "
@@ -3221,9 +3194,9 @@ with tab9:
                 st.dataframe(out_dn.reset_index(drop=True), use_container_width=True)
 
 # ---------------------------
-# TAB 10: Daily Slope + S/R reversal + BB mid cross scanner
+# TAB 9: Daily Slope + S/R reversal + BB mid cross scanner
 # ---------------------------
-with tab10:
+with tab9:
     st.header("Daily Slope + S/R Reversal + BB Midline Scanner (R² ≥ 0.99)")
     st.caption(
         "BUY list:\n"
@@ -3304,3 +3277,52 @@ with tab10:
                 out["R2"] = out["R2"].astype(float)
                 out = out.sort_values(["Bars Since Cross", "Slope"], ascending=[True, True])
                 st.dataframe(out.reset_index(drop=True), use_container_width=True)
+                st.dataframe(out.reset_index(drop=True), use_container_width=True)
+
+# ---------------------------
+# TAB 10: Fibonacci Proximity Scanner (NEW)
+# ---------------------------
+with tab10:
+    st.header("Fibonacci Proximity Scanner — Closest to 0% and 100%")
+    st.caption("Shows symbols closest to the Fibonacci edges. 0% = LOW, 100% = HIGH.")
+
+    frame = st.radio("Frame:", ["Daily", "Hourly (intraday)", "Both"], index=2, key=f"fib_scan_frame_{mode}")
+    top_n = st.slider("Top N per edge", 3, 30, 10, 1, key=f"fib_topn_{mode}")
+
+    period = st.selectbox("Hourly lookback (scanner):", ["1d", "2d", "4d"], index=0, key=f"fib_scan_period_{mode}")
+
+    run_fib_scan = st.button("Run Fibonacci Proximity Scan", key=f"btn_run_fib_scan_{mode}")
+
+    if run_fib_scan:
+        rows = []
+        if frame in ("Daily", "Both"):
+            for sym in universe:
+                r = last_daily_fib_position(sym, daily_view_label=daily_view)
+                if r is not None and np.isfinite(r.get("Fib%", np.nan)):
+                    rows.append(r)
+
+        if frame in ("Hourly (intraday)", "Both"):
+            for sym in universe:
+                r = last_hourly_fib_position(sym, period=period)
+                if r is not None and np.isfinite(r.get("Fib%", np.nan)):
+                    rows.append(r)
+
+        if not rows:
+            st.info("No matches.")
+        else:
+            out = pd.DataFrame(rows)
+            out["Fib%"] = out["Fib%"].astype(float)
+            out["Dist to 0%"] = out["Fib%"].astype(float)
+            out["Dist to 100%"] = (100.0 - out["Fib%"].astype(float)).astype(float)
+
+            left, right = st.columns(2)
+
+            with left:
+                st.subheader("Closest to 0% Fibonacci (LOW)")
+                o0 = out.sort_values(["Dist to 0%","Fib%"], ascending=[True, True]).head(int(top_n))
+                st.dataframe(o0.reset_index(drop=True), use_container_width=True)
+
+            with right:
+                st.subheader("Closest to 100% Fibonacci (HIGH)")
+                o1 = out.sort_values(["Dist to 100%","Fib%"], ascending=[True, False]).head(int(top_n))
+                st.dataframe(o1.reset_index(drop=True), use_container_width=True)
