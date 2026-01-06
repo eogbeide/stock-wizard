@@ -1,3 +1,6 @@
+# =========================
+# Part 1/10 — bullbear.py
+# =========================
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -217,6 +220,9 @@ def _diff_text(a: float, b: float, symbol: str) -> str:
 
 ALERT_TEXT = "ALERT: Trend may be changing - Open trade position with caution while still following the signals on the chat."
 
+# NEW (THIS REQUEST): Fibonacci-specific alert instruction
+FIB_ALERT_TEXT = "ALERT: Fibonacci guidance — BUY close to the 100% line and SELL close to the 0% line."
+
 def format_trade_instruction(trend_slope: float,
                              buy_val: float,
                              sell_val: float,
@@ -289,10 +295,8 @@ def format_trade_instruction(trend_slope: float,
         return text
 
     return alert_txt
-
-
 # =========================
-# Part 2/8 — bullbear.py
+# Part 2/10 — bullbear.py
 # =========================
 # ---------------------------
 # Gapless (continuous) intraday prices
@@ -409,7 +413,8 @@ if st.sidebar.button("🧹 Clear cache (data + run state)", use_container_width=
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2, key="sb_bb_period")
 daily_view = st.sidebar.selectbox("Daily view range:", ["Historical", "6M", "12M", "24M"], index=2, key="sb_daily_view")
 
-show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=True, key="sb_show_fibs")
+# UPDATED (THIS REQUEST): Fibonacci applies to Daily + Hourly, default ON
+show_fibs = st.sidebar.checkbox("Show Fibonacci", value=True, key="sb_show_fibs")
 
 slope_lb_daily  = st.sidebar.slider("Daily slope lookback (bars)", 10, 360, 90, 10, key="sb_slope_lb_daily")
 slope_lb_hourly = st.sidebar.slider("Hourly slope lookback (bars)", 12, 480, 120, 6, key="sb_slope_lb_hourly")
@@ -599,6 +604,86 @@ def fibonacci_levels(series_like):
         "100%": lo
     }
 
+# NEW (THIS REQUEST): Trigger that confirms reversal from Fib 0% / 100%
+def fib_reversal_trigger_from_extremes(series_like,
+                                      proximity_pct_of_range: float = 0.02,
+                                      confirm_bars: int = 2,
+                                      lookback_bars: int = 60):
+    """
+    CONFIRMED BUY:
+      - price touched near Fib 100% (low) within lookback
+      - then prints `confirm_bars` consecutive higher closes (reversal up from low)
+    CONFIRMED SELL:
+      - price touched near Fib 0% (high) within lookback
+      - then prints `confirm_bars` consecutive lower closes (reversal down from high)
+
+    Returns dict or None.
+    """
+    s = _coerce_1d_series(series_like).dropna()
+    if s.empty or len(s) < max(4, int(confirm_bars) + 2):
+        return None
+
+    lb = max(10, int(lookback_bars))
+    s = s.iloc[-lb:] if len(s) > lb else s
+
+    fibs = fibonacci_levels(s)
+    if not fibs:
+        return None
+
+    hi = float(fibs.get("0%", np.nan))
+    lo = float(fibs.get("100%", np.nan))
+    rng = hi - lo
+    if not np.isfinite(rng) or rng <= 0:
+        return None
+
+    tol = float(proximity_pct_of_range) * rng
+    if not np.isfinite(tol) or tol <= 0:
+        return None
+
+    near_hi = s >= (hi - tol)
+    near_lo = s <= (lo + tol)
+
+    last_hi_touch = near_hi[near_hi].index[-1] if near_hi.any() else None
+    last_lo_touch = near_lo[near_lo].index[-1] if near_lo.any() else None
+
+    def _confirmed_up(from_time):
+        seg = s.loc[from_time:]
+        return bool(len(seg) >= int(confirm_bars) + 1 and np.all(np.diff(seg.iloc[-(int(confirm_bars)+1):]) > 0))
+
+    def _confirmed_down(from_time):
+        seg = s.loc[from_time:]
+        return bool(len(seg) >= int(confirm_bars) + 1 and np.all(np.diff(seg.iloc[-(int(confirm_bars)+1):]) < 0))
+
+    buy_tr = None
+    if last_lo_touch is not None and _confirmed_up(last_lo_touch):
+        buy_tr = {
+            "side": "BUY",
+            "from_level": "100%",
+            "touch_time": last_lo_touch,
+            "touch_price": float(s.loc[last_lo_touch]) if np.isfinite(s.loc[last_lo_touch]) else np.nan,
+            "last_time": s.index[-1],
+            "last_price": float(s.iloc[-1]) if np.isfinite(s.iloc[-1]) else np.nan
+        }
+
+    sell_tr = None
+    if last_hi_touch is not None and _confirmed_down(last_hi_touch):
+        sell_tr = {
+            "side": "SELL",
+            "from_level": "0%",
+            "touch_time": last_hi_touch,
+            "touch_price": float(s.loc[last_hi_touch]) if np.isfinite(s.loc[last_hi_touch]) else np.nan,
+            "last_time": s.index[-1],
+            "last_price": float(s.iloc[-1]) if np.isfinite(s.iloc[-1]) else np.nan
+        }
+
+    if buy_tr is None and sell_tr is None:
+        return None
+    if buy_tr is None:
+        return sell_tr
+    if sell_tr is None:
+        return buy_tr
+    return buy_tr if buy_tr["touch_time"] >= sell_tr["touch_time"] else sell_tr
+
 def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
     if ohlc is None or ohlc.empty or not {"High","Low","Close"}.issubset(ohlc.columns):
         return {}
@@ -609,10 +694,8 @@ def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
     R1 = 2 * P - L; S1 = 2 * P - H
     R2 = P + (H - L); S2 = P - (H - L)
     return {"P": P, "R1": R1, "S1": S1, "R2": R2, "S2": S2}
-
-
 # =========================
-# Part 3/8 — bullbear.py
+# Part 3/10 — bullbear.py
 # =========================
 # ---------------------------
 # Regression & ±2σ band
@@ -791,7 +874,7 @@ def annotate_crossover(ax, ts, px, side: str, note: str = ""):
                 color="tab:red", fontweight="bold")
 
 # ---------------------------
-# NEW (THIS REQUEST): Slope BUY/SELL Trigger (leaderline + legend)
+# Slope BUY/SELL Trigger (leaderline + legend)
 # ---------------------------
 def find_slope_trigger_after_band_reversal(price: pd.Series,
                                           yhat: pd.Series,
@@ -900,10 +983,8 @@ def annotate_slope_trigger(ax, trig: dict):
         va="bottom" if side == "BUY" else "top",
         zorder=10
     )
-
-
 # =========================
-# Part 4/8 — bullbear.py
+# Part 4/10 — bullbear.py
 # =========================
 # ---------------------------
 # Other indicators
@@ -1138,10 +1219,8 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     pctb = ((s - lower) / width).clip(0.0, 1.0)
     nbb = pctb * 2.0 - 1.0
     return (mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index))
-
-
 # =========================
-# Part 5/8 — bullbear.py
+# Part 5/10 — bullbear.py
 # =========================
 # ---------------------------
 # Ichimoku, Supertrend, PSAR
@@ -1388,10 +1467,8 @@ def overlay_ntd_sr_reversal_stars(ax,
         ax.scatter([t], [ntd0], marker="*", s=170, color="tab:green", zorder=12, label="BUY ★ (Support reversal)")
     if sell_cond:
         ax.scatter([t], [ntd0], marker="*", s=170, color="tab:red", zorder=12, label="SELL ★ (Resistance reversal)")
-
-
 # =========================
-# Part 6/8 — bullbear.py
+# Part 6/10 — bullbear.py
 # =========================
 # ---------------------------
 # Sessions (PST)
@@ -1601,10 +1678,8 @@ def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
         return float(ntd.iloc[-1]), ntd.index[-1]
     except Exception:
         return np.nan, None
-
-
 # =========================
-# Part 7/8 — bullbear.py
+# Part 7/10 — bullbear.py
 # =========================
 # ---------------------------
 # Recent BUY scanner helpers (uses SAME band-bounce logic as the chart)
@@ -1844,7 +1919,7 @@ def last_daily_npx_zero_cross_with_local_slope(symbol: str,
         return None
 
 # ---------------------------
-# NEW (THIS REQUEST): Daily Slope + Support/Resistance reversal + BB mid cross scanner (R²>=0.99)
+# Daily Slope + Support/Resistance reversal + BB mid cross scanner (R²>=0.99)
 # ---------------------------
 @st.cache_data(ttl=120)
 def last_daily_sr_reversal_bbmid(symbol: str,
@@ -1966,9 +2041,93 @@ def last_daily_sr_reversal_bbmid(symbol: str,
     except Exception:
         return None
 
+# ---------------------------
+# NEW (THIS REQUEST): Fib 0%/100% proximity + reversal-chance helper
+# ---------------------------
+@st.cache_data(ttl=120)
+def fib_extreme_reversal_watch(symbol: str,
+                               daily_view_label: str,
+                               slope_lb: int,
+                               hist_window: int,
+                               slope_window: int,
+                               horizon: int,
+                               proximity_pct_of_range: float = 0.02,
+                               confirm_bars: int = 2,
+                               lookback_bars_for_trigger: int = 90):
+    """
+    Returns a dict when symbol is close to Fib 0% or 100% (daily), including:
+      - distance to extreme (as % of fib range)
+      - slope reversal probability estimate
+      - confirmed fib reversal trigger (if present)
+    """
+    try:
+        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        if close_full.empty:
+            return None
+        close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
+        if close_show.empty or len(close_show) < 10:
+            return None
 
+        fibs = fibonacci_levels(close_show)
+        if not fibs:
+            return None
+
+        hi = float(fibs.get("0%", np.nan))
+        lo = float(fibs.get("100%", np.nan))
+        if not (np.isfinite(hi) and np.isfinite(lo)) or hi == lo:
+            return None
+        rng = hi - lo
+        if not np.isfinite(rng) or rng <= 0:
+            return None
+
+        last_px = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
+        if not np.isfinite(last_px):
+            return None
+
+        dist0 = abs(last_px - hi)
+        dist100 = abs(last_px - lo)
+        thr = float(proximity_pct_of_range) * rng
+
+        near0 = dist0 <= thr
+        near100 = dist100 <= thr
+        if not (near0 or near100):
+            return None
+
+        # slope + reversal probability (uses same regression slope as charts)
+        yhat, up, lo_band, m, r2 = regression_with_band(close_show, lookback=int(slope_lb))
+        rev_prob = slope_reversal_probability(
+            close_show, m,
+            hist_window=int(hist_window),
+            slope_window=int(slope_window),
+            horizon=int(horizon)
+        )
+
+        trig = fib_reversal_trigger_from_extremes(
+            close_show,
+            proximity_pct_of_range=float(proximity_pct_of_range),
+            confirm_bars=int(confirm_bars),
+            lookback_bars=int(lookback_bars_for_trigger),
+        )
+
+        near_level = "0%" if (near0 and (dist0 <= dist100)) else ("100%" if near100 else ("0%" if near0 else "100%"))
+        dist_pct = (dist0 / rng) if near_level == "0%" else (dist100 / rng)
+
+        return {
+            "Symbol": symbol,
+            "Near": near_level,
+            "Last Price": last_px,
+            "Fib 0%": hi,
+            "Fib 100%": lo,
+            "Dist (% of range)": float(dist_pct),
+            f"P(slope rev≤{int(horizon)} bars)": float(rev_prob) if np.isfinite(rev_prob) else np.nan,
+            "Slope": float(m) if np.isfinite(m) else np.nan,
+            "R2": float(r2) if np.isfinite(r2) else np.nan,
+            "Confirmed Trigger": (trig.get("side") + f" from {trig.get('from_level')}") if isinstance(trig, dict) else "",
+        }
+    except Exception:
+        return None
 # =========================
-# Part 8/8 — bullbear.py
+# Part 8/10 — bullbear.py
 # =========================
 # ---------------------------
 # Session state init
@@ -1988,11 +2147,10 @@ def render_hourly_views(sel: str,
                         p_up: float,
                         p_dn: float,
                         hour_range_label: str,
-                        is_forex: bool,
-                        alert_placeholder=None):
+                        is_forex: bool):
     if intraday is None or intraday.empty or "Close" not in intraday:
         st.warning("No intraday data available.")
-        return
+        return None
 
     real_times = intraday.index if isinstance(intraday.index, pd.DatetimeIndex) else None
     intr_plot = intraday.copy()
@@ -2043,9 +2201,6 @@ def render_hourly_views(sel: str,
     if is_forex and show_fx_news:
         fx_news = fetch_yf_news(sel, window_days=news_window_days)
 
-    # ---------------------------
-    # UPDATED (THIS REQUEST): show Hourly NTD panel by default (like Daily)
-    # ---------------------------
     ax2w = None
     if show_nrsi:
         fig2, (ax2, ax2w) = plt.subplots(
@@ -2110,7 +2265,6 @@ def render_hourly_views(sel: str,
         if bounce_sig_h is not None:
             annotate_crossover(ax2, bounce_sig_h["time"], bounce_sig_h["price"], bounce_sig_h["side"])
 
-        # leaderline + legend
         trig_h = find_slope_trigger_after_band_reversal(hc, yhat_h, upper_h, lower_h, horizon=rev_horizon)
         annotate_slope_trigger(ax2, trig_h)
 
@@ -2119,6 +2273,7 @@ def render_hourly_views(sel: str,
         if news_pos:
             draw_news_markers(ax2, news_pos, label="News")
 
+    # UPDATED (THIS REQUEST): move Buy/Sell instruction off the chart title
     instr_txt = format_trade_instruction(
         trend_slope=slope_sig_h,
         buy_val=sup_val,
@@ -2127,17 +2282,6 @@ def render_hourly_views(sel: str,
         symbol=sel,
         global_trend_slope=global_m_h
     )
-
-    is_alert = isinstance(instr_txt, str) and instr_txt.startswith("ALERT:")
-    if alert_placeholder is not None:
-        if is_alert:
-            alert_placeholder.error(instr_txt)
-        else:
-            alert_placeholder.empty()
-
-    title_instr = instr_txt
-    if alert_placeholder is not None and is_alert:
-        title_instr = ""
 
     macd_sig = find_macd_hma_sr_signal(
         close=hc, hma=hma_h, macd=macd_h, sup=sup_h, res=res_h,
@@ -2159,10 +2303,9 @@ def render_hourly_views(sel: str,
     )
 
     rev_txt_h = fmt_pct(rev_prob_h) if np.isfinite(rev_prob_h) else "n/a"
-    instr_part = f" — {title_instr} " if isinstance(title_instr, str) and title_instr.strip() else " "
     ax2.set_title(
         f"{sel} Intraday ({hour_range_label})  "
-        f"↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{instr_part}"
+        f"↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}  "
         f"[P(slope rev≤{rev_horizon} bars)={rev_txt_h}]"
     )
 
@@ -2204,6 +2347,7 @@ def render_hourly_views(sel: str,
         }
         session_handles, session_labels = draw_session_lines(ax2, sess_pos)
 
+    # Fibonacci (applies to hourly; sidebar now says "Show Fibonacci")
     if show_fibs and not hc.empty:
         fibs_h = fibonacci_levels(hc)
         for lbl, y in fibs_h.items():
@@ -2211,9 +2355,6 @@ def render_hourly_views(sel: str,
         for lbl, y in fibs_h.items():
             ax2.text(hc.index[-1], y, f" {lbl}", va="center")
 
-    # ---------------------------
-    # UPDATED (THIS REQUEST): render hourly NTD panel (default ON)
-    # ---------------------------
     if ax2w is not None:
         ax2w.set_title(f"Hourly Indicator Panel — NTD + NPX + Trend (S/R w={sr_lb_hourly})")
         ntd_h = compute_normalized_trend(hc, window=ntd_window) if show_ntd else pd.Series(index=hc.index, dtype=float)
@@ -2272,7 +2413,6 @@ def render_hourly_views(sel: str,
             title_fontsize=9
         )
 
-    # ticks on bottom axis if we have the NTD panel
     if isinstance(real_times, pd.DatetimeIndex):
         _apply_compact_time_ticks(ax2w if ax2w is not None else ax2, real_times, n_ticks=8)
 
@@ -2295,10 +2435,36 @@ def render_hourly_views(sel: str,
         style_axes(axm)
         st.pyplot(figm)
 
+    # NEW (THIS REQUEST): return values so Tab 1 can show instructions below Run Forecast
+    trig_raw = fib_reversal_trigger_from_extremes(
+        hc,
+        proximity_pct_of_range=0.02,
+        confirm_bars=int(rev_bars_confirm),
+        lookback_bars=int(max(60, slope_lb_hourly)),
+    )
+    trig_disp = None
+    if isinstance(trig_raw, dict):
+        trig_disp = dict(trig_raw)
+        if isinstance(real_times, pd.DatetimeIndex):
+            for k in ["touch_time", "last_time"]:
+                try:
+                    bi = int(trig_disp.get(k))
+                    if 0 <= bi < len(real_times):
+                        trig_disp[k] = real_times[bi]
+                except Exception:
+                    pass
+
+    return {
+        "trade_instruction": instr_txt,
+        "fib_trigger": trig_disp,
+    }
+# =========================
+# Part 9/10 — bullbear.py
+# =========================
 # ---------------------------
 # Tabs
 # ---------------------------
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -2307,7 +2473,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "Long-Term History",
     "Recent BUY Scanner",
     "NPX 0.5-Cross Scanner",
-    "Daily Slope+BB Reversal Scanner"
+    "Daily Slope+BB Reversal Scanner",
+    "Fib 0%/100% Reversal Watchlist"  # NEW (THIS REQUEST)
 ])
 
 # ---------------------------
@@ -2319,7 +2486,6 @@ with tab1:
             "Charts stay on the last RUN ticker until you run again.")
 
     sel = st.selectbox("Ticker:", universe, key=f"orig_ticker_{mode}")
-    # UPDATED (prior request): use a new key so "Daily" view (and Daily NTD panel) is default again
     chart = st.radio("Chart View:", ["Daily", "Hourly", "Both"], key=f"orig_chart_{mode}_v2")
 
     hour_range = st.selectbox(
@@ -2331,7 +2497,10 @@ with tab1:
     period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
 
     run_clicked = st.button("Run Forecast", key=f"btn_run_forecast_{mode}")
-    alert_box = st.empty()
+
+    # NEW (THIS REQUEST): instruction placeholders directly below Run Forecast button
+    fib_instruction_box = st.empty()
+    trade_instruction_box = st.empty()
 
     if run_clicked:
         df_hist = fetch_hist(sel)
@@ -2354,11 +2523,6 @@ with tab1:
         })
 
     if st.session_state.get("run_all", False) and st.session_state.get("ticker") is not None and st.session_state.get("mode_at_run") == mode:
-        try:
-            alert_box.empty()
-        except Exception:
-            pass
-
         disp_ticker = st.session_state.ticker
         df = st.session_state.df_hist
         df_ohlc = st.session_state.df_ohlc
@@ -2373,6 +2537,21 @@ with tab1:
         fx_news = pd.DataFrame()
         if mode == "Forex" and show_fx_news:
             fx_news = fetch_yf_news(disp_ticker, window_days=news_window_days)
+
+        # NEW (THIS REQUEST): Always show the new Fib ALERT + trigger definition below the Run Forecast button
+        with fib_instruction_box.container():
+            st.warning(FIB_ALERT_TEXT)
+            st.caption(
+                "Fibonacci Reversal Trigger (confirmed): "
+                "BUY when price touches near the **100%** line then prints consecutive higher closes; "
+                "SELL when price touches near the **0%** line then prints consecutive lower closes."
+            )
+
+        # We'll collect instructions (Daily/Hourly) and render them below the Run Forecast button
+        daily_instr_txt = None
+        hourly_instr_txt = None
+        daily_fib_trig = None
+        hourly_fib_trig = None
 
         if chart in ("Daily", "Both"):
             ema30 = df.ewm(span=30).mean()
@@ -2511,6 +2690,16 @@ with tab1:
                 for lbl, y in piv.items():
                     ax.text(x1, y, f" {lbl} = {fmt_price_val(y)}", va="center")
 
+            # NEW (THIS REQUEST): Fibonacci lines on DAILY chart by default (same style as hourly)
+            if show_fibs and len(df_show) > 0:
+                fibs_d = fibonacci_levels(df_show)
+                if fibs_d:
+                    x0, x1 = df_show.index[0], df_show.index[-1]
+                    for lbl, y in fibs_d.items():
+                        ax.hlines(y, xmin=x0, xmax=x1, linestyles="dotted", linewidth=1)
+                    for lbl, y in fibs_d.items():
+                        ax.text(x1, y, f" {lbl}", va="center")
+
             last_px_show = _safe_last_float(df_show)
             if np.isfinite(last_px_show):
                 nbb_txt = ""
@@ -2577,22 +2766,68 @@ with tab1:
                 style_axes(axm)
                 st.pyplot(figm)
 
+            # NEW (THIS REQUEST): compute Daily instruction + Daily Fib reversal trigger for below-button display
+            daily_instr_txt = format_trade_instruction(
+                trend_slope=m_d,
+                buy_val=sup_val_d,
+                sell_val=res_val_d,
+                close_val=last_px_show,
+                symbol=disp_ticker,
+                global_trend_slope=global_m_d
+            )
+            daily_fib_trig = fib_reversal_trigger_from_extremes(
+                df_show,
+                proximity_pct_of_range=0.02,
+                confirm_bars=int(rev_bars_confirm),
+                lookback_bars=int(max(60, slope_lb_daily)),
+            )
+
         if chart in ("Hourly", "Both"):
             intraday = st.session_state.intraday
-            render_hourly_views(
+            out_h = render_hourly_views(
                 sel=disp_ticker,
                 intraday=intraday,
                 p_up=p_up,
                 p_dn=p_dn,
                 hour_range_label=st.session_state.hour_range,
-                is_forex=(mode == "Forex"),
-                alert_placeholder=alert_box
+                is_forex=(mode == "Forex")
             )
-        else:
-            try:
-                alert_box.empty()
-            except Exception:
-                pass
+            if isinstance(out_h, dict):
+                hourly_instr_txt = out_h.get("trade_instruction", None)
+                hourly_fib_trig = out_h.get("fib_trigger", None)
+
+        # NEW (THIS REQUEST): show Buy/Sell instruction(s) below the Run Forecast button (declog chart)
+        with trade_instruction_box.container():
+            if isinstance(daily_instr_txt, str) and daily_instr_txt.strip():
+                if daily_instr_txt.startswith("ALERT:"):
+                    st.error(f"Daily: {daily_instr_txt}")
+                else:
+                    st.success(f"Daily: {daily_instr_txt}")
+
+            if isinstance(hourly_instr_txt, str) and hourly_instr_txt.strip():
+                if hourly_instr_txt.startswith("ALERT:"):
+                    st.error(f"Hourly: {hourly_instr_txt}")
+                else:
+                    st.success(f"Hourly: {hourly_instr_txt}")
+
+            # NEW (THIS REQUEST): show confirmed Fib reversal trigger(s) from 0%/100%
+            if isinstance(daily_fib_trig, dict):
+                st.info(
+                    f"Daily Fib Reversal Trigger: **{daily_fib_trig.get('side')}** "
+                    f"(from {daily_fib_trig.get('from_level')}) • touch={daily_fib_trig.get('touch_time')} "
+                    f"@ {fmt_price_val(daily_fib_trig.get('touch_price', np.nan))}"
+                )
+            else:
+                st.caption("Daily Fib Reversal Trigger: none confirmed.")
+
+            if isinstance(hourly_fib_trig, dict):
+                st.info(
+                    f"Hourly Fib Reversal Trigger: **{hourly_fib_trig.get('side')}** "
+                    f"(from {hourly_fib_trig.get('from_level')}) • touch={hourly_fib_trig.get('touch_time')} "
+                    f"@ {fmt_price_val(hourly_fib_trig.get('touch_price', np.nan))}"
+                )
+            elif chart in ("Hourly", "Both"):
+                st.caption("Hourly Fib Reversal Trigger: none confirmed.")
 
         if mode == "Forex" and show_fx_news:
             st.subheader("Recent Forex News (Yahoo Finance)")
@@ -2611,9 +2846,11 @@ with tab1:
         }, index=st.session_state.fc_idx))
     else:
         st.info("Click **Run Forecast** to display charts and forecast.")
-
+# =========================
+# Part 10/10 — bullbear.py
+# =========================
 # ---------------------------
-# TAB 2: ENHANCED FORECAST (unchanged)
+# TAB 2: ENHANCED FORECAST (unchanged logic; hourly title declogged by renderer)
 # ---------------------------
 with tab2:
     st.header("Enhanced Forecast")
@@ -2646,6 +2883,16 @@ with tab2:
             if not res_d_show.empty and not sup_d_show.empty:
                 ax.hlines(float(res_d_show.iloc[-1]), xmin=df_show.index[0], xmax=df_show.index[-1], colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance")
                 ax.hlines(float(sup_d_show.iloc[-1]), xmin=df_show.index[0], xmax=df_show.index[-1], colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
+
+            # NEW (THIS REQUEST): Fibonacci lines on DAILY chart (Enhanced tab) by default too
+            if show_fibs and len(df_show) > 0:
+                fibs_d = fibonacci_levels(df_show)
+                if fibs_d:
+                    x0, x1 = df_show.index[0], df_show.index[-1]
+                    for lbl, y in fibs_d.items():
+                        ax.hlines(y, xmin=x0, xmax=x1, linestyles="dotted", linewidth=1)
+                    for lbl, y in fibs_d.items():
+                        ax.text(x1, y, f" {lbl}", va="center")
 
             macd_sig = find_macd_hma_sr_signal(df_show, hma_d_show, macd_d, sup_d_show, res_d_show, global_m_d, prox=sr_prox_pct)
             macd_txt = "MACD/HMA55: n/a"
@@ -2891,7 +3138,7 @@ with tab8:
                 st.dataframe(out_dn.reset_index(drop=True), use_container_width=True)
 
 # ---------------------------
-# TAB 9: Daily Slope + S/R reversal + BB mid cross scanner (NEW)
+# TAB 9: Daily Slope + S/R reversal + BB mid cross scanner
 # ---------------------------
 with tab9:
     st.header("Daily Slope + S/R Reversal + BB Midline Scanner (R² ≥ 0.99)")
@@ -2974,3 +3221,69 @@ with tab9:
                 out["R2"] = out["R2"].astype(float)
                 out = out.sort_values(["Bars Since Cross", "Slope"], ascending=[True, True])
                 st.dataframe(out.reset_index(drop=True), use_container_width=True)
+
+# ---------------------------
+# TAB 10: Fib 0% / 100% proximity + reversal chance (NEW)
+# ---------------------------
+with tab10:
+    st.header("Fib 0%/100% Reversal Watchlist")
+    st.caption(
+        "Lists symbols close to the Fibonacci **0%** (high) or **100%** (low) lines, "
+        "and includes a slope-reversal probability estimate + any confirmed Fib reversal trigger."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    prox_pct = c1.slider("Proximity to 0%/100% (as % of Fib range)", 0.005, 0.08, 0.02, 0.005, key="fibwatch_prox")
+    min_rev = c2.slider(f"Min P(slope rev≤{rev_horizon} bars)", 0.00, 0.95, 0.25, 0.05, key="fibwatch_minrev")
+    run_watch = c3.button("Run Fib Watchlist", key=f"btn_run_fib_watch_{mode}")
+
+    if run_watch:
+        rows = []
+        for sym in universe:
+            r = fib_extreme_reversal_watch(
+                symbol=sym,
+                daily_view_label=daily_view,
+                slope_lb=slope_lb_daily,
+                hist_window=rev_hist_lb,
+                slope_window=slope_lb_daily,
+                horizon=rev_horizon,
+                proximity_pct_of_range=float(prox_pct),
+                confirm_bars=int(rev_bars_confirm),
+                lookback_bars_for_trigger=int(max(60, slope_lb_daily)),
+            )
+            if r is None:
+                continue
+            pcol = f"P(slope rev≤{int(rev_horizon)} bars)"
+            pv = r.get(pcol, np.nan)
+            if np.isfinite(pv) and float(pv) < float(min_rev):
+                continue
+            rows.append(r)
+
+        if not rows:
+            st.info("No matches.")
+        else:
+            out = pd.DataFrame(rows)
+            pcol = f"P(slope rev≤{int(rev_horizon)} bars)"
+            if "Dist (% of range)" in out.columns:
+                out["Dist (% of range)"] = out["Dist (% of range)"].astype(float)
+            if pcol in out.columns:
+                out[pcol] = out[pcol].astype(float)
+
+            left, right = st.columns(2)
+            with left:
+                st.subheader("Near 100% (Low) — potential BUY area")
+                out100 = out[out["Near"] == "100%"].copy()
+                if out100.empty:
+                    st.info("No matches.")
+                else:
+                    out100 = out100.sort_values(["Dist (% of range)", pcol], ascending=[True, False])
+                    st.dataframe(out100.reset_index(drop=True), use_container_width=True)
+
+            with right:
+                st.subheader("Near 0% (High) — potential SELL area")
+                out0 = out[out["Near"] == "0%"].copy()
+                if out0.empty:
+                    st.info("No matches.")
+                else:
+                    out0 = out0.sort_values(["Dist (% of range)", pcol], ascending=[True, False])
+                    st.dataframe(out0.reset_index(drop=True), use_container_width=True)
