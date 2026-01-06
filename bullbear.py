@@ -1,7 +1,7 @@
 # =========================
 # Part 1/10 — bullbear.py
 # =========================
-import streamlit as st
+import streamlit as stx
 import pandas as pd
 import numpy as np
 import yfinance as yf
