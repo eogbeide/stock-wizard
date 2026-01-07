@@ -295,7 +295,6 @@ def format_trade_instruction(trend_slope: float,
         return text
 
     return alert_txt
-
 # =========================
 # Part 2/10 — bullbear.py
 # =========================
@@ -393,14 +392,6 @@ def _map_times_to_bar_positions(real_times: pd.DatetimeIndex, times_list):
 # ---------------------------
 st.sidebar.title("Configuration")
 st.sidebar.markdown(f"### Asset Class: **{mode}**")
-
-# NEW (THIS REQUEST): Global trendline show/hide button (default ON)
-if "show_global_trendline" not in st.session_state:
-    st.session_state.show_global_trendline = True
-
-btn_lbl = "📏 Hide Global Trendline" if st.session_state.show_global_trendline else "📏 Show Global Trendline"
-if st.sidebar.button(btn_lbl, use_container_width=True, key="btn_toggle_global_trendline"):
-    st.session_state.show_global_trendline = not bool(st.session_state.show_global_trendline)
 
 if st.sidebar.button("🧹 Clear cache (data + run state)", use_container_width=True, key="btn_clear_cache"):
     try:
@@ -527,24 +518,10 @@ else:
 # ---------------------------
 # Data fetchers
 # ---------------------------
-# NEW (ERROR FIX): yfinance can return MultiIndex columns (even for a single symbol).
-# Ensure we always have flat OHLC columns so downstream Series ops stay scalar-safe.
-def _flatten_yf_single_ticker_columns(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return df
-    try:
-        if isinstance(df.columns, pd.MultiIndex):
-            df = df.copy()
-            df.columns = df.columns.get_level_values(0)
-    except Exception:
-        pass
-    return df
-
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
-    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))
-    df = _flatten_yf_single_ticker_columns(df)
-    s = _coerce_1d_series(df.get("Close", pd.Series(dtype=float))).asfreq("D").ffill()
+    s = (yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))["Close"]
+         .asfreq("D").ffill())
     try:
         s = s.tz_localize(PACIFIC)
     except TypeError:
@@ -553,10 +530,8 @@ def fetch_hist(ticker: str) -> pd.Series:
 
 @st.cache_data(ttl=120)
 def fetch_hist_max(ticker: str) -> pd.Series:
-    df = yf.download(ticker, period="max")
-    df = _flatten_yf_single_ticker_columns(df)
-    df = df[["Close"]].dropna() if "Close" in df.columns else pd.DataFrame(columns=["Close"])
-    s = _coerce_1d_series(df.get("Close", pd.Series(dtype=float))).asfreq("D").ffill()
+    df = yf.download(ticker, period="max")[["Close"]].dropna()
+    s = df["Close"].asfreq("D").ffill()
     try:
         s = s.tz_localize(PACIFIC)
     except TypeError:
@@ -565,13 +540,9 @@ def fetch_hist_max(ticker: str) -> pd.Series:
 
 @st.cache_data(ttl=120)
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
-    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))
-    df = _flatten_yf_single_ticker_columns(df)
-    try:
-        df = df[["Open","High","Low","Close"]].dropna()
-    except Exception:
-        cols = [c for c in ["Open","High","Low","Close"] if c in df.columns]
-        df = df[cols].dropna() if cols else pd.DataFrame(columns=["Open","High","Low","Close"])
+    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[
+        ["Open","High","Low","Close"]
+    ].dropna()
     try:
         df = df.tz_localize(PACIFIC)
     except TypeError:
@@ -581,7 +552,6 @@ def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
 @st.cache_data(ttl=120)
 def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
     df = yf.download(ticker, period=period, interval="5m")
-    df = _flatten_yf_single_ticker_columns(df)
     if df is None or df.empty:
         return df
     try:
@@ -724,7 +694,6 @@ def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
     R1 = 2 * P - L; S1 = 2 * P - H
     R2 = P + (H - L); S2 = P - (H - L)
     return {"P": P, "R1": R1, "S1": S1, "R2": R2, "S2": S2}
-
 # =========================
 # Part 3/10 — bullbear.py
 # =========================
@@ -1014,7 +983,6 @@ def annotate_slope_trigger(ax, trig: dict):
         va="bottom" if side == "BUY" else "top",
         zorder=10
     )
-
 # =========================
 # Part 4/10 — bullbear.py
 # =========================
@@ -1148,8 +1116,7 @@ def shade_ntd_regions(ax, ntd: pd.Series):
     ax.fill_between(ntd.index, 0, pos, alpha=0.12, color="tab:green")
     ax.fill_between(ntd.index, 0, neg, alpha=0.12, color="tab:red")
 
-# UPDATED (THIS REQUEST): allow hiding the global trendline without changing any logic
-def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "Trend", do_plot: bool = True):
+def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "Trend"):
     s = _coerce_1d_series(series_like).dropna()
     if s.shape[0] < 2:
         return np.nan
@@ -1157,9 +1124,8 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
     m, b = np.polyfit(x, s.values, 1)
     yhat = m * x + b
     color = "green" if m >= 0 else "red"
-    if do_plot:
-        ax.plot(s.index, yhat, linestyle="--", linewidth=2.4, color=color,
-                label=f"{label_prefix} ({fmt_slope(m)}/bar)")
+    ax.plot(s.index, yhat, linestyle="--", linewidth=2.4, color=color,
+            label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return float(m)
 
 def _wma(s: pd.Series, window: int) -> pd.Series:
@@ -1253,7 +1219,6 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     pctb = ((s - lower) / width).clip(0.0, 1.0)
     nbb = pctb * 2.0 - 1.0
     return (mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index))
-
 # =========================
 # Part 5/10 — bullbear.py
 # =========================
@@ -1713,8 +1678,6 @@ def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
         return float(ntd.iloc[-1]), ntd.index[-1]
     except Exception:
         return np.nan, None
-
-
 # =========================
 # Part 7/10 — bullbear.py
 # =========================
@@ -2163,8 +2126,6 @@ def fib_extreme_reversal_watch(symbol: str,
         }
     except Exception:
         return None
-
-
 # =========================
 # Part 8/10 — bullbear.py
 # =========================
@@ -2190,9 +2151,6 @@ def render_hourly_views(sel: str,
     if intraday is None or intraday.empty or "Close" not in intraday:
         st.warning("No intraday data available.")
         return None
-
-    # NEW (THIS REQUEST): global trendline visibility toggle (button drives this session_state key)
-    show_global_trendline = bool(st.session_state.get("show_global_trendline", True))
 
     real_times = intraday.index if isinstance(intraday.index, pd.DatetimeIndex) else None
     intr_plot = intraday.copy()
@@ -2257,7 +2215,7 @@ def render_hourly_views(sel: str,
     ax2.plot(hc.index, hc, label="Intraday")
     ax2.plot(he.index, he.values, "--", label="20 EMA")
 
-    global_m_h = draw_trend_direction_line(ax2, hc, label_prefix="Trend (global)", show_line=show_global_trendline)
+    global_m_h = draw_trend_direction_line(ax2, hc, label_prefix="Trend (global)")
 
     if show_hma and not hma_h.dropna().empty:
         ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
@@ -2500,8 +2458,6 @@ def render_hourly_views(sel: str,
         "trade_instruction": instr_txt,
         "fib_trigger": trig_disp,
     }
-
-
 # =========================
 # Part 9/10 — bullbear.py
 # =========================
@@ -2530,9 +2486,7 @@ with tab1:
             "Charts stay on the last RUN ticker until you run again.")
 
     sel = st.selectbox("Ticker:", universe, key=f"orig_ticker_{mode}")
-
-    # UPDATED (THIS REQUEST): default to showing BOTH (Daily + Hourly)
-    chart = st.radio("Chart View:", ["Daily", "Hourly", "Both"], index=2, key=f"orig_chart_{mode}_v2")
+    chart = st.radio("Chart View:", ["Daily", "Hourly", "Both"], key=f"orig_chart_{mode}_v2")
 
     hour_range = st.selectbox(
         "Hourly lookback:",
@@ -2569,9 +2523,6 @@ with tab1:
         })
 
     if st.session_state.get("run_all", False) and st.session_state.get("ticker") is not None and st.session_state.get("mode_at_run") == mode:
-        # NEW (THIS REQUEST): global trendline visibility toggle (button drives this session_state key)
-        show_global_trendline = bool(st.session_state.get("show_global_trendline", True))
-
         disp_ticker = st.session_state.ticker
         df = st.session_state.df_hist
         df_ohlc = st.session_state.df_ohlc
@@ -2664,7 +2615,7 @@ with tab1:
             ax.plot(df_show, label="History")
             ax.plot(ema30_show, "--", label="30 EMA")
 
-            global_m_d = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)", show_line=show_global_trendline)
+            global_m_d = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
 
             if show_hma and not hma_d_show.dropna().empty:
                 ax.plot(hma_d_show.index, hma_d_show.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
@@ -2895,8 +2846,6 @@ with tab1:
         }, index=st.session_state.fc_idx))
     else:
         st.info("Click **Run Forecast** to display charts and forecast.")
-
-
 # =========================
 # Part 10/10 — bullbear.py
 # =========================
@@ -2908,9 +2857,6 @@ with tab2:
     if not st.session_state.get("run_all", False) or st.session_state.get("ticker") is None or st.session_state.get("mode_at_run") != mode:
         st.info("Run Tab 1 first (in the current mode).")
     else:
-        # NEW (THIS REQUEST): global trendline visibility toggle (button drives this session_state key)
-        show_global_trendline = bool(st.session_state.get("show_global_trendline", True))
-
         df = st.session_state.df_hist
         idx, vals, ci = st.session_state.fc_idx, st.session_state.fc_vals, st.session_state.fc_ci
         last_price = _safe_last_float(df)
@@ -2918,9 +2864,7 @@ with tab2:
         p_dn = 1 - p_up if np.isfinite(p_up) else np.nan
 
         st.caption(f"Displayed ticker: **{st.session_state.ticker}**  •  Intraday lookback: **{st.session_state.get('hour_range','24h')}**")
-
-        # UPDATED (THIS REQUEST): default to BOTH (Daily + Intraday)
-        view = st.radio("View:", ["Daily", "Intraday", "Both"], index=2, key=f"enh_view_{mode}")
+        view = st.radio("View:", ["Daily", "Intraday", "Both"], key=f"enh_view_{mode}")
 
         if view in ("Daily", "Both"):
             df_show = subset_by_daily_view(df, daily_view)
@@ -2932,7 +2876,7 @@ with tab2:
             fig, ax = plt.subplots(figsize=(14, 5))
             ax.set_title(f"{st.session_state.ticker} Daily (Enhanced) — {daily_view}")
             ax.plot(df_show.index, df_show.values, label="History")
-            global_m_d = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)", show_line=show_global_trendline)
+            global_m_d = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
             if show_hma and not hma_d_show.dropna().empty:
                 ax.plot(hma_d_show.index, hma_d_show.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
 
@@ -2997,9 +2941,6 @@ with tab3:
     st.header("Bull vs Bear")
     st.caption("Simple lookback performance overview (based on Bull/Bear lookback selection).")
 
-    # NEW (THIS REQUEST): global trendline visibility toggle (button drives this session_state key)
-    show_global_trendline = bool(st.session_state.get("show_global_trendline", True))
-
     sel_bb = st.selectbox("Ticker:", universe, key=f"bb_ticker_{mode}")
     try:
         dfp = yf.download(sel_bb, period=bb_period, interval="1d")[["Close"]].dropna()
@@ -3015,7 +2956,7 @@ with tab3:
         fig, ax = plt.subplots(figsize=(14, 4))
         ax.set_title(f"{sel_bb} — {bb_period} Close")
         ax.plot(s.index, s.values, label="Close")
-        draw_trend_direction_line(ax, s, label_prefix="Trend (global)", show_line=show_global_trendline)
+        draw_trend_direction_line(ax, s, label_prefix="Trend (global)")
         ax.legend(loc="lower left", framealpha=0.5, fontsize=9)
         style_axes(ax)
         st.pyplot(fig)
@@ -3087,10 +3028,6 @@ with tab5:
 # ---------------------------
 with tab6:
     st.header("Long-Term History")
-
-    # NEW (THIS REQUEST): global trendline visibility toggle (button drives this session_state key)
-    show_global_trendline = bool(st.session_state.get("show_global_trendline", True))
-
     sel_lt = st.selectbox("Ticker:", universe, key=f"lt_ticker_{mode}")
     try:
         smax = fetch_hist_max(sel_lt)
@@ -3103,7 +3040,7 @@ with tab6:
         fig, ax = plt.subplots(figsize=(14, 4))
         ax.set_title(f"{sel_lt} — Max History")
         ax.plot(smax.index, smax.values, label="Close")
-        draw_trend_direction_line(ax, smax, label_prefix="Trend (global)", show_line=show_global_trendline)
+        draw_trend_direction_line(ax, smax, label_prefix="Trend (global)")
         ax.legend(loc="lower left", framealpha=0.5, fontsize=9)
         style_axes(ax)
         st.pyplot(fig)
@@ -3350,4 +3287,3 @@ with tab10:
                 else:
                     out0 = out0.sort_values(["Dist (% of range)", pcol], ascending=[True, False])
                     st.dataframe(out0.reset_index(drop=True), use_container_width=True)
-
