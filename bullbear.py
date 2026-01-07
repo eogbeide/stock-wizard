@@ -26,6 +26,18 @@ st.set_page_config(
 st.markdown("""
 <style>
   #MainMenu, header, footer {visibility: hidden;}
+
+  /* UPDATED (THIS REQUEST): show all tabs by default (wrap tab labels instead of requiring horizontal scroll) */
+  div[data-baseweb="tab-list"] {
+    flex-wrap: wrap !important;
+    overflow: visible !important;
+  }
+  button[data-baseweb="tab"] {
+    height: auto !important;
+    padding-top: 6px !important;
+    padding-bottom: 6px !important;
+  }
+
   @media (max-width: 600px) {
     .css-18e3th9 {
       transform: none !important;
@@ -295,6 +307,7 @@ def format_trade_instruction(trend_slope: float,
         return text
 
     return alert_txt
+
 # =========================
 # Part 2/10 — bullbear.py
 # =========================
@@ -412,6 +425,19 @@ if st.sidebar.button("🧹 Clear cache (data + run state)", use_container_width=
 
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2, key="sb_bb_period")
 daily_view = st.sidebar.selectbox("Daily view range:", ["Historical", "6M", "12M", "24M"], index=2, key="sb_daily_view")
+
+# UPDATED (THIS REQUEST): add a button to show/hide the global trendline (default ON)
+if "show_global_trendline" not in st.session_state:
+    st.session_state.show_global_trendline = True
+
+if st.sidebar.button(
+    "Hide Global Trendline" if st.session_state.show_global_trendline else "Show Global Trendline",
+    use_container_width=True,
+    key="btn_toggle_global_trendline"
+):
+    st.session_state.show_global_trendline = not st.session_state.show_global_trendline
+
+show_global_trendline = st.session_state.show_global_trendline
 
 # UPDATED (THIS REQUEST): Fibonacci applies to Daily + Hourly, default ON
 show_fibs = st.sidebar.checkbox("Show Fibonacci", value=True, key="sb_show_fibs")
@@ -694,6 +720,7 @@ def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
     R1 = 2 * P - L; S1 = 2 * P - H
     R2 = P + (H - L); S2 = P - (H - L)
     return {"P": P, "R1": R1, "S1": S1, "R2": R2, "S2": S2}
+
 # =========================
 # Part 3/10 — bullbear.py
 # =========================
@@ -983,6 +1010,7 @@ def annotate_slope_trigger(ax, trig: dict):
         va="bottom" if side == "BUY" else "top",
         zorder=10
     )
+
 # =========================
 # Part 4/10 — bullbear.py
 # =========================
@@ -1116,7 +1144,8 @@ def shade_ntd_regions(ax, ntd: pd.Series):
     ax.fill_between(ntd.index, 0, pos, alpha=0.12, color="tab:green")
     ax.fill_between(ntd.index, 0, neg, alpha=0.12, color="tab:red")
 
-def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "Trend"):
+# UPDATED (THIS REQUEST): add show flag to optionally hide global trendline without changing slope logic
+def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "Trend", show: bool = True):
     s = _coerce_1d_series(series_like).dropna()
     if s.shape[0] < 2:
         return np.nan
@@ -1124,8 +1153,9 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
     m, b = np.polyfit(x, s.values, 1)
     yhat = m * x + b
     color = "green" if m >= 0 else "red"
-    ax.plot(s.index, yhat, linestyle="--", linewidth=2.4, color=color,
-            label=f"{label_prefix} ({fmt_slope(m)}/bar)")
+    if bool(show):
+        ax.plot(s.index, yhat, linestyle="--", linewidth=2.4, color=color,
+                label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return float(m)
 
 def _wma(s: pd.Series, window: int) -> pd.Series:
@@ -1219,6 +1249,7 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     pctb = ((s - lower) / width).clip(0.0, 1.0)
     nbb = pctb * 2.0 - 1.0
     return (mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index))
+
 # =========================
 # Part 5/10 — bullbear.py
 # =========================
@@ -1678,6 +1709,7 @@ def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
         return float(ntd.iloc[-1]), ntd.index[-1]
     except Exception:
         return np.nan, None
+
 # =========================
 # Part 7/10 — bullbear.py
 # =========================
@@ -2126,6 +2158,7 @@ def fib_extreme_reversal_watch(symbol: str,
         }
     except Exception:
         return None
+
 # =========================
 # Part 8/10 — bullbear.py
 # =========================
@@ -2138,6 +2171,31 @@ if "run_all" not in st.session_state:
     st.session_state.hour_range = "24h"
 if "hist_years" not in st.session_state:
     st.session_state.hist_years = 10
+
+# ---------------------------
+# Global Trendline toggle (THIS REQUEST)
+# ---------------------------
+if "show_global_trendline" not in st.session_state:
+    st.session_state.show_global_trendline = True  # default ON
+
+_toggle_lbl = "Hide global trendline" if st.session_state.show_global_trendline else "Show global trendline"
+if st.sidebar.button(_toggle_lbl, use_container_width=True, key="btn_toggle_global_trendline"):
+    st.session_state.show_global_trendline = not st.session_state.show_global_trendline
+    try:
+        st.experimental_rerun()
+    except Exception:
+        pass
+
+def _global_slope_only(series_like) -> float:
+    s = _coerce_1d_series(series_like).dropna()
+    if s.shape[0] < 2:
+        return float("nan")
+    x = np.arange(len(s), dtype=float)
+    try:
+        m, _ = np.polyfit(x, s.to_numpy(dtype=float), 1)
+    except Exception:
+        return float("nan")
+    return float(m)
 
 # ---------------------------
 # Shared hourly renderer (Stock & Forex)
@@ -2215,7 +2273,11 @@ def render_hourly_views(sel: str,
     ax2.plot(hc.index, hc, label="Intraday")
     ax2.plot(he.index, he.values, "--", label="20 EMA")
 
-    global_m_h = draw_trend_direction_line(ax2, hc, label_prefix="Trend (global)")
+    # THIS REQUEST: show/hide global trendline (compute slope either way)
+    if st.session_state.get("show_global_trendline", True):
+        global_m_h = draw_trend_direction_line(ax2, hc, label_prefix="Trend (global)")
+    else:
+        global_m_h = _global_slope_only(hc)
 
     if show_hma and not hma_h.dropna().empty:
         ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
@@ -2458,12 +2520,21 @@ def render_hourly_views(sel: str,
         "trade_instruction": instr_txt,
         "fib_trigger": trig_disp,
     }
+
 # =========================
 # Part 9/10 — bullbear.py
 # =========================
 # ---------------------------
-# Tabs
+# Tabs (THIS REQUEST): show all tabs by default (wrap tab list so all labels are visible)
 # ---------------------------
+st.markdown("""
+<style>
+  div[data-baseweb="tab-list"] {
+    flex-wrap: wrap;
+  }
+</style>
+""", unsafe_allow_html=True)
+
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
@@ -2615,7 +2686,11 @@ with tab1:
             ax.plot(df_show, label="History")
             ax.plot(ema30_show, "--", label="30 EMA")
 
-            global_m_d = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
+            # THIS REQUEST: show/hide global trendline (compute slope either way)
+            if st.session_state.get("show_global_trendline", True):
+                global_m_d = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
+            else:
+                global_m_d = _global_slope_only(df_show)
 
             if show_hma and not hma_d_show.dropna().empty:
                 ax.plot(hma_d_show.index, hma_d_show.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
@@ -2846,6 +2921,7 @@ with tab1:
         }, index=st.session_state.fc_idx))
     else:
         st.info("Click **Run Forecast** to display charts and forecast.")
+
 # =========================
 # Part 10/10 — bullbear.py
 # =========================
@@ -2876,7 +2952,13 @@ with tab2:
             fig, ax = plt.subplots(figsize=(14, 5))
             ax.set_title(f"{st.session_state.ticker} Daily (Enhanced) — {daily_view}")
             ax.plot(df_show.index, df_show.values, label="History")
-            global_m_d = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
+
+            # THIS REQUEST: show/hide global trendline (compute slope either way)
+            if st.session_state.get("show_global_trendline", True):
+                global_m_d = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
+            else:
+                global_m_d = _global_slope_only(df_show)
+
             if show_hma and not hma_d_show.dropna().empty:
                 ax.plot(hma_d_show.index, hma_d_show.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
 
@@ -2956,7 +3038,11 @@ with tab3:
         fig, ax = plt.subplots(figsize=(14, 4))
         ax.set_title(f"{sel_bb} — {bb_period} Close")
         ax.plot(s.index, s.values, label="Close")
-        draw_trend_direction_line(ax, s, label_prefix="Trend (global)")
+
+        # THIS REQUEST: show/hide global trendline
+        if st.session_state.get("show_global_trendline", True):
+            draw_trend_direction_line(ax, s, label_prefix="Trend (global)")
+
         ax.legend(loc="lower left", framealpha=0.5, fontsize=9)
         style_axes(ax)
         st.pyplot(fig)
@@ -3040,7 +3126,11 @@ with tab6:
         fig, ax = plt.subplots(figsize=(14, 4))
         ax.set_title(f"{sel_lt} — Max History")
         ax.plot(smax.index, smax.values, label="Close")
-        draw_trend_direction_line(ax, smax, label_prefix="Trend (global)")
+
+        # THIS REQUEST: show/hide global trendline
+        if st.session_state.get("show_global_trendline", True):
+            draw_trend_direction_line(ax, smax, label_prefix="Trend (global)")
+
         ax.legend(loc="lower left", framealpha=0.5, fontsize=9)
         style_axes(ax)
         st.pyplot(fig)
