@@ -36,15 +36,6 @@ st.markdown("""
     }
     .css-1v3fvcr { margin-left: 0 !important; }
   }
-
-  /* NEW (THIS REQUEST): Show all tabs by default (wrap instead of overflow) */
-  .stTabs [data-baseweb="tab-list"] {
-    flex-wrap: wrap !important;
-    row-gap: 0.25rem !important;
-  }
-  .stTabs [data-baseweb="tab"] {
-    white-space: nowrap !important;
-  }
 </style>
 """, unsafe_allow_html=True)
 
@@ -304,7 +295,6 @@ def format_trade_instruction(trend_slope: float,
         return text
 
     return alert_txt
-
 # =========================
 # Part 2/10 — bullbear.py
 # =========================
@@ -402,16 +392,6 @@ def _map_times_to_bar_positions(real_times: pd.DatetimeIndex, times_list):
 # ---------------------------
 st.sidebar.title("Configuration")
 st.sidebar.markdown(f"### Asset Class: **{mode}**")
-
-# NEW (THIS REQUEST): Global trendline show/hide button (default ON)
-if "show_global_trendline" not in st.session_state:
-    st.session_state.show_global_trendline = True
-
-st.sidebar.subheader("Global Trendline")
-btn_label = "Hide Global Trendline" if st.session_state.show_global_trendline else "Show Global Trendline"
-if st.sidebar.button(btn_label, use_container_width=True, key="btn_toggle_global_trendline"):
-    st.session_state.show_global_trendline = not st.session_state.show_global_trendline
-st.sidebar.caption(f"Status: **{'Shown' if st.session_state.show_global_trendline else 'Hidden'}**")
 
 if st.sidebar.button("🧹 Clear cache (data + run state)", use_container_width=True, key="btn_clear_cache"):
     try:
@@ -714,7 +694,6 @@ def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
     R1 = 2 * P - L; S1 = 2 * P - H
     R2 = P + (H - L); S2 = P - (H - L)
     return {"P": P, "R1": R1, "S1": S1, "R2": R2, "S2": S2}
-
 # =========================
 # Part 3/10 — bullbear.py
 # =========================
@@ -1004,7 +983,6 @@ def annotate_slope_trigger(ax, trig: dict):
         va="bottom" if side == "BUY" else "top",
         zorder=10
     )
-
 # =========================
 # Part 4/10 — bullbear.py
 # =========================
@@ -1138,17 +1116,16 @@ def shade_ntd_regions(ax, ntd: pd.Series):
     ax.fill_between(ntd.index, 0, pos, alpha=0.12, color="tab:green")
     ax.fill_between(ntd.index, 0, neg, alpha=0.12, color="tab:red")
 
-def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "Trend", show: bool = True):
+def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "Trend"):
     s = _coerce_1d_series(series_like).dropna()
     if s.shape[0] < 2:
         return np.nan
     x = np.arange(len(s), dtype=float)
     m, b = np.polyfit(x, s.values, 1)
     yhat = m * x + b
-    if show:
-        color = "green" if m >= 0 else "red"
-        ax.plot(s.index, yhat, linestyle="--", linewidth=2.4, color=color,
-                label=f"{label_prefix} ({fmt_slope(m)}/bar)")
+    color = "green" if m >= 0 else "red"
+    ax.plot(s.index, yhat, linestyle="--", linewidth=2.4, color=color,
+            label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return float(m)
 
 def _wma(s: pd.Series, window: int) -> pd.Series:
@@ -1242,7 +1219,6 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     pctb = ((s - lower) / width).clip(0.0, 1.0)
     nbb = pctb * 2.0 - 1.0
     return (mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index))
-
 # =========================
 # Part 5/10 — bullbear.py
 # =========================
@@ -1435,6 +1411,62 @@ def overlay_ntd_triangles_by_trend(ax, ntd: pd.Series, trend_slope: float, upper
             ax.scatter(idx_dn0, [0.0]*len(idx_dn0), marker="v", s=95, color="tab:red", zorder=10, label="NTD 0↓")
         if idx_hi:
             ax.scatter(idx_hi, s.loc[idx_hi], marker="v", s=85, color="tab:red", zorder=10, label="NTD > +0.75")
+
+def _n_consecutive_increasing(series: pd.Series, n: int = 2) -> bool:
+    s = _coerce_1d_series(series).dropna()
+    if len(s) < n+1:
+        return False
+    deltas = np.diff(s.iloc[-(n+1):])
+    return bool(np.all(deltas > 0))
+
+def _n_consecutive_decreasing(series: pd.Series, n: int = 2) -> bool:
+    s = _coerce_1d_series(series).dropna()
+    if len(s) < n+1:
+        return False
+    deltas = np.diff(s.iloc[-(n+1):])
+    return bool(np.all(deltas < 0))
+
+def overlay_ntd_sr_reversal_stars(ax,
+                                 price: pd.Series,
+                                 sup: pd.Series,
+                                 res: pd.Series,
+                                 trend_slope: float,
+                                 ntd: pd.Series,
+                                 prox: float = 0.0025,
+                                 bars_confirm: int = 2):
+    p = _coerce_1d_series(price).dropna()
+    if p.empty:
+        return
+    s_sup = _coerce_1d_series(sup).reindex(p.index).ffill().bfill()
+    s_res = _coerce_1d_series(res).reindex(p.index).ffill().bfill()
+    s_ntd = _coerce_1d_series(ntd).reindex(p.index)
+
+    t = p.index[-1]
+    if not (t in s_sup.index and t in s_res.index and t in s_ntd.index):
+        return
+    c0 = float(p.iloc[-1])
+    c1 = float(p.iloc[-2]) if len(p) >= 2 else np.nan
+    S0 = float(s_sup.loc[t]) if pd.notna(s_sup.loc[t]) else np.nan
+    R0 = float(s_res.loc[t]) if pd.notna(s_res.loc[t]) else np.nan
+    ntd0 = float(s_ntd.loc[t]) if pd.notna(s_ntd.loc[t]) else np.nan
+    if not np.all(np.isfinite([c0, S0, R0, ntd0])):
+        return
+
+    near_support = c0 <= S0 * (1.0 + prox)
+    near_resist  = c0 >= R0 * (1.0 - prox)
+
+    toward_res = toward_sup = False
+    if np.isfinite(c1):
+        toward_res = (R0 - c0) < (R0 - c1)
+        toward_sup = (c0 - S0) < (c1 - S0)
+
+    buy_cond  = (trend_slope > 0) and near_support and _n_consecutive_increasing(p, bars_confirm) and toward_res
+    sell_cond = (trend_slope < 0) and near_resist  and _n_consecutive_decreasing(p, bars_confirm) and toward_sup
+
+    if buy_cond:
+        ax.scatter([t], [ntd0], marker="*", s=170, color="tab:green", zorder=12, label="BUY ★ (Support reversal)")
+    if sell_cond:
+        ax.scatter([t], [ntd0], marker="*", s=170, color="tab:red", zorder=12, label="SELL ★ (Resistance reversal)")
 # =========================
 # Part 6/10 — bullbear.py
 # =========================
@@ -1646,8 +1678,6 @@ def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
         return float(ntd.iloc[-1]), ntd.index[-1]
     except Exception:
         return np.nan, None
-
-
 # =========================
 # Part 7/10 — bullbear.py
 # =========================
@@ -1740,56 +1770,6 @@ def last_band_bounce_signal_hourly(symbol: str, period: str, slope_lb: int):
             "Side": sig.get("side", ""),
             "Bars Since": bars_since,
             "Signal Time": ts,
-            "Signal Price": spx,
-            "Current Price": curr,
-            "DeltaPct": dlt,
-            "Slope": float(m) if np.isfinite(m) else np.nan,
-            "R2": float(r2) if np.isfinite(r2) else np.nan,
-        }
-    except Exception:
-        return None
-
-# ---------------------------
-# NEW (THIS REQUEST): Daily ±2σ band reversal helper (uses current Daily View)
-# ---------------------------
-@st.cache_data(ttl=120)
-def last_daily_sigma_band_reversal_in_view(symbol: str, daily_view_label: str, slope_lb: int):
-    """
-    Returns most recent band-bounce signal for the DAILY view subset:
-      - Up-slope => BUY when price re-enters band after being below -2σ
-      - Down-slope => SELL when price re-enters band after being above +2σ
-    """
-    try:
-        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
-        if close_full.empty:
-            return None
-
-        close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
-        if close_show.empty or len(close_show) < 5:
-            return None
-
-        yhat, up, lo, m, r2 = regression_with_band(close_show, lookback=int(slope_lb))
-        sig = find_band_bounce_signal(close_show, up, lo, m)
-        if sig is None:
-            return None
-
-        t = sig.get("time", None)
-        if t is None or t not in close_show.index:
-            return None
-
-        loc = int(close_show.index.get_loc(t))
-        bars_since = int((len(close_show) - 1) - loc)
-
-        curr = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
-        spx = float(sig.get("price", np.nan))
-        dlt = (curr / spx - 1.0) if np.isfinite(curr) and np.isfinite(spx) and spx != 0 else np.nan
-
-        return {
-            "Symbol": symbol,
-            "Daily View": daily_view_label,
-            "Side": sig.get("side", ""),
-            "Bars Since": bars_since,
-            "Signal Time": t,
             "Signal Price": spx,
             "Current Price": curr,
             "DeltaPct": dlt,
@@ -1934,61 +1914,6 @@ def last_daily_npx_zero_cross_with_local_slope(symbol: str,
             "NPX (last)": npx_last,
             "Zero-Eps": float(eps),
             "Slope LB": int(local_slope_lb),
-        }
-    except Exception:
-        return None
-
-# ---------------------------
-# NEW (THIS REQUEST): Confirmed Fib 0%/100% reversal trigger scanner helper (Daily View)
-# ---------------------------
-@st.cache_data(ttl=120)
-def last_daily_fib_confirmed_reversal(symbol: str,
-                                      daily_view_label: str,
-                                      proximity_pct_of_range: float = 0.02,
-                                      confirm_bars: int = 2,
-                                      lookback_bars: int = 90):
-    """
-    Returns the most recent CONFIRMED fib reversal trigger (Daily View subset):
-      - BUY from 100% (low)  => consecutive higher closes after touch near low
-      - SELL from 0%  (high) => consecutive lower closes after touch near high
-    """
-    try:
-        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
-        if close_full.empty:
-            return None
-
-        close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
-        if close_show.empty or len(close_show) < 6:
-            return None
-
-        trig = fib_reversal_trigger_from_extremes(
-            close_show,
-            proximity_pct_of_range=float(proximity_pct_of_range),
-            confirm_bars=int(confirm_bars),
-            lookback_bars=int(lookback_bars),
-        )
-        if not isinstance(trig, dict):
-            return None
-
-        t_touch = trig.get("touch_time", None)
-        if t_touch is None or t_touch not in close_show.index:
-            return None
-
-        loc = int(close_show.index.get_loc(t_touch))
-        bars_since_touch = int((len(close_show) - 1) - loc)
-
-        last_px = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
-
-        return {
-            "Symbol": symbol,
-            "Daily View": daily_view_label,
-            "Side": trig.get("side", ""),
-            "From Level": trig.get("from_level", ""),
-            "Touch Time": t_touch,
-            "Touch Price": float(trig.get("touch_price", np.nan)),
-            "Bars Since Touch": bars_since_touch,
-            "Last Time": close_show.index[-1],
-            "Last Price": last_px,
         }
     except Exception:
         return None
@@ -2201,8 +2126,6 @@ def fib_extreme_reversal_watch(symbol: str,
         }
     except Exception:
         return None
-
-
 # =========================
 # Part 8/10 — bullbear.py
 # =========================
@@ -2535,15 +2458,13 @@ def render_hourly_views(sel: str,
         "trade_instruction": instr_txt,
         "fib_trigger": trig_disp,
     }
-
-
 # =========================
 # Part 9/10 — bullbear.py
 # =========================
 # ---------------------------
 # Tabs
 # ---------------------------
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -2553,9 +2474,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.t
     "Recent BUY Scanner",
     "NPX 0.5-Cross Scanner",
     "Daily Slope+BB Reversal Scanner",
-    "Fib 0%/100% Reversal Watchlist",
-    "±2σ Band Reversal Scanner",                    # NEW (THIS REQUEST)
-    "Fib 0%/100% Confirmed Reversals"               # NEW (THIS REQUEST)
+    "Fib 0%/100% Reversal Watchlist"  # NEW (THIS REQUEST)
 ])
 
 # ---------------------------
@@ -2927,8 +2846,6 @@ with tab1:
         }, index=st.session_state.fc_idx))
     else:
         st.info("Click **Run Forecast** to display charts and forecast.")
-
-
 # =========================
 # Part 10/10 — bullbear.py
 # =========================
@@ -3370,129 +3287,3 @@ with tab10:
                 else:
                     out0 = out0.sort_values(["Dist (% of range)", pcol], ascending=[True, False])
                     st.dataframe(out0.reset_index(drop=True), use_container_width=True)
-
-# ---------------------------
-# TAB 11: ±2σ Band Reversal Scanner (NEW)
-# ---------------------------
-with tab11:
-    st.header("±2σ Band Reversal Scanner (Daily)")
-    st.caption(
-        "Shows:\n"
-        "• **UP Slope** symbols that have **recently reversed from the LOWER -2σ band** (BUY bounce)\n"
-        "• **DOWN Slope** symbols that have **recently reversed from the UPPER +2σ band** (SELL bounce)\n"
-        "Uses the current **Daily view range** and the same ±2σ band-bounce logic as the charts."
-    )
-
-    c1, c2 = st.columns(2)
-    max_bars_sigma = c1.slider("Max bars since ±2σ reversal", 0, 60, 10, 1, key=f"sigma_max_bars_{mode}")
-    run_sigma = c2.button("Run ±2σ Reversal Scan", key=f"btn_run_sigma_scan_{mode}")
-
-    if run_sigma:
-        rows_up, rows_dn = [], []
-        for sym in universe:
-            r = last_daily_sigma_band_reversal_in_view(sym, daily_view_label=daily_view, slope_lb=slope_lb_daily)
-            if r is None:
-                continue
-            if int(r.get("Bars Since", 9999)) > int(max_bars_sigma):
-                continue
-
-            side = str(r.get("Side", "")).upper()
-            slope = float(r.get("Slope", np.nan)) if np.isfinite(r.get("Slope", np.nan)) else np.nan
-
-            if np.isfinite(slope) and slope > 0 and side == "BUY":
-                rows_up.append(r)
-            if np.isfinite(slope) and slope < 0 and side == "SELL":
-                rows_dn.append(r)
-
-        left, right = st.columns(2)
-
-        with left:
-            st.subheader("UP Slope + Lower -2σ Reversal (BUY)")
-            if not rows_up:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(rows_up)
-                out["Bars Since"] = out["Bars Since"].astype(int)
-                if "Slope" in out.columns:
-                    out["Slope"] = out["Slope"].astype(float)
-                if "R2" in out.columns:
-                    out["R2"] = out["R2"].astype(float)
-                out = out.sort_values(["Bars Since", "Slope"], ascending=[True, False])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-        with right:
-            st.subheader("DOWN Slope + Upper +2σ Reversal (SELL)")
-            if not rows_dn:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(rows_dn)
-                out["Bars Since"] = out["Bars Since"].astype(int)
-                if "Slope" in out.columns:
-                    out["Slope"] = out["Slope"].astype(float)
-                if "R2" in out.columns:
-                    out["R2"] = out["R2"].astype(float)
-                out = out.sort_values(["Bars Since", "Slope"], ascending=[True, True])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-# ---------------------------
-# TAB 12: Fib 0%/100% Confirmed Reversals (NEW)
-# ---------------------------
-with tab12:
-    st.header("Fib 0%/100% Confirmed Reversals (Daily)")
-    st.caption(
-        "Lists symbols where a **confirmed** Fibonacci reversal trigger occurred in the selected **Daily view range**:\n"
-        "• **BUY list:** reversed up from **100%** (low)\n"
-        "• **SELL list:** reversed down from **0%** (high)\n"
-        "Confirmation uses consecutive closes (same trigger definition used elsewhere)."
-    )
-
-    c1, c2, c3 = st.columns(3)
-    fibrev_prox = c1.slider("Touch proximity (as % of Fib range)", 0.005, 0.08, 0.02, 0.005, key=f"fibrev_prox_{mode}")
-    fibrev_bars = c2.slider("Max bars since touch", 0, 90, 20, 1, key=f"fibrev_maxbars_{mode}")
-    run_fibrev = c3.button("Run Confirmed Fib Reversal Scan", key=f"btn_run_fibrev_scan_{mode}")
-
-    if run_fibrev:
-        buy_rows, sell_rows = [], []
-        for sym in universe:
-            r = last_daily_fib_confirmed_reversal(
-                symbol=sym,
-                daily_view_label=daily_view,
-                proximity_pct_of_range=float(fibrev_prox),
-                confirm_bars=int(rev_bars_confirm),
-                lookback_bars=int(max(60, slope_lb_daily)),
-            )
-            if r is None:
-                continue
-            if int(r.get("Bars Since Touch", 9999)) > int(fibrev_bars):
-                continue
-
-            side = str(r.get("Side", "")).upper()
-            frm = str(r.get("From Level", ""))
-
-            if side == "BUY" and frm == "100%":
-                buy_rows.append(r)
-            if side == "SELL" and frm == "0%":
-                sell_rows.append(r)
-
-        left, right = st.columns(2)
-
-        with left:
-            st.subheader("Confirmed BUY — from 100% (Low)")
-            if not buy_rows:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(buy_rows)
-                out["Bars Since Touch"] = out["Bars Since Touch"].astype(int)
-                out = out.sort_values(["Bars Since Touch"], ascending=[True])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-        with right:
-            st.subheader("Confirmed SELL — from 0% (High)")
-            if not sell_rows:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(sell_rows)
-                out["Bars Since Touch"] = out["Bars Since Touch"].astype(int)
-                out = out.sort_values(["Bars Since Touch"], ascending=[True])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
