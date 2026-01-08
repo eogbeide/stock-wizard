@@ -3134,7 +3134,7 @@ def render_hourly_views(sel: str,
 # ---------------------------
 # Tabs
 # ---------------------------
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -3147,7 +3147,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "Daily Slope+BB Reversal Scanner",
     "Fib 0%/100% Reversal Watchlist",
     "Slope Direction Scan",
-    "Fib 0%/100% 99.9% Reversal (R²≥0.999)"
+    "Fib 0%/100% 99.9% Reversal (R²≥0.999)",
+    "Trendline Direction Lists"              # NEW (THIS REQUEST)
 ])
 
 # ---------------------------
@@ -3535,18 +3536,51 @@ with tab1:
                 hourly_instr_txt = out_h.get("trade_instruction", None)
                 hourly_fib_trig = out_h.get("fib_trigger", None)
 
+        # NEW (THIS REQUEST): Track the last time each instruction text changed (PST)
+        if "instr_daily_text" not in st.session_state:
+            st.session_state.instr_daily_text = None
+        if "instr_daily_updated_at" not in st.session_state:
+            st.session_state.instr_daily_updated_at = None
+        if "instr_hourly_text" not in st.session_state:
+            st.session_state.instr_hourly_text = None
+        if "instr_hourly_updated_at" not in st.session_state:
+            st.session_state.instr_hourly_updated_at = None
+
+        now_pst = datetime.now(PACIFIC)
+
+        if isinstance(daily_instr_txt, str) and daily_instr_txt.strip():
+            if st.session_state.get("instr_daily_text") != daily_instr_txt:
+                st.session_state.instr_daily_text = daily_instr_txt
+                st.session_state.instr_daily_updated_at = now_pst
+
+        if isinstance(hourly_instr_txt, str) and hourly_instr_txt.strip():
+            if st.session_state.get("instr_hourly_text") != hourly_instr_txt:
+                st.session_state.instr_hourly_text = hourly_instr_txt
+                st.session_state.instr_hourly_updated_at = now_pst
+
+        def _ts_str(dt_obj):
+            if isinstance(dt_obj, datetime):
+                try:
+                    d = dt_obj.astimezone(PACIFIC)
+                except Exception:
+                    d = dt_obj
+                return f"{d.strftime('%Y-%m-%d %H:%M:%S')} PST"
+            return "n/a"
+
         with trade_instruction_box.container():
             if isinstance(daily_instr_txt, str) and daily_instr_txt.strip():
+                daily_msg = f"Daily (updated {_ts_str(st.session_state.get('instr_daily_updated_at'))}): {daily_instr_txt}"
                 if daily_instr_txt.startswith("ALERT:"):
-                    st.error(f"Daily: {daily_instr_txt}")
+                    st.error(daily_msg)
                 else:
-                    st.success(f"Daily: {daily_instr_txt}")
+                    st.success(daily_msg)
 
             if isinstance(hourly_instr_txt, str) and hourly_instr_txt.strip():
+                hourly_msg = f"Hourly (updated {_ts_str(st.session_state.get('instr_hourly_updated_at'))}): {hourly_instr_txt}"
                 if hourly_instr_txt.startswith("ALERT:"):
-                    st.error(f"Hourly: {hourly_instr_txt}")
+                    st.error(hourly_msg)
                 else:
-                    st.success(f"Hourly: {hourly_instr_txt}")
+                    st.success(hourly_msg)
 
             if isinstance(daily_fib_trig, dict):
                 st.info(
@@ -4216,3 +4250,46 @@ with tab13:
                 else:
                     out0 = out0.sort_values(["R2 (now)", "Slope (now)"], ascending=[False, True])
                     st.dataframe(out0.reset_index(drop=True), use_container_width=True)
+
+# ---------------------------
+# TAB 14: Trendline Direction Lists (NEW)
+# ---------------------------
+with tab14:
+    st.header("Trendline Direction Lists")
+    st.caption(
+        "Displays symbols whose **current DAILY chart-area global trendline** is:\n"
+        "• **Upward** (green dashed global trendline)\n"
+        "• **Downward** (red dashed global trendline)\n\n"
+        "Uses the selected Daily view range."
+    )
+
+    run_trend_lists = st.button("Run Trendline Direction Lists", key=f"btn_run_trendline_lists_{mode}")
+
+    if run_trend_lists:
+        up_syms, dn_syms = [], []
+        for sym in universe:
+            m, r2, ts = daily_global_slope(sym, daily_view_label=daily_view)
+            if not np.isfinite(m):
+                continue
+            if float(m) >= 0.0:
+                up_syms.append(sym)
+            else:
+                dn_syms.append(sym)
+
+        left, right = st.columns(2)
+
+        with left:
+            st.subheader("Upward Trend (Green dashed)")
+            if not up_syms:
+                st.info("No matches.")
+            else:
+                st.dataframe(pd.DataFrame({"Symbol": sorted(up_syms)}), use_container_width=True)
+
+        with right:
+            st.subheader("Downward Trend (Red dashed)")
+            if not dn_syms:
+                st.info("No matches.")
+            else:
+                st.dataframe(pd.DataFrame({"Symbol": sorted(dn_syms)}), use_container_width=True)
+    else:
+        st.info("Click **Run Trendline Direction Lists** to scan the current universe.")
