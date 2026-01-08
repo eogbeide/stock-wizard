@@ -294,6 +294,8 @@ def format_trade_instruction(trend_slope: float,
         return text
 
     return alert_txt
+
+
 # =========================
 # Part 2/10 — bullbear.py
 # =========================
@@ -690,6 +692,8 @@ def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
     R1 = 2 * P - L; S1 = 2 * P - H
     R2 = P + (H - L); S2 = P - (H - L)
     return {"P": P, "R1": R1, "S1": S1, "R2": R2, "S2": S2}
+
+
 # =========================
 # Part 3/10 — bullbear.py
 # =========================
@@ -1018,6 +1022,8 @@ def annotate_slope_trigger(ax, trig: dict):
         va="bottom" if side == "BUY" else "top",
         zorder=10
     )
+
+
 # =========================
 # Part 4/10 — bullbear.py
 # =========================
@@ -1326,6 +1332,8 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     pctb = ((s - lower) / width).clip(0.0, 1.0)
     nbb = pctb * 2.0 - 1.0
     return (mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index))
+
+
 # =========================
 # Part 5/10 — bullbear.py
 # =========================
@@ -1895,6 +1903,8 @@ def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
         return float(ntd.iloc[-1]), ntd.index[-1]
     except Exception:
         return np.nan, None
+
+
 # =========================
 # Part 7/10 — bullbear.py
 # =========================
@@ -2721,6 +2731,8 @@ def fib_extreme_confirmed_reversal_999(symbol: str,
         }
     except Exception:
         return None
+
+
 # =========================
 # Part 8/10 — bullbear.py
 # =========================
@@ -2802,10 +2814,12 @@ def render_hourly_views(sel: str,
             2, 1, sharex=True, figsize=(14, 7),
             gridspec_kw={"height_ratios": [3.2, 1.3]}
         )
-        plt.subplots_adjust(hspace=0.05, top=0.90, right=0.93, bottom=0.22)
+        # UPDATED (THIS REQUEST): more bottom room for legend below chart
+        plt.subplots_adjust(hspace=0.05, top=0.90, right=0.93, bottom=0.30)
     else:
         fig2, ax2 = plt.subplots(figsize=(14, 4))
-        plt.subplots_adjust(top=0.85, right=0.93, bottom=0.24)
+        # UPDATED (THIS REQUEST): more bottom room for legend below chart
+        plt.subplots_adjust(top=0.85, right=0.93, bottom=0.30)
 
     ax2.plot(hc.index, hc, label="Intraday")
     ax2.plot(he.index, he.values, "--", label="20 EMA")
@@ -3036,25 +3050,40 @@ def render_hourly_views(sel: str,
         ax2w.axhline(0.75, linestyle="-", linewidth=1.0, color="black", label="+0.75")
         ax2w.axhline(-0.75, linestyle="-", linewidth=1.0, color="black", label="-0.75")
         ax2w.set_ylim(-1.1, 1.1)
-        ax2w.legend(loc="lower left", framealpha=0.5, fontsize=9)
         ax2w.set_xlabel("Time (PST)")
     else:
         ax2.set_xlabel("Time (PST)")
 
-    ax2.legend(loc="lower left", framealpha=0.5, fontsize=9)
-
+    # UPDATED (THIS REQUEST): move legends below chart (outside plot area) using a single figure legend
+    handles, labels = [], []
+    h1, l1 = ax2.get_legend_handles_labels()
+    handles += h1; labels += l1
+    if ax2w is not None:
+        h2, l2 = ax2w.get_legend_handles_labels()
+        handles += h2; labels += l2
     if session_handles and session_labels:
-        fig2.legend(
-            handles=session_handles,
-            labels=session_labels,
-            loc="lower center",
-            bbox_to_anchor=(0.5, 0.01),
-            ncol=2,
-            frameon=True,
-            fontsize=9,
-            title="Sessions (PST)",
-            title_fontsize=9
-        )
+        handles += list(session_handles)
+        labels += list(session_labels)
+
+    seen = set()
+    h_u, l_u = [], []
+    for h, l in zip(handles, labels):
+        if not l or l in seen:
+            continue
+        seen.add(l)
+        h_u.append(h)
+        l_u.append(l)
+
+    fig2.legend(
+        handles=h_u,
+        labels=l_u,
+        loc="lower center",
+        bbox_to_anchor=(0.5, 0.01),
+        ncol=4,
+        frameon=True,
+        fontsize=9,
+        framealpha=0.5
+    )
 
     if isinstance(real_times, pd.DatetimeIndex):
         _apply_compact_time_ticks(ax2w if ax2w is not None else ax2, real_times, n_ticks=8)
@@ -3067,12 +3096,14 @@ def render_hourly_views(sel: str,
 
     if show_macd and not macd_h.dropna().empty:
         figm, axm = plt.subplots(figsize=(14, 2.6))
+        # UPDATED (THIS REQUEST): more bottom room for legend below chart
+        figm.subplots_adjust(top=0.88, bottom=0.35)
         axm.set_title("MACD (optional)")
         axm.plot(macd_h.index, macd_h.values, linewidth=1.4, label="MACD")
         axm.plot(macd_sig_h.index, macd_sig_h.values, linewidth=1.2, label="Signal")
         axm.axhline(0.0, linestyle="--", linewidth=1.0, color="black")
         axm.set_xlim(xlim_price)
-        axm.legend(loc="lower left", framealpha=0.5, fontsize=9)
+        axm.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=3, framealpha=0.5, fontsize=9)
         if isinstance(real_times, pd.DatetimeIndex):
             _apply_compact_time_ticks(axm, real_times, n_ticks=8)
         style_axes(axm)
@@ -3095,6 +3126,8 @@ def render_hourly_views(sel: str,
         "trade_instruction": instr_txt,
         "fib_trigger": trig_disp,
     }
+
+
 # =========================
 # Part 9/10 — bullbear.py
 # =========================
@@ -3246,7 +3279,8 @@ with tab1:
                 2, 1, sharex=True, figsize=(14, 8),
                 gridspec_kw={"height_ratios": [3.2, 1.3]}
             )
-            plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93)
+            # UPDATED (THIS REQUEST): more bottom room for legend below chart
+            plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93, bottom=0.26)
 
             rev_txt_d = fmt_pct(rev_prob_d) if np.isfinite(rev_prob_d) else "n/a"
             ax.set_title(
@@ -3406,7 +3440,6 @@ with tab1:
                     transform=ax.transAxes, ha="center", va="bottom",
                     fontsize=9, color="black",
                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-            ax.legend(loc="lower left", framealpha=0.5, fontsize=9)
 
             axdw.set_title(f"Daily Indicator Panel — NTD + NPX + Trend (S/R w={sr_lb_daily})")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
@@ -3435,7 +3468,33 @@ with tab1:
 
             axdw.set_ylim(-1.1, 1.1)
             axdw.set_xlabel("Date (PST)")
-            axdw.legend(loc="lower left", framealpha=0.5, fontsize=9)
+
+            # UPDATED (THIS REQUEST): move legends below chart (outside plot area) using a single figure legend
+            handles, labels = [], []
+            h1, l1 = ax.get_legend_handles_labels()
+            handles += h1; labels += l1
+            h2, l2 = axdw.get_legend_handles_labels()
+            handles += h2; labels += l2
+
+            seen = set()
+            h_u, l_u = [], []
+            for h, l in zip(handles, labels):
+                if not l or l in seen:
+                    continue
+                seen.add(l)
+                h_u.append(h)
+                l_u.append(l)
+
+            fig.legend(
+                handles=h_u,
+                labels=l_u,
+                loc="lower center",
+                bbox_to_anchor=(0.5, 0.01),
+                ncol=4,
+                frameon=True,
+                fontsize=9,
+                framealpha=0.5
+            )
 
             style_axes(ax)
             style_axes(axdw)
@@ -3443,11 +3502,13 @@ with tab1:
 
             if show_macd and not macd_d.dropna().empty:
                 figm, axm = plt.subplots(figsize=(14, 2.6))
+                # UPDATED (THIS REQUEST): more bottom room for legend below chart
+                figm.subplots_adjust(top=0.88, bottom=0.35)
                 axm.set_title("MACD (optional)")
                 axm.plot(macd_d.index, macd_d.values, linewidth=1.4, label="MACD")
                 axm.plot(macd_sig_d.index, macd_sig_d.values, linewidth=1.2, label="Signal")
                 axm.axhline(0.0, linestyle="--", linewidth=1.0, color="black")
-                axm.legend(loc="lower left", framealpha=0.5, fontsize=9)
+                axm.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=3, framealpha=0.5, fontsize=9)
                 style_axes(axm)
                 st.pyplot(figm)
 
@@ -3522,6 +3583,8 @@ with tab1:
         }, index=st.session_state.fc_idx))
     else:
         st.info("Click **Run Forecast** to display charts and forecast.")
+
+
 # =========================
 # Part 10/10 — bullbear.py
 # =========================
@@ -3550,6 +3613,8 @@ with tab2:
             macd_d, macd_sig_d, _ = compute_macd(df_show)
 
             fig, ax = plt.subplots(figsize=(14, 5))
+            # UPDATED (THIS REQUEST): more bottom room for legend below chart
+            fig.subplots_adjust(bottom=0.25)
             ax.set_title(f"{st.session_state.ticker} Daily (Enhanced) — {daily_view}")
             ax.plot(df_show.index, df_show.values, label="History")
             global_m_d = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
@@ -3593,17 +3658,20 @@ with tab2:
                     fontsize=10, fontweight="bold",
                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.8))
 
-            ax.legend(loc="lower left", framealpha=0.5, fontsize=9)
+            # UPDATED (THIS REQUEST): legend below chart (outside plot area)
+            ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=4, framealpha=0.5, fontsize=9)
             style_axes(ax)
             st.pyplot(fig)
 
             if show_macd and not macd_d.dropna().empty:
                 figm, axm = plt.subplots(figsize=(14, 2.6))
+                # UPDATED (THIS REQUEST): more bottom room for legend below chart
+                figm.subplots_adjust(top=0.88, bottom=0.35)
                 axm.set_title("MACD (optional)")
                 axm.plot(macd_d.index, macd_d.values, linewidth=1.4, label="MACD")
                 axm.plot(macd_sig_d.index, macd_sig_d.values, linewidth=1.2, label="Signal")
                 axm.axhline(0.0, linestyle="--", linewidth=1.0, color="black")
-                axm.legend(loc="lower left", framealpha=0.5, fontsize=9)
+                axm.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=3, framealpha=0.5, fontsize=9)
                 style_axes(axm)
                 st.pyplot(figm)
 
@@ -3644,10 +3712,13 @@ with tab3:
         ret = (float(s.iloc[-1]) / float(s.iloc[0]) - 1.0) if len(s) > 1 else np.nan
         st.metric(label=f"{sel_bb} return over {bb_period}", value=fmt_pct(ret))
         fig, ax = plt.subplots(figsize=(14, 4))
+        # UPDATED (THIS REQUEST): more bottom room for legend below chart
+        fig.subplots_adjust(bottom=0.25)
         ax.set_title(f"{sel_bb} — {bb_period} Close")
         ax.plot(s.index, s.values, label="Close")
         draw_trend_direction_line(ax, s, label_prefix="Trend (global)")
-        ax.legend(loc="lower left", framealpha=0.5, fontsize=9)
+        # UPDATED (THIS REQUEST): legend below chart (outside plot area)
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=4, framealpha=0.5, fontsize=9)
         style_axes(ax)
         st.pyplot(fig)
 
@@ -3728,10 +3799,13 @@ with tab6:
         st.warning("No long-term history available.")
     else:
         fig, ax = plt.subplots(figsize=(14, 4))
+        # UPDATED (THIS REQUEST): more bottom room for legend below chart
+        fig.subplots_adjust(bottom=0.25)
         ax.set_title(f"{sel_lt} — Max History")
         ax.plot(smax.index, smax.values, label="Close")
         draw_trend_direction_line(ax, smax, label_prefix="Trend (global)")
-        ax.legend(loc="lower left", framealpha=0.5, fontsize=9)
+        # UPDATED (THIS REQUEST): legend below chart (outside plot area)
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=4, framealpha=0.5, fontsize=9)
         style_axes(ax)
         st.pyplot(fig)
 
