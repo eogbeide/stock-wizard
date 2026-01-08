@@ -1792,6 +1792,74 @@ def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
     except Exception:
         return np.nan, None
 
+# ---------------------------
+# NEW (THIS REQUEST): NTX (Norm Price) scan helpers
+#   NTX = normalized price (uses existing compute_normalized_price / NPX)
+# ---------------------------
+@st.cache_data(ttl=120)
+def ntx_scan_info_daily(symbol: str, daily_view_label: str, ntx_win: int, slope_lb: int):
+    try:
+        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        if close_full.empty:
+            return None
+
+        close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
+        if len(close_show) < max(20, int(slope_lb)):
+            return None
+
+        x = np.arange(len(close_show), dtype=float)
+        m_global, _ = np.polyfit(x, close_show.to_numpy(dtype=float), 1)
+
+        _, _, _, m_reg, r2 = regression_with_band(close_show, lookback=int(slope_lb))
+
+        ntx = compute_normalized_price(close_show, window=int(ntx_win)).dropna()
+        ntx_last = float(ntx.iloc[-1]) if len(ntx) else np.nan
+
+        return {
+            "Symbol": symbol,
+            "Frame": "Daily",
+            "NTX": ntx_last,
+            "Time": close_show.index[-1],
+            "Global Slope": float(m_global) if np.isfinite(m_global) else np.nan,
+            "Regression Slope": float(m_reg) if np.isfinite(m_reg) else np.nan,
+            "R2": float(r2) if np.isfinite(r2) else np.nan,
+        }
+    except Exception:
+        return None
+
+@st.cache_data(ttl=120)
+def ntx_scan_info_hourly(symbol: str, period: str, ntx_win: int, slope_lb: int):
+    try:
+        df = fetch_intraday(symbol, period=period)
+        if df is None or df.empty or "Close" not in df.columns:
+            return None
+
+        close = _coerce_1d_series(df["Close"]).ffill().dropna()
+        if len(close) < max(20, int(slope_lb)):
+            return None
+
+        x = np.arange(len(close), dtype=float)
+        m_global, _ = np.polyfit(x, close.to_numpy(dtype=float), 1)
+
+        _, _, _, m_reg, r2 = regression_with_band(close, lookback=int(slope_lb))
+
+        ntx = compute_normalized_price(close, window=int(ntx_win)).dropna()
+        ntx_last = float(ntx.iloc[-1]) if len(ntx) else np.nan
+
+        t_last = df.index[-1] if isinstance(df.index, pd.DatetimeIndex) and len(df.index) else None
+
+        return {
+            "Symbol": symbol,
+            "Frame": f"Hourly ({period})",
+            "NTX": ntx_last,
+            "Time": t_last,
+            "Global Slope": float(m_global) if np.isfinite(m_global) else np.nan,
+            "Regression Slope": float(m_reg) if np.isfinite(m_reg) else np.nan,
+            "R2": float(r2) if np.isfinite(r2) else np.nan,
+        }
+    except Exception:
+        return None
+
 
 # =========================
 # Part 7/10 — bullbear.py
@@ -1971,7 +2039,6 @@ def last_daily_npx_zero_cross_with_local_slope(symbol: str,
         npx_full = compute_normalized_price(close_full, window=ntd_win)
         npx_show = _coerce_1d_series(npx_full).reindex(close_show.index)
 
-        # UPDATED (prior request): use 0.5 cross level instead of 0.0
         level = 0.5
 
         prev = npx_show.shift(1)
@@ -2033,9 +2100,6 @@ def last_daily_npx_zero_cross_with_local_slope(symbol: str,
     except Exception:
         return None
 
-# ---------------------------
-# Daily Slope + Support/Resistance reversal + BB mid cross scanner (R²>=0.99)
-# ---------------------------
 @st.cache_data(ttl=120)
 def last_daily_sr_reversal_bbmid(symbol: str,
                                  daily_view_label: str,
@@ -2049,18 +2113,6 @@ def last_daily_sr_reversal_bbmid(symbol: str,
                                  horizon: int,
                                  side: str = "BUY",
                                  min_r2: float = 0.99):
-    """
-    BUY:
-      - regression slope (lookback) > 0 and R² >= min_r2
-      - touched Support within last `horizon` bars before BB mid cross UP
-      - BB mid cross UP occurs after touch
-      - confirms reversal via consecutive increasing closes
-    SELL:
-      - regression slope (lookback) < 0 and R² >= min_r2
-      - touched Resistance within last `horizon` bars before BB mid cross DOWN
-      - BB mid cross DOWN occurs after touch
-      - confirms reversal via consecutive decreasing closes
-    """
     try:
         close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
         if close_full.empty:
@@ -2156,9 +2208,6 @@ def last_daily_sr_reversal_bbmid(symbol: str,
     except Exception:
         return None
 
-# ---------------------------
-# NEW (THIS REQUEST): Fib 0%/100% proximity + reversal-chance helper
-# ---------------------------
 @st.cache_data(ttl=120)
 def fib_extreme_reversal_watch(symbol: str,
                                daily_view_label: str,
@@ -2169,12 +2218,6 @@ def fib_extreme_reversal_watch(symbol: str,
                                proximity_pct_of_range: float = 0.02,
                                confirm_bars: int = 2,
                                lookback_bars_for_trigger: int = 90):
-    """
-    Returns a dict when symbol is close to Fib 0% or 100% (daily), including:
-      - distance to extreme (as % of fib range)
-      - slope reversal probability estimate
-      - confirmed fib reversal trigger (if present)
-    """
     try:
         close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
         if close_full.empty:
@@ -2208,7 +2251,6 @@ def fib_extreme_reversal_watch(symbol: str,
         if not (near0 or near100):
             return None
 
-        # slope + reversal probability (uses same regression slope as charts)
         yhat, up, lo_band, m, r2 = regression_with_band(close_show, lookback=int(slope_lb))
         rev_prob = slope_reversal_probability(
             close_show, m,
@@ -2242,14 +2284,8 @@ def fib_extreme_reversal_watch(symbol: str,
     except Exception:
         return None
 
-# ---------------------------
-# NEW (THIS REQUEST): Daily slope direction helper for new tab
-# ---------------------------
 @st.cache_data(ttl=120)
 def daily_global_slope(symbol: str, daily_view_label: str):
-    """
-    Returns (slope, r2, last_time) for the DAILY global trendline in the selected Daily view range.
-    """
     try:
         close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
         if close_full.empty:
@@ -2268,9 +2304,6 @@ def daily_global_slope(symbol: str, daily_view_label: str):
     except Exception:
         return np.nan, np.nan, None
 
-# ---------------------------
-# NEW (THIS REQUEST): Fib 0%/100% "99.9% confidence" (R²≥0.999) confirmed reversal list helper
-# ---------------------------
 @st.cache_data(ttl=120)
 def fib_extreme_confirmed_reversal_999(symbol: str,
                                        daily_view_label: str,
@@ -2279,12 +2312,6 @@ def fib_extreme_confirmed_reversal_999(symbol: str,
                                        lookback_bars_for_trigger: int,
                                        proximity_pct_of_range: float = 0.02,
                                        min_r2: float = 0.999):
-    """
-    Returns a dict only when:
-      - a CONFIRMED Fib reversal trigger exists (touch + consecutive closes)
-      - regression R² over slope_lb is >= min_r2 (99.9% "confidence")
-      - regression slope has reversed sign from the touch-window slope (successful reversal)
-    """
     try:
         close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
         if close_full.empty:
@@ -2315,7 +2342,6 @@ def fib_extreme_confirmed_reversal_999(symbol: str,
         if (not want_up) and float(m_now) >= 0.0:
             return None
 
-        # slope at touch (lookback window ending at touch)
         t_touch = trig.get("touch_time", None)
         if t_touch is None or t_touch not in close_show.index:
             return None
@@ -2331,7 +2357,7 @@ def fib_extreme_confirmed_reversal_999(symbol: str,
         if np.sign(m_touch) == 0.0 or np.sign(m_now) == 0.0:
             return None
         if np.sign(m_touch) == np.sign(m_now):
-            return None  # not a successful slope reversal
+            return None
 
         last_px = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
 
@@ -2496,7 +2522,6 @@ def render_hourly_views(sel: str,
         if news_pos:
             draw_news_markers(ax2, news_pos, label="News")
 
-    # UPDATED (THIS REQUEST): move Buy/Sell instruction off the chart title
     instr_txt = format_trade_instruction(
         trend_slope=slope_sig_h,
         buy_val=sup_val,
@@ -2570,7 +2595,6 @@ def render_hourly_views(sel: str,
         }
         session_handles, session_labels = draw_session_lines(ax2, sess_pos)
 
-    # Fibonacci (applies to hourly; sidebar now says "Show Fibonacci")
     if show_fibs and not hc.empty:
         fibs_h = fibonacci_levels(hc)
         for lbl, y in fibs_h.items():
@@ -2578,7 +2602,6 @@ def render_hourly_views(sel: str,
         for lbl, y in fibs_h.items():
             ax2.text(hc.index[-1], y, f" {lbl}", va="center")
 
-    # NEW (THIS REQUEST): Write "Reverse Possible" when regression slope has successfully reversed at Fib 0%/100%
     fib_trig_chart = fib_reversal_trigger_from_extremes(
         hc,
         proximity_pct_of_range=0.02,
@@ -2697,7 +2720,6 @@ def render_hourly_views(sel: str,
         style_axes(axm)
         st.pyplot(figm)
 
-    # NEW (THIS REQUEST): return values so Tab 1 can show instructions below Run Forecast
     trig_disp = None
     if isinstance(fib_trig_chart, dict):
         trig_disp = dict(fib_trig_chart)
@@ -2727,7 +2749,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.t
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
-    "NTD -0.75 Scanner",
+    "NTX Scanner",
     "Long-Term History",
     "Recent BUY Scanner",
     "NPX 0.5-Cross Scanner",
@@ -2758,7 +2780,6 @@ with tab1:
 
     run_clicked = st.button("Run Forecast", key=f"btn_run_forecast_{mode}")
 
-    # NEW (THIS REQUEST): instruction placeholders directly below Run Forecast button
     fib_instruction_box = st.empty()
     trade_instruction_box = st.empty()
 
@@ -2798,7 +2819,6 @@ with tab1:
         if mode == "Forex" and show_fx_news:
             fx_news = fetch_yf_news(disp_ticker, window_days=news_window_days)
 
-        # NEW (THIS REQUEST): Always show the new Fib ALERT + trigger definition below the Run Forecast button
         with fib_instruction_box.container():
             st.warning(FIB_ALERT_TEXT)
             st.caption(
@@ -2807,7 +2827,6 @@ with tab1:
                 "SELL when price touches near the **0%** line then prints consecutive lower closes."
             )
 
-        # We'll collect instructions (Daily/Hourly) and render them below the Run Forecast button
         daily_instr_txt = None
         hourly_instr_txt = None
         daily_fib_trig = None
@@ -2950,7 +2969,6 @@ with tab1:
                 for lbl, y in piv.items():
                     ax.text(x1, y, f" {lbl} = {fmt_price_val(y)}", va="center")
 
-            # Fibonacci lines on DAILY chart by default (same style as hourly)
             if show_fibs and len(df_show) > 0:
                 fibs_d = fibonacci_levels(df_show)
                 if fibs_d:
@@ -2960,7 +2978,6 @@ with tab1:
                     for lbl, y in fibs_d.items():
                         ax.text(x1, y, f" {lbl}", va="center")
 
-            # NEW (THIS REQUEST): Write "Reverse Possible" when regression slope has successfully reversed at Fib 0%/100%
             daily_fib_trig = fib_reversal_trigger_from_extremes(
                 df_show,
                 proximity_pct_of_range=0.02,
@@ -3061,7 +3078,6 @@ with tab1:
                 style_axes(axm)
                 st.pyplot(figm)
 
-            # compute Daily instruction for below-button display
             daily_instr_txt = format_trade_instruction(
                 trend_slope=m_d,
                 buy_val=sup_val_d,
@@ -3085,7 +3101,6 @@ with tab1:
                 hourly_instr_txt = out_h.get("trade_instruction", None)
                 hourly_fib_trig = out_h.get("fib_trigger", None)
 
-        # show Buy/Sell instruction(s) below the Run Forecast button
         with trade_instruction_box.container():
             if isinstance(daily_instr_txt, str) and daily_instr_txt.strip():
                 if daily_instr_txt.startswith("ALERT:"):
@@ -3099,7 +3114,6 @@ with tab1:
                 else:
                     st.success(f"Hourly: {hourly_instr_txt}")
 
-            # show confirmed Fib reversal trigger(s) from 0%/100%
             if isinstance(daily_fib_trig, dict):
                 st.info(
                     f"Daily Fib Reversal Trigger: **{daily_fib_trig.get('side')}** "
@@ -3175,7 +3189,6 @@ with tab2:
                 ax.hlines(float(res_d_show.iloc[-1]), xmin=df_show.index[0], xmax=df_show.index[-1], colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance")
                 ax.hlines(float(sup_d_show.iloc[-1]), xmin=df_show.index[0], xmax=df_show.index[-1], colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
 
-            # Fibonacci lines on DAILY chart (Enhanced tab) by default too
             if show_fibs and len(df_show) > 0:
                 fibs_d = fibonacci_levels(df_show)
                 if fibs_d:
@@ -3285,34 +3298,100 @@ with tab4:
             })
 
 # ---------------------------
-# TAB 5: NTD -0.75 Scanner
+# TAB 5: NTX Scanner
 # ---------------------------
 with tab5:
-    st.header("NTD -0.75 Scanner")
-    st.caption("Lists symbols where the latest NTD is below -0.75 (using latest intraday for hourly; daily uses daily close).")
+    st.header("NTX Scanner")
+    st.caption(
+        "Shows two lists using **NTX (Norm Price)** = normalized price (NPX):\n"
+        "1) **Uptrend list:** NTX ≤ -0.50 / -0.75 while **global trendline slope > 0** and **regression slope > 0**\n"
+        "2) **Downtrend list:** NTX ≥ +0.50 / +0.75 while **global trendline slope < 0** and **regression slope < 0**"
+    )
 
     scan_frame = st.radio("Frame:", ["Hourly (intraday)", "Daily"], index=0, key=f"ntd_scan_frame_{mode}")
     run_scan = st.button("Run Scanner", key=f"btn_run_ntd_scan_{mode}")
 
+    def _bucket_ntx(v: float, side: str) -> str:
+        try:
+            vv = float(v)
+        except Exception:
+            return ""
+        if side == "UP":
+            return "<= -0.75" if vv <= -0.75 else "<= -0.50"
+        return ">= +0.75" if vv >= 0.75 else ">= +0.50"
+
     if run_scan:
-        rows = []
+        up_rows, dn_rows = [], []
+
         if scan_frame.startswith("Hourly"):
             period = "1d"
             for sym in universe:
-                val, ts = last_hourly_ntd_value(sym, ntd_window, period=period)
-                if np.isfinite(val) and val < -0.75:
-                    rows.append({"Symbol": sym, "NTD": float(val), "Time": ts})
+                info = ntx_scan_info_hourly(sym, period=period, ntx_win=ntd_window, slope_lb=slope_lb_hourly)
+                if not isinstance(info, dict):
+                    continue
+
+                ntx_v = info.get("NTX", np.nan)
+                m_g = info.get("Global Slope", np.nan)
+                m_r = info.get("Regression Slope", np.nan)
+
+                if not (np.isfinite(ntx_v) and np.isfinite(m_g) and np.isfinite(m_r)):
+                    continue
+
+                if (m_g > 0.0) and (m_r > 0.0) and (ntx_v <= -0.5):
+                    row = dict(info)
+                    row["NTX Bucket"] = _bucket_ntx(ntx_v, "UP")
+                    up_rows.append(row)
+
+                if (m_g < 0.0) and (m_r < 0.0) and (ntx_v >= 0.5):
+                    row = dict(info)
+                    row["NTX Bucket"] = _bucket_ntx(ntx_v, "DN")
+                    dn_rows.append(row)
+
         else:
             for sym in universe:
-                val, ts = last_daily_ntd_value(sym, ntd_window)
-                if np.isfinite(val) and val < -0.75:
-                    rows.append({"Symbol": sym, "NTD": float(val), "Time": ts})
+                info = ntx_scan_info_daily(sym, daily_view_label=daily_view, ntx_win=ntd_window, slope_lb=slope_lb_daily)
+                if not isinstance(info, dict):
+                    continue
 
-        if not rows:
+                ntx_v = info.get("NTX", np.nan)
+                m_g = info.get("Global Slope", np.nan)
+                m_r = info.get("Regression Slope", np.nan)
+
+                if not (np.isfinite(ntx_v) and np.isfinite(m_g) and np.isfinite(m_r)):
+                    continue
+
+                if (m_g > 0.0) and (m_r > 0.0) and (ntx_v <= -0.5):
+                    row = dict(info)
+                    row["NTX Bucket"] = _bucket_ntx(ntx_v, "UP")
+                    up_rows.append(row)
+
+                if (m_g < 0.0) and (m_r < 0.0) and (ntx_v >= 0.5):
+                    row = dict(info)
+                    row["NTX Bucket"] = _bucket_ntx(ntx_v, "DN")
+                    dn_rows.append(row)
+
+        if (not up_rows) and (not dn_rows):
             st.info("No matches.")
         else:
-            out = pd.DataFrame(rows).sort_values("NTD")
-            st.dataframe(out.reset_index(drop=True), use_container_width=True)
+            left, right = st.columns(2)
+
+            with left:
+                st.subheader("List 1 — Uptrend + NTX ≤ -0.50 / -0.75")
+                if not up_rows:
+                    st.info("No matches.")
+                else:
+                    out_up = pd.DataFrame(up_rows)
+                    out_up = out_up.sort_values(["NTX", "Regression Slope"], ascending=[True, False])
+                    st.dataframe(out_up.reset_index(drop=True), use_container_width=True)
+
+            with right:
+                st.subheader("List 2 — Downtrend + NTX ≥ +0.50 / +0.75")
+                if not dn_rows:
+                    st.info("No matches.")
+                else:
+                    out_dn = pd.DataFrame(dn_rows)
+                    out_dn = out_dn.sort_values(["NTX", "Regression Slope"], ascending=[False, True])
+                    st.dataframe(out_dn.reset_index(drop=True), use_container_width=True)
 
 # ---------------------------
 # TAB 6: LONG-TERM HISTORY
