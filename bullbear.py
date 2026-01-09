@@ -2732,6 +2732,119 @@ def fib_extreme_confirmed_reversal_999(symbol: str,
     except Exception:
         return None
 
+# ---------------------------
+# NEW (THIS REQUEST): Enhanced Forecast Buy/Sell scanner helper (Daily)
+# ---------------------------
+@st.cache_data(ttl=120)
+def enhanced_sr_buy_sell_candidate(symbol: str,
+                                   daily_view_label: str,
+                                   sr_lb: int,
+                                   prox_pct: float,
+                                   recent_bars: int = 3,
+                                   sr_slope_lb: int = 20):
+    """
+    For the 'Enhanced Forecast Buy and Sell' tab (Daily):
+
+    BUY LIST:
+      - Support line slope is UP (support_slope > 0)
+      - AND price is currently below/at/near Support OR crossed UP through Support within last 1-3 bars
+
+    SELL LIST:
+      - Resistance line slope is DOWN (resistance_slope < 0)
+      - AND price is currently above/at/near Resistance OR crossed DOWN through Resistance within last 1-3 bars
+
+    Returns dict with flags (Buy OK / Sell OK) or None if insufficient data.
+    """
+    try:
+        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        if close_full.empty:
+            return None
+
+        close = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
+        if close.empty or len(close) < max(5, int(sr_lb)):
+            return None
+
+        sup = close.rolling(int(sr_lb), min_periods=1).min()
+        res = close.rolling(int(sr_lb), min_periods=1).max()
+
+        c_last = float(close.iloc[-1]) if np.isfinite(close.iloc[-1]) else np.nan
+        s_last = float(sup.iloc[-1]) if np.isfinite(sup.iloc[-1]) else np.nan
+        r_last = float(res.iloc[-1]) if np.isfinite(res.iloc[-1]) else np.nan
+        if not np.all(np.isfinite([c_last, s_last, r_last])):
+            return None
+
+        def _slope_last(series: pd.Series, lb: int) -> float:
+            s = _coerce_1d_series(series).dropna()
+            if len(s) < 2:
+                return np.nan
+            lb = max(2, int(lb))
+            s = s.iloc[-lb:] if len(s) > lb else s
+            if len(s) < 2:
+                return np.nan
+            x = np.arange(len(s), dtype=float)
+            m, b = np.polyfit(x, s.to_numpy(dtype=float), 1)
+            return float(m) if np.isfinite(m) else np.nan
+
+        sup_slope = _slope_last(sup, sr_slope_lb)
+        res_slope = _slope_last(res, sr_slope_lb)
+
+        cross_up_sup, _ = _cross_series(close, sup)
+        cross_up_sup = cross_up_sup.reindex(close.index, fill_value=False)
+
+        _, cross_dn_res = _cross_series(close, res)
+        cross_dn_res = cross_dn_res.reindex(close.index, fill_value=False)
+
+        def _bars_since(t_cross):
+            if t_cross is None:
+                return None
+            try:
+                loc = int(close.index.get_loc(t_cross))
+                return int((len(close) - 1) - loc)
+            except Exception:
+                return None
+
+        t_cross_up_sup = cross_up_sup[cross_up_sup].index[-1] if cross_up_sup.any() else None
+        bs_cross_up_sup = _bars_since(t_cross_up_sup)
+
+        t_cross_dn_res = cross_dn_res[cross_dn_res].index[-1] if cross_dn_res.any() else None
+        bs_cross_dn_res = _bars_since(t_cross_dn_res)
+
+        prox = float(prox_pct)
+        buy_now = c_last <= s_last * (1.0 + prox)
+        sell_now = c_last >= r_last * (1.0 - prox)
+
+        recent_bars = max(1, int(recent_bars))
+        buy_cross_recent = (bs_cross_up_sup is not None) and (0 <= bs_cross_up_sup <= recent_bars)
+        sell_cross_recent = (bs_cross_dn_res is not None) and (0 <= bs_cross_dn_res <= recent_bars)
+
+        buy_ok = (np.isfinite(sup_slope) and sup_slope > 0.0) and (buy_now or buy_cross_recent)
+        sell_ok = (np.isfinite(res_slope) and res_slope < 0.0) and (sell_now or sell_cross_recent)
+
+        dist_sup_pct = (c_last / s_last - 1.0) if s_last != 0 else np.nan
+        dist_res_pct = (c_last / r_last - 1.0) if r_last != 0 else np.nan
+
+        return {
+            "Symbol": symbol,
+            "AsOf": close.index[-1],
+            "Close": c_last,
+            "Support": s_last,
+            "Support Slope": sup_slope,
+            "Dist vs Support": dist_sup_pct,
+            "Buy Now": bool(buy_now),
+            "Buy Cross Time": t_cross_up_sup,
+            "Buy Bars Since Cross": bs_cross_up_sup,
+            "Buy OK": bool(buy_ok),
+            "Resistance": r_last,
+            "Resistance Slope": res_slope,
+            "Dist vs Resistance": dist_res_pct,
+            "Sell Now": bool(sell_now),
+            "Sell Cross Time": t_cross_dn_res,
+            "Sell Bars Since Cross": bs_cross_dn_res,
+            "Sell OK": bool(sell_ok),
+        }
+    except Exception:
+        return None
+
 
 # =========================
 # Part 8/10 — bullbear.py
@@ -3155,7 +3268,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -3169,7 +3282,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "Fib 0%/100% Reversal Watchlist",
     "Slope Direction Scan",
     "Fib 0%/100% 99.9% Reversal (R²≥0.999)",
-    "Trendline Direction Lists"              # NEW (THIS REQUEST)
+    "Trendline Direction Lists",             # NEW (THIS REQUEST)
+    "Enhanced Forecast Buy and Sell"         # NEW (THIS REQUEST)
 ])
 
 # ---------------------------
@@ -4315,3 +4429,105 @@ with tab14:
     else:
         st.info("Click **Run Trendline Direction Lists** to scan the current universe.")
 
+# ---------------------------
+# TAB 15: Enhanced Forecast Buy and Sell (NEW)
+# ---------------------------
+with tab15:
+    st.header("Enhanced Forecast Buy and Sell")
+    st.caption(
+        "Daily scan based on the existing **Daily view range**, **Daily S/R window**, and **S/R proximity (%)**.\n\n"
+        "✅ **Buy List**: symbols where price is currently **below/at/near Support** OR **crossed UP through Support** in the last **1–3** bars, "
+        "**AND** the **Support line is sloping upward**.\n"
+        "✅ **Sell List**: symbols where price is currently **above/at/near Resistance** OR **crossed DOWN through Resistance** in the last **1–3** bars, "
+        "**AND** the **Resistance line is sloping downward**."
+    )
+
+    c1, c2 = st.columns(2)
+    recent_bars = c1.slider("Recent cross window (bars)", 1, 3, 3, 1, key=f"enh_buysell_recent_{mode}")
+    sr_slope_lb = c2.slider("S/R slope lookback (bars)", 5, 60, min(20, int(sr_lb_daily)), 5, key=f"enh_buysell_srslope_{mode}")
+
+    run_bs = st.button("Run Enhanced Buy/Sell Scan", key=f"btn_run_enh_buysell_{mode}")
+
+    if run_bs:
+        buy_rows, sell_rows = [], []
+
+        for sym in universe:
+            r = enhanced_sr_buy_sell_candidate(
+                symbol=sym,
+                daily_view_label=daily_view,
+                sr_lb=sr_lb_daily,
+                prox_pct=sr_prox_pct,
+                recent_bars=int(recent_bars),
+                sr_slope_lb=int(sr_slope_lb),
+            )
+            if not isinstance(r, dict):
+                continue
+
+            if bool(r.get("Buy OK", False)):
+                trig = "At/Below Support" if bool(r.get("Buy Now", False)) else "Crossed UP (≤3 bars)"
+                buy_rows.append({
+                    "Symbol": r.get("Symbol"),
+                    "AsOf": r.get("AsOf"),
+                    "Close": r.get("Close"),
+                    "Support": r.get("Support"),
+                    "Support Slope": r.get("Support Slope"),
+                    "Dist vs Support": r.get("Dist vs Support"),
+                    "Trigger": trig,
+                    "Bars Since Cross": r.get("Buy Bars Since Cross"),
+                    "Cross Time": r.get("Buy Cross Time"),
+                })
+
+            if bool(r.get("Sell OK", False)):
+                trig = "At/Above Resistance" if bool(r.get("Sell Now", False)) else "Crossed DOWN (≤3 bars)"
+                sell_rows.append({
+                    "Symbol": r.get("Symbol"),
+                    "AsOf": r.get("AsOf"),
+                    "Close": r.get("Close"),
+                    "Resistance": r.get("Resistance"),
+                    "Resistance Slope": r.get("Resistance Slope"),
+                    "Dist vs Resistance": r.get("Dist vs Resistance"),
+                    "Trigger": trig,
+                    "Bars Since Cross": r.get("Sell Bars Since Cross"),
+                    "Cross Time": r.get("Sell Cross Time"),
+                })
+
+        left, right = st.columns(2)
+
+        with left:
+            st.subheader("Buy List (Support slope UP)")
+            if not buy_rows:
+                st.info("No matches.")
+            else:
+                outb = pd.DataFrame(buy_rows)
+                if "Bars Since Cross" in outb.columns:
+                    outb["Bars Since Cross"] = pd.to_numeric(outb["Bars Since Cross"], errors="coerce")
+                if "Support Slope" in outb.columns:
+                    outb["Support Slope"] = pd.to_numeric(outb["Support Slope"], errors="coerce")
+                if "Dist vs Support" in outb.columns:
+                    outb["Dist vs Support"] = pd.to_numeric(outb["Dist vs Support"], errors="coerce")
+
+                # Sort: best = currently at/below support first, then most recent crosses, then closest distance
+                outb["_buy_now_rank"] = (outb["Trigger"] == "At/Below Support").astype(int)
+                outb["_bars_rank"] = outb["Bars Since Cross"].fillna(9999)
+                outb = outb.sort_values(["_buy_now_rank", "_bars_rank", "Dist vs Support"], ascending=[False, True, True]).drop(columns=["_buy_now_rank","_bars_rank"])
+                st.dataframe(outb.reset_index(drop=True), use_container_width=True)
+
+        with right:
+            st.subheader("Sell List (Resistance slope DOWN)")
+            if not sell_rows:
+                st.info("No matches.")
+            else:
+                outs = pd.DataFrame(sell_rows)
+                if "Bars Since Cross" in outs.columns:
+                    outs["Bars Since Cross"] = pd.to_numeric(outs["Bars Since Cross"], errors="coerce")
+                if "Resistance Slope" in outs.columns:
+                    outs["Resistance Slope"] = pd.to_numeric(outs["Resistance Slope"], errors="coerce")
+                if "Dist vs Resistance" in outs.columns:
+                    outs["Dist vs Resistance"] = pd.to_numeric(outs["Dist vs Resistance"], errors="coerce")
+
+                outs["_sell_now_rank"] = (outs["Trigger"] == "At/Above Resistance").astype(int)
+                outs["_bars_rank"] = outs["Bars Since Cross"].fillna(9999)
+                outs = outs.sort_values(["_sell_now_rank", "_bars_rank", "Dist vs Resistance"], ascending=[False, True, False]).drop(columns=["_sell_now_rank","_bars_rank"])
+                st.dataframe(outs.reset_index(drop=True), use_container_width=True)
+    else:
+        st.info("Click **Run Enhanced Buy/Sell Scan** to scan the current universe.")
