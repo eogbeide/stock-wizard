@@ -2146,6 +2146,418 @@ def last_daily_npx_zero_cross_with_local_slope(symbol: str,
         return None
 
 # ---------------------------
+# NEW (THIS REQUEST): Fib 0%/100% + NPX 0.0-cross (Up/Down) helpers
+# ---------------------------
+def _npx_zero_cross_masks(npx: pd.Series):
+    s = _coerce_1d_series(npx)
+    prev = s.shift(1)
+    cross_up0 = (s >= 0.0) & (prev < 0.0)
+    cross_dn0 = (s <= 0.0) & (prev > 0.0)
+    return cross_up0.fillna(False), cross_dn0.fillna(False)
+
+def _fib_npx_zero_signal_series(close: pd.Series,
+                                npx: pd.Series,
+                                prox: float,
+                                lookback_bars: int,
+                                slope_lb: int,
+                                npx_confirm_bars: int = 1):
+    """
+    UPDATED (THIS REQUEST): Fib signals align with SLOPE reversal + NPX direction.
+
+    FIB BUY:
+      - Touch Fib 100% (low) within lookback
+      - NPX crossed UP through 0.0 within lookback (touch_time <= cross_time)
+      - Regression slope reversed from DOWN to UP (slope_at_touch < 0 and slope_now > 0)
+      - NPX is going UP after the 0.0 cross (last npx_confirm_bars diffs > 0, and npx_last > npx_at_cross)
+
+    FIB SELL:
+      - Touch Fib 0% (high) within lookback
+      - NPX crossed DOWN through 0.0 within lookback (touch_time <= cross_time)
+      - Regression slope reversed from UP to DOWN (slope_at_touch > 0 and slope_now < 0)
+      - NPX is going DOWN after the 0.0 cross (last npx_confirm_bars diffs < 0, and npx_last < npx_at_cross)
+
+    Returns dict or None (most recent of BUY/SELL by cross_time).
+    """
+    c = _coerce_1d_series(close).dropna()
+    if c.empty or len(c) < 3:
+        return None
+
+    fibs = fibonacci_levels(c)
+    if not fibs:
+        return None
+
+    fib0 = float(fibs.get("0%", np.nan))
+    fib100 = float(fibs.get("100%", np.nan))
+    if not (np.isfinite(fib0) and np.isfinite(fib100)):
+        return None
+
+    npx_s = _coerce_1d_series(npx).reindex(c.index)
+    if npx_s.dropna().empty:
+        return None
+
+    lb = max(2, int(lookback_bars))
+    c_lb = c.iloc[-lb:] if len(c) > lb else c
+    npx_lb = npx_s.reindex(c_lb.index)
+
+    cross_up0, cross_dn0 = _npx_zero_cross_masks(npx_lb)
+
+    # Touch masks in the same lookback window
+    touch_lo = c_lb <= (fib100 * (1.0 + float(prox)))
+    touch_hi = c_lb >= (fib0   * (1.0 - float(prox)))
+
+    slope_lb = max(2, int(slope_lb))
+    npx_confirm_bars = max(1, int(npx_confirm_bars))
+
+    def _slope(seg: pd.Series) -> float:
+        seg = _coerce_1d_series(seg).dropna()
+        if len(seg) < 2:
+            return np.nan
+        x = np.arange(len(seg), dtype=float)
+        m, b = np.polyfit(x, seg.to_numpy(dtype=float), 1)
+        return float(m) if np.isfinite(m) else np.nan
+
+    # "current" slope (now)
+    m_now = _slope(c.tail(slope_lb))
+
+    def _npx_direction_ok(t_cross, want_up: bool) -> bool:
+        if t_cross is None or t_cross not in npx_s.index:
+            return False
+        post = npx_s.loc[t_cross:]
+        post = _coerce_1d_series(post).dropna()
+        if len(post) < (npx_confirm_bars + 1):
+            return False
+        deltas = post.diff().dropna()
+        if deltas.empty:
+            return False
+        last_d = deltas.iloc[-npx_confirm_bars:]
+        if want_up:
+            return bool(np.all(last_d > 0) and (float(post.iloc[-1]) > float(post.iloc[0])))
+        return bool(np.all(last_d < 0) and (float(post.iloc[-1]) < float(post.iloc[0])))
+
+    buy = None
+    if cross_up0.any() and touch_lo.any():
+        t_cross = cross_up0[cross_up0].index[-1]
+        touch_before = touch_lo.loc[:t_cross]
+        if touch_before.any():
+            t_touch = touch_before[touch_before].index[-1]
+            m_touch = _slope(c.loc[:t_touch].tail(slope_lb))
+
+            slope_ok = (np.isfinite(m_touch) and np.isfinite(m_now) and (float(m_touch) < 0.0) and (float(m_now) > 0.0))
+            npx_ok = _npx_direction_ok(t_cross, want_up=True)
+
+            if slope_ok and npx_ok:
+                px = float(c.loc[t_cross]) if (t_cross in c.index and np.isfinite(c.loc[t_cross])) else np.nan
+                buy = {
+                    "side": "BUY",
+                    "time": t_cross,
+                    "price": px,
+                    "touch_time": t_touch,
+                    "fib_level": "100%",
+                    "fib_price": fib100,
+                    "npx_at_cross": float(npx_s.loc[t_cross]) if (t_cross in npx_s.index and np.isfinite(npx_s.loc[t_cross])) else np.nan,
+                    "slope_touch": float(m_touch),
+                    "slope_now": float(m_now),
+                }
+
+    sell = None
+    if cross_dn0.any() and touch_hi.any():
+        t_cross = cross_dn0[cross_dn0].index[-1]
+        touch_before = touch_hi.loc[:t_cross]
+        if touch_before.any():
+            t_touch = touch_before[touch_before].index[-1]
+            m_touch = _slope(c.loc[:t_touch].tail(slope_lb))
+
+            slope_ok = (np.isfinite(m_touch) and np.isfinite(m_now) and (float(m_touch) > 0.0) and (float(m_now) < 0.0))
+            npx_ok = _npx_direction_ok(t_cross, want_up=False)
+
+            if slope_ok and npx_ok:
+                px = float(c.loc[t_cross]) if (t_cross in c.index and np.isfinite(c.loc[t_cross])) else np.nan
+                sell = {
+                    "side": "SELL",
+                    "time": t_cross,
+                    "price": px,
+                    "touch_time": t_touch,
+                    "fib_level": "0%",
+                    "fib_price": fib0,
+                    "npx_at_cross": float(npx_s.loc[t_cross]) if (t_cross in npx_s.index and np.isfinite(npx_s.loc[t_cross])) else np.nan,
+                    "slope_touch": float(m_touch),
+                    "slope_now": float(m_now),
+                }
+
+    if buy is None and sell is None:
+        return None
+    if buy is None:
+        return sell
+    if sell is None:
+        return buy
+    return buy if buy["time"] >= sell["time"] else sell
+
+def annotate_fib_npx_signal(ax, sig: dict):
+    if not isinstance(sig, dict):
+        return
+    side = str(sig.get("side", "")).upper()
+    t = sig.get("time", None)
+    px = sig.get("price", np.nan)
+    if t is None or (not np.isfinite(px)):
+        return
+
+    col = "tab:green" if side.startswith("B") else "tab:red"
+    marker = "^" if side.startswith("B") else "v"
+    label = "Fib BUY" if side.startswith("B") else "Fib SELL"
+
+    ax.scatter([t], [px], marker=marker, s=110, color=col, zorder=12)
+    ax.text(
+        t, px,
+        f"  {label}",
+        color=col,
+        fontsize=9,
+        fontweight="bold",
+        va="bottom" if side.startswith("B") else "top",
+        zorder=12
+    )
+
+@st.cache_data(ttl=120)
+def last_daily_fib_npx_zero_signal(symbol: str,
+                                  daily_view_label: str,
+                                  ntd_win: int,
+                                  direction: str,
+                                  prox: float,
+                                  lookback_bars: int,
+                                  slope_lb: int,
+                                  npx_confirm_bars: int = 1):
+    """
+    UPDATED (THIS REQUEST):
+      Scanner helper now requires:
+        • Fib touch (0%/100%) + NPX 0.0 cross (down/up)
+        • Slope reversal aligned with the side (touch-slope sign != now-slope sign)
+        • NPX continues in that direction after the cross
+    """
+    try:
+        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        if close_full.empty:
+            return None
+        close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
+        if close_show.empty or len(close_show) < 3:
+            return None
+
+        fibs = fibonacci_levels(close_show)
+        if not fibs:
+            return None
+        fib0 = float(fibs.get("0%", np.nan))
+        fib100 = float(fibs.get("100%", np.nan))
+        if not (np.isfinite(fib0) and np.isfinite(fib100)):
+            return None
+
+        npx_full = compute_normalized_price(close_full, window=ntd_win)
+        npx_show = _coerce_1d_series(npx_full).reindex(close_show.index)
+        if npx_show.dropna().empty:
+            return None
+
+        lb = max(2, int(lookback_bars))
+        c_lb = close_show.iloc[-lb:] if len(close_show) > lb else close_show
+        npx_lb = npx_show.reindex(c_lb.index)
+
+        cross_up0, cross_dn0 = _npx_zero_cross_masks(npx_lb)
+
+        slope_lb = max(2, int(slope_lb))
+        npx_confirm_bars = max(1, int(npx_confirm_bars))
+
+        def _slope(seg: pd.Series) -> float:
+            seg = _coerce_1d_series(seg).dropna()
+            if len(seg) < 2:
+                return np.nan
+            x = np.arange(len(seg), dtype=float)
+            m, b = np.polyfit(x, seg.to_numpy(dtype=float), 1)
+            return float(m) if np.isfinite(m) else np.nan
+
+        m_now = _slope(close_show.tail(slope_lb))
+
+        def _npx_dir_ok(t_cross, want_up: bool) -> bool:
+            if t_cross is None or t_cross not in npx_show.index:
+                return False
+            post = _coerce_1d_series(npx_show.loc[t_cross:]).dropna()
+            if len(post) < (npx_confirm_bars + 1):
+                return False
+            d = post.diff().dropna()
+            if d.empty:
+                return False
+            last_d = d.iloc[-npx_confirm_bars:]
+            if want_up:
+                return bool(np.all(last_d > 0) and (float(post.iloc[-1]) > float(post.iloc[0])))
+            return bool(np.all(last_d < 0) and (float(post.iloc[-1]) < float(post.iloc[0])))
+
+        want_buy = str(direction).lower().startswith(("b", "u"))
+        if want_buy:
+            if not cross_up0.any():
+                return None
+            t_cross = cross_up0[cross_up0].index[-1]
+            touch_mask = c_lb <= (fib100 * (1.0 + float(prox)))
+            touch_before = touch_mask.loc[:t_cross]
+            if not touch_before.any():
+                return None
+            t_touch = touch_before[touch_before].index[-1]
+            m_touch = _slope(close_show.loc[:t_touch].tail(slope_lb))
+
+            slope_ok = (np.isfinite(m_touch) and np.isfinite(m_now) and (float(m_touch) < 0.0) and (float(m_now) > 0.0))
+            npx_ok = _npx_dir_ok(t_cross, want_up=True)
+            if not (slope_ok and npx_ok):
+                return None
+
+            side = "BUY"
+            fib_level = "100%"
+            fib_price = fib100
+        else:
+            if not cross_dn0.any():
+                return None
+            t_cross = cross_dn0[cross_dn0].index[-1]
+            touch_mask = c_lb >= (fib0 * (1.0 - float(prox)))
+            touch_before = touch_mask.loc[:t_cross]
+            if not touch_before.any():
+                return None
+            t_touch = touch_before[touch_before].index[-1]
+            m_touch = _slope(close_show.loc[:t_touch].tail(slope_lb))
+
+            slope_ok = (np.isfinite(m_touch) and np.isfinite(m_now) and (float(m_touch) > 0.0) and (float(m_now) < 0.0))
+            npx_ok = _npx_dir_ok(t_cross, want_up=False)
+            if not (slope_ok and npx_ok):
+                return None
+
+            side = "SELL"
+            fib_level = "0%"
+            fib_price = fib0
+
+        loc = int(close_show.index.get_loc(t_cross))
+        bars_since = int((len(close_show) - 1) - loc)
+
+        curr_px = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
+        cross_px = float(close_show.loc[t_cross]) if (t_cross in close_show.index and np.isfinite(close_show.loc[t_cross])) else np.nan
+        npx_at = float(npx_show.loc[t_cross]) if (t_cross in npx_show.index and np.isfinite(npx_show.loc[t_cross])) else np.nan
+
+        return {
+            "Symbol": symbol,
+            "Side": side,
+            "Daily View": daily_view_label,
+            "Bars Since Cross": bars_since,
+            "Touch Time": t_touch,
+            "Cross Time": t_cross,
+            "Price@Cross": cross_px,
+            "Current Price": curr_px,
+            "Fib Level": fib_level,
+            "Fib Price": fib_price,
+            "NPX@Cross": npx_at,
+            "Slope@Touch": float(m_touch) if np.isfinite(m_touch) else np.nan,
+            "Slope (now)": float(m_now) if np.isfinite(m_now) else np.nan,
+        }
+    except Exception:
+        return None
+
+# ---------------------------
+# Daily Slope + Support/Resistance reversal + BB mid cross scanner (R²>=0.99)
+# ---------------------------
+@st.cache_data(ttl=120)
+def last_daily_sr_reversal_bbmid(symbol: str,
+                                 daily_view_label: str,
+                                 slope_lb: int,
+                                 sr_lb: int,
+                                 bb_window: int,
+                                 bb_sigma: float,
+                                 bb_ema: bool,
+                                 prox: float,
+                                 bars_confirm: int,
+                                 horizon: int,
+                                 side: str = "BUY",
+                                 min_r2: float = 0.99):
+    try:
+        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        if close_full.empty:
+            return None
+
+        close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
+        if close_show.empty or len(close_show) < max(10, int(slope_lb), int(sr_lb)):
+            return None
+
+        yhat, up, lo, m, r2 = regression_with_band(close_show, lookback=int(slope_lb))
+        if not (np.isfinite(m) and np.isfinite(r2)):
+            return None
+        if float(r2) < float(min_r2):
+            return None
+
+        want_buy = str(side).upper().startswith("B")
+        if want_buy and float(m) <= 0.0:
+            return None
+        if (not want_buy) and float(m) >= 0.0:
+            return None
+
+        res = close_show.rolling(int(sr_lb), min_periods=1).max()
+        sup = close_show.rolling(int(sr_lb), min_periods=1).min()
+
+        bb_mid, bb_up, bb_lo, _, _ = compute_bbands(close_show, window=int(bb_window), mult=float(bb_sigma), use_ema=bool(bb_ema))
+        if bb_mid.dropna().empty:
+            return None
+
+        cross_up, cross_dn = _cross_series(close_show, bb_mid)
+        hz = max(1, int(horizon))
+
+        if want_buy:
+            if not cross_up.any():
+                return None
+            t_cross = cross_up[cross_up].index[-1]
+            try:
+                loc = int(close_show.index.get_loc(t_cross))
+            except Exception:
+                return None
+            j0 = max(0, loc - hz)
+            touch_mask = close_show.iloc[j0:loc+1] <= (sup.iloc[j0:loc+1] * (1.0 + float(prox)))
+            if not touch_mask.any():
+                return None
+            t_touch = touch_mask[touch_mask].index[-1]
+            seg = close_show.loc[:t_cross]
+            if not _n_consecutive_increasing(seg, int(bars_confirm)):
+                return None
+        else:
+            if not cross_dn.any():
+                return None
+            t_cross = cross_dn[cross_dn].index[-1]
+            try:
+                loc = int(close_show.index.get_loc(t_cross))
+            except Exception:
+                return None
+            j0 = max(0, loc - hz)
+            touch_mask = close_show.iloc[j0:loc+1] >= (res.iloc[j0:loc+1] * (1.0 - float(prox)))
+            if not touch_mask.any():
+                return None
+            t_touch = touch_mask[touch_mask].index[-1]
+            seg = close_show.loc[:t_cross]
+            if not _n_consecutive_decreasing(seg, int(bars_confirm)):
+                return None
+
+        bars_since_cross = int((len(close_show) - 1) - int(close_show.index.get_loc(t_cross)))
+
+        curr_px = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
+        cross_px = float(close_show.loc[t_cross]) if np.isfinite(close_show.loc[t_cross]) else np.nan
+        mid_px = float(bb_mid.loc[t_cross]) if (t_cross in bb_mid.index and np.isfinite(bb_mid.loc[t_cross])) else np.nan
+        sup_px = float(sup.loc[t_touch]) if (t_touch in sup.index and np.isfinite(sup.loc[t_touch])) else np.nan
+        res_px = float(res.loc[t_touch]) if (t_touch in res.index and np.isfinite(res.loc[t_touch])) else np.nan
+
+        return {
+            "Symbol": symbol,
+            "Side": "BUY" if want_buy else "SELL",
+            "Daily View": daily_view_label,
+            "Bars Since Cross": bars_since_cross,
+            "Touch Time": t_touch,
+            "Cross Time": t_cross,
+            "Slope": float(m),
+            "R2": float(r2),
+            "Support@Touch": sup_px,
+            "Resistance@Touch": res_px,
+            "BB Mid@Cross": mid_px,
+            "Price@Cross": cross_px,
+            "Current Price": curr_px,
+        }
+    except Exception:
+        return None
+
+# ---------------------------
 # NEW (THIS REQUEST): Fib 0%/100% proximity + reversal-chance helper
 # ---------------------------
 @st.cache_data(ttl=120)
@@ -2429,86 +2841,6 @@ def enhanced_sr_buy_sell_candidate(symbol: str,
             "Sell Cross Time": t_cross_dn_res,
             "Sell Bars Since Cross": bs_cross_dn_res,
             "Sell OK": bool(sell_ok),
-        }
-    except Exception:
-        return None
-
-# ---------------------------
-# NEW (THIS REQUEST): Enhanced Support Crossed helper (Daily)
-# ---------------------------
-@st.cache_data(ttl=120)
-def enhanced_sr_retreat_cross(symbol: str,
-                              daily_view_label: str,
-                              sr_lb: int):
-    """
-    For the 'Enhanced Support Crossed' tab (Daily), using the SAME S/R lines as Enhanced Forecast:
-
-    Support Retreat (from below moving upward):
-      - previous close < support(previous)
-      - current close >= support(current)
-
-    Resistance Retreat (from above moving downward):
-      - previous close > resistance(previous)
-      - current close <= resistance(current)
-
-    Returns dict with the most recent retreat timestamps + bars-since for each side (may be None).
-    """
-    try:
-        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
-        if close_full.empty:
-            return None
-
-        close = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
-        if close.empty or len(close) < max(5, int(sr_lb) + 2):
-            return None
-
-        sup = close.rolling(int(sr_lb), min_periods=1).min()
-        res = close.rolling(int(sr_lb), min_periods=1).max()
-
-        c_last = float(close.iloc[-1]) if np.isfinite(close.iloc[-1]) else np.nan
-        s_last = float(sup.iloc[-1]) if np.isfinite(sup.iloc[-1]) else np.nan
-        r_last = float(res.iloc[-1]) if np.isfinite(res.iloc[-1]) else np.nan
-
-        # Retreat masks (explicit "from below/above")
-        prev_c = close.shift(1)
-        prev_s = sup.shift(1)
-        prev_r = res.shift(1)
-
-        retreat_up_sup = (close >= sup) & (prev_c < prev_s)
-        retreat_dn_res = (close <= res) & (prev_c > prev_r)
-
-        def _last_event(mask: pd.Series):
-            mask = mask.fillna(False)
-            if not mask.any():
-                return None, None, np.nan
-            t = mask[mask].index[-1]
-            try:
-                loc = int(close.index.get_loc(t))
-                bs = int((len(close) - 1) - loc)
-            except Exception:
-                bs = None
-            line_at = np.nan
-            try:
-                line_at = float(sup.loc[t]) if (t in sup.index and np.isfinite(sup.loc[t])) else np.nan
-            except Exception:
-                pass
-            return t, bs, line_at
-
-        t_sup, bs_sup, sup_at = _last_event(retreat_up_sup)
-        t_res, bs_res, res_at = _last_event(retreat_dn_res)
-
-        return {
-            "Symbol": symbol,
-            "AsOf": close.index[-1],
-            "Close": c_last,
-            "Support (last)": s_last,
-            "Resistance (last)": r_last,
-            "Support Retreat Time": t_sup,
-            "Support Bars Since": bs_sup,
-            "Support@Retreat": sup_at,
-            "Resistance Retreat Time": t_res,
-            "Resistance Bars Since": bs_res,
-            "Resistance@Retreat": res_at,
         }
     except Exception:
         return None
@@ -2936,8 +3268,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# UPDATED (THIS REQUEST): added new tab "Enhanced Support Crossed" (all existing tabs unchanged)
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -2952,8 +3283,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "Slope Direction Scan",
     "Fib 0%/100% 99.9% Reversal (R²≥0.999)",
     "Trendline Direction Lists",             # NEW (THIS REQUEST)
-    "Enhanced Forecast Buy and Sell",        # NEW (THIS REQUEST)
-    "Enhanced Support Crossed"               # NEW (THIS REQUEST)
+    "Enhanced Forecast Buy and Sell"         # NEW (THIS REQUEST)
 ])
 
 # ---------------------------
@@ -3460,21 +3790,11 @@ with tab2:
             if show_hma and not hma_d_show.dropna().empty:
                 ax.plot(hma_d_show.index, hma_d_show.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
 
-            # UPDATED (THIS REQUEST): show Support/Resistance values on the Enhanced chart (same look/feel as originals)
-            res_val_e = sup_val_e = np.nan
-            try:
-                res_val_e = float(res_d_show.iloc[-1]) if len(res_d_show) else np.nan
-                sup_val_e = float(sup_d_show.iloc[-1]) if len(sup_d_show) else np.nan
-            except Exception:
-                pass
-
-            if np.isfinite(res_val_e) and np.isfinite(sup_val_e) and len(df_show.index) > 0:
-                ax.hlines(res_val_e, xmin=df_show.index[0], xmax=df_show.index[-1],
+            if not res_d_show.empty and not sup_d_show.empty:
+                ax.hlines(float(res_d_show.iloc[-1]), xmin=df_show.index[0], xmax=df_show.index[-1],
                           colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance")
-                ax.hlines(sup_val_e, xmin=df_show.index[0], xmax=df_show.index[-1],
+                ax.hlines(float(sup_d_show.iloc[-1]), xmin=df_show.index[0], xmax=df_show.index[-1],
                           colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
-                label_on_left(ax, res_val_e, f"R {fmt_price_val(res_val_e)}", color="tab:red")
-                label_on_left(ax, sup_val_e, f"S {fmt_price_val(sup_val_e)}", color="tab:green")
 
             if show_fibs and len(df_show) > 0:
                 fibs_d = fibonacci_levels(df_show)
@@ -3506,17 +3826,6 @@ with tab2:
             ax.text(0.01, 0.98, macd_txt, transform=ax.transAxes, ha="left", va="top",
                     fontsize=10, fontweight="bold",
                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.8))
-
-            # UPDATED (THIS REQUEST): add Current Price to the Enhanced chart area
-            last_px_show = _safe_last_float(df_show)
-            if np.isfinite(last_px_show):
-                ax.text(
-                    0.99, 0.02,
-                    f"Current price: {fmt_price_val(last_px_show)}",
-                    transform=ax.transAxes, ha="right", va="bottom",
-                    fontsize=11, fontweight="bold",
-                    bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7)
-                )
 
             # UPDATED (THIS REQUEST): legend below chart (outside plot area)
             ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=4, framealpha=0.5, fontsize=9)
@@ -4222,77 +4531,3 @@ with tab15:
                 st.dataframe(outs.reset_index(drop=True), use_container_width=True)
     else:
         st.info("Click **Run Enhanced Buy/Sell Scan** to scan the current universe.")
-
-# ---------------------------
-# TAB 16: Enhanced Support Crossed (NEW)
-# ---------------------------
-with tab16:
-    st.header("Enhanced Support Crossed")
-    st.caption(
-        "Daily scan using the same **Daily view range** and **Daily S/R window** as the Enhanced Forecast chart.\n\n"
-        "✅ **Support Retreat (Up):** price was **below** Support, then moved **upward** to **at/above** Support.\n"
-        "✅ **Resistance Retreat (Down):** price was **above** Resistance, then moved **downward** to **at/below** Resistance."
-    )
-
-    c1, c2 = st.columns(2)
-    max_bars = c1.slider("Max bars since retreat event", 0, 60, 3, 1, key=f"enh_retreat_maxbars_{mode}")
-    run_retreat = c2.button("Run Enhanced Support Crossed Scan", key=f"btn_run_enh_retreat_{mode}")
-
-    if run_retreat:
-        up_rows, dn_rows = [], []
-        for sym in universe:
-            r = enhanced_sr_retreat_cross(
-                symbol=sym,
-                daily_view_label=daily_view,
-                sr_lb=sr_lb_daily
-            )
-            if not isinstance(r, dict):
-                continue
-
-            bs_sup = r.get("Support Bars Since", None)
-            bs_res = r.get("Resistance Bars Since", None)
-
-            if bs_sup is not None and np.isfinite(bs_sup) and int(bs_sup) <= int(max_bars):
-                up_rows.append({
-                    "Symbol": r.get("Symbol"),
-                    "AsOf": r.get("AsOf"),
-                    "Close": r.get("Close"),
-                    "Support (last)": r.get("Support (last)"),
-                    "Support@Retreat": r.get("Support@Retreat"),
-                    "Retreat Time": r.get("Support Retreat Time"),
-                    "Bars Since": int(bs_sup),
-                })
-
-            if bs_res is not None and np.isfinite(bs_res) and int(bs_res) <= int(max_bars):
-                dn_rows.append({
-                    "Symbol": r.get("Symbol"),
-                    "AsOf": r.get("AsOf"),
-                    "Close": r.get("Close"),
-                    "Resistance (last)": r.get("Resistance (last)"),
-                    "Resistance@Retreat": r.get("Resistance@Retreat"),
-                    "Retreat Time": r.get("Resistance Retreat Time"),
-                    "Bars Since": int(bs_res),
-                })
-
-        left, right = st.columns(2)
-        with left:
-            st.subheader("Support Retreat (from below → up)")
-            if not up_rows:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(up_rows)
-                out["Bars Since"] = pd.to_numeric(out["Bars Since"], errors="coerce")
-                out = out.sort_values(["Bars Since"], ascending=[True])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-        with right:
-            st.subheader("Resistance Retreat (from above → down)")
-            if not dn_rows:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(dn_rows)
-                out["Bars Since"] = pd.to_numeric(out["Bars Since"], errors="coerce")
-                out = out.sort_values(["Bars Since"], ascending=[True])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
-    else:
-        st.info("Click **Run Enhanced Support Crossed Scan** to scan the current universe.")
