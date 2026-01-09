@@ -3134,6 +3134,27 @@ def render_hourly_views(sel: str,
 # ---------------------------
 # Tabs
 # ---------------------------
+
+# UPDATED (THIS REQUEST): force Streamlit tabs to wrap so ALL tabs show by default (no horizontal overflow)
+st.markdown(
+    """
+    <style>
+      div[data-baseweb="tab-list"] {
+        flex-wrap: wrap !important;
+        overflow-x: visible !important;
+        gap: 0.25rem !important;
+      }
+      div[data-baseweb="tab"] {
+        flex: 0 0 auto !important;
+      }
+      div[data-baseweb="tab"] button {
+        padding: 6px 10px !important;
+      }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
@@ -4293,3 +4314,4 @@ with tab14:
                 st.dataframe(pd.DataFrame({"Symbol": sorted(dn_syms)}), use_container_width=True)
     else:
         st.info("Click **Run Trendline Direction Lists** to scan the current universe.")
+
