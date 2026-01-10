@@ -220,7 +220,7 @@ def _diff_text(a: float, b: float, symbol: str) -> str:
 
 ALERT_TEXT = "ALERT: Trend may be changing - Open trade position with caution while still following the signals on the chat."
 
-FIB_ALERT_TEXT = "ALERT: Fibonacci guidance — BUY close to the 100% line and SELL close to the 0% line."
+FIB_ALERT_TEXT = "ALERT: Fibonacci Guidance — Prices often reverse at the 100% and 0% lines. It's essential to implement risk management when trading near these Fibonacci levels."
 
 def format_trade_instruction(trend_slope: float,
                              buy_val: float,
