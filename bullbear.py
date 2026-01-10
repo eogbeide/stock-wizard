@@ -2711,6 +2711,112 @@ def daily_last_npx_in_view(symbol: str, daily_view_label: str, ntd_win: int):
         return np.nan, None
 
 # ---------------------------
+# NEW (THIS REQUEST): Daily NPX series in selected Daily view range (for scanners)
+# ---------------------------
+@st.cache_data(ttl=120)
+def daily_npx_series_in_view(symbol: str, daily_view_label: str, ntd_win: int) -> pd.Series:
+    try:
+        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        if close_full.empty:
+            return pd.Series(dtype=float)
+
+        close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
+        if close_show.empty:
+            return pd.Series(index=close_show.index, dtype=float)
+
+        npx_full = compute_normalized_price(close_full, window=int(ntd_win))
+        npx_show = _coerce_1d_series(npx_full).reindex(close_show.index)
+        return npx_show
+    except Exception:
+        return pd.Series(dtype=float)
+
+def _series_heading_up(series_like: pd.Series, confirm_bars: int = 1) -> bool:
+    s = _coerce_1d_series(series_like).dropna()
+    confirm_bars = max(1, int(confirm_bars))
+    if len(s) < confirm_bars + 1:
+        return False
+    d = s.diff().dropna()
+    if len(d) < confirm_bars:
+        return False
+    last_d = d.iloc[-confirm_bars:]
+    return bool(np.all(last_d > 0))
+
+# ---------------------------
+# NEW (THIS REQUEST): Support reversal heading up (Daily) helper for new tab
+# ---------------------------
+@st.cache_data(ttl=120)
+def daily_support_reversal_heading_up(symbol: str,
+                                      daily_view_label: str,
+                                      sr_lb: int,
+                                      prox: float,
+                                      bars_confirm: int,
+                                      horizon: int):
+    """
+    "Price reversed from support heading up" (Daily view):
+      - price touched near support within last `horizon` bars
+      - and the most recent `bars_confirm` closes are increasing
+      - and distance-from-support is increasing over the confirmation bars
+    Returns dict or None.
+    """
+    try:
+        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        if close_full.empty:
+            return None
+
+        close = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
+        if close.empty or len(close) < max(5, int(sr_lb)):
+            return None
+
+        sup = close.rolling(int(sr_lb), min_periods=1).min()
+
+        hz = max(1, int(horizon))
+        win = min(len(close), hz + 1)
+        near_support = close <= (sup * (1.0 + float(prox)))
+
+        recent_mask = near_support.iloc[-win:]
+        if not recent_mask.any():
+            return None
+
+        t_touch = recent_mask[recent_mask].index[-1]
+        try:
+            loc_touch = int(close.index.get_loc(t_touch))
+        except Exception:
+            return None
+
+        bars_since_touch = int((len(close) - 1) - loc_touch)
+
+        # Confirm "heading up" AFTER the touch (ending at the current bar)
+        seg = close.loc[t_touch:]
+        seg = _coerce_1d_series(seg).dropna()
+        if len(seg) < int(bars_confirm) + 1:
+            return None
+        if not _n_consecutive_increasing(seg, int(bars_confirm)):
+            return None
+
+        # Distance-from-support increasing over the confirmation window
+        sup_seg = _coerce_1d_series(sup).reindex(seg.index).ffill()
+        dist = (seg - sup_seg).iloc[-(int(bars_confirm) + 1):]
+        if dist.isna().any():
+            return None
+        if not bool(np.all(np.diff(dist.to_numpy(dtype=float)) > 0)):
+            return None
+
+        c_last = float(close.iloc[-1]) if np.isfinite(close.iloc[-1]) else np.nan
+        s_last = float(sup.iloc[-1]) if np.isfinite(sup.iloc[-1]) else np.nan
+        dist_sup_pct = (c_last / s_last - 1.0) if np.isfinite(c_last) and np.isfinite(s_last) and s_last != 0 else np.nan
+
+        return {
+            "Symbol": symbol,
+            "Touch Time": t_touch,
+            "Bars Since Touch": bars_since_touch,
+            "Close": c_last,
+            "Support": s_last,
+            "Dist vs Support": dist_sup_pct,
+        }
+    except Exception:
+        return None
+
+# ---------------------------
 # NEW (THIS REQUEST): Fib 0%/100% "99.9% confidence" (R²≥0.999) confirmed reversal list helper
 # ---------------------------
 @st.cache_data(ttl=120)
@@ -3320,10 +3426,9 @@ st.markdown(
 )
 
 # UPDATED (THIS REQUEST):
-# - Removed tabs: Fib 0%/100% Reversal Watchlist, Daily Slope+BB Reversal Scanner,
-#   Enhanced Forecast Buy and Sell, Fib 0%/100% 99.9% Reversal (R²≥0.999)
-# - Added tab: NTD Hot List
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
+# - Added tab: NTD NPX 0.0–0.2 Scanner
+# - Added tab: Uptrend vs Downtrend
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -3335,7 +3440,9 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.t
     "Fib NPX 0.0 Signal Scanner",
     "Slope Direction Scan",
     "Trendline Direction Lists",
-    "NTD Hot List"
+    "NTD Hot List",
+    "NTD NPX 0.0-0.2 Scanner",
+    "Uptrend vs Downtrend"
 ])
 
 # ---------------------------
@@ -4341,3 +4448,145 @@ with tab12:
             st.dataframe(out.reset_index(drop=True), use_container_width=True)
     else:
         st.info("Click **Run NTD Hot List** to scan the current universe.")
+
+# ---------------------------
+# TAB 13: NTD NPX 0.0–0.2 Scanner (NEW)
+# ---------------------------
+with tab13:
+    st.header("NTD NPX 0.0-0.2 Scanner")
+    st.caption(
+        "Scans the current universe for symbols where **NPX (Norm Price)** is between **0.0** and **0.2** "
+        "and is **heading up**, split into two lists:\n"
+        "• **List 1:** regression slope **> 0**\n"
+        "• **List 2:** regression slope **< 0**\n\n"
+        "Includes **NPX (last)** and **R²** of the regression slope line."
+    )
+
+    c1, c2 = st.columns(2)
+    npx_up_bars = c1.slider("NPX heading-up confirmation (consecutive bars)", 1, 5, 1, 1, key="npx_02_up_bars")
+    run_npx02 = c2.button("Run NTD NPX 0.0-0.2 Scan", key=f"btn_run_npx02_{mode}")
+
+    if run_npx02:
+        rows_up_slope, rows_dn_slope = [], []
+
+        for sym in universe:
+            m, r2, ts = daily_global_slope(sym, daily_view_label=daily_view)
+            if not np.isfinite(m):
+                continue
+
+            npx_s = daily_npx_series_in_view(sym, daily_view_label=daily_view, ntd_win=ntd_window)
+            npx_s = _coerce_1d_series(npx_s).dropna()
+            if npx_s.empty or len(npx_s) < 2:
+                continue
+
+            npx_last = float(npx_s.iloc[-1]) if np.isfinite(npx_s.iloc[-1]) else np.nan
+            if not np.isfinite(npx_last):
+                continue
+
+            if not (0.0 <= float(npx_last) <= 0.2):
+                continue
+
+            if not _series_heading_up(npx_s, confirm_bars=int(npx_up_bars)):
+                continue
+
+            row = {
+                "Symbol": sym,
+                "Slope": float(m),
+                "R2": float(r2) if np.isfinite(r2) else np.nan,
+                "NPX (Norm Price)": float(npx_last),
+                "AsOf": ts
+            }
+
+            if float(m) > 0.0:
+                rows_up_slope.append(row)
+            elif float(m) < 0.0:
+                rows_dn_slope.append(row)
+
+        left, right = st.columns(2)
+
+        with left:
+            st.subheader("List 1 — Slope > 0 and NPX 0.0–0.2 heading up")
+            if not rows_up_slope:
+                st.info("No matches.")
+            else:
+                out = pd.DataFrame(rows_up_slope)
+                out = out.sort_values(["NPX (Norm Price)", "Slope"], ascending=[True, False])
+                st.dataframe(out.reset_index(drop=True), use_container_width=True)
+
+        with right:
+            st.subheader("List 2 — Slope < 0 and NPX 0.0–0.2 heading up")
+            if not rows_dn_slope:
+                st.info("No matches.")
+            else:
+                out = pd.DataFrame(rows_dn_slope)
+                out = out.sort_values(["NPX (Norm Price)", "Slope"], ascending=[True, True])
+                st.dataframe(out.reset_index(drop=True), use_container_width=True)
+
+# ---------------------------
+# TAB 14: Uptrend vs Downtrend (NEW)
+# ---------------------------
+with tab14:
+    st.header("Uptrend vs Downtrend")
+    st.caption(
+        "Lists symbols where the price has **reversed from support heading up** (Daily view), split into:\n"
+        "• **(a) Uptrend:** Slope > 0 and price reversed from support heading up\n"
+        "• **(b) Downtrend:** Slope < 0 and price reversed from support heading up\n\n"
+        "Support reversal uses the same Daily S/R proximity logic and confirmation bars."
+    )
+
+    c1, c2 = st.columns(2)
+    hz_sr = c1.slider("Support-touch lookback window (bars)", 1, 60, int(max(3, rev_horizon)), 1, key="ud_sr_hz")
+    run_ud = c2.button("Run Uptrend vs Downtrend Scan", key=f"btn_run_ud_{mode}")
+
+    if run_ud:
+        rows_uptrend, rows_downtrend = [], []
+
+        for sym in universe:
+            m, r2, ts = daily_global_slope(sym, daily_view_label=daily_view)
+            if not np.isfinite(m):
+                continue
+
+            rev = daily_support_reversal_heading_up(
+                symbol=sym,
+                daily_view_label=daily_view,
+                sr_lb=int(sr_lb_daily),
+                prox=float(sr_prox_pct),
+                bars_confirm=int(rev_bars_confirm),
+                horizon=int(hz_sr)
+            )
+            if rev is None:
+                continue
+
+            row = dict(rev)
+            row["Slope"] = float(m)
+            row["R2"] = float(r2) if np.isfinite(r2) else np.nan
+            row["AsOf"] = ts
+
+            if float(m) > 0.0:
+                rows_uptrend.append(row)
+            elif float(m) < 0.0:
+                rows_downtrend.append(row)
+
+        left, right = st.columns(2)
+
+        with left:
+            st.subheader("(a) Uptrend — Slope > 0 and Support Reversal heading up")
+            if not rows_uptrend:
+                st.info("No matches.")
+            else:
+                out = pd.DataFrame(rows_uptrend)
+                if "Bars Since Touch" in out.columns:
+                    out["Bars Since Touch"] = out["Bars Since Touch"].astype(int)
+                out = out.sort_values(["Bars Since Touch", "Slope"], ascending=[True, False])
+                st.dataframe(out.reset_index(drop=True), use_container_width=True)
+
+        with right:
+            st.subheader("(b) Downtrend — Slope < 0 and Support Reversal heading up")
+            if not rows_downtrend:
+                st.info("No matches.")
+            else:
+                out = pd.DataFrame(rows_downtrend)
+                if "Bars Since Touch" in out.columns:
+                    out["Bars Since Touch"] = out["Bars Since Touch"].astype(int)
+                out = out.sort_values(["Bars Since Touch", "Slope"], ascending=[True, True])
+                st.dataframe(out.reset_index(drop=True), use_container_width=True)
