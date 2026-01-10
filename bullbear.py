@@ -1904,6 +1904,34 @@ def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
     except Exception:
         return np.nan, None
 
+# ---------------------------
+# NEW (THIS REQUEST): Cached last NPX values for scanning (Daily/Hourly)
+# ---------------------------
+@st.cache_data(ttl=120)
+def last_daily_npx_value(symbol: str, ntd_win: int):
+    try:
+        s = fetch_hist(symbol)
+        npx = compute_normalized_price(s, window=ntd_win).dropna()
+        if npx.empty:
+            return np.nan, None
+        return float(npx.iloc[-1]), npx.index[-1]
+    except Exception:
+        return np.nan, None
+
+@st.cache_data(ttl=120)
+def last_hourly_npx_value(symbol: str, ntd_win: int, period: str = "1d"):
+    try:
+        df = fetch_intraday(symbol, period=period)
+        if df is None or df.empty or "Close" not in df:
+            return np.nan, None
+        s = df["Close"].ffill()
+        npx = compute_normalized_price(s, window=ntd_win).dropna()
+        if npx.empty:
+            return np.nan, None
+        return float(npx.iloc[-1]), npx.index[-1]
+    except Exception:
+        return np.nan, None
+
 
 # =========================
 # Part 7/10 — bullbear.py
@@ -2660,6 +2688,29 @@ def daily_global_slope(symbol: str, daily_view_label: str):
         return np.nan, np.nan, None
 
 # ---------------------------
+# NEW (THIS REQUEST): Daily last NPX in selected Daily view range
+# ---------------------------
+@st.cache_data(ttl=120)
+def daily_last_npx_in_view(symbol: str, daily_view_label: str, ntd_win: int):
+    try:
+        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        if close_full.empty:
+            return np.nan, None
+
+        close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
+        if close_show.empty:
+            return np.nan, None
+
+        npx_full = compute_normalized_price(close_full, window=int(ntd_win))
+        npx_show = _coerce_1d_series(npx_full).reindex(close_show.index).dropna()
+        if npx_show.empty:
+            return np.nan, close_show.index[-1]
+
+        return float(npx_show.iloc[-1]), npx_show.index[-1]
+    except Exception:
+        return np.nan, None
+
+# ---------------------------
 # NEW (THIS REQUEST): Fib 0%/100% "99.9% confidence" (R²≥0.999) confirmed reversal list helper
 # ---------------------------
 @st.cache_data(ttl=120)
@@ -3268,7 +3319,11 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15 = st.tabs([
+# UPDATED (THIS REQUEST):
+# - Removed tabs: Fib 0%/100% Reversal Watchlist, Daily Slope+BB Reversal Scanner,
+#   Enhanced Forecast Buy and Sell, Fib 0%/100% 99.9% Reversal (R²≥0.999)
+# - Added tab: NTD Hot List
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -3277,13 +3332,10 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "Long-Term History",
     "Recent BUY Scanner",
     "NPX 0.5-Cross Scanner",
-    "Fib NPX 0.0 Signal Scanner",            # NEW (THIS REQUEST)
-    "Daily Slope+BB Reversal Scanner",
-    "Fib 0%/100% Reversal Watchlist",
+    "Fib NPX 0.0 Signal Scanner",
     "Slope Direction Scan",
-    "Fib 0%/100% 99.9% Reversal (R²≥0.999)",
-    "Trendline Direction Lists",             # NEW (THIS REQUEST)
-    "Enhanced Forecast Buy and Sell"         # NEW (THIS REQUEST)
+    "Trendline Direction Lists",
+    "NTD Hot List"
 ])
 
 # ---------------------------
@@ -3940,12 +3992,24 @@ with tab5:
             for sym in universe:
                 val, ts = last_hourly_ntd_value(sym, ntd_window, period=period)
                 if np.isfinite(val) and val < -0.75:
-                    rows.append({"Symbol": sym, "NTD": float(val), "Time": ts})
+                    npx_val, _ = last_hourly_npx_value(sym, ntd_window, period=period)
+                    rows.append({
+                        "Symbol": sym,
+                        "NTD": float(val),
+                        "NPX (Norm Price)": float(npx_val) if np.isfinite(npx_val) else np.nan,
+                        "Time": ts
+                    })
         else:
             for sym in universe:
                 val, ts = last_daily_ntd_value(sym, ntd_window)
                 if np.isfinite(val) and val < -0.75:
-                    rows.append({"Symbol": sym, "NTD": float(val), "Time": ts})
+                    npx_val, _ = last_daily_npx_value(sym, ntd_window)
+                    rows.append({
+                        "Symbol": sym,
+                        "NTD": float(val),
+                        "NPX (Norm Price)": float(npx_val) if np.isfinite(npx_val) else np.nan,
+                        "Time": ts
+                    })
 
         if not rows:
             st.info("No matches.")
@@ -4137,160 +4201,9 @@ with tab9:
                 st.dataframe(out.reset_index(drop=True), use_container_width=True)
 
 # ---------------------------
-# TAB 10: Daily Slope + S/R reversal + BB mid cross scanner
+# TAB 10: Slope Direction Scan
 # ---------------------------
 with tab10:
-    st.header("Daily Slope + S/R Reversal + BB Midline Scanner (R² ≥ 0.99)")
-    st.caption(
-        "BUY list:\n"
-        "• Daily regression slope is UP and **R² ≥ 0.99** (99% confidence)\n"
-        "• Price reversed from Support (touch within horizon + confirmed reversal)\n"
-        "• Price crossed ABOVE BB midline\n\n"
-        "SELL list:\n"
-        "• Daily regression slope is DOWN and **R² ≥ 0.99** (99% confidence)\n"
-        "• Price reversed from Resistance (touch within horizon + confirmed reversal)\n"
-        "• Price crossed BELOW BB midline"
-    )
-
-    c1, c2 = st.columns(2)
-    max_bars_since = c1.slider("Max bars since BB mid cross", 0, 60, 10, 1, key="srbb_max_bars_since")
-    r2_thr = c2.slider("Min R² (confidence)", 0.80, 0.99, 0.99, 0.01, key="srbb_r2_thr")
-
-    run_scan = st.button("Run Daily Slope+BB Scan", key="btn_run_daily_slope_bb_scan")
-
-    if run_scan:
-        buy_rows, sell_rows = [], []
-        for sym in universe:
-            rb = last_daily_sr_reversal_bbmid(
-                symbol=sym,
-                daily_view_label=daily_view,
-                slope_lb=slope_lb_daily,
-                sr_lb=sr_lb_daily,
-                bb_window=bb_win,
-                bb_sigma=bb_mult,
-                bb_ema=bb_use_ema,
-                prox=sr_prox_pct,
-                bars_confirm=rev_bars_confirm,
-                horizon=rev_horizon,
-                side="BUY",
-                min_r2=float(r2_thr),
-            )
-            if rb is not None and int(rb.get("Bars Since Cross", 9999)) <= int(max_bars_since):
-                buy_rows.append(rb)
-
-            rs = last_daily_sr_reversal_bbmid(
-                symbol=sym,
-                daily_view_label=daily_view,
-                slope_lb=slope_lb_daily,
-                sr_lb=sr_lb_daily,
-                bb_window=bb_win,
-                bb_sigma=bb_mult,
-                bb_ema=bb_use_ema,
-                prox=sr_prox_pct,
-                bars_confirm=rev_bars_confirm,
-                horizon=rev_horizon,
-                side="SELL",
-                min_r2=float(r2_thr),
-            )
-            if rs is not None and int(rs.get("Bars Since Cross", 9999)) <= int(max_bars_since):
-                sell_rows.append(rs)
-
-        left, right = st.columns(2)
-
-        with left:
-            st.subheader("BUY — Up Slope + Support Reversal + BB Mid Cross")
-            if not buy_rows:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(buy_rows)
-                out["Bars Since Cross"] = out["Bars Since Cross"].astype(int)
-                out["Slope"] = out["Slope"].astype(float)
-                out["R2"] = out["R2"].astype(float)
-                out = out.sort_values(["Bars Since Cross", "Slope"], ascending=[True, False])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-        with right:
-            st.subheader("SELL — Down Slope + Resistance Reversal + BB Mid Cross")
-            if not sell_rows:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(sell_rows)
-                out["Bars Since Cross"] = out["Bars Since Cross"].astype(int)
-                out["Slope"] = out["Slope"].astype(float)
-                out["R2"] = out["R2"].astype(float)
-                out = out.sort_values(["Bars Since Cross", "Slope"], ascending=[True, True])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-# ---------------------------
-# TAB 11: Fib 0% / 100% proximity + reversal chance
-# ---------------------------
-with tab11:
-    st.header("Fib 0%/100% Reversal Watchlist")
-    st.caption(
-        "Lists symbols close to the Fibonacci **0%** (high) or **100%** (low) lines, "
-        "and includes a slope-reversal probability estimate + any confirmed Fib reversal trigger."
-    )
-
-    c1, c2, c3 = st.columns(3)
-    prox_pct = c1.slider("Proximity to 0%/100% (as % of Fib range)", 0.005, 0.08, 0.02, 0.005, key="fibwatch_prox")
-    min_rev = c2.slider(f"Min P(slope rev≤{rev_horizon} bars)", 0.00, 0.95, 0.25, 0.05, key="fibwatch_minrev")
-    run_watch = c3.button("Run Fib Watchlist", key=f"btn_run_fib_watch_{mode}")
-
-    if run_watch:
-        rows = []
-        for sym in universe:
-            r = fib_extreme_reversal_watch(
-                symbol=sym,
-                daily_view_label=daily_view,
-                slope_lb=slope_lb_daily,
-                hist_window=rev_hist_lb,
-                slope_window=slope_lb_daily,
-                horizon=rev_horizon,
-                proximity_pct_of_range=float(prox_pct),
-                confirm_bars=int(rev_bars_confirm),
-                lookback_bars_for_trigger=int(max(60, slope_lb_daily)),
-            )
-            if r is None:
-                continue
-            pcol = f"P(slope rev≤{int(rev_horizon)} bars)"
-            pv = r.get(pcol, np.nan)
-            if np.isfinite(pv) and float(pv) < float(min_rev):
-                continue
-            rows.append(r)
-
-        if not rows:
-            st.info("No matches.")
-        else:
-            out = pd.DataFrame(rows)
-            pcol = f"P(slope rev≤{int(rev_horizon)} bars)"
-            if "Dist (% of range)" in out.columns:
-                out["Dist (% of range)"] = out["Dist (% of range)"].astype(float)
-            if pcol in out.columns:
-                out[pcol] = out[pcol].astype(float)
-
-            left, right = st.columns(2)
-            with left:
-                st.subheader("Near 100% (Low) — potential BUY area")
-                out100 = out[out["Near"] == "100%"].copy()
-                if out100.empty:
-                    st.info("No matches.")
-                else:
-                    out100 = out100.sort_values(["Dist (% of range)", pcol], ascending=[True, False])
-                    st.dataframe(out100.reset_index(drop=True), use_container_width=True)
-
-            with right:
-                st.subheader("Near 0% (High) — potential SELL area")
-                out0 = out[out["Near"] == "0%"].copy()
-                if out0.empty:
-                    st.info("No matches.")
-                else:
-                    out0 = out0.sort_values(["Dist (% of range)", pcol], ascending=[True, False])
-                    st.dataframe(out0.reset_index(drop=True), use_container_width=True)
-
-# ---------------------------
-# TAB 12: Slope Direction Scan
-# ---------------------------
-with tab12:
     st.header("Slope Direction Scan")
     st.caption(
         "Lists symbols whose **current DAILY global trendline slope** is **up** vs **down** "
@@ -4335,61 +4248,9 @@ with tab12:
                     st.dataframe(dn.reset_index(drop=True), use_container_width=True)
 
 # ---------------------------
-# TAB 13: Fib 0%/100% 99.9% Reversal (R²≥0.999)
+# TAB 11: Trendline Direction Lists
 # ---------------------------
-with tab13:
-    st.header("Fib 0%/100% 99.9% Reversal (R² ≥ 0.999)")
-    st.caption(
-        "Lists symbols that have a **CONFIRMED Fib extreme reversal** (touch + consecutive closes) "
-        "AND have **R² ≥ 0.999** on the current regression window, with the regression slope having "
-        "successfully reversed sign from the touch-window slope."
-    )
-
-    run_fib999 = st.button("Run 99.9% Fib Reversal Scan", key=f"btn_run_fib999_{mode}")
-
-    if run_fib999:
-        rows = []
-        for sym in universe:
-            r = fib_extreme_confirmed_reversal_999(
-                symbol=sym,
-                daily_view_label=daily_view,
-                slope_lb=slope_lb_daily,
-                confirm_bars=int(rev_bars_confirm),
-                lookback_bars_for_trigger=int(max(60, slope_lb_daily)),
-                proximity_pct_of_range=0.02,
-                min_r2=0.999,
-            )
-            if r is not None:
-                rows.append(r)
-
-        if not rows:
-            st.info("No matches.")
-        else:
-            out = pd.DataFrame(rows)
-            left, right = st.columns(2)
-
-            with left:
-                st.subheader("Touched 100% (Low) — reversal up (BUY)")
-                out100 = out[out["From Level"] == "100%"].copy()
-                if out100.empty:
-                    st.info("No matches.")
-                else:
-                    out100 = out100.sort_values(["R2 (now)", "Slope (now)"], ascending=[False, False])
-                    st.dataframe(out100.reset_index(drop=True), use_container_width=True)
-
-            with right:
-                st.subheader("Touched 0% (High) — reversal down (SELL)")
-                out0 = out[out["From Level"] == "0%"].copy()
-                if out0.empty:
-                    st.info("No matches.")
-                else:
-                    out0 = out0.sort_values(["R2 (now)", "Slope (now)"], ascending=[False, True])
-                    st.dataframe(out0.reset_index(drop=True), use_container_width=True)
-
-# ---------------------------
-# TAB 14: Trendline Direction Lists (NEW)
-# ---------------------------
-with tab14:
+with tab11:
     st.header("Trendline Direction Lists")
     st.caption(
         "Displays symbols whose **current DAILY chart-area global trendline** is:\n"
@@ -4401,133 +4262,82 @@ with tab14:
     run_trend_lists = st.button("Run Trendline Direction Lists", key=f"btn_run_trendline_lists_{mode}")
 
     if run_trend_lists:
-        up_syms, dn_syms = [], []
+        up_rows, dn_rows = [], []
         for sym in universe:
             m, r2, ts = daily_global_slope(sym, daily_view_label=daily_view)
             if not np.isfinite(m):
                 continue
-            if float(m) >= 0.0:
-                up_syms.append(sym)
-            else:
-                dn_syms.append(sym)
+
+            npx_last, _ = daily_last_npx_in_view(sym, daily_view_label=daily_view, ntd_win=ntd_window)
+            if not np.isfinite(npx_last):
+                continue
+
+            # UPDATED (THIS REQUEST):
+            # - Upward Trend list requires NPX < 0.0
+            # - Downward Trend list requires NPX > 0.5
+            if float(m) >= 0.0 and float(npx_last) < 0.0:
+                up_rows.append({"Symbol": sym, "NPX (Norm Price)": float(npx_last)})
+            elif float(m) < 0.0 and float(npx_last) > 0.5:
+                dn_rows.append({"Symbol": sym, "NPX (Norm Price)": float(npx_last)})
 
         left, right = st.columns(2)
 
         with left:
             st.subheader("Upward Trend (Green dashed)")
-            if not up_syms:
+            if not up_rows:
                 st.info("No matches.")
             else:
-                st.dataframe(pd.DataFrame({"Symbol": sorted(up_syms)}), use_container_width=True)
+                out_up = pd.DataFrame(up_rows).sort_values(["Symbol"], ascending=True)
+                st.dataframe(out_up.reset_index(drop=True), use_container_width=True)
 
         with right:
             st.subheader("Downward Trend (Red dashed)")
-            if not dn_syms:
+            if not dn_rows:
                 st.info("No matches.")
             else:
-                st.dataframe(pd.DataFrame({"Symbol": sorted(dn_syms)}), use_container_width=True)
+                out_dn = pd.DataFrame(dn_rows).sort_values(["Symbol"], ascending=True)
+                st.dataframe(out_dn.reset_index(drop=True), use_container_width=True)
     else:
         st.info("Click **Run Trendline Direction Lists** to scan the current universe.")
 
 # ---------------------------
-# TAB 15: Enhanced Forecast Buy and Sell (NEW)
+# TAB 12: NTD Hot List (NEW)
 # ---------------------------
-with tab15:
-    st.header("Enhanced Forecast Buy and Sell")
+with tab12:
+    st.header("NTD Hot List")
     st.caption(
-        "Daily scan based on the existing **Daily view range**, **Daily S/R window**, and **S/R proximity (%)**.\n\n"
-        "✅ **Buy List**: symbols where price is currently **below/at/near Support** OR **crossed UP through Support** in the last **1–3** bars, "
-        "**AND** the **Support line is sloping upward**.\n"
-        "✅ **Sell List**: symbols where price is currently **above/at/near Resistance** OR **crossed DOWN through Resistance** in the last **1–3** bars, "
-        "**AND** the **Resistance line is sloping downward**."
+        "Lists symbols where the **daily regression slope > 0** (upward trend) "
+        "and **NPX (Norm Price)** is between **0.0** and **0.5** (inclusive), "
+        "using the selected Daily view range."
     )
 
-    c1, c2 = st.columns(2)
-    recent_bars = c1.slider("Recent cross window (bars)", 1, 3, 3, 1, key=f"enh_buysell_recent_{mode}")
-    sr_slope_lb = c2.slider("S/R slope lookback (bars)", 5, 60, min(20, int(sr_lb_daily)), 5, key=f"enh_buysell_srslope_{mode}")
+    run_hot = st.button("Run NTD Hot List", key=f"btn_run_ntd_hot_{mode}")
 
-    run_bs = st.button("Run Enhanced Buy/Sell Scan", key=f"btn_run_enh_buysell_{mode}")
-
-    if run_bs:
-        buy_rows, sell_rows = [], []
-
+    if run_hot:
+        rows = []
         for sym in universe:
-            r = enhanced_sr_buy_sell_candidate(
-                symbol=sym,
-                daily_view_label=daily_view,
-                sr_lb=sr_lb_daily,
-                prox_pct=sr_prox_pct,
-                recent_bars=int(recent_bars),
-                sr_slope_lb=int(sr_slope_lb),
-            )
-            if not isinstance(r, dict):
+            m, r2, ts = daily_global_slope(sym, daily_view_label=daily_view)
+            if not np.isfinite(m) or float(m) <= 0.0:
                 continue
 
-            if bool(r.get("Buy OK", False)):
-                trig = "At/Below Support" if bool(r.get("Buy Now", False)) else "Crossed UP (≤3 bars)"
-                buy_rows.append({
-                    "Symbol": r.get("Symbol"),
-                    "AsOf": r.get("AsOf"),
-                    "Close": r.get("Close"),
-                    "Support": r.get("Support"),
-                    "Support Slope": r.get("Support Slope"),
-                    "Dist vs Support": r.get("Dist vs Support"),
-                    "Trigger": trig,
-                    "Bars Since Cross": r.get("Buy Bars Since Cross"),
-                    "Cross Time": r.get("Buy Cross Time"),
+            npx_last, npx_ts = daily_last_npx_in_view(sym, daily_view_label=daily_view, ntd_win=ntd_window)
+            if not np.isfinite(npx_last):
+                continue
+
+            if 0.0 <= float(npx_last) <= 0.5:
+                rows.append({
+                    "Symbol": sym,
+                    "Slope": float(m),
+                    "NPX (Norm Price)": float(npx_last),
+                    "R2": float(r2) if np.isfinite(r2) else np.nan,
+                    "AsOf": ts
                 })
 
-            if bool(r.get("Sell OK", False)):
-                trig = "At/Above Resistance" if bool(r.get("Sell Now", False)) else "Crossed DOWN (≤3 bars)"
-                sell_rows.append({
-                    "Symbol": r.get("Symbol"),
-                    "AsOf": r.get("AsOf"),
-                    "Close": r.get("Close"),
-                    "Resistance": r.get("Resistance"),
-                    "Resistance Slope": r.get("Resistance Slope"),
-                    "Dist vs Resistance": r.get("Dist vs Resistance"),
-                    "Trigger": trig,
-                    "Bars Since Cross": r.get("Sell Bars Since Cross"),
-                    "Cross Time": r.get("Sell Cross Time"),
-                })
-
-        left, right = st.columns(2)
-
-        with left:
-            st.subheader("Buy List (Support slope UP)")
-            if not buy_rows:
-                st.info("No matches.")
-            else:
-                outb = pd.DataFrame(buy_rows)
-                if "Bars Since Cross" in outb.columns:
-                    outb["Bars Since Cross"] = pd.to_numeric(outb["Bars Since Cross"], errors="coerce")
-                if "Support Slope" in outb.columns:
-                    outb["Support Slope"] = pd.to_numeric(outb["Support Slope"], errors="coerce")
-                if "Dist vs Support" in outb.columns:
-                    outb["Dist vs Support"] = pd.to_numeric(outb["Dist vs Support"], errors="coerce")
-
-                # Sort: best = currently at/below support first, then most recent crosses, then closest distance
-                outb["_buy_now_rank"] = (outb["Trigger"] == "At/Below Support").astype(int)
-                outb["_bars_rank"] = outb["Bars Since Cross"].fillna(9999)
-                outb = outb.sort_values(["_buy_now_rank", "_bars_rank", "Dist vs Support"], ascending=[False, True, True]).drop(columns=["_buy_now_rank","_bars_rank"])
-                st.dataframe(outb.reset_index(drop=True), use_container_width=True)
-
-        with right:
-            st.subheader("Sell List (Resistance slope DOWN)")
-            if not sell_rows:
-                st.info("No matches.")
-            else:
-                outs = pd.DataFrame(sell_rows)
-                if "Bars Since Cross" in outs.columns:
-                    outs["Bars Since Cross"] = pd.to_numeric(outs["Bars Since Cross"], errors="coerce")
-                if "Resistance Slope" in outs.columns:
-                    outs["Resistance Slope"] = pd.to_numeric(outs["Resistance Slope"], errors="coerce")
-                if "Dist vs Resistance" in outs.columns:
-                    outs["Dist vs Resistance"] = pd.to_numeric(outs["Dist vs Resistance"], errors="coerce")
-
-                outs["_sell_now_rank"] = (outs["Trigger"] == "At/Above Resistance").astype(int)
-                outs["_bars_rank"] = outs["Bars Since Cross"].fillna(9999)
-                outs = outs.sort_values(["_sell_now_rank", "_bars_rank", "Dist vs Resistance"], ascending=[False, True, False]).drop(columns=["_sell_now_rank","_bars_rank"])
-                st.dataframe(outs.reset_index(drop=True), use_container_width=True)
+        if not rows:
+            st.info("No matches.")
+        else:
+            out = pd.DataFrame(rows)
+            out = out.sort_values(["Slope", "NPX (Norm Price)"], ascending=[False, True])
+            st.dataframe(out.reset_index(drop=True), use_container_width=True)
     else:
-        st.info("Click **Run Enhanced Buy/Sell Scan** to scan the current universe.")
+        st.info("Click **Run NTD Hot List** to scan the current universe.")
