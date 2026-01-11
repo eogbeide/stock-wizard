@@ -2699,10 +2699,7 @@ def daily_support_reversal_heading_up(symbol: str,
         return None
 
 # ---------------------------
-# NEW (THIS REQUEST): Ichimoku Kijun Daily Cross-Up Scanner helper (Daily only / matches Price Chart)
-#   - Price crosses ABOVE Kijun (cross_up) and is heading up
-#   - Provide Price@Cross, Kijun@Cross, and R2 of regression slope line
-#   - Filter: cross happened within last N bars (scanner filter)
+# Ichimoku Kijun Daily Cross-Up Scanner helper (Daily only / matches Price Chart)
 # ---------------------------
 @st.cache_data(ttl=120)
 def last_daily_kijun_cross_up(symbol: str,
@@ -2717,12 +2714,10 @@ def last_daily_kijun_cross_up(symbol: str,
         if close_full.empty:
             return None
 
-        # Daily view subset must match the "Price Chart"
         close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
         if close_show.empty or len(close_show) < max(3, int(base) + 2, int(slope_lb)):
             return None
 
-        # Daily OHLC aligned to the same daily-view window
         ohlc = fetch_hist_ohlc(symbol)
         if ohlc is None or ohlc.empty or not {"High","Low","Close"}.issubset(ohlc.columns):
             return None
@@ -2732,7 +2727,6 @@ def last_daily_kijun_cross_up(symbol: str,
         if ohlc_show.empty or len(ohlc_show) < max(3, int(base) + 2):
             return None
 
-        # Kijun (no cloud shift; matches the overlay logic on the price chart)
         _, kijun, _, _, _ = ichimoku_lines(
             ohlc_show["High"], ohlc_show["Low"], ohlc_show["Close"],
             conv=int(conv), base=int(base), span_b=int(span_b),
@@ -2754,12 +2748,10 @@ def last_daily_kijun_cross_up(symbol: str,
             return None
         bars_since = int((len(close_show) - 1) - loc)
 
-        # (a) within last N bars filter
         within_last_n_bars = max(0, int(within_last_n_bars))
         if bars_since > within_last_n_bars:
             return None
 
-        # "Heading up" confirmation: cross bar is an up-close AND current close >= cross close
         px_cross = float(close_show.loc[t_cross]) if np.isfinite(close_show.loc[t_cross]) else np.nan
         px_prev = float(close_show.shift(1).loc[t_cross]) if (t_cross in close_show.index and np.isfinite(close_show.shift(1).loc[t_cross])) else np.nan
         px_last = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
@@ -2772,7 +2764,6 @@ def last_daily_kijun_cross_up(symbol: str,
         if not np.isfinite(kij_cross):
             return None
 
-        # Regression slope + R² in the same daily view range (matches "Price Chart" global trendline behavior)
         yhat, up, lo, m, r2 = regression_with_band(close_show, lookback=int(slope_lb))
         if not (np.isfinite(m) and np.isfinite(r2)):
             return None
@@ -2827,6 +2818,15 @@ def render_hourly_views(sel: str,
 
     res_h = hc.rolling(sr_lb_hourly, min_periods=1).max()
     sup_h = hc.rolling(sr_lb_hourly, min_periods=1).min()
+
+    # =========================
+    # NEW (THIS REQUEST): Extra dotted S/R lines (default 60 bars via slider)
+    #   - Light blue dotted (above) = resistance
+    #   - Dark blue dotted (below)  = support
+    #   - Applied to intraday (5m bars) charts too
+    # =========================
+    res_h60 = hc.rolling(int(sr_lb_extra), min_periods=1).max() if "sr_lb_extra" in globals() else hc.rolling(60, min_periods=1).max()
+    sup_h60 = hc.rolling(int(sr_lb_extra), min_periods=1).min() if "sr_lb_extra" in globals() else hc.rolling(60, min_periods=1).min()
 
     hma_h = compute_hma(hc, period=hma_period)
     macd_h, macd_sig_h, macd_hist_h = compute_macd(hc)
@@ -2921,6 +2921,29 @@ def render_hourly_views(sel: str,
         ax2.hlines(sup_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
         label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
         label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
+
+    # =========================
+    # NEW (THIS REQUEST): Extra dotted 60-bar S/R lines on intraday charts
+    # =========================
+    try:
+        res60_val = float(res_h60.iloc[-1]) if len(res_h60) else np.nan
+        sup60_val = float(sup_h60.iloc[-1]) if len(sup_h60) else np.nan
+    except Exception:
+        res60_val = np.nan
+        sup60_val = np.nan
+
+    if np.isfinite(res60_val):
+        ax2.hlines(
+            res60_val, xmin=hc.index[0], xmax=hc.index[-1],
+            colors="lightskyblue", linestyles="dotted", linewidth=1.6,
+            label=f"Resistance ({int(sr_lb_extra) if 'sr_lb_extra' in globals() else 60})"
+        )
+    if np.isfinite(sup60_val):
+        ax2.hlines(
+            sup60_val, xmin=hc.index[0], xmax=hc.index[-1],
+            colors="darkblue", linestyles="dotted", linewidth=1.6,
+            label=f"Support ({int(sr_lb_extra) if 'sr_lb_extra' in globals() else 60})"
+        )
 
     if not st_line_intr.empty:
         ax2.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
@@ -3283,7 +3306,14 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# UPDATED (THIS REQUEST): added Ichimoku Kijun Scanner tab (Daily-only / matches Price Chart)
+# =========================
+# NEW (THIS REQUEST): Sidebar slider for extra dotted S/R lookback (default 60)
+#   - Added without changing existing UI views; appears in sidebar only.
+# =========================
+st.sidebar.subheader("Extra S/R (Dotted Lines)")
+sr_lb_extra = st.sidebar.slider("Extra S/R lookback (bars)", 20, 252, 60, 5, key="sb_sr_lb_extra")
+
+# UPDATED: last tab name must be "IK Cross"
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
@@ -3299,7 +3329,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "NTD Hot List",
     "NTD NPX 0.0-0.2 Scanner",
     "Uptrend vs Downtrend",
-    "Ichimoku Kijun Scanner"
+    "IK Cross"
 ])
 
 # ---------------------------
@@ -3385,6 +3415,12 @@ with tab1:
             res_d = df.rolling(sr_lb_daily, min_periods=1).max()
             sup_d = df.rolling(sr_lb_daily, min_periods=1).min()
 
+            # =========================
+            # NEW (THIS REQUEST): Extra dotted S/R lines on DAILY price chart (default 60 bars via slider)
+            # =========================
+            res_d60 = df.rolling(int(sr_lb_extra), min_periods=1).max()
+            sup_d60 = df.rolling(int(sr_lb_extra), min_periods=1).min()
+
             yhat_d, upper_d, lower_d, m_d, r2_d = regression_with_band(df, slope_lb_daily)
             rev_prob_d = slope_reversal_probability(df, m_d, hist_window=rev_hist_lb, slope_window=slope_lb_daily, horizon=rev_horizon)
             piv = current_daily_pivots(df_ohlc)
@@ -3407,6 +3443,10 @@ with tab1:
             ema30_show = ema30.reindex(df_show.index)
             res_d_show = res_d.reindex(df_show.index)
             sup_d_show = sup_d.reindex(df_show.index)
+
+            res_d60_show = res_d60.reindex(df_show.index)
+            sup_d60_show = sup_d60.reindex(df_show.index)
+
             yhat_d_show = yhat_d.reindex(df_show.index) if not yhat_d.empty else yhat_d
             upper_d_show = upper_d.reindex(df_show.index) if not upper_d.empty else upper_d
             lower_d_show = lower_d.reindex(df_show.index) if not lower_d.empty else lower_d
@@ -3484,6 +3524,29 @@ with tab1:
                           label=f"Support (w={sr_lb_daily})")
                 label_on_left(ax, res_val_d, f"R {fmt_price_val(res_val_d)}", color="tab:red")
                 label_on_left(ax, sup_val_d, f"S {fmt_price_val(sup_val_d)}", color="tab:green")
+
+            # =========================
+            # NEW (THIS REQUEST): Extra dotted 60-bar S/R lines on DAILY chart
+            # =========================
+            try:
+                res60_val_d = float(res_d60_show.iloc[-1]) if len(res_d60_show) else np.nan
+                sup60_val_d = float(sup_d60_show.iloc[-1]) if len(sup_d60_show) else np.nan
+            except Exception:
+                res60_val_d = np.nan
+                sup60_val_d = np.nan
+
+            if np.isfinite(res60_val_d):
+                ax.hlines(
+                    res60_val_d, xmin=df_show.index[0], xmax=df_show.index[-1],
+                    colors="lightskyblue", linestyles="dotted", linewidth=1.6,
+                    label=f"Resistance ({int(sr_lb_extra)})"
+                )
+            if np.isfinite(sup60_val_d):
+                ax.hlines(
+                    sup60_val_d, xmin=df_show.index[0], xmax=df_show.index[-1],
+                    colors="darkblue", linestyles="dotted", linewidth=1.6,
+                    label=f"Support ({int(sr_lb_extra)})"
+                )
 
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
@@ -3796,6 +3859,11 @@ with tab2:
             df_show = subset_by_daily_view(df, daily_view)
             res_d_show = df_show.rolling(sr_lb_daily, min_periods=1).max()
             sup_d_show = df_show.rolling(sr_lb_daily, min_periods=1).min()
+
+            # NEW (THIS REQUEST): extra dotted S/R on enhanced daily chart too
+            res_d60_show = df_show.rolling(int(sr_lb_extra), min_periods=1).max()
+            sup_d60_show = df_show.rolling(int(sr_lb_extra), min_periods=1).min()
+
             hma_d_show = compute_hma(df_show, period=hma_period)
             macd_d, macd_sig_d, _ = compute_macd(df_show)
 
@@ -3812,6 +3880,21 @@ with tab2:
                           colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance")
                 ax.hlines(float(sup_d_show.iloc[-1]), xmin=df_show.index[0], xmax=df_show.index[-1],
                           colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
+
+            # NEW (THIS REQUEST): dotted S/R (60 default) on enhanced chart
+            try:
+                res60v = float(res_d60_show.iloc[-1]) if len(res_d60_show) else np.nan
+                sup60v = float(sup_d60_show.iloc[-1]) if len(sup_d60_show) else np.nan
+            except Exception:
+                res60v = np.nan
+                sup60v = np.nan
+
+            if np.isfinite(res60v):
+                ax.hlines(res60v, xmin=df_show.index[0], xmax=df_show.index[-1],
+                          colors="lightskyblue", linestyles="dotted", linewidth=1.6, label=f"Resistance ({int(sr_lb_extra)})")
+            if np.isfinite(sup60v):
+                ax.hlines(sup60v, xmin=df_show.index[0], xmax=df_show.index[-1],
+                          colors="darkblue", linestyles="dotted", linewidth=1.6, label=f"Support ({int(sr_lb_extra)})")
 
             if show_fibs and len(df_show) > 0:
                 fibs_d = fibonacci_levels(df_show)
@@ -4440,23 +4523,22 @@ with tab14:
                 st.dataframe(out.reset_index(drop=True), use_container_width=True)
 
 # ---------------------------
-# TAB 15: Ichimoku Kijun Scanner (NEW)
+# TAB 15: IK Cross (NEW TAB NAME)
 # ---------------------------
 with tab15:
-    st.header("Ichimoku Kijun Scanner")
+    st.header("IK Cross")
     st.caption(
-        "Daily-only scanner (matches the **Price Chart**):\n"
-        "• **List 1:** regression line slope **> 0** AND price **crossed above** the **Ichimoku Kijun** line, **heading up**\n"
-        "• **List 2:** regression line slope **< 0** AND price **crossed above** the **Ichimoku Kijun** line, **heading up**\n\n"
-        "Includes **Price@Cross**, **Kijun@Cross**, and **R²**."
+        "Daily-only list (matches the **Price Chart**): symbols where price **just crossed above** the "
+        "**Ichimoku Kijun (26)** line and is **heading up**.\n\n"
+        "Includes **Price@Cross**, **Kijun@Cross**, **Slope**, and **R²**."
     )
 
     c1, c2 = st.columns(2)
     kijun_within = c1.slider("Cross must be within last N bars", 0, 60, 5, 1, key="kijun_within_n")
-    run_kijun = c2.button("Run Ichimoku Kijun Scan", key=f"btn_run_kijun_scan_{mode}")
+    run_kijun = c2.button("Run IK Cross Scan", key=f"btn_run_kijun_scan_{mode}")
 
     if run_kijun:
-        rows_list1, rows_list2 = [], []
+        rows = []
         for sym in universe:
             r = last_daily_kijun_cross_up(
                 symbol=sym,
@@ -4467,41 +4549,18 @@ with tab15:
                 span_b=int(ichi_spanb),
                 within_last_n_bars=int(kijun_within),
             )
-            if r is None:
-                continue
+            if r is not None:
+                rows.append(r)
 
-            # Split lists by regression slope sign
-            try:
-                m = float(r.get("Slope", np.nan))
-            except Exception:
-                m = np.nan
-            if not np.isfinite(m):
-                continue
-
-            if m > 0.0:
-                rows_list1.append(r)
-            elif m < 0.0:
-                rows_list2.append(r)
-
-        left, right = st.columns(2)
-        with left:
-            st.subheader("Ichimoku Kijun List 1 — Slope > 0 and Kijun Cross-Up (heading up)")
-            if not rows_list1:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(rows_list1)
-                if "Bars Since Cross" in out.columns:
-                    out["Bars Since Cross"] = out["Bars Since Cross"].astype(int)
-                out = out.sort_values(["Bars Since Cross", "Slope"], ascending=[True, False])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-        with right:
-            st.subheader("Ichimoku Kijun List 2 — Slope < 0 and Kijun Cross-Up (heading up)")
-            if not rows_list2:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(rows_list2)
-                if "Bars Since Cross" in out.columns:
-                    out["Bars Since Cross"] = out["Bars Since Cross"].astype(int)
-                out = out.sort_values(["Bars Since Cross", "Slope"], ascending=[True, True])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
+        if not rows:
+            st.info("No matches.")
+        else:
+            out = pd.DataFrame(rows)
+            if "Bars Since Cross" in out.columns:
+                out["Bars Since Cross"] = out["Bars Since Cross"].astype(int)
+            if "Slope" in out.columns:
+                out["Slope"] = out["Slope"].astype(float)
+            if "R2" in out.columns:
+                out["R2"] = out["R2"].astype(float)
+            out = out.sort_values(["Bars Since Cross", "Slope"], ascending=[True, False])
+            st.dataframe(out.reset_index(drop=True), use_container_width=True)
