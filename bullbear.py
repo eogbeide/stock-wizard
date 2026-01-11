@@ -1,5 +1,5 @@
 # =========================
-# Part 1/10 — bullbear.py
+# Part 1/10 — bullbear.py  (UPDATED: Ribbon Tabs + Beautiful Chart Styling)
 # =========================
 import streamlit as st
 import pandas as pd
@@ -14,6 +14,36 @@ from matplotlib.transforms import blended_transform_factory
 from matplotlib.lines import Line2D
 
 # ---------------------------
+# Matplotlib theme (STYLE ONLY — no logic changes)
+# ---------------------------
+def _apply_mpl_theme():
+    """A clean, modern look for matplotlib output rendered in Streamlit (no data/logic changes)."""
+    try:
+        plt.rcParams.update({
+            "figure.dpi": 120,
+            "savefig.dpi": 140,
+            "figure.facecolor": "white",
+            "axes.facecolor": "white",
+            "axes.edgecolor": "0.25",
+            "axes.linewidth": 0.9,
+            "axes.titleweight": "bold",
+            "axes.titlesize": 12,
+            "axes.labelsize": 10,
+            "xtick.labelsize": 9,
+            "ytick.labelsize": 9,
+            "grid.alpha": 0.18,
+            "grid.linewidth": 0.8,
+            "legend.fontsize": 9,
+            "legend.framealpha": 0.70,
+            "legend.fancybox": True,
+            "lines.linewidth": 1.6,
+        })
+    except Exception:
+        pass
+
+_apply_mpl_theme()
+
+# ---------------------------
 # Page config + UI CSS
 # ---------------------------
 st.set_page_config(
@@ -26,6 +56,67 @@ st.set_page_config(
 st.markdown("""
 <style>
   #MainMenu, header, footer {visibility: hidden;}
+
+  /* =========================
+     UPDATED (THIS REQUEST):
+     (1) Beautiful rectangular ribbon tabs (BaseWeb tabs)
+     ========================= */
+  div[data-baseweb="tab-list"] {
+    flex-wrap: wrap !important;
+    overflow-x: visible !important;
+    gap: 0.45rem !important;
+    padding: 0.35rem 0.35rem 0.25rem 0.35rem !important;
+    border-bottom: 1px solid rgba(49, 51, 63, 0.18) !important;
+  }
+  div[data-baseweb="tab"] { flex: 0 0 auto !important; }
+
+  div[data-baseweb="tab"] > button,
+  div[data-baseweb="tab"] button {
+    border: 1px solid rgba(49, 51, 63, 0.22) !important;
+    background: rgba(255,255,255,0.92) !important;
+    padding: 0.45rem 0.75rem !important;
+    border-radius: 6px !important;       /* rectangular ribbon (not pill) */
+    font-weight: 800 !important;
+    letter-spacing: 0.01em !important;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.06) !important;
+    transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease !important;
+    white-space: nowrap !important;
+  }
+  div[data-baseweb="tab"] > button:hover,
+  div[data-baseweb="tab"] button:hover {
+    transform: translateY(-1px) !important;
+    box-shadow: 0 6px 16px rgba(0,0,0,0.10) !important;
+  }
+  div[data-baseweb="tab"] > button[aria-selected="true"],
+  div[data-baseweb="tab"] button[aria-selected="true"] {
+    background: rgba(49, 51, 63, 0.92) !important;
+    color: white !important;
+    border-color: rgba(49, 51, 63, 0.92) !important;
+    box-shadow: 0 10px 22px rgba(0,0,0,0.16) !important;
+  }
+  div[data-baseweb="tab"] > button:focus,
+  div[data-baseweb="tab"] button:focus {
+    outline: none !important;
+    box-shadow: 0 0 0 3px rgba(49, 51, 63, 0.18) !important;
+  }
+
+  /* =========================
+     UPDATED (THIS REQUEST):
+     (2) Beautiful chart container styling (Streamlit React UI wrappers)
+     ========================= */
+  div[data-testid="stImage"] {
+    border: 1px solid rgba(49, 51, 63, 0.12);
+    border-radius: 14px;
+    background: rgba(255,255,255,0.65);
+    box-shadow: 0 8px 24px rgba(0,0,0,0.06);
+    padding: 0.35rem 0.35rem 0.15rem 0.35rem;
+    overflow: hidden;
+  }
+  div[data-testid="stImage"] img {
+    border-radius: 12px;
+  }
+
+  /* Mobile: keep sidebar usable */
   @media (max-width: 600px) {
     .css-18e3th9 {
       transform: none !important;
@@ -114,15 +205,24 @@ mode = st.session_state.asset_mode
 st.caption(f"**Current mode:** {mode}")
 
 # ---------------------------
-# Aesthetic helper (no logic change)
+# Aesthetic helper (STYLE ONLY — no logic change)
 # ---------------------------
 def style_axes(ax):
-    """Simple, consistent, user-friendly chart styling."""
+    """Simple, consistent, user-friendly chart styling (no data/logic changes)."""
     try:
-        ax.grid(True, alpha=0.22, linewidth=0.8)
+        ax.grid(True, which="major", alpha=0.18, linewidth=0.8)
+        ax.minorticks_on()
+        ax.grid(True, which="minor", alpha=0.07, linewidth=0.6)
         ax.set_axisbelow(True)
+
         for spine in ["top", "right"]:
             ax.spines[spine].set_visible(False)
+        for spine in ["left", "bottom"]:
+            ax.spines[spine].set_alpha(0.25)
+
+        ax.tick_params(axis="both", which="major", length=4, width=0.9, colors="0.25")
+        ax.tick_params(axis="both", which="minor", length=2, width=0.6, colors="0.35")
+        ax.margins(x=0.01)
     except Exception:
         pass
 
@@ -1693,10 +1793,6 @@ def annotate_reverse_possible(ax, rev_info: dict, text: str = "Reverse Possible"
         zorder=25
     )
 # =========================
-# Batch 2/2 — Parts 6/10 to 10/10 — bullbear.py (UPDATED)
-# =========================
-
-# =========================
 # Part 6/10 — bullbear.py
 # =========================
 # ---------------------------
@@ -2776,10 +2872,15 @@ def render_hourly_views(sel: str,
             2, 1, sharex=True, figsize=(14, 7),
             gridspec_kw={"height_ratios": [3.2, 1.3]}
         )
-        plt.subplots_adjust(hspace=0.05, top=0.90, right=0.93, bottom=0.30)
+        plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93, bottom=0.34)
     else:
         fig2, ax2 = plt.subplots(figsize=(14, 4))
-        plt.subplots_adjust(top=0.85, right=0.93, bottom=0.30)
+        plt.subplots_adjust(top=0.90, right=0.93, bottom=0.34)
+
+    try:
+        fig2.patch.set_facecolor("white")
+    except Exception:
+        pass
 
     ax2.plot(hc.index, hc, label="Intraday")
     ax2.plot(he.index, he.values, "--", label="20 EMA")
@@ -3034,11 +3135,14 @@ def render_hourly_views(sel: str,
         handles=h_u,
         labels=l_u,
         loc="lower center",
-        bbox_to_anchor=(0.5, 0.01),
+        bbox_to_anchor=(0.5, 0.015),
         ncol=4,
         frameon=True,
         fontsize=9,
-        framealpha=0.5
+        framealpha=0.65,
+        fancybox=True,
+        borderpad=0.6,
+        handlelength=2.0
     )
 
     if isinstance(real_times, pd.DatetimeIndex):
@@ -3052,13 +3156,13 @@ def render_hourly_views(sel: str,
 
     if show_macd and not macd_h.dropna().empty:
         figm, axm = plt.subplots(figsize=(14, 2.6))
-        figm.subplots_adjust(top=0.88, bottom=0.35)
+        figm.subplots_adjust(top=0.88, bottom=0.45)
         axm.set_title("MACD (optional)")
         axm.plot(macd_h.index, macd_h.values, linewidth=1.4, label="MACD")
         axm.plot(macd_sig_h.index, macd_sig_h.values, linewidth=1.2, label="Signal")
         axm.axhline(0.0, linestyle="--", linewidth=1.0, color="black")
         axm.set_xlim(xlim_price)
-        axm.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=3, framealpha=0.5, fontsize=9)
+        axm.legend(loc="upper center", bbox_to_anchor=(0.5, -0.32), ncol=3, framealpha=0.65, fontsize=9, fancybox=True)
         if isinstance(real_times, pd.DatetimeIndex):
             _apply_compact_time_ticks(axm, real_times, n_ticks=8)
         style_axes(axm)
@@ -3089,19 +3193,90 @@ def render_hourly_views(sel: str,
 # Tabs
 # ---------------------------
 
+# ---------------------------
+# Matplotlib + Streamlit chart UI polish (THIS REQUEST)
+#   - No data/logic changes
+#   - Prevent overlaps by giving legends more space
+#   - Add subtle "card" styling to rendered charts
+# ---------------------------
+try:
+    plt.rcParams.update({
+        "legend.frameon": True,
+        "legend.fancybox": True,
+        "legend.framealpha": 0.65,
+        "axes.titleweight": "bold",
+    })
+except Exception:
+    pass
+
 st.markdown(
     """
     <style>
+      /* ==========================
+         Tabs: rectangular ribbons
+         ========================== */
       div[data-baseweb="tab-list"] {
         flex-wrap: wrap !important;
         overflow-x: visible !important;
-        gap: 0.25rem !important;
+        gap: 0.40rem !important;
+        padding: 0.25rem 0.25rem 0.40rem 0.25rem !important;
+        border-bottom: 1px solid rgba(49, 51, 63, 0.14) !important;
       }
+
       div[data-baseweb="tab"] {
         flex: 0 0 auto !important;
       }
-      div[data-baseweb="tab"] button {
-        padding: 6px 10px !important;
+
+      div[data-baseweb="tab"] > button {
+        padding: 0.40rem 0.85rem !important;
+        border: 1px solid rgba(49, 51, 63, 0.20) !important;
+        border-radius: 6px !important; /* rectangular ribbon feel */
+        background: rgba(248, 250, 252, 0.96) !important;
+        box-shadow: 0 1px 0 rgba(0,0,0,0.03) !important;
+        font-weight: 700 !important;
+        line-height: 1.05 !important;
+        transition: transform 120ms ease, box-shadow 120ms ease, border-color 120ms ease, background 120ms ease !important;
+      }
+
+      div[data-baseweb="tab"] > button:hover {
+        transform: translateY(-1px) !important;
+        box-shadow: 0 10px 22px rgba(0,0,0,0.10) !important;
+        border-color: rgba(49, 51, 63, 0.32) !important;
+        background: rgba(241, 245, 249, 1.0) !important;
+      }
+
+      div[data-baseweb="tab"] > button[aria-selected="true"] {
+        background: linear-gradient(90deg, rgba(59,130,246,0.96), rgba(99,102,241,0.96)) !important;
+        border-color: rgba(59,130,246,0.95) !important;
+        box-shadow: 0 12px 24px rgba(59,130,246,0.24) !important;
+      }
+
+      div[data-baseweb="tab"] > button[aria-selected="true"] p {
+        color: white !important;
+      }
+
+      div[data-baseweb="tab"] p {
+        margin: 0 !important;
+        font-size: 0.90rem !important;
+      }
+
+      /* ==========================
+         Charts: "React UI" polish
+         (Streamlit renders matplotlib via <img>)
+         ========================== */
+      div[data-testid="stImage"] img {
+        border-radius: 14px !important;
+        background: white !important;
+        padding: 6px !important;
+        box-shadow: 0 12px 28px rgba(0,0,0,0.10) !important;
+      }
+
+      @media (max-width: 600px) {
+        div[data-testid="stImage"] img {
+          border-radius: 10px !important;
+          padding: 4px !important;
+          box-shadow: 0 10px 22px rgba(0,0,0,0.10) !important;
+        }
       }
     </style>
     """,
@@ -3256,7 +3431,12 @@ with tab1:
                 2, 1, sharex=True, figsize=(14, 8),
                 gridspec_kw={"height_ratios": [3.2, 1.3]}
             )
-            plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93, bottom=0.26)
+            plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93, bottom=0.33)
+
+            try:
+                fig.patch.set_facecolor("white")
+            except Exception:
+                pass
 
             rev_txt_d = fmt_pct(rev_prob_d) if np.isfinite(rev_prob_d) else "n/a"
             ax.set_title(
@@ -3462,11 +3642,14 @@ with tab1:
                 handles=h_u,
                 labels=l_u,
                 loc="lower center",
-                bbox_to_anchor=(0.5, 0.01),
+                bbox_to_anchor=(0.5, 0.015),
                 ncol=4,
                 frameon=True,
                 fontsize=9,
-                framealpha=0.5
+                framealpha=0.65,
+                fancybox=True,
+                borderpad=0.6,
+                handlelength=2.0
             )
 
             style_axes(ax)
@@ -3475,12 +3658,12 @@ with tab1:
 
             if show_macd and not macd_d.dropna().empty:
                 figm, axm = plt.subplots(figsize=(14, 2.6))
-                figm.subplots_adjust(top=0.88, bottom=0.35)
+                figm.subplots_adjust(top=0.88, bottom=0.45)
                 axm.set_title("MACD (optional)")
                 axm.plot(macd_d.index, macd_d.values, linewidth=1.4, label="MACD")
                 axm.plot(macd_sig_d.index, macd_sig_d.values, linewidth=1.2, label="Signal")
                 axm.axhline(0.0, linestyle="--", linewidth=1.0, color="black")
-                axm.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=3, framealpha=0.5, fontsize=9)
+                axm.legend(loc="upper center", bbox_to_anchor=(0.5, -0.32), ncol=3, framealpha=0.65, fontsize=9, fancybox=True)
                 style_axes(axm)
                 st.pyplot(figm)
 
@@ -3617,7 +3800,7 @@ with tab2:
             macd_d, macd_sig_d, _ = compute_macd(df_show)
 
             fig, ax = plt.subplots(figsize=(14, 5))
-            fig.subplots_adjust(bottom=0.25)
+            fig.subplots_adjust(bottom=0.30)
             ax.set_title(f"{st.session_state.ticker} Daily (Enhanced) — {daily_view}")
             ax.plot(df_show.index, df_show.values, label="History")
             global_m_d = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
@@ -3660,18 +3843,18 @@ with tab2:
                     fontsize=10, fontweight="bold",
                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.8))
 
-            ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=4, framealpha=0.5, fontsize=9)
+            ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18), ncol=4, framealpha=0.65, fontsize=9, fancybox=True)
             style_axes(ax)
             st.pyplot(fig)
 
             if show_macd and not macd_d.dropna().empty:
                 figm, axm = plt.subplots(figsize=(14, 2.6))
-                figm.subplots_adjust(top=0.88, bottom=0.35)
+                figm.subplots_adjust(top=0.88, bottom=0.45)
                 axm.set_title("MACD (optional)")
                 axm.plot(macd_d.index, macd_d.values, linewidth=1.4, label="MACD")
                 axm.plot(macd_sig_d.index, macd_sig_d.values, linewidth=1.2, label="Signal")
                 axm.axhline(0.0, linestyle="--", linewidth=1.0, color="black")
-                axm.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=3, framealpha=0.5, fontsize=9)
+                axm.legend(loc="upper center", bbox_to_anchor=(0.5, -0.32), ncol=3, framealpha=0.65, fontsize=9, fancybox=True)
                 style_axes(axm)
                 st.pyplot(figm)
 
@@ -3712,11 +3895,11 @@ with tab3:
         ret = (float(s.iloc[-1]) / float(s.iloc[0]) - 1.0) if len(s) > 1 else np.nan
         st.metric(label=f"{sel_bb} return over {bb_period}", value=fmt_pct(ret))
         fig, ax = plt.subplots(figsize=(14, 4))
-        fig.subplots_adjust(bottom=0.25)
+        fig.subplots_adjust(bottom=0.30)
         ax.set_title(f"{sel_bb} — {bb_period} Close")
         ax.plot(s.index, s.values, label="Close")
         draw_trend_direction_line(ax, s, label_prefix="Trend (global)")
-        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=4, framealpha=0.5, fontsize=9)
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18), ncol=4, framealpha=0.65, fontsize=9, fancybox=True)
         style_axes(ax)
         st.pyplot(fig)
 
@@ -3809,11 +3992,11 @@ with tab6:
         st.warning("No long-term history available.")
     else:
         fig, ax = plt.subplots(figsize=(14, 4))
-        fig.subplots_adjust(bottom=0.25)
+        fig.subplots_adjust(bottom=0.30)
         ax.set_title(f"{sel_lt} — Max History")
         ax.plot(smax.index, smax.values, label="Close")
         draw_trend_direction_line(ax, smax, label_prefix="Trend (global)")
-        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=4, framealpha=0.5, fontsize=9)
+        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.18), ncol=4, framealpha=0.65, fontsize=9, fancybox=True)
         style_axes(ax)
         st.pyplot(fig)
 
