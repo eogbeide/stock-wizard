@@ -14,6 +14,32 @@ from matplotlib.transforms import blended_transform_factory
 from matplotlib.lines import Line2D
 
 # ---------------------------
+# NEW (THIS REQUEST): Beautiful chart styling (global, no logic change)
+# ---------------------------
+try:
+    plt.rcParams.update({
+        "figure.dpi": 120,
+        "savefig.dpi": 120,
+        "axes.titlesize": 13,
+        "axes.titleweight": "bold",
+        "axes.labelsize": 10,
+        "axes.labelpad": 8,
+        "xtick.labelsize": 9,
+        "ytick.labelsize": 9,
+        "legend.fontsize": 9,
+        "legend.frameon": True,
+        "legend.framealpha": 0.55,
+        "legend.borderpad": 0.6,
+        "legend.handlelength": 2.0,
+        "axes.grid": True,
+        "grid.alpha": 0.20,
+        "grid.linewidth": 0.8,
+        "axes.formatter.useoffset": False,
+    })
+except Exception:
+    pass
+
+# ---------------------------
 # Page config + UI CSS
 # ---------------------------
 st.set_page_config(
@@ -117,12 +143,29 @@ st.caption(f"**Current mode:** {mode}")
 # Aesthetic helper (no logic change)
 # ---------------------------
 def style_axes(ax):
-    """Simple, consistent, user-friendly chart styling."""
+    """Beautiful, consistent, user-friendly chart styling (no logic change)."""
     try:
-        ax.grid(True, alpha=0.22, linewidth=0.8)
+        # Softer, layered grid
+        ax.grid(True, which="major", alpha=0.20, linewidth=0.8)
+        ax.minorticks_on()
+        ax.grid(True, which="minor", alpha=0.08, linewidth=0.6)
         ax.set_axisbelow(True)
+
+        # Clean spines
         for spine in ["top", "right"]:
             ax.spines[spine].set_visible(False)
+        for spine in ["left", "bottom"]:
+            ax.spines[spine].set_alpha(0.35)
+
+        # Ticks
+        ax.tick_params(axis="both", which="major", length=4, width=0.8)
+        ax.tick_params(axis="both", which="minor", length=2, width=0.6, alpha=0.6)
+
+        # Subtle background polish (keeps UI intact)
+        try:
+            ax.set_facecolor((1, 1, 1, 1))
+        except Exception:
+            pass
     except Exception:
         pass
 
@@ -1936,6 +1979,51 @@ def last_hourly_npx_value(symbol: str, ntd_win: int, period: str = "1d"):
     except Exception:
         return np.nan, None
 
+# ---------------------------
+# NEW (THIS REQUEST): Chart polish (matplotlib-only; no logic change)
+# ---------------------------
+def polish_figure(fig):
+    """Make matplotlib figures feel 'native' inside Streamlit (clean + crisp)."""
+    try:
+        fig.patch.set_alpha(0.0)  # transparent, lets Streamlit background show through
+    except Exception:
+        pass
+
+def polish_axes(ax):
+    """Extra chart polish (keeps existing plot colors; only improves cosmetics)."""
+    try:
+        ax.set_axisbelow(True)
+        ax.tick_params(axis="both", which="major", labelsize=9)
+        ax.tick_params(axis="both", which="minor", labelsize=8)
+
+        # Subtle grid (style_axes already sets a grid; this just refines)
+        ax.grid(True, alpha=0.18, linewidth=0.9)
+
+        # Softer spines
+        for s in ax.spines.values():
+            try:
+                s.set_alpha(0.35)
+            except Exception:
+                pass
+
+        # Slightly stronger title
+        try:
+            ax.title.set_fontsize(12)
+            ax.title.set_fontweight("bold")
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+def polish_legend(leg):
+    """Make legends match the polished look without changing layout."""
+    try:
+        fr = leg.get_frame()
+        fr.set_alpha(0.55)
+        fr.set_linewidth(0.8)
+    except Exception:
+        pass
+
 
 # =========================
 # Part 7/10 — bullbear.py
@@ -2604,9 +2692,6 @@ def daily_support_reversal_heading_up(symbol: str,
 
 # ---------------------------
 # NEW (THIS REQUEST): Ichimoku Kijun Daily Cross-Up Scanner helper (Daily only / matches Price Chart)
-#   - Price crosses ABOVE Kijun (cross_up) and is heading up
-#   - Provide Price@Cross, Kijun@Cross, and R2 of regression slope line
-#   - Filter: cross happened within last N bars (scanner filter)
 # ---------------------------
 @st.cache_data(ttl=120)
 def last_daily_kijun_cross_up(symbol: str,
@@ -2621,12 +2706,10 @@ def last_daily_kijun_cross_up(symbol: str,
         if close_full.empty:
             return None
 
-        # Daily view subset must match the "Price Chart"
         close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
         if close_show.empty or len(close_show) < max(3, int(base) + 2, int(slope_lb)):
             return None
 
-        # Daily OHLC aligned to the same daily-view window
         ohlc = fetch_hist_ohlc(symbol)
         if ohlc is None or ohlc.empty or not {"High","Low","Close"}.issubset(ohlc.columns):
             return None
@@ -2636,7 +2719,6 @@ def last_daily_kijun_cross_up(symbol: str,
         if ohlc_show.empty or len(ohlc_show) < max(3, int(base) + 2):
             return None
 
-        # Kijun (no cloud shift; matches the overlay logic on the price chart)
         _, kijun, _, _, _ = ichimoku_lines(
             ohlc_show["High"], ohlc_show["Low"], ohlc_show["Close"],
             conv=int(conv), base=int(base), span_b=int(span_b),
@@ -2658,12 +2740,10 @@ def last_daily_kijun_cross_up(symbol: str,
             return None
         bars_since = int((len(close_show) - 1) - loc)
 
-        # (a) within last N bars filter
         within_last_n_bars = max(0, int(within_last_n_bars))
         if bars_since > within_last_n_bars:
             return None
 
-        # "Heading up" confirmation: cross bar is an up-close AND current close >= cross close
         px_cross = float(close_show.loc[t_cross]) if np.isfinite(close_show.loc[t_cross]) else np.nan
         px_prev = float(close_show.shift(1).loc[t_cross]) if (t_cross in close_show.index and np.isfinite(close_show.shift(1).loc[t_cross])) else np.nan
         px_last = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
@@ -2676,7 +2756,6 @@ def last_daily_kijun_cross_up(symbol: str,
         if not np.isfinite(kij_cross):
             return None
 
-        # Regression slope + R² in the same daily view range (matches "Price Chart" global trendline behavior)
         yhat, up, lo, m, r2 = regression_with_band(close_show, lookback=int(slope_lb))
         if not (np.isfinite(m) and np.isfinite(r2)):
             return None
@@ -3030,7 +3109,7 @@ def render_hourly_views(sel: str,
         h_u.append(h)
         l_u.append(l)
 
-    fig2.legend(
+    leg = fig2.legend(
         handles=h_u,
         labels=l_u,
         loc="lower center",
@@ -3040,13 +3119,18 @@ def render_hourly_views(sel: str,
         fontsize=9,
         framealpha=0.5
     )
+    polish_legend(leg)
 
     if isinstance(real_times, pd.DatetimeIndex):
         _apply_compact_time_ticks(ax2w if ax2w is not None else ax2, real_times, n_ticks=8)
 
     style_axes(ax2)
+    polish_axes(ax2)
     if ax2w is not None:
         style_axes(ax2w)
+        polish_axes(ax2w)
+
+    polish_figure(fig2)
     xlim_price = ax2.get_xlim()
     st.pyplot(fig2)
 
@@ -3058,10 +3142,13 @@ def render_hourly_views(sel: str,
         axm.plot(macd_sig_h.index, macd_sig_h.values, linewidth=1.2, label="Signal")
         axm.axhline(0.0, linestyle="--", linewidth=1.0, color="black")
         axm.set_xlim(xlim_price)
-        axm.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=3, framealpha=0.5, fontsize=9)
+        legm = axm.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=3, framealpha=0.5, fontsize=9)
+        polish_legend(legm)
         if isinstance(real_times, pd.DatetimeIndex):
             _apply_compact_time_ticks(axm, real_times, n_ticks=8)
         style_axes(axm)
+        polish_axes(axm)
+        polish_figure(figm)
         st.pyplot(figm)
 
     trig_disp = None
@@ -3086,29 +3173,76 @@ def render_hourly_views(sel: str,
 # Part 9/10 — bullbear.py
 # =========================
 # ---------------------------
-# Tabs
+# Tabs (UPDATED: Ribbon styling)
 # ---------------------------
-
 st.markdown(
     """
     <style>
-      div[data-baseweb="tab-list"] {
+      /* Keep existing behavior (wrap + spacing) */
+      div[data-baseweb="tab-list"]{
         flex-wrap: wrap !important;
         overflow-x: visible !important;
-        gap: 0.25rem !important;
+        gap: .35rem !important;
+        padding: .25rem .15rem .55rem .15rem !important;
       }
-      div[data-baseweb="tab"] {
-        flex: 0 0 auto !important;
+      div[data-baseweb="tab"]{ flex: 0 0 auto !important; }
+
+      /* Ribbon look */
+      div[data-baseweb="tab"] > button{
+        position: relative !important;
+        padding: .45rem .85rem !important;
+        border-radius: 14px 14px 10px 10px !important;
+        border: 1px solid rgba(49,51,63,.22) !important;
+        background: linear-gradient(180deg, rgba(255,255,255,0.92), rgba(248,249,252,0.92)) !important;
+        box-shadow: 0 6px 18px rgba(0,0,0,0.06) !important;
+        font-weight: 700 !important;
+        letter-spacing: .2px !important;
+        transition: transform .10s ease, box-shadow .10s ease, background .10s ease !important;
+        outline: none !important;
       }
-      div[data-baseweb="tab"] button {
-        padding: 6px 10px !important;
+
+      /* Little “ribbon” notch */
+      div[data-baseweb="tab"] > button::after{
+        content: "" !important;
+        position: absolute !important;
+        left: 50% !important;
+        transform: translateX(-50%) !important;
+        bottom: -9px !important;
+        width: 0 !important;
+        height: 0 !important;
+        border-left: 10px solid transparent !important;
+        border-right: 10px solid transparent !important;
+        border-top: 10px solid rgba(255,255,255,0.92) !important;
+        filter: drop-shadow(0 4px 6px rgba(0,0,0,0.07)) !important;
+        opacity: .85 !important;
+      }
+
+      /* Hover */
+      div[data-baseweb="tab"] > button:hover{
+        transform: translateY(-1px) !important;
+        box-shadow: 0 10px 22px rgba(0,0,0,0.08) !important;
+      }
+
+      /* Selected tab: more “ribbon” and clearer emphasis (no layout change) */
+      div[data-baseweb="tab"] > button[aria-selected="true"]{
+        background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(243,247,255,0.98)) !important;
+        border: 1px solid rgba(49,51,63,.28) !important;
+        box-shadow: 0 12px 26px rgba(0,0,0,0.10) !important;
+      }
+      div[data-baseweb="tab"] > button[aria-selected="true"]::after{
+        border-top-color: rgba(243,247,255,0.98) !important;
+        opacity: 1 !important;
+      }
+
+      /* Reduce tab underline artifacts (Streamlit/baseweb) */
+      div[data-baseweb="tab-highlight"]{
+        height: 0px !important;
       }
     </style>
     """,
     unsafe_allow_html=True
 )
 
-# UPDATED (THIS REQUEST): added Ichimoku Kijun Scanner tab (Daily-only / matches Price Chart)
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
@@ -3458,7 +3592,7 @@ with tab1:
                 h_u.append(h)
                 l_u.append(l)
 
-            fig.legend(
+            leg = fig.legend(
                 handles=h_u,
                 labels=l_u,
                 loc="lower center",
@@ -3468,9 +3602,13 @@ with tab1:
                 fontsize=9,
                 framealpha=0.5
             )
+            polish_legend(leg)
 
             style_axes(ax)
+            polish_axes(ax)
             style_axes(axdw)
+            polish_axes(axdw)
+            polish_figure(fig)
             st.pyplot(fig)
 
             if show_macd and not macd_d.dropna().empty:
@@ -3480,8 +3618,11 @@ with tab1:
                 axm.plot(macd_d.index, macd_d.values, linewidth=1.4, label="MACD")
                 axm.plot(macd_sig_d.index, macd_sig_d.values, linewidth=1.2, label="Signal")
                 axm.axhline(0.0, linestyle="--", linewidth=1.0, color="black")
-                axm.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=3, framealpha=0.5, fontsize=9)
+                legm = axm.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=3, framealpha=0.5, fontsize=9)
+                polish_legend(legm)
                 style_axes(axm)
+                polish_axes(axm)
+                polish_figure(figm)
                 st.pyplot(figm)
 
             daily_instr_txt = format_trade_instruction(
@@ -3660,8 +3801,11 @@ with tab2:
                     fontsize=10, fontweight="bold",
                     bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.8))
 
-            ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=4, framealpha=0.5, fontsize=9)
+            leg = ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=4, framealpha=0.5, fontsize=9)
+            polish_legend(leg)
             style_axes(ax)
+            polish_axes(ax)
+            polish_figure(fig)
             st.pyplot(fig)
 
             if show_macd and not macd_d.dropna().empty:
@@ -3671,8 +3815,11 @@ with tab2:
                 axm.plot(macd_d.index, macd_d.values, linewidth=1.4, label="MACD")
                 axm.plot(macd_sig_d.index, macd_sig_d.values, linewidth=1.2, label="Signal")
                 axm.axhline(0.0, linestyle="--", linewidth=1.0, color="black")
-                axm.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=3, framealpha=0.5, fontsize=9)
+                legm = axm.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=3, framealpha=0.5, fontsize=9)
+                polish_legend(legm)
                 style_axes(axm)
+                polish_axes(axm)
+                polish_figure(figm)
                 st.pyplot(figm)
 
         if view in ("Intraday", "Both"):
@@ -3716,8 +3863,11 @@ with tab3:
         ax.set_title(f"{sel_bb} — {bb_period} Close")
         ax.plot(s.index, s.values, label="Close")
         draw_trend_direction_line(ax, s, label_prefix="Trend (global)")
-        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=4, framealpha=0.5, fontsize=9)
+        leg = ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=4, framealpha=0.5, fontsize=9)
+        polish_legend(leg)
         style_axes(ax)
+        polish_axes(ax)
+        polish_figure(fig)
         st.pyplot(fig)
 
 # ---------------------------
@@ -3813,8 +3963,11 @@ with tab6:
         ax.set_title(f"{sel_lt} — Max History")
         ax.plot(smax.index, smax.values, label="Close")
         draw_trend_direction_line(ax, smax, label_prefix="Trend (global)")
-        ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=4, framealpha=0.5, fontsize=9)
+        leg = ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=4, framealpha=0.5, fontsize=9)
+        polish_legend(leg)
         style_axes(ax)
+        polish_axes(ax)
+        polish_figure(fig)
         st.pyplot(fig)
 
 # ---------------------------
@@ -4287,7 +4440,6 @@ with tab15:
             if r is None:
                 continue
 
-            # Split lists by regression slope sign
             try:
                 m = float(r.get("Slope", np.nan))
             except Exception:
@@ -4318,7 +4470,5 @@ with tab15:
                 st.info("No matches.")
             else:
                 out = pd.DataFrame(rows_list2)
-                if "Bars Since Cross" in out.columns:
-                    out["Bars Since Cross"] = out["Bars Since Cross"].astype(int)
                 out = out.sort_values(["Bars Since Cross", "Slope"], ascending=[True, True])
                 st.dataframe(out.reset_index(drop=True), use_container_width=True)
