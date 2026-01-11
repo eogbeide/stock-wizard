@@ -1,5 +1,5 @@
 # =========================
-# Part 1/10 — bullbear.py  (UPDATED)
+# Part 1/10 — bullbear.py
 # =========================
 import streamlit as st
 import pandas as pd
@@ -26,17 +26,6 @@ st.set_page_config(
 st.markdown("""
 <style>
   #MainMenu, header, footer {visibility: hidden;}
-
-  /* UPDATED (THIS REQUEST): chart containers look more "premium" without changing layout */
-  div[data-testid="stPlotlyChart"],
-  div[data-testid="stPyplotFigure"] {
-    background: rgba(255,255,255,0.92);
-    border: 1px solid rgba(0,0,0,0.08);
-    border-radius: 14px;
-    padding: 0.35rem 0.35rem 0.15rem 0.35rem;
-    box-shadow: 0 12px 34px rgba(0,0,0,0.08);
-  }
-
   @media (max-width: 600px) {
     .css-18e3th9 {
       transform: none !important;
@@ -49,25 +38,6 @@ st.markdown("""
   }
 </style>
 """, unsafe_allow_html=True)
-
-# ---------------------------
-# Global Matplotlib styling (style-only)
-# ---------------------------
-try:
-    plt.rcParams.update({
-        "figure.facecolor": "white",
-        "axes.facecolor": "white",
-        "axes.titleweight": "bold",
-        "axes.titlesize": 12,
-        "axes.labelsize": 10,
-        "font.size": 10,
-        "legend.frameon": True,
-        "legend.framealpha": 0.35,
-        "legend.fancybox": True,
-        "lines.linewidth": 1.6,
-    })
-except Exception:
-    pass
 
 # ---------------------------
 # Auto-refresh (PST)
@@ -153,84 +123,8 @@ def style_axes(ax):
         ax.set_axisbelow(True)
         for spine in ["top", "right"]:
             ax.spines[spine].set_visible(False)
-        ax.tick_params(axis="both", which="both", length=0)
-        ax.margins(x=0.01)
     except Exception:
         pass
-
-# ---------------------------
-# UPDATED (THIS REQUEST): Interactive chart renderer (style-only)
-#   - Attempts Plotly interactivity (hover/zoom) without changing chart content
-#   - Falls back to Matplotlib if conversion isn't available
-# ---------------------------
-_PLOTLY_CFG = {
-    "displayModeBar": True,
-    "scrollZoom": True,
-    "displaylogo": False,
-    "responsive": True,
-}
-
-def render_chart(fig, key: str = None):
-    """
-    Render a Matplotlib figure as an interactive Plotly chart when possible.
-    Falls back to st.pyplot without changing underlying chart content.
-    """
-    try:
-        import plotly.tools as tls
-        import plotly.graph_objects as go
-
-        pfig = tls.mpl_to_plotly(fig)
-
-        # Global style: engaging, clean, interactive (no content changes)
-        pfig.update_layout(
-            template="plotly_white",
-            hovermode="x unified",
-            margin=dict(l=18, r=18, t=54, b=56),
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=-0.30,
-                xanchor="center",
-                x=0.5,
-                bgcolor="rgba(255,255,255,0.65)",
-                bordercolor="rgba(0,0,0,0.10)",
-                borderwidth=1,
-            ),
-        )
-        pfig.update_xaxes(
-            showspikes=True,
-            spikemode="across",
-            spikesnap="cursor",
-            showline=True,
-            mirror=True,
-            linewidth=1,
-        )
-        pfig.update_yaxes(
-            showspikes=True,
-            spikemode="across",
-            showline=True,
-            mirror=True,
-            linewidth=1,
-        )
-
-        # Keep markers readable (no data/trace removals)
-        for tr in pfig.data:
-            try:
-                if isinstance(tr, go.Scatter):
-                    if tr.mode and "markers" in tr.mode:
-                        tr.marker = dict(size=max(6, (tr.marker.size or 6)))
-            except Exception:
-                pass
-
-        st.plotly_chart(pfig, use_container_width=True, key=key, config=_PLOTLY_CFG)
-        try:
-            plt.close(fig)
-        except Exception:
-            pass
-        return
-    except Exception:
-        # Fallback: original matplotlib rendering
-        st.pyplot(fig, use_container_width=True)
 
 # ---------------------------
 # Core helpers
@@ -1800,9 +1694,6 @@ def annotate_reverse_possible(ax, rev_info: dict, text: str = "Reverse Possible"
     )
 # =========================
 # Batch 2/2 — Parts 6/10 to 10/10 — bullbear.py (UPDATED)
-#   Requested Changes Implemented:
-#     (1) Tabs styled as rectangular "ribbons"
-#     (2) Charts rendered with a more interactive/engaging UI (zoom/pan + download) WITHOUT changing chart content
 # =========================
 
 # =========================
@@ -1903,92 +1794,6 @@ def draw_news_markers(ax, times, label="News"):
         except Exception:
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
-
-# ---------------------------
-# NEW (THIS REQUEST): Interactive/Engaging chart renderer (no chart content changes)
-#   - Renders the SAME Matplotlib figure as a zoomable Plotly image (pan/zoom + download)
-#   - Falls back to st.pyplot if Plotly/PIL aren't available
-# ---------------------------
-st.markdown(
-    """
-    <style>
-      /* Subtle "card" feel for Plotly charts (styling only) */
-      .js-plotly-plot, .plot-container {
-        border-radius: 14px !important;
-      }
-      /* Softer modebar (styling only) */
-      .modebar {
-        background: rgba(255,255,255,0.65) !important;
-        border-radius: 10px !important;
-        box-shadow: 0 6px 16px rgba(0,0,0,0.10) !important;
-        padding: 4px 6px !important;
-      }
-      .modebar-btn {
-        border-radius: 8px !important;
-      }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
-
-def st_render_chart(fig, key: str = None, interactive: bool = True):
-    """
-    Style-only upgrade:
-      - Keeps ALL original plotted information (since the Matplotlib figure is preserved)
-      - Adds interactivity: zoom/pan + reset + download (via Plotly image wrapper)
-      - No changes to chart data/logic; only rendering style/UX.
-
-    If Plotly/PIL are missing or error occurs, uses st.pyplot as fallback.
-    """
-    if not interactive:
-        try:
-            st.pyplot(fig, use_container_width=True)
-        finally:
-            try:
-                plt.close(fig)
-            except Exception:
-                pass
-        return
-
-    try:
-        import io
-        import numpy as _np
-        from PIL import Image as _Image
-        import plotly.graph_objects as go
-
-        buf = io.BytesIO()
-        # Preserve the original Matplotlib layout; do NOT crop/alter layout
-        fig.savefig(buf, format="png", dpi=200)
-        buf.seek(0)
-
-        img = _Image.open(buf).convert("RGBA")
-        arr = _np.array(img)
-
-        pfig = go.Figure(go.Image(z=arr))
-        pfig.update_layout(
-            margin=dict(l=0, r=0, t=0, b=0),
-            dragmode="zoom",
-            paper_bgcolor="rgba(0,0,0,0)",
-            plot_bgcolor="rgba(0,0,0,0)",
-        )
-        pfig.update_xaxes(visible=False)
-        pfig.update_yaxes(visible=False, scaleanchor="x")
-
-        config = {
-            "displaylogo": False,
-            "scrollZoom": True,
-            "doubleClick": "reset",
-            "toImageButtonOptions": {"format": "png", "scale": 2},
-            "modeBarButtonsToRemove": ["select2d", "lasso2d"],
-        }
-        st.plotly_chart(pfig, use_container_width=True, config=config, key=key)
-    except Exception:
-        st.pyplot(fig, use_container_width=True)
-    finally:
-        try:
-            plt.close(fig)
-        except Exception:
-            pass
 
 # ---------------------------
 # Channel-in-range helpers for NTD panel
@@ -2798,7 +2603,10 @@ def daily_support_reversal_heading_up(symbol: str,
         return None
 
 # ---------------------------
-# Ichimoku Kijun Daily Cross-Up Scanner helper (Daily only / matches Price Chart)
+# NEW (THIS REQUEST): Ichimoku Kijun Daily Cross-Up Scanner helper (Daily only / matches Price Chart)
+#   - Price crosses ABOVE Kijun (cross_up) and is heading up
+#   - Provide Price@Cross, Kijun@Cross, and R2 of regression slope line
+#   - Filter: cross happened within last N bars (scanner filter)
 # ---------------------------
 @st.cache_data(ttl=120)
 def last_daily_kijun_cross_up(symbol: str,
@@ -2850,6 +2658,7 @@ def last_daily_kijun_cross_up(symbol: str,
             return None
         bars_since = int((len(close_show) - 1) - loc)
 
+        # (a) within last N bars filter
         within_last_n_bars = max(0, int(within_last_n_bars))
         if bars_since > within_last_n_bars:
             return None
@@ -3239,9 +3048,7 @@ def render_hourly_views(sel: str,
     if ax2w is not None:
         style_axes(ax2w)
     xlim_price = ax2.get_xlim()
-
-    # UPDATED (THIS REQUEST): interactive render (zoom/pan/download) without changing chart content
-    st_render_chart(fig2)
+    st.pyplot(fig2)
 
     if show_macd and not macd_h.dropna().empty:
         figm, axm = plt.subplots(figsize=(14, 2.6))
@@ -3255,7 +3062,7 @@ def render_hourly_views(sel: str,
         if isinstance(real_times, pd.DatetimeIndex):
             _apply_compact_time_ticks(axm, real_times, n_ticks=8)
         style_axes(axm)
-        st_render_chart(figm)
+        st.pyplot(figm)
 
     trig_disp = None
     if isinstance(fib_trig_chart, dict):
@@ -3279,78 +3086,29 @@ def render_hourly_views(sel: str,
 # Part 9/10 — bullbear.py
 # =========================
 # ---------------------------
-# Tabs (Rectangular Ribbon Styling — THIS REQUEST)
+# Tabs
 # ---------------------------
+
 st.markdown(
     """
     <style>
-      /* Keep wrap behavior as before */
       div[data-baseweb="tab-list"] {
         flex-wrap: wrap !important;
         overflow-x: visible !important;
-        gap: 0.35rem !important;
-        padding: 0.15rem 0.15rem 0.45rem 0.15rem !important;
+        gap: 0.25rem !important;
       }
-
-      /* Ribbon tab container spacing */
       div[data-baseweb="tab"] {
         flex: 0 0 auto !important;
       }
-
-      /* Rectangular "ribbon" tab button */
       div[data-baseweb="tab"] button {
-        position: relative !important;
-        padding: 9px 14px !important;
-        border-radius: 8px 8px 4px 4px !important; /* rectangular ribbon feel */
-        border: 1px solid rgba(49, 51, 63, 0.18) !important;
-        border-bottom: 2px solid rgba(49, 51, 63, 0.22) !important;
-        background: linear-gradient(180deg, rgba(255,255,255,0.96), rgba(245,246,250,0.96)) !important;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.08) !important;
-        font-weight: 700 !important;
-        transition: transform 140ms ease, box-shadow 140ms ease, border-color 140ms ease !important;
-      }
-
-      /* Left accent strip = ribbon vibe */
-      div[data-baseweb="tab"] button::before {
-        content: "" !important;
-        position: absolute !important;
-        left: 0 !important;
-        top: 0 !important;
-        bottom: 0 !important;
-        width: 6px !important;
-        border-radius: 8px 0 0 4px !important;
-        background: rgba(49, 51, 63, 0.18) !important;
-      }
-
-      /* Hover */
-      div[data-baseweb="tab"] button:hover {
-        transform: translateY(-1px) !important;
-        box-shadow: 0 6px 16px rgba(0,0,0,0.12) !important;
-        border-color: rgba(49, 51, 63, 0.28) !important;
-      }
-
-      /* Active/selected tab */
-      div[data-baseweb="tab"] button[aria-selected="true"] {
-        background: linear-gradient(90deg, rgba(0,164,255,0.12), rgba(255,75,75,0.10)) !important;
-        border-color: rgba(0,164,255,0.45) !important;
-        border-bottom-color: rgba(0,164,255,0.75) !important;
-        box-shadow: 0 10px 24px rgba(0,164,255,0.14) !important;
-      }
-      div[data-baseweb="tab"] button[aria-selected="true"]::before {
-        background: linear-gradient(180deg, rgba(0,164,255,0.85), rgba(255,75,75,0.65)) !important;
-      }
-
-      /* Make tab text a touch tighter */
-      div[data-baseweb="tab"] button p {
-        margin: 0 !important;
-        line-height: 1.05 !important;
+        padding: 6px 10px !important;
       }
     </style>
     """,
     unsafe_allow_html=True
 )
 
-# Tabs list (UNCHANGED)
+# UPDATED (THIS REQUEST): added Ichimoku Kijun Scanner tab (Daily-only / matches Price Chart)
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
@@ -3369,9 +3127,6 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "Ichimoku Kijun Scanner"
 ])
 
-# =========================
-# Part 10/10 — bullbear.py
-# =========================
 # ---------------------------
 # TAB 1: ORIGINAL FORECAST
 # ---------------------------
@@ -3716,9 +3471,7 @@ with tab1:
 
             style_axes(ax)
             style_axes(axdw)
-
-            # UPDATED (THIS REQUEST): interactive render (zoom/pan/download) without changing chart content
-            st_render_chart(fig)
+            st.pyplot(fig)
 
             if show_macd and not macd_d.dropna().empty:
                 figm, axm = plt.subplots(figsize=(14, 2.6))
@@ -3729,7 +3482,7 @@ with tab1:
                 axm.axhline(0.0, linestyle="--", linewidth=1.0, color="black")
                 axm.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=3, framealpha=0.5, fontsize=9)
                 style_axes(axm)
-                st_render_chart(figm)
+                st.pyplot(figm)
 
             daily_instr_txt = format_trade_instruction(
                 trend_slope=m_d,
@@ -3836,6 +3589,9 @@ with tab1:
         st.info("Click **Run Forecast** to display charts and forecast.")
 
 
+# =========================
+# Part 10/10 — bullbear.py
+# =========================
 # ---------------------------
 # TAB 2: ENHANCED FORECAST
 # ---------------------------
@@ -3906,7 +3662,7 @@ with tab2:
 
             ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=4, framealpha=0.5, fontsize=9)
             style_axes(ax)
-            st_render_chart(fig)
+            st.pyplot(fig)
 
             if show_macd and not macd_d.dropna().empty:
                 figm, axm = plt.subplots(figsize=(14, 2.6))
@@ -3917,7 +3673,7 @@ with tab2:
                 axm.axhline(0.0, linestyle="--", linewidth=1.0, color="black")
                 axm.legend(loc="upper center", bbox_to_anchor=(0.5, -0.25), ncol=3, framealpha=0.5, fontsize=9)
                 style_axes(axm)
-                st_render_chart(figm)
+                st.pyplot(figm)
 
         if view in ("Intraday", "Both"):
             render_hourly_views(
@@ -3962,7 +3718,7 @@ with tab3:
         draw_trend_direction_line(ax, s, label_prefix="Trend (global)")
         ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=4, framealpha=0.5, fontsize=9)
         style_axes(ax)
-        st_render_chart(fig)
+        st.pyplot(fig)
 
 # ---------------------------
 # TAB 4: METRICS
@@ -4059,7 +3815,7 @@ with tab6:
         draw_trend_direction_line(ax, smax, label_prefix="Trend (global)")
         ax.legend(loc="upper center", bbox_to_anchor=(0.5, -0.15), ncol=4, framealpha=0.5, fontsize=9)
         style_axes(ax)
-        st_render_chart(fig)
+        st.pyplot(fig)
 
 # ---------------------------
 # TAB 7: RECENT BUY SCANNER
