@@ -2790,6 +2790,42 @@ def last_daily_kijun_cross_up(symbol: str,
     except Exception:
         return None
 
+# ---------------------------
+# NEW (THIS REQUEST): R² > 45% scanners (Daily/Hourly)
+# ---------------------------
+@st.cache_data(ttl=120)
+def daily_regression_r2(symbol: str, slope_lb: int):
+    try:
+        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        if close_full.empty:
+            return np.nan, np.nan, None
+        _, _, _, m, r2 = regression_with_band(close_full, lookback=int(slope_lb))
+        ts = close_full.index[-1] if isinstance(close_full.index, pd.DatetimeIndex) and len(close_full.index) else None
+        return float(r2) if np.isfinite(r2) else np.nan, float(m) if np.isfinite(m) else np.nan, ts
+    except Exception:
+        return np.nan, np.nan, None
+
+@st.cache_data(ttl=120)
+def hourly_regression_r2(symbol: str, period: str, slope_lb: int):
+    try:
+        df = fetch_intraday(symbol, period=period)
+        if df is None or df.empty or "Close" not in df.columns:
+            return np.nan, np.nan, None
+
+        real_times = df.index if isinstance(df.index, pd.DatetimeIndex) else None
+
+        df2 = df.copy()
+        df2.index = pd.RangeIndex(len(df2))
+        hc = _coerce_1d_series(df2["Close"]).ffill().dropna()
+        if hc.empty:
+            return np.nan, np.nan, (real_times[-1] if isinstance(real_times, pd.DatetimeIndex) and len(real_times) else None)
+
+        _, _, _, m, r2 = regression_with_band(hc, lookback=int(slope_lb))
+        ts = real_times[-1] if isinstance(real_times, pd.DatetimeIndex) and len(real_times) else None
+        return float(r2) if np.isfinite(r2) else np.nan, float(m) if np.isfinite(m) else np.nan, ts
+    except Exception:
+        return np.nan, np.nan, None
+
 
 # =========================
 # Part 8/10 — bullbear.py
@@ -3283,8 +3319,8 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# UPDATED (THIS REQUEST): added Ichimoku Kijun Scanner tab (Daily-only / matches Price Chart)
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15 = st.tabs([
+# UPDATED (THIS REQUEST): added R² > 45% Scanner tab (Daily/Hourly)
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -3299,7 +3335,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "NTD Hot List",
     "NTD NPX 0.0-0.2 Scanner",
     "Uptrend vs Downtrend",
-    "Ichimoku Kijun Scanner"
+    "Ichimoku Kijun Scanner",
+    "R² > 45% Daily/Hourly"
 ])
 
 # ---------------------------
@@ -4504,4 +4541,64 @@ with tab15:
                 if "Bars Since Cross" in out.columns:
                     out["Bars Since Cross"] = out["Bars Since Cross"].astype(int)
                 out = out.sort_values(["Bars Since Cross", "Slope"], ascending=[True, True])
+                st.dataframe(out.reset_index(drop=True), use_container_width=True)
+
+# ---------------------------
+# TAB 16: R² > 45% Daily/Hourly (NEW)
+# ---------------------------
+with tab16:
+    st.header("R² > 45% Daily/Hourly")
+    st.caption(
+        "Shows symbols where the **R²** (regression fit quality) is **> 45%** using:\n"
+        "• **Daily:** regression_with_band on daily close (lookback = Daily slope lookback)\n"
+        "• **Hourly (intraday):** regression_with_band on intraday close (lookback = Hourly slope lookback)\n\n"
+        "No changes to any existing tabs/views/buttons — this is an added scanner tab only."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    r2_thr = c1.slider("R² threshold", 0.00, 1.00, 0.45, 0.01, key="r2_thr_scan")
+    hour_period = c2.selectbox("Hourly intraday period", ["1d", "2d", "4d"], index=0, key="r2_hour_period")
+    run_r2 = c3.button("Run R² Scan", key=f"btn_run_r2_scan_{mode}")
+
+    if run_r2:
+        daily_rows, hourly_rows = [], []
+
+        for sym in universe:
+            r2_d, m_d, ts_d = daily_regression_r2(sym, slope_lb=int(slope_lb_daily))
+            if np.isfinite(r2_d) and float(r2_d) > float(r2_thr):
+                daily_rows.append({
+                    "Symbol": sym,
+                    "R2": float(r2_d),
+                    "Slope": float(m_d) if np.isfinite(m_d) else np.nan,
+                    "AsOf": ts_d
+                })
+
+            r2_h, m_h, ts_h = hourly_regression_r2(sym, period=str(hour_period), slope_lb=int(slope_lb_hourly))
+            if np.isfinite(r2_h) and float(r2_h) > float(r2_thr):
+                hourly_rows.append({
+                    "Symbol": sym,
+                    "R2": float(r2_h),
+                    "Slope": float(m_h) if np.isfinite(m_h) else np.nan,
+                    "AsOf": ts_h,
+                    "Period": str(hour_period)
+                })
+
+        left, right = st.columns(2)
+
+        with left:
+            st.subheader("Daily — R² > threshold")
+            if not daily_rows:
+                st.info("No matches.")
+            else:
+                out = pd.DataFrame(daily_rows)
+                out = out.sort_values(["R2", "Slope"], ascending=[False, False])
+                st.dataframe(out.reset_index(drop=True), use_container_width=True)
+
+        with right:
+            st.subheader(f"Hourly (intraday {hour_period}) — R² > threshold")
+            if not hourly_rows:
+                st.info("No matches.")
+            else:
+                out = pd.DataFrame(hourly_rows)
+                out = out.sort_values(["R2", "Slope"], ascending=[False, False])
                 st.dataframe(out.reset_index(drop=True), use_container_width=True)
