@@ -2791,7 +2791,7 @@ def last_daily_kijun_cross_up(symbol: str,
         return None
 
 # ---------------------------
-# NEW (THIS REQUEST): R² > 45% scanners (Daily/Hourly)
+# NEW (THIS REQUEST): R² scanners (Daily/Hourly)
 # ---------------------------
 @st.cache_data(ttl=120)
 def daily_regression_r2(symbol: str, slope_lb: int):
@@ -3319,8 +3319,8 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# UPDATED (THIS REQUEST): added R² > 45% Scanner tab (Daily/Hourly)
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16 = st.tabs([
+# UPDATED (THIS REQUEST): add NEW tab for R² < 45% Daily/Hourly (without changing existing tabs)
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -3336,7 +3336,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "NTD NPX 0.0-0.2 Scanner",
     "Uptrend vs Downtrend",
     "Ichimoku Kijun Scanner",
-    "R² > 45% Daily/Hourly"
+    "R² > 45% Daily/Hourly",
+    "R² < 45% Daily/Hourly"
 ])
 
 # ---------------------------
@@ -4544,7 +4545,7 @@ with tab15:
                 st.dataframe(out.reset_index(drop=True), use_container_width=True)
 
 # ---------------------------
-# TAB 16: R² > 45% Daily/Hourly (NEW)
+# TAB 16: R² > 45% Daily/Hourly
 # ---------------------------
 with tab16:
     st.header("R² > 45% Daily/Hourly")
@@ -4601,4 +4602,64 @@ with tab16:
             else:
                 out = pd.DataFrame(hourly_rows)
                 out = out.sort_values(["R2", "Slope"], ascending=[False, False])
+                st.dataframe(out.reset_index(drop=True), use_container_width=True)
+
+# ---------------------------
+# TAB 17: R² < 45% Daily/Hourly (NEW — THIS REQUEST)
+# ---------------------------
+with tab17:
+    st.header("R² < 45% Daily/Hourly")
+    st.caption(
+        "Shows symbols where the **R²** (regression fit quality) is **< 45%** using:\n"
+        "• **Daily:** regression_with_band on daily close (lookback = Daily slope lookback)\n"
+        "• **Hourly (intraday):** regression_with_band on intraday close (lookback = Hourly slope lookback)\n\n"
+        "This tab is added only (no changes to existing tabs/views/buttons)."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    r2_ceiling = c1.slider("R² ceiling (show below)", 0.00, 1.00, 0.45, 0.01, key="r2_thr_low_scan")
+    hour_period_low = c2.selectbox("Hourly intraday period", ["1d", "2d", "4d"], index=0, key="r2_hour_period_low")
+    run_r2_low = c3.button("Run R² < Scan", key=f"btn_run_r2_low_scan_{mode}")
+
+    if run_r2_low:
+        daily_rows, hourly_rows = [], []
+
+        for sym in universe:
+            r2_d, m_d, ts_d = daily_regression_r2(sym, slope_lb=int(slope_lb_daily))
+            if np.isfinite(r2_d) and float(r2_d) < float(r2_ceiling):
+                daily_rows.append({
+                    "Symbol": sym,
+                    "R2": float(r2_d),
+                    "Slope": float(m_d) if np.isfinite(m_d) else np.nan,
+                    "AsOf": ts_d
+                })
+
+            r2_h, m_h, ts_h = hourly_regression_r2(sym, period=str(hour_period_low), slope_lb=int(slope_lb_hourly))
+            if np.isfinite(r2_h) and float(r2_h) < float(r2_ceiling):
+                hourly_rows.append({
+                    "Symbol": sym,
+                    "R2": float(r2_h),
+                    "Slope": float(m_h) if np.isfinite(m_h) else np.nan,
+                    "AsOf": ts_h,
+                    "Period": str(hour_period_low)
+                })
+
+        left, right = st.columns(2)
+
+        with left:
+            st.subheader("Daily — R² < ceiling")
+            if not daily_rows:
+                st.info("No matches.")
+            else:
+                out = pd.DataFrame(daily_rows)
+                out = out.sort_values(["R2", "Slope"], ascending=[True, False])
+                st.dataframe(out.reset_index(drop=True), use_container_width=True)
+
+        with right:
+            st.subheader(f"Hourly (intraday {hour_period_low}) — R² < ceiling")
+            if not hourly_rows:
+                st.info("No matches.")
+            else:
+                out = pd.DataFrame(hourly_rows)
+                out = out.sort_values(["R2", "Slope"], ascending=[True, False])
                 st.dataframe(out.reset_index(drop=True), use_container_width=True)
