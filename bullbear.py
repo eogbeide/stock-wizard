@@ -4663,3 +4663,38 @@ with tab17:
                 out = pd.DataFrame(hourly_rows)
                 out = out.sort_values(["R2", "Slope"], ascending=[True, False])
                 st.dataframe(out.reset_index(drop=True), use_container_width=True)
+# ---------------------------
+# TAB 17: R² < 45% Daily (NEW — THIS REQUEST)
+# ---------------------------
+with tab17:
+    st.header("R² < 45% Daily")
+    st.caption(
+        "Shows symbols where the **R²** (regression fit quality) is **below** the selected ceiling using:\n"
+        "• **Daily:** regression_with_band on daily close (lookback = Daily slope lookback)\n\n"
+        "Daily-only (per your setting). This tab is added only — no changes to any existing tabs/views/buttons."
+    )
+
+    c1, c2 = st.columns(2)
+    r2_ceiling_daily = c1.slider("R² ceiling (show below)", 0.00, 1.00, 0.45, 0.01, key="r2_thr_low_daily_scan")
+    run_r2_low_daily = c2.button("Run R² < Daily Scan", key=f"btn_run_r2_low_daily_scan_{mode}")
+
+    if run_r2_low_daily:
+        daily_rows = []
+
+        for sym in universe:
+            r2_d, m_d, ts_d = daily_regression_r2(sym, slope_lb=int(slope_lb_daily))
+            if np.isfinite(r2_d) and float(r2_d) < float(r2_ceiling_daily):
+                daily_rows.append({
+                    "Symbol": sym,
+                    "R2": float(r2_d),
+                    "Slope": float(m_d) if np.isfinite(m_d) else np.nan,
+                    "AsOf": ts_d
+                })
+
+        st.subheader("Daily — R² below ceiling")
+        if not daily_rows:
+            st.info("No matches.")
+        else:
+            out = pd.DataFrame(daily_rows)
+            out = out.sort_values(["R2", "Slope"], ascending=[True, False])
+            st.dataframe(out.reset_index(drop=True), use_container_width=True)
