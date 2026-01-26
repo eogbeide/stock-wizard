@@ -2825,6 +2825,79 @@ def hourly_regression_r2(symbol: str, period: str, slope_lb: int):
         return float(r2) if np.isfinite(r2) else np.nan, float(m) if np.isfinite(m) else np.nan, ts
     except Exception:
         return np.nan, np.nan, None
+# ---------------------------
+# NEW (THIS REQUEST): Daily R² + ±2σ band proximity helper (for Tab 18)
+# ---------------------------
+@st.cache_data(ttl=120)
+def daily_r2_band_proximity(symbol: str,
+                            daily_view_label: str,
+                            slope_lb: int,
+                            prox: float,
+                            z: float = 2.0):
+    """
+    Daily-only:
+      - uses the selected Daily view range (subset_by_daily_view)
+      - computes regression_with_band over slope_lb
+      - checks proximity to the last ±zσ band values
+      - 'Near' is abs(distance %) <= prox (where prox is sr_prox_pct, already a fraction)
+    Returns dict (or None).
+    """
+    try:
+        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        if close_full.empty:
+            return None
+
+        close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
+        if close_show.empty:
+            return None
+
+        slope_lb = int(max(2, slope_lb))
+        if len(close_show) < max(6, slope_lb + 2):
+            return None
+
+        yhat, up, lo, m, r2 = regression_with_band(close_show, lookback=slope_lb, z=float(z))
+        if lo is None or up is None or lo.dropna().empty or up.dropna().empty:
+            return None
+
+        px = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
+        lo_last = float(lo.iloc[-1]) if np.isfinite(lo.iloc[-1]) else np.nan
+        up_last = float(up.iloc[-1]) if np.isfinite(up.iloc[-1]) else np.nan
+
+        if not np.all(np.isfinite([px, lo_last, up_last])):
+            return None
+        if not (np.isfinite(m) and np.isfinite(r2)):
+            return None
+
+        # Fractional distances (0.01 = 1%)
+        dist_lo = (px / lo_last - 1.0) if lo_last != 0 else np.nan
+        dist_up = (px / up_last - 1.0) if up_last != 0 else np.nan
+
+        abs_lo = abs(dist_lo) if np.isfinite(dist_lo) else np.nan
+        abs_up = abs(dist_up) if np.isfinite(dist_up) else np.nan
+
+        prox = abs(float(prox))
+        near_lo = bool(np.isfinite(abs_lo) and abs_lo <= prox)
+        near_up = bool(np.isfinite(abs_up) and abs_up <= prox)
+
+        return {
+            "Symbol": symbol,
+            "Daily View": daily_view_label,
+            "AsOf": close_show.index[-1] if isinstance(close_show.index, pd.DatetimeIndex) and len(close_show.index) else None,
+            "Price": px,
+            "Lower -2σ": lo_last,
+            "Upper +2σ": up_last,
+            "Dist Lower (%)": dist_lo,
+            "Dist Upper (%)": dist_up,
+            "AbsDist Lower (%)": abs_lo,
+            "AbsDist Upper (%)": abs_up,
+            "Slope": float(m),
+            "R2": float(r2),
+            "Near Lower": near_lo,
+            "Near Upper": near_up,
+            "Slope LB": int(slope_lb),
+        }
+    except Exception:
+        return None
 
 
 # =========================
@@ -3320,7 +3393,7 @@ st.markdown(
 )
 
 # UPDATED (THIS REQUEST): add NEW tab for R² < 45% Daily/Hourly (without changing existing tabs)
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17, tab18 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -3337,8 +3410,11 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "Uptrend vs Downtrend",
     "Ichimoku Kijun Scanner",
     "R² > 45% Daily/Hourly",
-    "R² < 45% Daily/Hourly"
+    "R² < 45% Daily/Hourly",
+    "R² Sign ±2σ Proximity (Daily)"
 ])
+
+
 
 # ---------------------------
 # TAB 1: ORIGINAL FORECAST
@@ -4610,23 +4686,23 @@ with tab16:
 with tab17:
     st.header("R² < 45% Daily/Hourly")
     st.caption(
-        "Shows symbols where the **R²** (regression fit quality) is **< 45%** using:\n"
+        "Shows symbols where the **R²** (regression fit quality) is **< threshold** using:\n"
         "• **Daily:** regression_with_band on daily close (lookback = Daily slope lookback)\n"
         "• **Hourly (intraday):** regression_with_band on intraday close (lookback = Hourly slope lookback)\n\n"
-        "This tab is added only (no changes to existing tabs/views/buttons)."
+        "This is a scanner tab only; it does not change any charts or logic elsewhere."
     )
 
     c1, c2, c3 = st.columns(3)
-    r2_ceiling = c1.slider("R² ceiling (show below)", 0.00, 1.00, 0.45, 0.01, key="r2_thr_low_scan")
-    hour_period_low = c2.selectbox("Hourly intraday period", ["1d", "2d", "4d"], index=0, key="r2_hour_period_low")
-    run_r2_low = c3.button("Run R² < Scan", key=f"btn_run_r2_low_scan_{mode}")
+    r2_thr_lo = c1.slider("R² threshold", 0.00, 1.00, 0.45, 0.01, key="r2_thr_scan_lo")
+    hour_period_lo = c2.selectbox("Hourly intraday period", ["1d", "2d", "4d"], index=0, key="r2_hour_period_lo")
+    run_r2_lo = c3.button("Run R² Low Scan", key=f"btn_run_r2_scan_lo_{mode}")
 
-    if run_r2_low:
+    if run_r2_lo:
         daily_rows, hourly_rows = [], []
 
         for sym in universe:
             r2_d, m_d, ts_d = daily_regression_r2(sym, slope_lb=int(slope_lb_daily))
-            if np.isfinite(r2_d) and float(r2_d) < float(r2_ceiling):
+            if np.isfinite(r2_d) and float(r2_d) < float(r2_thr_lo):
                 daily_rows.append({
                     "Symbol": sym,
                     "R2": float(r2_d),
@@ -4634,32 +4710,128 @@ with tab17:
                     "AsOf": ts_d
                 })
 
-            r2_h, m_h, ts_h = hourly_regression_r2(sym, period=str(hour_period_low), slope_lb=int(slope_lb_hourly))
-            if np.isfinite(r2_h) and float(r2_h) < float(r2_ceiling):
+            r2_h, m_h, ts_h = hourly_regression_r2(sym, period=str(hour_period_lo), slope_lb=int(slope_lb_hourly))
+            if np.isfinite(r2_h) and float(r2_h) < float(r2_thr_lo):
                 hourly_rows.append({
                     "Symbol": sym,
                     "R2": float(r2_h),
                     "Slope": float(m_h) if np.isfinite(m_h) else np.nan,
                     "AsOf": ts_h,
-                    "Period": str(hour_period_low)
+                    "Period": str(hour_period_lo)
                 })
 
         left, right = st.columns(2)
 
         with left:
-            st.subheader("Daily — R² < ceiling")
+            st.subheader("Daily — R² < threshold")
             if not daily_rows:
                 st.info("No matches.")
             else:
                 out = pd.DataFrame(daily_rows)
-                out = out.sort_values(["R2", "Slope"], ascending=[True, False])
+                out = out.sort_values(["R2", "Slope"], ascending=[True, True])
                 st.dataframe(out.reset_index(drop=True), use_container_width=True)
 
         with right:
-            st.subheader(f"Hourly (intraday {hour_period_low}) — R² < ceiling")
+            st.subheader(f"Hourly (intraday {hour_period_lo}) — R² < threshold")
             if not hourly_rows:
                 st.info("No matches.")
             else:
                 out = pd.DataFrame(hourly_rows)
-                out = out.sort_values(["R2", "Slope"], ascending=[True, False])
+                out = out.sort_values(["R2", "Slope"], ascending=[True, True])
+                st.dataframe(out.reset_index(drop=True), use_container_width=True)
+# ---------------------------
+# TAB 18: R² Sign ±2σ Proximity (Daily) (NEW — THIS REQUEST, DAILY ONLY)
+# ---------------------------
+with tab18:
+    st.header("R² Sign ±2σ Proximity (Daily)")
+    st.caption(
+        "Daily-only scan (uses the selected **Daily view range** and **Daily slope lookback**):\n"
+        "Creates four lists:\n"
+        "1) **R² > 0** and price **near Lower -2σ**\n"
+        "2) **R² > 0** and price **near Upper +2σ**\n"
+        "3) **R² < 0** and price **near Lower -2σ**\n"
+        "4) **R² < 0** and price **near Upper +2σ**\n\n"
+        "“Near” uses the existing sidebar **S/R proximity (%)** value."
+    )
+
+    run_band_scan = st.button("Run R² Sign ±2σ Proximity Scan (Daily)", key=f"btn_run_r2_sign_band_scan_{mode}")
+
+    if run_band_scan:
+        rows_pos_lower, rows_pos_upper = [], []
+        rows_neg_lower, rows_neg_upper = [], []
+
+        for sym in universe:
+            r = daily_r2_band_proximity(
+                symbol=sym,
+                daily_view_label=daily_view,
+                slope_lb=int(slope_lb_daily),
+                prox=float(sr_prox_pct)
+            )
+            if r is None:
+                continue
+
+            r2v = r.get("R2", np.nan)
+            if not np.isfinite(r2v):
+                continue
+
+            near_lo = bool(r.get("Near Lower", False))
+            near_up = bool(r.get("Near Upper", False))
+
+            # Keep the row tidy (flags not needed in table output)
+            row = {k: v for k, v in r.items() if k not in ("Near Lower", "Near Upper")}
+
+            if float(r2v) > 0.0:
+                if near_lo:
+                    rows_pos_lower.append(row)
+                if near_up:
+                    rows_pos_upper.append(row)
+            elif float(r2v) < 0.0:
+                if near_lo:
+                    rows_neg_lower.append(row)
+                if near_up:
+                    rows_neg_upper.append(row)
+
+        st.info(f"Near threshold = ±{sr_prox_pct*100:.3f}% (from sidebar S/R proximity %)")
+
+        # Display 4 tables (2 rows × 2 columns)
+        r1c1, r1c2 = st.columns(2)
+        with r1c1:
+            st.subheader("R² > 0  •  Near Lower -2σ")
+            if not rows_pos_lower:
+                st.info("No matches.")
+            else:
+                out = pd.DataFrame(rows_pos_lower)
+                if "AbsDist Lower (%)" in out.columns:
+                    out = out.sort_values(["AbsDist Lower (%)", "R2"], ascending=[True, False])
+                st.dataframe(out.reset_index(drop=True), use_container_width=True)
+
+        with r1c2:
+            st.subheader("R² > 0  •  Near Upper +2σ")
+            if not rows_pos_upper:
+                st.info("No matches.")
+            else:
+                out = pd.DataFrame(rows_pos_upper)
+                if "AbsDist Upper (%)" in out.columns:
+                    out = out.sort_values(["AbsDist Upper (%)", "R2"], ascending=[True, False])
+                st.dataframe(out.reset_index(drop=True), use_container_width=True)
+
+        r2c1, r2c2 = st.columns(2)
+        with r2c1:
+            st.subheader("R² < 0  •  Near Lower -2σ")
+            if not rows_neg_lower:
+                st.info("No matches.")
+            else:
+                out = pd.DataFrame(rows_neg_lower)
+                if "AbsDist Lower (%)" in out.columns:
+                    out = out.sort_values(["AbsDist Lower (%)", "R2"], ascending=[True, True])
+                st.dataframe(out.reset_index(drop=True), use_container_width=True)
+
+        with r2c2:
+            st.subheader("R² < 0  •  Near Upper +2σ")
+            if not rows_neg_upper:
+                st.info("No matches.")
+            else:
+                out = pd.DataFrame(rows_neg_upper)
+                if "AbsDist Upper (%)" in out.columns:
+                    out = out.sort_values(["AbsDist Upper (%)", "R2"], ascending=[True, True])
                 st.dataframe(out.reset_index(drop=True), use_container_width=True)
