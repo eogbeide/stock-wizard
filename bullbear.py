@@ -13,6 +13,8 @@ import time
 import pytz
 from matplotlib.transforms import blended_transform_factory
 from matplotlib.lines import Line2D
+import time
+from datetime import datetime, timezone
 
 # ---------------------------
 # Matplotlib theme (STYLE ONLY — no logic changes)
@@ -614,6 +616,7 @@ else:
         "HKDJPY=X","USDCAD=X","USDCNY=X","EURGBP=X","EURCAD=X","NZDJPY=X","USDKRW=X",
         "USDHKD=X","EURHKD=X","GBPHKD=X","GBPJPY=X","CNHJPY=X","AUDJPY=X","GBPCAD=X"
     ]
+
 
 # ---------------------------
 # Data fetchers
