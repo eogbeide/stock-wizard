@@ -1,6 +1,5 @@
 # easymcat.py
-# Streamlit DOCX Reader + Subject dropdown + Topic dropdown + Subtopic dropdown
-# + Text-to-Speech + Next/Back
+# Streamlit DOCX Reader + Subject dropdown + Topic dropdown + Text-to-Speech + Next/Back
 #
 # Run:
 #   streamlit run easymcat.py
@@ -22,8 +21,6 @@ from docx import Document
 # -----------------------------
 SUBJECT_RE = re.compile(r"^\s*subject\s*[:\-]\s*(.+?)\s*$", flags=re.IGNORECASE)
 TOPIC_RE = re.compile(r"^\s*topic\s*[:\-]\s*(.+?)\s*$", flags=re.IGNORECASE)
-SUBTOPIC_RE = re.compile(r"^\s*sub\s*topic\s*[:\-]\s*(.+?)\s*$", flags=re.IGNORECASE)
-SUBTOPIC_RE2 = re.compile(r"^\s*subtopic\s*[:\-]\s*(.+?)\s*$", flags=re.IGNORECASE)
 
 
 def heading_level(style_name: str) -> Optional[int]:
@@ -47,24 +44,14 @@ def fetch_docx_bytes(url: str) -> bytes:
 
 def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
     """
-    Structure:
     subjects = [
-      {
-        "subject": str, "real": bool,
-        "topics": [
-          {
-            "topic": str, "real": bool,
-            "subtopics": [
-              {"subtopic": str, "real": bool, "chunks": [str], "full_text": str}
-            ]
-          }
-        ]
-      }
+      {"subject": str, "topics": [{"topic": str, "chunks": [str], "full_text": str, "real": bool}, ...], "real": bool},
+      ...
     ]
 
     Preference:
-      - If the doc contains ANY Subject:/Topic:/Subtopic: markers, those define navigation.
-      - Otherwise fallback to Heading 1/2/3 as Subject/Topic/Subtopic.
+      - If the doc contains ANY "Subject:" / "Topic:" lines, those define the navigation.
+      - Otherwise fallback to Heading 1/Heading 2.
     """
     doc = Document(io.BytesIO(docx_bytes))
 
@@ -74,41 +61,28 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
         raw = (p.text or "").strip()
         if not raw:
             continue
-        if SUBJECT_RE.match(raw) or TOPIC_RE.match(raw) or SUBTOPIC_RE.match(raw) or SUBTOPIC_RE2.match(raw):
+        if SUBJECT_RE.match(raw) or TOPIC_RE.match(raw):
             has_markers = True
             break
 
     subjects: List[Dict] = []
     cur_subject: Optional[Dict] = None
     cur_topic: Optional[Dict] = None
-    cur_subtopic: Optional[Dict] = None
 
     def ensure_subject(name: str, real: bool = True):
-        nonlocal cur_subject, cur_topic, cur_subtopic
+        nonlocal cur_subject, cur_topic
         subj = {"subject": (name.strip() or "Untitled Subject"), "topics": [], "real": real}
         subjects.append(subj)
         cur_subject = subj
         cur_topic = None
-        cur_subtopic = None
 
     def ensure_topic(name: str, real: bool = True):
-        nonlocal cur_subject, cur_topic, cur_subtopic
+        nonlocal cur_subject, cur_topic
         if cur_subject is None:
             ensure_subject("General", real=False)
-        top = {"topic": (name.strip() or "Untitled Topic"), "subtopics": [], "real": real}
+        top = {"topic": (name.strip() or "Untitled Topic"), "chunks": [], "full_text": "", "real": real}
         cur_subject["topics"].append(top)
         cur_topic = top
-        cur_subtopic = None
-
-    def ensure_subtopic(name: str, real: bool = True):
-        nonlocal cur_subject, cur_topic, cur_subtopic
-        if cur_subject is None:
-            ensure_subject("General", real=False)
-        if cur_topic is None:
-            ensure_topic("Overview", real=False)
-        sub = {"subtopic": (name.strip() or "Untitled Subtopic"), "chunks": [], "full_text": "", "real": real}
-        cur_topic["subtopics"].append(sub)
-        cur_subtopic = sub
 
     for p in doc.paragraphs:
         raw = (p.text or "").strip()
@@ -126,15 +100,9 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
                 ensure_topic(tm.group(1), real=True)
                 continue
 
-            stm = SUBTOPIC_RE.match(raw) or SUBTOPIC_RE2.match(raw)
-            if stm:
-                ensure_subtopic(stm.group(1), real=True)
-                continue
-
-            # Attach content only when we're inside a real subtopic (or at least an existing one)
-            if cur_subtopic is not None:
-                cur_subtopic["chunks"].append(raw)
-            # If there's no subtopic yet, we ignore content in markers-mode (keeps sidebar "document-only")
+            # Attach content only when we're inside a real topic
+            if cur_topic is not None:
+                cur_topic["chunks"].append(raw)
             continue
 
         # fallback: headings
@@ -145,83 +113,47 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
         if lvl == 2:
             ensure_topic(raw, real=True)
             continue
-        if lvl == 3:
-            ensure_subtopic(raw, real=True)
-            continue
 
-        # Regular content lines: attach to current subtopic; create minimal placeholders in fallback mode
-        if cur_subtopic is None:
-            ensure_subtopic("Overview", real=False)
-        cur_subtopic["chunks"].append(raw)
+        if cur_topic is None:
+            ensure_topic("Overview", real=False)
+        cur_topic["chunks"].append(raw)
 
-    # If empty doc parsing fallback
     if not subjects:
         subjects = [
             {
                 "subject": "Document",
+                "topics": [{"topic": "Content", "chunks": [], "full_text": "", "real": True}],
                 "real": True,
-                "topics": [
-                    {
-                        "topic": "Content",
-                        "real": True,
-                        "subtopics": [{"subtopic": "Content", "real": True, "chunks": [], "full_text": ""}],
-                    }
-                ],
             }
         ]
 
-    # Finalize full_text and ensure minimal structure
     for subj in subjects:
         if not subj.get("topics"):
             subj["real"] = False
-            subj["topics"] = [{"topic": "Overview", "real": False, "subtopics": []}]
-
+            subj["topics"] = [{"topic": "Overview", "chunks": [], "full_text": "", "real": False}]
         for top in subj["topics"]:
-            if not top.get("subtopics"):
-                top["real"] = False
-                top["subtopics"] = [{"subtopic": "Overview", "real": False, "chunks": [], "full_text": ""}]
-
-            for sub in top["subtopics"]:
-                sub["full_text"] = "\n\n".join(sub.get("chunks", [])).strip()
+            top["full_text"] = "\n\n".join(top.get("chunks", [])).strip()
 
     return subjects
 
 
-def build_navigation(subjects: List[Dict]) -> Tuple[List[Dict], List[Tuple[int, int, int]]]:
+def build_navigation(subjects: List[Dict]) -> Tuple[List[Tuple[int, str, List[int]]], List[Tuple[int, int]]]:
     """
-    Returns:
-      nav: list of dicts with indexes to real subjects/topics/subtopics:
-        [
-          {
-            "si": int, "subject": str,
-            "topics": [
-              {"ti": int, "topic": str, "subtopics": [{"ui": int, "subtopic": str}, ...]}
-            ]
-          },
-          ...
-        ]
-      flat: [(si, ti, ui), ...]  # real subtopics only, for Next/Back
+    nav_subjects: [(si, subject_name, [real_topic_ti...]), ...]  # only real subjects/topics
+    flat: [(si, ti), ...]  # only real topics (for Next/Back)
     """
-    nav: List[Dict] = []
-    flat: List[Tuple[int, int, int]] = []
+    nav_subjects: List[Tuple[int, str, List[int]]] = []
+    flat: List[Tuple[int, int]] = []
 
     for si, subj in enumerate(subjects):
-        subj_topics = []
-        for ti, top in enumerate(subj.get("topics", [])):
-            sub_list = []
-            for ui, sub in enumerate(top.get("subtopics", [])):
-                if sub.get("real", False):
-                    sub_list.append({"ui": ui, "subtopic": sub.get("subtopic", f"Subtopic {ui+1}")})
-            if sub_list and top.get("real", False):
-                subj_topics.append({"ti": ti, "topic": top.get("topic", f"Topic {ti+1}"), "subtopics": sub_list})
+        real_tis = [ti for ti, t in enumerate(subj.get("topics", [])) if t.get("real", False)]
+        if not real_tis:
+            continue
+        nav_subjects.append((si, subj.get("subject", f"Subject {si+1}"), real_tis))
+        for ti in real_tis:
+            flat.append((si, ti))
 
-        if subj_topics and subj.get("real", False):
-            nav.append({"si": si, "subject": subj.get("subject", f"Subject {si+1}"), "topics": subj_topics})
-            for t in subj_topics:
-                for s in t["subtopics"]:
-                    flat.append((si, t["ti"], s["ui"]))
-
-    return nav, flat
+    return nav_subjects, flat
 
 
 # -----------------------------
@@ -273,7 +205,7 @@ def tts_component(text: str, voice_lang: str = "en-US", rate: float = 1.0, pitch
 # -----------------------------
 st.set_page_config(page_title="DOCX Study Reader", layout="wide")
 st.title("DOCX Study Reader")
-st.caption("Sidebar: Subject → Topic → Subtopic • Page: content + Text-to-Speech + Next/Back")
+st.caption("Sidebar: Subject dropdown → Topic dropdown • Page: content + Text-to-Speech + Next/Back")
 
 
 @st.cache_data(show_spinner=True)
@@ -284,10 +216,8 @@ def load_structure_from_url(url: str) -> List[Dict]:
 with st.sidebar:
     st.header("Document Source")
     url = st.text_input("DOCX URL", value=DEFAULT_URL)
-    st.write(
-        "Navigation comes from **Subject:** / **Topic:** / **Subtopic:** lines (if present), "
-        "otherwise Heading 1/2/3."
-    )
+    st.write("Navigation comes from **Subject:** and **Topic:** lines (if present), otherwise Heading 1/2.")
+
 
 # Load document
 try:
@@ -296,17 +226,14 @@ except Exception as e:
     st.error(f"Could not load DOCX.\n\nError: {e}")
     st.stop()
 
-nav, flat = build_navigation(subjects)
-
-if not nav or not flat:
+nav_subjects, flat = build_navigation(subjects)
+if not nav_subjects or not flat:
     st.warning(
-        "No usable Subject/Topic/Subtopic triples found.\n\n"
+        "No usable Subject/Topic pairs found.\n\n"
         "Ensure your DOCX includes lines like:\n"
         "- Subject: ...\n"
         "- Topic: ...\n"
-        "- Subtopic: ...\n"
-        "with text beneath each Subtopic.\n\n"
-        "Or use Heading 1/2/3 styles."
+        "with text beneath each Topic."
     )
     st.stop()
 
@@ -315,56 +242,37 @@ if "flat_index" not in st.session_state:
     st.session_state.flat_index = 0
 st.session_state.flat_index = max(0, min(st.session_state.flat_index, len(flat) - 1))
 
-# Current position
-cur_si, cur_ti, cur_ui = flat[st.session_state.flat_index]
+# Current (real-topic) position
+cur_si, cur_ti = flat[st.session_state.flat_index]
 
 # -----------------------------
-# Sidebar: Subject dropdown (1st) + Topic dropdown (2nd) + Subtopic dropdown (3rd)
+# Sidebar: Subject dropdown (1st) + Topic dropdown (2nd)
 # -----------------------------
 with st.sidebar:
     st.header("Navigate")
 
-    # ---- Subject dropdown ----
-    subject_options = [x["subject"] for x in nav]
-    cur_subject_nav_idx = next(i for i, x in enumerate(nav) if x["si"] == cur_si)
-    selected_subject_name = st.selectbox("Subject", subject_options, index=cur_subject_nav_idx)
-    subj_nav_idx = subject_options.index(selected_subject_name)
-    subj_node = nav[subj_nav_idx]
-    new_si = subj_node["si"]
+    subject_options = [name for _, name, _ in nav_subjects]
+    cur_subject_option_index = next(i for i, (si, _, _) in enumerate(nav_subjects) if si == cur_si)
 
-    # ---- Topic dropdown ----
-    topic_options = [t["topic"] for t in subj_node["topics"]]
-    # default topic based on current selection if same subject
-    if new_si == cur_si:
-        cur_topic_nav_idx = next(
-            (i for i, t in enumerate(subj_node["topics"]) if t["ti"] == cur_ti),
-            0
-        )
+    # 1) Subject dropdown stays as-is
+    selected_subject_name = st.selectbox("Subject", subject_options, index=cur_subject_option_index)
+    subj_opt_idx = subject_options.index(selected_subject_name)
+    new_si, _, new_real_tis = nav_subjects[subj_opt_idx]
+
+    # 2) Topic dropdown (new second dropdown) depends on selected subject
+    topic_options = [subjects[new_si]["topics"][ti]["topic"] for ti in new_real_tis]
+
+    if new_si == cur_si and cur_ti in new_real_tis:
+        topic_default_idx = new_real_tis.index(cur_ti)
     else:
-        cur_topic_nav_idx = 0
+        topic_default_idx = 0
 
-    selected_topic_name = st.selectbox("Topic", topic_options, index=cur_topic_nav_idx)
-    topic_nav_idx = topic_options.index(selected_topic_name)
-    topic_node = subj_node["topics"][topic_nav_idx]
-    new_ti = topic_node["ti"]
-
-    # ---- Subtopic dropdown ----
-    subtopic_options = [s["subtopic"] for s in topic_node["subtopics"]]
-    if new_si == cur_si and new_ti == cur_ti:
-        cur_sub_nav_idx = next(
-            (i for i, s in enumerate(topic_node["subtopics"]) if s["ui"] == cur_ui),
-            0
-        )
-    else:
-        cur_sub_nav_idx = 0
-
-    selected_subtopic_name = st.selectbox("Subtopic", subtopic_options, index=cur_sub_nav_idx)
-    sub_nav_idx = subtopic_options.index(selected_subtopic_name)
-    new_ui = topic_node["subtopics"][sub_nav_idx]["ui"]
+    selected_topic_name = st.selectbox("Topic", topic_options, index=topic_default_idx)
 
     if st.button("Go", use_container_width=True):
-        for idx, (si, ti, ui) in enumerate(flat):
-            if si == new_si and ti == new_ti and ui == new_ui:
+        chosen_ti = new_real_tis[topic_options.index(selected_topic_name)]
+        for idx, (si, ti) in enumerate(flat):
+            if si == new_si and ti == chosen_ti:
                 st.session_state.flat_index = idx
                 break
         st.rerun()
@@ -376,22 +284,21 @@ with st.sidebar:
     pitch = st.slider("Pitch", 0.5, 2.0, 1.0, 0.1)
 
 # Current content
-cur_si, cur_ti, cur_ui = flat[st.session_state.flat_index]
+cur_si, cur_ti = flat[st.session_state.flat_index]
 cur_subject = subjects[cur_si]["subject"]
 cur_topic = subjects[cur_si]["topics"][cur_ti]["topic"]
-cur_subtopic = subjects[cur_si]["topics"][cur_ti]["subtopics"][cur_ui]["subtopic"]
-cur_text = (subjects[cur_si]["topics"][cur_ti]["subtopics"][cur_ui].get("full_text") or "").strip()
+cur_text = (subjects[cur_si]["topics"][cur_ti].get("full_text") or "").strip()
 
 # Layout
 col_left, col_right = st.columns([2, 1], vertical_alignment="top")
 
 with col_left:
-    st.subheader(f"{cur_subject}  →  {cur_topic}  →  {cur_subtopic}")
+    st.subheader(f"{cur_subject}  →  {cur_topic}")
 
     if cur_text:
         st.write(cur_text)
     else:
-        st.info("No paragraph text under this subtopic.")
+        st.info("No paragraph text under this topic.")
 
     st.divider()
 
@@ -410,8 +317,8 @@ with col_right:
     if cur_text:
         tts_component(cur_text, voice_lang=voice_lang, rate=rate, pitch=pitch)
     else:
-        st.caption("Nothing to read for this subtopic.")
+        st.caption("Nothing to read for this topic.")
 
     st.divider()
     st.caption("Progress")
-    st.write(f"Section {st.session_state.flat_index + 1} of {len(flat)}")
+    st.write(f"Topic {st.session_state.flat_index + 1} of {len(flat)}")
