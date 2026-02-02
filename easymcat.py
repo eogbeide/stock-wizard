@@ -1,33 +1,26 @@
-# app.py
+# easymcat.py
 # Streamlit DOCX Reader + Subject/Topic sidebar + Text-to-Speech + Next/Back
 #
 # Run:
-#   streamlit run app.py
+#   streamlit run easymcat.py
 #
-# Notes:
-# - Subjects/Topics are inferred from DOCX headings:
-#     Heading 1 => Subject
-#     Heading 2 => Topic
-#   If your doc doesn't use headings, it will fall back to a single Subject/Topic.
-# - TTS uses the browser via embedded Web Speech API (no external keys required).
+# Your default DOCX URL:
+DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Exam_Crackers.docx"
 
 import io
 import re
+from typing import Optional, List, Dict, Tuple
+
 import requests
 import streamlit as st
 from docx import Document
 
-DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Exam_Crackers.docx"
-
 
 # -----------------------------
-# DOCX parsing
+# DOCX parsing helpers
 # -----------------------------
-def _is_heading(style_name: str) -> int | None:
-    """
-    Return heading level if style_name looks like 'Heading 1', 'Heading 2', etc.
-    Otherwise return None.
-    """
+def heading_level(style_name: str) -> Optional[int]:
+    """Return heading level if style_name looks like 'Heading 1', 'Heading 2', etc."""
     if not style_name:
         return None
     m = re.match(r"Heading\s+(\d+)", str(style_name).strip(), flags=re.IGNORECASE)
@@ -45,46 +38,37 @@ def fetch_docx_bytes(url: str) -> bytes:
     return r.content
 
 
-def parse_docx_to_structure(docx_bytes: bytes):
+def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
     """
-    Returns a nested structure:
-
+    Build structure:
     subjects = [
-      {
-        "subject": "Subject Name",
-        "topics": [
-          {
-            "topic": "Topic Name",
-            "chunks": [ "para1", "para2", ... ],
-            "full_text": "..."
-          },
-          ...
-        ]
-      },
+      {"subject": str, "topics": [{"topic": str, "chunks": [str], "full_text": str}, ...]},
       ...
     ]
+
+    Heuristics:
+      Heading 1 => Subject
+      Heading 2 => Topic
+      Normal paragraphs are appended to current Topic (or a default "Overview").
     """
     doc = Document(io.BytesIO(docx_bytes))
 
-    subjects = []
-    cur_subject = None
-    cur_topic = None
+    subjects: List[Dict] = []
+    cur_subject: Optional[Dict] = None
+    cur_topic: Optional[Dict] = None
 
     def ensure_subject(name: str):
-        nonlocal subjects, cur_subject
-        subj = {"subject": name.strip() or "Untitled Subject", "topics": []}
+        nonlocal cur_subject, cur_topic
+        subj = {"subject": (name.strip() or "Untitled Subject"), "topics": []}
         subjects.append(subj)
         cur_subject = subj
+        cur_topic = None
 
     def ensure_topic(name: str):
         nonlocal cur_subject, cur_topic
         if cur_subject is None:
             ensure_subject("General")
-        top = {
-            "topic": name.strip() or "Untitled Topic",
-            "chunks": [],
-            "full_text": "",
-        }
+        top = {"topic": (name.strip() or "Untitled Topic"), "chunks": [], "full_text": ""}
         cur_subject["topics"].append(top)
         cur_topic = top
 
@@ -93,45 +77,31 @@ def parse_docx_to_structure(docx_bytes: bytes):
         if not text:
             continue
 
-        lvl = _is_heading(getattr(p.style, "name", ""))
+        lvl = heading_level(getattr(p.style, "name", ""))
         if lvl == 1:
             ensure_subject(text)
-            cur_topic = None
         elif lvl == 2:
             ensure_topic(text)
         else:
-            # regular text goes into current topic; if none, create a default topic
             if cur_topic is None:
                 ensure_topic("Overview")
             cur_topic["chunks"].append(text)
 
     # finalize full_text
-    for subj in subjects:
-        for top in subj["topics"]:
-            top["full_text"] = "\n\n".join(top["chunks"]).strip()
-
-    # Fallback if doc had no headings and no paragraphs captured
     if not subjects:
-        subjects = [
-            {
-                "subject": "Document",
-                "topics": [{"topic": "Content", "chunks": [], "full_text": ""}],
-            }
-        ]
+        subjects = [{"subject": "Document", "topics": [{"topic": "Content", "chunks": [], "full_text": ""}]}]
 
-    # If headings existed but a subject has zero topics, make a placeholder
     for subj in subjects:
-        if not subj["topics"]:
+        if not subj.get("topics"):
             subj["topics"] = [{"topic": "Overview", "chunks": [], "full_text": ""}]
+        for top in subj["topics"]:
+            top["full_text"] = "\n\n".join(top.get("chunks", [])).strip()
 
     return subjects
 
 
-def flatten_topics(subjects):
-    """
-    Create a flat ordered list of (subj_idx, topic_idx).
-    """
-    flat = []
+def flatten_topics(subjects: List[Dict]) -> List[Tuple[int, int]]:
+    flat: List[Tuple[int, int]] = []
     for si, subj in enumerate(subjects):
         for ti, _ in enumerate(subj["topics"]):
             flat.append((si, ti))
@@ -143,9 +113,11 @@ def flatten_topics(subjects):
 # -----------------------------
 def tts_component(text: str, voice_lang: str = "en-US", rate: float = 1.0, pitch: float = 1.0):
     """
-    Uses a small HTML/JS snippet that runs in the user's browser.
+    Text-to-speech in the user's browser (no API keys) using Web Speech API.
     """
-    safe_text = text.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+    # Escape for JS template literal
+    safe = text.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+
     html = f"""
     <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
       <button id="tts_play" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
@@ -158,13 +130,13 @@ def tts_component(text: str, voice_lang: str = "en-US", rate: float = 1.0, pitch
     </div>
 
     <script>
-      const text = `{safe_text}`;
+      const text = `{safe}`;
       const playBtn = document.getElementById("tts_play");
       const stopBtn = document.getElementById("tts_stop");
 
       function speak(t) {{
         if (!("speechSynthesis" in window)) {{
-          alert("Sorry—your browser doesn't support speech synthesis.");
+          alert("Your browser doesn't support speech synthesis.");
           return;
         }}
         window.speechSynthesis.cancel();
@@ -181,33 +153,33 @@ def tts_component(text: str, voice_lang: str = "en-US", rate: float = 1.0, pitch
       }});
     </script>
     """
-    st.components.v1.html(html, height=70)
+    st.components.v1.html(html, height=80)
 
 
 # -----------------------------
-# App
+# Streamlit App
 # -----------------------------
 st.set_page_config(page_title="DOCX Study Reader", layout="wide")
-
 st.title("DOCX Study Reader")
-st.caption("Sidebar: Subject → Topic • Main page: reading view + Text-to-Speech + Next/Back")
+st.caption("Sidebar: Subject → Topic • Page: content + Text-to-Speech + Next/Back")
 
-# Sidebar: document source
+
+@st.cache_data(show_spinner=True)
+def load_structure_from_url(url: str) -> List[Dict]:
+    b = fetch_docx_bytes(url)
+    return parse_docx_to_structure(b)
+
+
 with st.sidebar:
     st.header("Document Source")
     url = st.text_input("DOCX URL", value=DEFAULT_URL)
-    st.write("Tip: Use headings in the DOCX (Heading 1/2) for best Subject/Topic grouping.")
+    st.write("Best results if DOCX uses **Heading 1** (Subject) and **Heading 2** (Topic).")
 
-# Load / cache document
-@st.cache_data(show_spinner=True)
-def load_structure(url_: str):
-    b = fetch_docx_bytes(url_)
-    return parse_docx_to_structure(b)
-
+# Load document
 try:
-    subjects = load_structure(url)
+    subjects = load_structure_from_url(url)
 except Exception as e:
-    st.error(f"Could not load DOCX from URL.\n\nError: {e}")
+    st.error(f"Could not load DOCX.\n\nError: {e}")
     st.stop()
 
 flat = flatten_topics(subjects)
@@ -215,32 +187,27 @@ if not flat:
     st.warning("No topics found in the document.")
     st.stop()
 
-# Session state for navigation
+# Session state
 if "flat_index" not in st.session_state:
     st.session_state.flat_index = 0
 
-# Sidebar navigation controls
+# Current indices
+cur_si, cur_ti = flat[st.session_state.flat_index]
+
+# Sidebar navigation + TTS settings
 with st.sidebar:
     st.header("Navigate")
 
-    # Build options for subjects and topics
     subject_names = [s["subject"] for s in subjects]
-    # Determine current subject/topic from flat_index
-    cur_si, cur_ti = flat[st.session_state.flat_index]
-
     selected_subject = st.selectbox("Subject", subject_names, index=cur_si)
-
-    # When subject changes, default to first topic in that subject
     new_si = subject_names.index(selected_subject)
+
     topic_names = [t["topic"] for t in subjects[new_si]["topics"]]
-    # pick current topic index if same subject, else 0
     default_topic_index = cur_ti if new_si == cur_si and cur_ti < len(topic_names) else 0
     selected_topic = st.selectbox("Topic", topic_names, index=default_topic_index)
 
-    # Jump button
     if st.button("Go", use_container_width=True):
         new_ti = topic_names.index(selected_topic)
-        # find corresponding flat index
         for idx, (si, ti) in enumerate(flat):
             if si == new_si and ti == new_ti:
                 st.session_state.flat_index = idx
@@ -248,7 +215,49 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-
-    # TTS settings
     st.subheader("Text-to-Speech")
-    voice_lang =_
+
+    # ✅ FIX: make sure this is a real assignment (no stray underscore)
+    voice_lang = st.selectbox("Voice language", ["en-US", "en-GB", "en", "es-ES", "fr-FR"], index=0)
+    rate = st.slider("Rate", 0.5, 2.0, 1.0, 0.1)
+    pitch = st.slider("Pitch", 0.5, 2.0, 1.0, 0.1)
+
+# Refresh current content after potential jump
+cur_si, cur_ti = flat[st.session_state.flat_index]
+cur_subject = subjects[cur_si]["subject"]
+cur_topic = subjects[cur_si]["topics"][cur_ti]["topic"]
+cur_text = (subjects[cur_si]["topics"][cur_ti].get("full_text") or "").strip()
+
+# Layout
+col_left, col_right = st.columns([2, 1], vertical_alignment="top")
+
+with col_left:
+    st.subheader(f"{cur_subject}  →  {cur_topic}")
+
+    if cur_text:
+        st.write(cur_text)
+    else:
+        st.info("No paragraph text under this heading (topic may be header-only).")
+
+    st.divider()
+
+    b1, b2, _ = st.columns([1, 1, 6])
+    with b1:
+        if st.button("⬅️ Back", disabled=(st.session_state.flat_index == 0), use_container_width=True):
+            st.session_state.flat_index -= 1
+            st.rerun()
+    with b2:
+        if st.button("Next ➡️", disabled=(st.session_state.flat_index == len(flat) - 1), use_container_width=True):
+            st.session_state.flat_index += 1
+            st.rerun()
+
+with col_right:
+    st.subheader("Listen")
+    if cur_text:
+        tts_component(cur_text, voice_lang=voice_lang, rate=rate, pitch=pitch)
+    else:
+        st.caption("Nothing to read for this topic.")
+
+    st.divider()
+    st.caption("Progress")
+    st.write(f"Topic {st.session_state.flat_index + 1} of {len(flat)}")
