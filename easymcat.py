@@ -1,16 +1,12 @@
 # easymcat.py
-# -------------------------------------------------------------------
-# Streamlit DOCX Study Reader
-#   • Subject dropdown (1) → Topic dropdown (2) → Subtopic dropdown (3)
-#   • Clean reading layout + Progress + Next/Back
-#   • Browser Text-to-Speech (Web Speech API) — no keys required
+# Streamlit DOCX Reader + Subject dropdown + Topic dropdown + Subtopic dropdown
+# + Text-to-Speech + Next/Back
 #
 # Run:
 #   streamlit run easymcat.py
 #
 # Default DOCX URL:
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Exam_Crackers.docx"
-# -------------------------------------------------------------------
 
 import io
 import re
@@ -21,44 +17,9 @@ import streamlit as st
 from docx import Document
 
 
-# =========================================================
-# Styling (lightweight, Streamlit-safe)
-# =========================================================
-st.set_page_config(page_title="DOCX Study Reader", layout="wide")
-
-st.markdown(
-    """
-<style>
-/* Make the app feel a bit more "study app" */
-.block-container {padding-top: 1.2rem; padding-bottom: 2.5rem;}
-h1, h2, h3 {letter-spacing: -0.2px;}
-/* Subtle “card” look for content */
-.study-card {
-  background: rgba(255,255,255,0.65);
-  border: 1px solid rgba(0,0,0,0.08);
-  border-radius: 14px;
-  padding: 18px 18px 12px 18px;
-  box-shadow: 0 6px 18px rgba(0,0,0,0.04);
-}
-.breadcrumb {
-  font-size: 0.92rem;
-  color: rgba(0,0,0,0.60);
-  margin-bottom: 0.3rem;
-}
-.small-muted {font-size: 0.9rem; color: rgba(0,0,0,0.55);}
-hr {margin: 0.8rem 0;}
-</style>
-""",
-    unsafe_allow_html=True,
-)
-
-st.title("📘 DOCX Study Reader")
-st.caption("Pick **Subject → Topic → Subtopic** in the sidebar. Read on the left, listen on the right.")
-
-
-# =========================================================
+# -----------------------------
 # DOCX parsing helpers
-# =========================================================
+# -----------------------------
 SUBJECT_RE = re.compile(r"^\s*subject\s*[:\-]\s*(.+?)\s*$", flags=re.IGNORECASE)
 TOPIC_RE = re.compile(r"^\s*topic\s*[:\-]\s*(.+?)\s*$", flags=re.IGNORECASE)
 SUBTOPIC_RE = re.compile(r"^\s*(?:sub\s*topic|subtopic)\s*[:\-]\s*(.+?)\s*$", flags=re.IGNORECASE)
@@ -88,8 +49,7 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
     Structure:
     subjects = [
       {
-        "subject": str,
-        "topics": [
+        "subject": str, "topics": [
           {
             "topic": str,
             "subtopics": [
@@ -105,7 +65,7 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
       - Otherwise fallback to Heading 1/2/3 for Subject/Topic/Subtopic.
 
     Robustness:
-      - If content appears under a Topic before any Subtopic, create implicit Subtopic "Overview"
+      - If content appears under a Topic before any Subtopic, we create an implicit Subtopic "Overview"
         so the 3rd dropdown always has something to show.
     """
     doc = Document(io.BytesIO(docx_bytes))
@@ -175,6 +135,7 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
 
             # Content line
             if cur_topic is not None and cur_subtopic is None:
+                # If topic exists but no subtopic yet, create implicit subtopic
                 ensure_subtopic("Overview")
             if cur_subtopic is not None:
                 cur_subtopic["chunks"].append(raw)
@@ -199,14 +160,7 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
 
     # finalize full_text
     if not subjects:
-        subjects = [
-            {
-                "subject": "Document",
-                "topics": [
-                    {"topic": "Content", "subtopics": [{"subtopic": "Overview", "chunks": [], "full_text": ""}]}
-                ],
-            }
-        ]
+        subjects = [{"subject": "Document", "topics": [{"topic": "Content", "subtopics": [{"subtopic": "Overview", "chunks": [], "full_text": ""}]}]}]
 
     for subj in subjects:
         if not subj.get("topics"):
@@ -250,23 +204,21 @@ def build_navigation(subjects: List[Dict]) -> Tuple[List[Dict], List[Tuple[int, 
     return nav, flat
 
 
-# =========================================================
+# -----------------------------
 # Browser TTS (Web Speech API)
-# =========================================================
+# -----------------------------
 def tts_component(text: str, voice_lang: str = "en-US", rate: float = 1.0, pitch: float = 1.0):
     """Text-to-speech in the user's browser (no API keys) using Web Speech API."""
     safe = text.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
     html = f"""
     <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-      <button id="tts_play"
-        style="padding:8px 12px; border-radius:10px; border:1px solid rgba(0,0,0,0.12); cursor:pointer;">
+      <button id="tts_play" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
         ▶️ Play
       </button>
-      <button id="tts_stop"
-        style="padding:8px 12px; border-radius:10px; border:1px solid rgba(0,0,0,0.12); cursor:pointer;">
+      <button id="tts_stop" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
         ⏹ Stop
       </button>
-      <span style="color:rgba(0,0,0,0.55); font-size: 0.9rem;">(Uses your browser’s TTS)</span>
+      <span style="color:#666; font-size: 0.9rem;">(Uses your browser's text-to-speech)</span>
     </div>
 
     <script>
@@ -296,20 +248,25 @@ def tts_component(text: str, voice_lang: str = "en-US", rate: float = 1.0, pitch
     st.components.v1.html(html, height=80)
 
 
-# =========================================================
-# Data load
-# =========================================================
+# -----------------------------
+# Streamlit App
+# -----------------------------
+st.set_page_config(page_title="DOCX Study Reader", layout="wide")
+st.title("DOCX Study Reader")
+st.caption("Sidebar: Subject (1) → Topic (2) → Subtopic (3) • Page: content + Text-to-Speech + Next/Back")
+
+
 @st.cache_data(show_spinner=True)
 def load_structure_from_url(url: str) -> List[Dict]:
     return parse_docx_to_structure(fetch_docx_bytes(url))
 
 
 with st.sidebar:
-    st.header("📄 Document")
+    st.header("Document Source")
     url = st.text_input("DOCX URL", value=DEFAULT_URL)
-    st.caption("Uses **Subject / Topic / Subtopic** lines if present, otherwise Heading 1/2/3.")
+    st.write("Navigation comes from **Subject:** / **Topic:** / **Subtopic:** lines (if present), otherwise Heading 1/2/3.")
 
-
+# Load document
 try:
     subjects = load_structure_from_url(url)
 except Exception as e:
@@ -328,31 +285,19 @@ if not nav or not flat:
     )
     st.stop()
 
-
-# =========================================================
-# Session state + helpers
-# =========================================================
+# Session state
 if "flat_index" not in st.session_state:
     st.session_state.flat_index = 0
 st.session_state.flat_index = max(0, min(st.session_state.flat_index, len(flat) - 1))
 
+# Current position
 cur_si, cur_ti, cur_ui = flat[st.session_state.flat_index]
 
-
-def jump_to(si: int, ti: int, ui: int):
-    for idx, (sii, tii, uii) in enumerate(flat):
-        if sii == si and tii == ti and uii == ui:
-            st.session_state.flat_index = idx
-            break
-    st.rerun()
-
-
-# =========================================================
-# Sidebar navigation + TTS controls
-# =========================================================
+# -----------------------------
+# Sidebar: Subject dropdown (1st) + Topic dropdown (2nd) + Subtopic dropdown (3rd)
+# -----------------------------
 with st.sidebar:
-    st.divider()
-    st.header("🧭 Navigate")
+    st.header("Navigate")
 
     # 1) Subject dropdown
     subject_options = [x["subject"] for x in nav]
@@ -386,88 +331,56 @@ with st.sidebar:
     sub_nav_idx = subtopic_options.index(selected_subtopic)
     new_ui = topic_node["subtopics"][sub_nav_idx]["ui"]
 
-    cols = st.columns([1, 1])
-    with cols[0]:
-        if st.button("Go", use_container_width=True):
-            jump_to(new_si, new_ti, new_ui)
-    with cols[1]:
-        if st.button("Reset", use_container_width=True):
-            st.session_state.flat_index = 0
-            st.rerun()
+    if st.button("Go", use_container_width=True):
+        for idx, (si, ti, ui) in enumerate(flat):
+            if si == new_si and ti == new_ti and ui == new_ui:
+                st.session_state.flat_index = idx
+                break
+        st.rerun()
 
     st.divider()
-    st.subheader("🔊 Text-to-Speech")
+    st.subheader("Text-to-Speech")
     voice_lang = st.selectbox("Voice language", ["en-US", "en-GB", "en", "es-ES", "fr-FR"], index=0)
     rate = st.slider("Rate", 0.5, 2.0, 1.0, 0.1)
     pitch = st.slider("Pitch", 0.5, 2.0, 1.0, 0.1)
 
-    st.caption("Tip: Use **Next/Back** on the page for quick flow.")
-
-
-# =========================================================
 # Current content
-# =========================================================
 cur_si, cur_ti, cur_ui = flat[st.session_state.flat_index]
 cur_subject = subjects[cur_si]["subject"]
 cur_topic = subjects[cur_si]["topics"][cur_ti]["topic"]
 cur_subtopic = subjects[cur_si]["topics"][cur_ti]["subtopics"][cur_ui]["subtopic"]
 cur_text = (subjects[cur_si]["topics"][cur_ti]["subtopics"][cur_ui].get("full_text") or "").strip()
 
-progress_num = st.session_state.flat_index + 1
-progress_den = len(flat)
-progress_pct = progress_num / progress_den if progress_den else 0.0
+# Layout
+col_left, col_right = st.columns([2, 1], vertical_alignment="top")
 
-
-# =========================================================
-# Main layout
-# =========================================================
-left, right = st.columns([2.4, 1.2], vertical_alignment="top")
-
-with left:
-    st.markdown(
-        f"""
-<div class="study-card">
-  <div class="breadcrumb">Subject • <b>{cur_subject}</b> &nbsp;&nbsp;→&nbsp;&nbsp;
-       Topic • <b>{cur_topic}</b> &nbsp;&nbsp;→&nbsp;&nbsp;
-       Subtopic • <b>{cur_subtopic}</b>
-  </div>
-  <hr />
-</div>
-""",
-        unsafe_allow_html=True,
-    )
+with col_left:
+    st.subheader(f"{cur_subject}  →  {cur_topic}  →  {cur_subtopic}")
 
     if cur_text:
-        # Keep content readable; Streamlit handles wrapping well.
-        st.markdown(f"<div class='study-card'>{cur_text.replace('\\n', '<br><br>')}</div>", unsafe_allow_html=True)
+        st.write(cur_text)
     else:
         st.info("No paragraph text under this subtopic.")
 
-    st.write("")  # breathing room
+    st.divider()
 
-    nav_cols = st.columns([1, 1, 2])
-    with nav_cols[0]:
+    b1, b2, _ = st.columns([1, 1, 6])
+    with b1:
         if st.button("⬅️ Back", disabled=(st.session_state.flat_index == 0), use_container_width=True):
             st.session_state.flat_index -= 1
             st.rerun()
-    with nav_cols[1]:
+    with b2:
         if st.button("Next ➡️", disabled=(st.session_state.flat_index == len(flat) - 1), use_container_width=True):
             st.session_state.flat_index += 1
             st.rerun()
-    with nav_cols[2]:
-        st.progress(progress_pct, text=f"Progress: {progress_num}/{progress_den}")
 
-with right:
-    st.subheader("🎧 Listen")
-    st.markdown("<div class='small-muted'>Press play to read the current subtopic aloud.</div>", unsafe_allow_html=True)
-    st.write("")
-
+with col_right:
+    st.subheader("Listen")
     if cur_text:
         tts_component(cur_text, voice_lang=voice_lang, rate=rate, pitch=pitch)
     else:
         st.caption("Nothing to read for this subtopic.")
 
     st.divider()
-    st.subheader("📌 Quick Info")
-    st.metric("Section", f"{progress_num} / {progress_den}")
-    st.caption("Use the sidebar dropdowns to jump anywhere instantly.")
+    st.caption("Progress")
+    st.write(f"Section {st.session_state.flat_index + 1} of {len(flat)}")
