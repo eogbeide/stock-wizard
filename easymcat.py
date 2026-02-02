@@ -46,47 +46,36 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
     """
     Build structure:
     subjects = [
-      {"subject": str, "topics": [{"topic": str, "chunks": [str], "full_text": str, "real": bool}, ...], "real": bool},
+      {"subject": str, "topics": [{"topic": str, "chunks": [str], "full_text": str}, ...]},
       ...
     ]
 
-    IMPORTANT (per your request):
-      - If the document contains any "Subject:" / "Topic:" lines, we treat those as the ONLY Subject/Topic sources
-        (no Heading-1/Heading-2 fallback, and no auto "Overview" topics).
-      - If the doc has NO Subject/Topic markers at all, we fallback to Heading 1/2 behavior.
-
-    Content paragraphs are appended to the current Topic.
+    Priority rules:
+      1) If a paragraph line looks like "Subject: ..." -> Subject marker
+      2) If a paragraph line looks like "Topic: ..."   -> Topic marker
+      3) Else fall back to styles:
+         - Heading 1 => Subject
+         - Heading 2 => Topic
+      4) Otherwise, append paragraph text to current Topic.
     """
     doc = Document(io.BytesIO(docx_bytes))
-
-    # Detect if the doc uses explicit Subject/Topic markers anywhere.
-    has_markers = False
-    for p in doc.paragraphs:
-        raw = (p.text or "").strip()
-        if not raw:
-            continue
-        if SUBJECT_RE.match(raw) or TOPIC_RE.match(raw):
-            has_markers = True
-            break
 
     subjects: List[Dict] = []
     cur_subject: Optional[Dict] = None
     cur_topic: Optional[Dict] = None
 
-    def ensure_subject(name: str, real: bool = True):
+    def ensure_subject(name: str):
         nonlocal cur_subject, cur_topic
-        subj = {"subject": (name.strip() or "Untitled Subject"), "topics": [], "real": real}
+        subj = {"subject": (name.strip() or "Untitled Subject"), "topics": []}
         subjects.append(subj)
         cur_subject = subj
         cur_topic = None
 
-    def ensure_topic(name: str, real: bool = True):
+    def ensure_topic(name: str):
         nonlocal cur_subject, cur_topic
         if cur_subject is None:
-            # If content starts with Topic before Subject, create a placeholder subject
-            # (it will be filtered from the sidebar unless it has real topics).
-            ensure_subject("General", real=False)
-        top = {"topic": (name.strip() or "Untitled Topic"), "chunks": [], "full_text": "", "real": real}
+            ensure_subject("General")
+        top = {"topic": (name.strip() or "Untitled Topic"), "chunks": [], "full_text": ""}
         cur_subject["topics"].append(top)
         cur_topic = top
 
@@ -95,70 +84,50 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
         if not raw:
             continue
 
-        # MODE 1: Markers-only mode
-        if has_markers:
-            sm = SUBJECT_RE.match(raw)
-            if sm:
-                ensure_subject(sm.group(1), real=True)
-                continue
-
-            tm = TOPIC_RE.match(raw)
-            if tm:
-                ensure_topic(tm.group(1), real=True)
-                continue
-
-            # Regular content attaches ONLY if we are inside a real topic.
-            if cur_topic is not None:
-                cur_topic["chunks"].append(raw)
+        # 1) Explicit markers inside the document text (highest priority)
+        sm = SUBJECT_RE.match(raw)
+        if sm:
+            ensure_subject(sm.group(1))
             continue
 
-        # MODE 2: Fallback mode (no markers found) -> Heading styles + minimal defaulting
+        tm = TOPIC_RE.match(raw)
+        if tm:
+            ensure_topic(tm.group(1))
+            continue
+
+        # 2) Fallback to DOCX heading styles
         lvl = heading_level(getattr(p.style, "name", ""))
         if lvl == 1:
-            ensure_subject(raw, real=True)
+            ensure_subject(raw)
             continue
         if lvl == 2:
-            ensure_topic(raw, real=True)
+            ensure_topic(raw)
             continue
 
+        # 3) Regular content lines -> attach to current topic
         if cur_topic is None:
-            # Only created in fallback mode; marked not-real so it won’t appear in sidebar if you later add filtering.
-            ensure_topic("Overview", real=False)
+            ensure_topic("Overview")
         cur_topic["chunks"].append(raw)
 
-    # Finalize full_text
+    # finalize full_text
     if not subjects:
-        subjects = [{"subject": "Document", "topics": [{"topic": "Content", "chunks": [], "full_text": "", "real": True}], "real": True}]
+        subjects = [{"subject": "Document", "topics": [{"topic": "Content", "chunks": [], "full_text": ""}]}]
 
     for subj in subjects:
         if not subj.get("topics"):
-            # If a subject has no topics, keep it but mark it not-real
-            subj["real"] = False
-            subj["topics"] = [{"topic": "Overview", "chunks": [], "full_text": "", "real": False}]
+            subj["topics"] = [{"topic": "Overview", "chunks": [], "full_text": ""}]
         for top in subj["topics"]:
             top["full_text"] = "\n\n".join(top.get("chunks", [])).strip()
 
     return subjects
 
 
-def build_navigation(subjects: List[Dict]) -> Tuple[List[Tuple[int, str, List[int]]], List[Tuple[int, int]]]:
-    """
-    Returns:
-      nav_subjects: [(si, subject_name, [real_topic_ti...]), ...]  # ONLY subjects/topics from the document
-      flat: [(si, ti), ...]  # ONLY real topics (for Next/Back)
-    """
-    nav_subjects: List[Tuple[int, str, List[int]]] = []
+def flatten_topics(subjects: List[Dict]) -> List[Tuple[int, int]]:
     flat: List[Tuple[int, int]] = []
-
     for si, subj in enumerate(subjects):
-        real_tis = [ti for ti, t in enumerate(subj.get("topics", [])) if t.get("real", False)]
-        if not real_tis:
-            continue
-        nav_subjects.append((si, subj.get("subject", f"Subject {si+1}"), real_tis))
-        for ti in real_tis:
+        for ti, _ in enumerate(subj["topics"]):
             flat.append((si, ti))
-
-    return nav_subjects, flat
+    return flat
 
 
 # -----------------------------
@@ -223,7 +192,7 @@ def load_structure_from_url(url: str) -> List[Dict]:
 with st.sidebar:
     st.header("Document Source")
     url = st.text_input("DOCX URL", value=DEFAULT_URL)
-    st.write("Subjects/Topics come ONLY from lines like **Subject:** and **Topic:** (if present).")
+    st.write("This app will scan for lines like **Subject:** and **Topic:** in the DOCX.")
 
 
 # Load document
@@ -233,54 +202,32 @@ except Exception as e:
     st.error(f"Could not load DOCX.\n\nError: {e}")
     st.stop()
 
-nav_subjects, flat = build_navigation(subjects)
-
-if not nav_subjects or not flat:
-    st.warning(
-        "No usable Subject/Topic pairs found.\n\n"
-        "Make sure your DOCX contains lines like:\n"
-        "- Subject: ...\n"
-        "- Topic: ...\n"
-        "and text beneath each Topic."
-    )
+flat = flatten_topics(subjects)
+if not flat:
+    st.warning("No topics found in the document.")
     st.stop()
 
 # Session state
 if "flat_index" not in st.session_state:
     st.session_state.flat_index = 0
 
-# Clamp flat_index if doc changes
-st.session_state.flat_index = max(0, min(st.session_state.flat_index, len(flat) - 1))
-
-# Current indices (real-topic navigation only)
+# Current indices
 cur_si, cur_ti = flat[st.session_state.flat_index]
 
 # Sidebar navigation + TTS settings
 with st.sidebar:
     st.header("Navigate")
 
-    # Subject dropdown shows ONLY subjects found in the document (that have real topics)
-    subject_options = [name for _, name, _ in nav_subjects]
-    cur_subject_option_index = next(i for i, (si, _, _) in enumerate(nav_subjects) if si == cur_si)
+    subject_names = [s["subject"] for s in subjects]
+    selected_subject = st.selectbox("Subject", subject_names, index=cur_si)
+    new_si = subject_names.index(selected_subject)
 
-    selected_subject_name = st.selectbox("Subject", subject_options, index=cur_subject_option_index)
-    subj_opt_idx = subject_options.index(selected_subject_name)
-    new_si, _, new_real_tis = nav_subjects[subj_opt_idx]
-
-    # Topic dropdown shows ONLY topics found in the document (for the selected subject)
-    topic_options = [subjects[new_si]["topics"][ti]["topic"] for ti in new_real_tis]
-
-    # Default topic in dropdown
-    if new_si == cur_si and cur_ti in new_real_tis:
-        default_topic_index = new_real_tis.index(cur_ti)
-    else:
-        default_topic_index = 0
-
-    selected_topic_name = st.selectbox("Topic", topic_options, index=default_topic_index)
+    topic_names = [t["topic"] for t in subjects[new_si]["topics"]]
+    default_topic_index = cur_ti if new_si == cur_si and cur_ti < len(topic_names) else 0
+    selected_topic = st.selectbox("Topic", topic_names, index=default_topic_index)
 
     if st.button("Go", use_container_width=True):
-        # Map selected subject/topic back to flat_index
-        new_ti = new_real_tis[topic_options.index(selected_topic_name)]
+        new_ti = topic_names.index(selected_topic)
         for idx, (si, ti) in enumerate(flat):
             if si == new_si and ti == new_ti:
                 st.session_state.flat_index = idx
