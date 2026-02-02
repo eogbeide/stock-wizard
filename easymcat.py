@@ -4,7 +4,7 @@
 # Run:
 #   streamlit run easymcat.py
 #
-# Your default DOCX URL:
+# Default DOCX URL:
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Exam_Crackers.docx"
 
 import io
@@ -19,6 +19,10 @@ from docx import Document
 # -----------------------------
 # DOCX parsing helpers
 # -----------------------------
+SUBJECT_RE = re.compile(r"^\s*subject\s*[:\-]\s*(.+?)\s*$", flags=re.IGNORECASE)
+TOPIC_RE = re.compile(r"^\s*topic\s*[:\-]\s*(.+?)\s*$", flags=re.IGNORECASE)
+
+
 def heading_level(style_name: str) -> Optional[int]:
     """Return heading level if style_name looks like 'Heading 1', 'Heading 2', etc."""
     if not style_name:
@@ -46,10 +50,13 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
       ...
     ]
 
-    Heuristics:
-      Heading 1 => Subject
-      Heading 2 => Topic
-      Normal paragraphs are appended to current Topic (or a default "Overview").
+    Priority rules:
+      1) If a paragraph line looks like "Subject: ..." -> Subject marker
+      2) If a paragraph line looks like "Topic: ..."   -> Topic marker
+      3) Else fall back to styles:
+         - Heading 1 => Subject
+         - Heading 2 => Topic
+      4) Otherwise, append paragraph text to current Topic.
     """
     doc = Document(io.BytesIO(docx_bytes))
 
@@ -73,19 +80,34 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
         cur_topic = top
 
     for p in doc.paragraphs:
-        text = (p.text or "").strip()
-        if not text:
+        raw = (p.text or "").strip()
+        if not raw:
             continue
 
+        # 1) Explicit markers inside the document text (highest priority)
+        sm = SUBJECT_RE.match(raw)
+        if sm:
+            ensure_subject(sm.group(1))
+            continue
+
+        tm = TOPIC_RE.match(raw)
+        if tm:
+            ensure_topic(tm.group(1))
+            continue
+
+        # 2) Fallback to DOCX heading styles
         lvl = heading_level(getattr(p.style, "name", ""))
         if lvl == 1:
-            ensure_subject(text)
-        elif lvl == 2:
-            ensure_topic(text)
-        else:
-            if cur_topic is None:
-                ensure_topic("Overview")
-            cur_topic["chunks"].append(text)
+            ensure_subject(raw)
+            continue
+        if lvl == 2:
+            ensure_topic(raw)
+            continue
+
+        # 3) Regular content lines -> attach to current topic
+        if cur_topic is None:
+            ensure_topic("Overview")
+        cur_topic["chunks"].append(raw)
 
     # finalize full_text
     if not subjects:
@@ -112,10 +134,7 @@ def flatten_topics(subjects: List[Dict]) -> List[Tuple[int, int]]:
 # Browser TTS (Web Speech API)
 # -----------------------------
 def tts_component(text: str, voice_lang: str = "en-US", rate: float = 1.0, pitch: float = 1.0):
-    """
-    Text-to-speech in the user's browser (no API keys) using Web Speech API.
-    """
-    # Escape for JS template literal
+    """Text-to-speech in the user's browser (no API keys) using Web Speech API."""
     safe = text.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
 
     html = f"""
@@ -173,7 +192,8 @@ def load_structure_from_url(url: str) -> List[Dict]:
 with st.sidebar:
     st.header("Document Source")
     url = st.text_input("DOCX URL", value=DEFAULT_URL)
-    st.write("Best results if DOCX uses **Heading 1** (Subject) and **Heading 2** (Topic).")
+    st.write("This app will scan for lines like **Subject:** and **Topic:** in the DOCX.")
+
 
 # Load document
 try:
@@ -217,7 +237,6 @@ with st.sidebar:
     st.divider()
     st.subheader("Text-to-Speech")
 
-    # ✅ FIX: make sure this is a real assignment (no stray underscore)
     voice_lang = st.selectbox("Voice language", ["en-US", "en-GB", "en", "es-ES", "fr-FR"], index=0)
     rate = st.slider("Rate", 0.5, 2.0, 1.0, 0.1)
     pitch = st.slider("Pitch", 0.5, 2.0, 1.0, 0.1)
@@ -237,7 +256,7 @@ with col_left:
     if cur_text:
         st.write(cur_text)
     else:
-        st.info("No paragraph text under this heading (topic may be header-only).")
+        st.info("No paragraph text under this topic.")
 
     st.divider()
 
