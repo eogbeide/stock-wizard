@@ -8,7 +8,7 @@
 # Default DOCX URL:
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Exam_Crackers.docx"
 
-import iom
+import io
 import re
 from typing import Optional, List, Dict, Tuple
 
