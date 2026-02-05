@@ -2,7 +2,7 @@
 # =========================
 # Part 1/10 — bullbear.py  (UPDATED: Ribbon Tabs + Beautiful Chart Styling)
 # =========================
-import streamlit as stn
+import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
