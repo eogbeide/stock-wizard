@@ -1802,7 +1802,6 @@ with tabs[6]:
         if close.empty:
             st.warning("No history.")
         else:
-            # bb_period like "3mo", "6mo", "1y"
             try:
                 lookback_days = {"1mo": 30, "3mo": 90, "6mo": 180, "1y": 365}.get(bb_period, 180)
                 cut = close.index.max() - pd.Timedelta(days=int(lookback_days))
@@ -1974,7 +1973,7 @@ with tabs[12]:
             st.dataframe(df, use_container_width=True)
 
 # ---------------------------
-# Tab 14: Stickers
+# Tab 14: Stickers (FIXED)
 # ---------------------------
 with tabs[13]:
     st.write("### Stickers (Quick Snapshot)")
@@ -1989,7 +1988,9 @@ with tabs[13]:
         npx = compute_normalized_price(close, window=int(ntd_window))
         hma = compute_hma(close, period=int(hma_period))
 
-        st.write(pd.DataFrame([{
+        # ✅ FIX: st.write(...) does NOT accept use_container_width
+        # Use st.dataframe for width control.
+        df_stickers = pd.DataFrame([{
             "Symbol": symbol,
             "AsOf": close.index[-1],
             "Close": float(close.iloc[-1]) if np.isfinite(close.iloc[-1]) else np.nan,
@@ -1998,7 +1999,8 @@ with tabs[13]:
             "NTD": float(_coerce_1d_series(ntd).dropna().iloc[-1]) if len(_coerce_1d_series(ntd).dropna()) else np.nan,
             "NPX": float(_coerce_1d_series(npx).dropna().iloc[-1]) if len(_coerce_1d_series(npx).dropna()) else np.nan,
             f"HMA({hma_period})": float(_coerce_1d_series(hma).dropna().iloc[-1]) if len(_coerce_1d_series(hma).dropna()) else np.nan,
-        }]), use_container_width=True)
+        }])
+        st.dataframe(df_stickers, use_container_width=True)
 
 # ---------------------------
 # Tab 15: HMA Buy (NEW)
