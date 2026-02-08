@@ -1,4 +1,4 @@
-# ankideck.py
+# easymcat.py
 # Streamlit PDF Study Reader
 # - Sidebar navigation by PAGE NUMBER
 # - Browser Text-to-Speech (installed voices dropdown)
@@ -7,9 +7,10 @@
 # - Reads mathematical symbols more clearly (without turning prose dashes into “minus”)
 # - Reads chemical formulas + simple chemical equations more clearly (H2O, NaCl, (NH4)2SO4, CuSO4·5H2O, Fe3+, etc.)
 # - NEW: Better PDF text extraction + page text structuring into easy-to-narrate paragraphs & bullet “story mode”
+# - NEW: Explicit Resume button in TTS controls
 #
 # Run:
-#   streamlit run ankideck.py
+#   streamlit run easymcat.py
 #
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/ankideck.pdf"
 
@@ -277,14 +278,12 @@ def make_math_speakable(text: str, style: str = "Natural") -> str:
         s = s.replace("=", " equals ")
         s = s.replace("+", " plus ")
         s = s.replace("*", " times ")
-        # Safe minus conversion only in math-ish contexts:
         s = _replace_minus_in_math_context(s)
     else:
         s = s.replace("=", " equals ")
         s = s.replace("+", " plus ")
         s = s.replace("*", " times ")
 
-        # Safe minus conversion only in math-ish contexts:
         s = _replace_minus_in_math_context(s)
 
         s = re.sub(r"(\b[A-Za-z][A-Za-z0-9]*)\s*\^\s*2\b", r"\1 squared", s)
@@ -327,10 +326,8 @@ def _normalize_chem_unicode(s: str) -> str:
         s = s.replace(k, v)
     for k, v in _SUPER_SIGNS.items():
         s = s.replace(k, v)
-    # keep math superscripts too (sometimes used for charges)
     for k, v in _SUPERSCRIPT_UNICODE.items():
         s = s.replace(k, v.replace("^", ""))  # ² -> 2 in chemistry context
-    # normalize hydration dot variants
     s = s.replace("∙", "·")
     return s
 
@@ -370,7 +367,6 @@ def _speak_element(sym: str, element_mode: str) -> str:
 def _speak_formula(tok: str, element_mode: str) -> str:
     t = _normalize_chem_unicode(tok)
 
-    # Common state symbols
     t = re.sub(r"\(aq\)", " (aq) ", t, flags=re.IGNORECASE)
     t = re.sub(r"\(s\)", " (s) ", t, flags=re.IGNORECASE)
     t = re.sub(r"\(l\)", " (l) ", t, flags=re.IGNORECASE)
@@ -385,7 +381,6 @@ def _speak_formula(tok: str, element_mode: str) -> str:
             i += 1
             continue
 
-        # state symbols
         if t[i : i + 4].lower() == "(aq)":
             out.append("aqueous")
             i += 4
@@ -416,7 +411,6 @@ def _speak_formula(tok: str, element_mode: str) -> str:
             i += 1
             continue
 
-        # caret charge format: ^2- or ^-
         if ch == "^":
             j = i + 1
             num = ""
@@ -437,7 +431,6 @@ def _speak_formula(tok: str, element_mode: str) -> str:
             i = j
             continue
 
-        # digits (coefficients or subscripts)
         if ch.isdigit():
             j = i
             num = ""
@@ -448,7 +441,6 @@ def _speak_formula(tok: str, element_mode: str) -> str:
             i = j
             continue
 
-        # element symbol
         if ch.isalpha() and ch.isupper():
             sym = ch
             if i + 1 < len(t) and t[i + 1].isalpha() and t[i + 1].islower():
@@ -459,7 +451,6 @@ def _speak_formula(tok: str, element_mode: str) -> str:
             out.append(_speak_element(sym, element_mode))
             continue
 
-        # trailing ionic signs
         if ch in "+-":
             out.append("plus" if ch == "+" else "minus")
             if i == len(t) - 1:
@@ -487,7 +478,6 @@ def make_chem_speakable(
 
     s = _normalize_chem_unicode(text)
 
-    # reaction arrows
     s = s.replace("⇌", " reversible reaction ")
     s = s.replace("→", " yields ")
     s = s.replace("⇒", " yields ")
@@ -547,16 +537,13 @@ def structure_page_text(raw: str, fun_mode: bool = True) -> Tuple[str, str]:
     if not raw:
         return "", ""
 
-    # Preserve original line breaks for structuring
     s = raw.replace("\r\n", "\n").replace("\r", "\n")
-    # De-hyphenate common PDF line breaks: "exam-\nple" -> "example"
     s = re.sub(r"(\w)-\n(\w)", r"\1\2", s)
 
     lines = [ln.strip() for ln in s.split("\n")]
 
     blocks: List[Dict] = []
     buf: List[str] = []
-    in_bullet = False
 
     def flush_buf():
         nonlocal buf
@@ -566,9 +553,7 @@ def structure_page_text(raw: str, fun_mode: bool = True) -> Tuple[str, str]:
 
     for ln in lines:
         if not ln:
-            # paragraph break
             flush_buf()
-            in_bullet = False
             continue
 
         bm = _BULLET_RE.match(ln)
@@ -577,38 +562,27 @@ def structure_page_text(raw: str, fun_mode: bool = True) -> Tuple[str, str]:
         if bm:
             flush_buf()
             blocks.append({"type": "bullet", "text": bm.group(1).strip()})
-            in_bullet = True
             continue
 
         if nm:
             flush_buf()
             blocks.append({"type": "number", "num": nm.group(1), "text": nm.group(2).strip()})
-            in_bullet = True
             continue
 
-        # continuation lines:
-        # If the previous block is a bullet/number and current line looks like a continuation,
-        # append to that bullet/number.
         if blocks and blocks[-1]["type"] in ("bullet", "number"):
-            # Heuristic: continuation if line starts lowercase or is short and doesn't look like a new heading
             if (ln[:1].islower()) or (len(ln) <= 80 and not ln.isupper()):
                 blocks[-1]["text"] = (blocks[-1]["text"] + " " + ln).strip()
                 continue
 
-        # Heading heuristic: short + all caps or ends with colon
         if len(ln) <= 60 and (ln.isupper() or ln.endswith(":")):
             flush_buf()
             blocks.append({"type": "heading", "text": ln.strip(":").strip()})
-            in_bullet = False
             continue
 
-        # Otherwise, accumulate into paragraph buffer (PDF often wraps lines)
         buf.append(ln)
-        in_bullet = False
 
     flush_buf()
 
-    # Now build display markdown + narration text
     display_parts: List[str] = []
     narr_parts: List[str] = []
 
@@ -637,18 +611,16 @@ def structure_page_text(raw: str, fun_mode: bool = True) -> Tuple[str, str]:
                     narr_parts.append("Quick checklist time. Here are the key takeaways.")
                 bullet_intro_added = True
                 bullet_counter = 0
-                display_parts.append("")  # spacing
+                display_parts.append("")
 
             bullet_counter += 1
             txt = b["text"].strip()
 
-            # Display: Markdown bullet
             if b["type"] == "number":
                 display_parts.append(f"- **{b.get('num','')}**. {txt}")
             else:
                 display_parts.append(f"- {txt}")
 
-            # Narration: friendly enumeration
             if fun_mode:
                 lead = bullet_words[min(bullet_counter - 1, len(bullet_words) - 1)]
                 narr_parts.append(f"{lead}: {txt}.")
@@ -656,7 +628,6 @@ def structure_page_text(raw: str, fun_mode: bool = True) -> Tuple[str, str]:
                 narr_parts.append(f"{txt}.")
             continue
 
-        # Normal paragraph
         p = (b.get("text") or "").strip()
         if not p:
             continue
@@ -664,31 +635,22 @@ def structure_page_text(raw: str, fun_mode: bool = True) -> Tuple[str, str]:
         bullet_intro_added = False
         bullet_counter = 0
 
-        # Break long paragraphs into smaller chunks for readability
         sentences = _split_sentences_py(p)
         chunks = _chunk_sentences(sentences, max_sentences=2) if sentences else [p]
 
         for ci, chunk in enumerate(chunks):
-            # Light display emphasis for readability
             display_parts.append(chunk)
-
-            # Narration: keep it simple, but add tiny pacing cues
             if fun_mode and ci == 0 and len(chunks) > 1:
                 narr_parts.append("Alright—here’s the idea.")
             narr_parts.append(chunk)
 
-        # paragraph break
         display_parts.append("")
         narr_parts.append("")
 
-    # Cleanup: ensure readable spacing
     display_md = "\n\n".join([x for x in display_parts if x is not None]).strip()
     narration = "\n\n".join([x for x in narr_parts if x is not None]).strip()
 
-    # Final polish: avoid turning prose hyphens into subtraction later
     narration = _smart_dash_vs_minus(narration)
-
-    # Also clean excessive whitespace
     narration = re.sub(r"[ \t]+", " ", narration)
     narration = re.sub(r"\n{3,}", "\n\n", narration).strip()
 
@@ -718,6 +680,9 @@ def tts_component(
         <button id="{component_id}_playpause" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
           ▶️ Play
         </button>
+        <button id="{component_id}_resume" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+          🔊 Resume
+        </button>
         <button id="{component_id}_stop" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
           ⏹ Stop
         </button>
@@ -741,6 +706,7 @@ def tts_component(
       const TEXT = `{safe}`;
 
       const playPauseBtn = document.getElementById(ROOT_ID + "_playpause");
+      const resumeBtn = document.getElementById(ROOT_ID + "_resume");
       const stopBtn = document.getElementById(ROOT_ID + "_stop");
       const voiceSelect = document.getElementById(ROOT_ID + "_voice");
       const resetVoiceBtn = document.getElementById(ROOT_ID + "_resetvoice");
@@ -1208,6 +1174,32 @@ def tts_component(
         startFresh();
       }}
 
+      function resumeOrStart() {{
+        if (!ensureSpeechSupport()) return;
+
+        const synth = window.speechSynthesis;
+
+        if (betweenPaused || synth.paused) {{
+          resumeAll();
+          return;
+        }}
+
+        if (synth.speaking && !synth.paused) {{
+          setStatus("Already speaking…");
+          setPlayPauseLabel();
+          return;
+        }}
+
+        if (queue.length && idx < queue.length) {{
+          setStatus("Speaking…");
+          speakNext();
+          setPlayPauseLabel();
+          return;
+        }}
+
+        startFresh();
+      }}
+
       voiceSelect.addEventListener("change", () => {{
         try {{ localStorage.setItem(storageKey, voiceSelect.value || ""); }} catch (e) {{}}
         if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused)) {{
@@ -1233,6 +1225,7 @@ def tts_component(
       }});
 
       playPauseBtn.addEventListener("click", togglePlayPause);
+      resumeBtn.addEventListener("click", resumeOrStart);
       stopBtn.addEventListener("click", stopAll);
 
       setInterval(() => {{
@@ -1280,7 +1273,6 @@ def parse_pdf_to_pages(pdf_bytes: bytes) -> List[Dict]:
         # 2) pypdf layout-mode fallback (often better for spacing/columns)
         if not raw.strip():
             try:
-                # Not all versions support this kwarg; keep it in a try.
                 raw = page.extract_text(extraction_mode="layout") or ""
             except Exception:
                 pass
@@ -1467,7 +1459,6 @@ raw_text = (pages[st.session_state.page_index].get("raw") or "").strip()
 
 display_md, base_tts_text = structure_page_text(raw_text, fun_mode=fun_mode)
 
-# If extraction yields nothing, warn clearly
 if not raw_text.strip():
     display_md = ""
     base_tts_text = ""
@@ -1498,7 +1489,6 @@ with col_left:
         if display_md:
             st.markdown(display_md)
         else:
-            # fallback: show raw if structuring produced nothing
             st.write(raw_text)
 
         if show_tts_preview and tts_text:
