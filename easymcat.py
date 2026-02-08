@@ -1,11 +1,13 @@
 # easymcat.py
-# Streamlit DOCX Reader + Subject dropdown + Topic dropdown + Subtopic dropdown
-# + Browser Text-to-Speech (actual installed voices dropdown) + Next/Back (sticky floating controls)
+# Streamlit DOCX Study Reader
+# - Subject/Topic/Subtopic navigation (markers or Heading 1/2/3)
+# - Browser Text-to-Speech (installed voices dropdown)
+# - Flow reading: sentence/paragraph pauses (optionally clause pauses)
+# - Sticky floating Controls (Listen + Next/Back)
 #
 # Run:
 #   streamlit run easymcat.py
 #
-# Default DOCX URL:
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Exam_Crackers.docx"
 
 import io
@@ -66,8 +68,7 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
       - Otherwise fallback to Heading 1/2/3 for Subject/Topic/Subtopic.
 
     Robustness:
-      - If content appears under a Topic before any Subtopic, we create an implicit Subtopic "Overview"
-        so the 3rd dropdown always has something to show.
+      - If content appears under a Topic before any Subtopic, we create an implicit Subtopic "Overview".
     """
     doc = Document(io.BytesIO(docx_bytes))
 
@@ -166,7 +167,9 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
 
     for subj in subjects:
         if not subj.get("topics"):
-            subj["topics"] = [{"topic": "Overview", "subtopics": [{"subtopic": "Overview", "chunks": [], "full_text": ""}]}]
+            subj["topics"] = [
+                {"topic": "Overview", "subtopics": [{"subtopic": "Overview", "chunks": [], "full_text": ""}]}
+            ]
         for top in subj["topics"]:
             if not top.get("subtopics"):
                 top["subtopics"] = [{"subtopic": "Overview", "chunks": [], "full_text": ""}]
@@ -212,11 +215,20 @@ def build_navigation(subjects: List[Dict]) -> Tuple[List[Dict], List[Tuple[int, 
 def tts_component(
     text: str,
     preferred_lang: str = "en-GB",
-    rate: float = 1.0,
-    pitch: float = 0.8,
+    rate: float = 0.95,
+    pitch: float = 0.78,
     prefer_deep_male_gb: bool = True,
+    flow_mode: bool = True,
+    sentence_pause_ms: int = 320,
+    paragraph_pause_ms: int = 650,
+    clause_pause_ms: int = 0,
 ):
-    """Browser TTS with real installed voices dropdown + Play/Pause toggle + Stop."""
+    """
+    Browser TTS:
+    - Real installed voices dropdown
+    - Play/Pause toggle + Stop
+    - Flow mode: speaks sentence-by-sentence with pauses (optional clause pauses)
+    """
     safe = text.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
     component_id = f"tts_{uuid.uuid4().hex}"
 
@@ -259,23 +271,23 @@ def tts_component(
       const preferredPitch = {pitch};
       const preferDeepMaleGb = {str(prefer_deep_male_gb).lower()};
 
+      const flowMode = {str(flow_mode).lower()};
+      const sentencePauseMs = Math.max(0, {sentence_pause_ms});
+      const paragraphPauseMs = Math.max(0, {paragraph_pause_ms});
+      const clausePauseMs = Math.max(0, {clause_pause_ms});
+
       const storageKey = "easymcat_tts_voice_uri";
+
+      let queue = [];
+      let idx = 0;
+
+      let betweenTimer = null;
+      let betweenDueAt = 0;
+      let betweenRemaining = 0;
+      let betweenPaused = false;
 
       function setStatus(msg) {{
         statusEl.textContent = msg;
-      }}
-
-      function setPlayPauseLabel() {{
-        if (!("speechSynthesis" in window)) {{
-          playPauseBtn.textContent = "▶️ Play";
-          return;
-        }}
-        const synth = window.speechSynthesis;
-        if (synth.speaking) {{
-          playPauseBtn.textContent = synth.paused ? "🔊 Resume" : "⏸ Pause";
-        }} else {{
-          playPauseBtn.textContent = "▶️ Play";
-        }}
       }}
 
       function ensureSpeechSupport() {{
@@ -284,6 +296,25 @@ def tts_component(
           return false;
         }}
         return true;
+      }}
+
+      function setPlayPauseLabel() {{
+        if (!("speechSynthesis" in window)) {{
+          playPauseBtn.textContent = "▶️ Play";
+          return;
+        }}
+        const synth = window.speechSynthesis;
+
+        if (betweenPaused) {{
+          playPauseBtn.textContent = "🔊 Resume";
+          return;
+        }}
+
+        if (synth.speaking) {{
+          playPauseBtn.textContent = synth.paused ? "🔊 Resume" : "⏸ Pause";
+        }} else {{
+          playPauseBtn.textContent = "▶️ Play";
+        }}
       }}
 
       function getVoicesAsync() {{
@@ -376,14 +407,14 @@ def tts_component(
         const hasSaved = savedUri && options.some(o => o.uri === savedUri);
         if (hasSaved) {{
           voiceSelect.value = savedUri;
-          setStatus("Voice loaded (saved selection).");
+          setStatus("Voice loaded (saved).");
           return;
         }}
 
         const def = pickDefaultVoice(voices);
         if (def && def.voiceURI) {{
           voiceSelect.value = def.voiceURI;
-          setStatus("Voice loaded (default selection).");
+          setStatus("Voice loaded (default).");
         }} else {{
           setStatus("Voice loaded.");
         }}
@@ -409,22 +440,204 @@ def tts_component(
         return voices.find(v => (v.voiceURI || "") === uri) || null;
       }}
 
+      function normalizeText(t) {{
+        return (t || "")
+          .replace(/\\r\\n/g, "\\n")
+          .replace(/\\r/g, "\\n")
+          .replace(/[ \\t]+/g, " ")
+          .replace(/\\n[ \\t]+/g, "\\n")
+          .trim();
+      }}
+
+      function splitParagraphs(t) {{
+        const cleaned = normalizeText(t);
+        if (!cleaned) return [];
+        return cleaned
+          .split(/\\n\\s*\\n+/g)
+          .map(p => p.trim())
+          .filter(Boolean);
+      }}
+
+      function splitSentences(paragraph) {{
+        const p = (paragraph || "").trim();
+        if (!p) return [];
+
+        // Prefer Intl.Segmenter when available (best sentence boundaries)
+        if (typeof Intl !== "undefined" && Intl.Segmenter) {{
+          try {{
+            const seg = new Intl.Segmenter("en", {{ granularity: "sentence" }});
+            const parts = [];
+            for (const s of seg.segment(p)) {{
+              const chunk = (s.segment || "").trim();
+              if (chunk) parts.push(chunk);
+            }}
+            if (parts.length) return parts;
+          }} catch (e) {{}}
+        }}
+
+        // Fallback: split after . ! ? followed by whitespace
+        return p
+          .split(/(?<=[.!?])\\s+/g)
+          .map(s => s.trim())
+          .filter(Boolean);
+      }}
+
+      function splitClauses(sentence) {{
+        const s = (sentence || "").trim();
+        if (!s) return [];
+
+        // Keep punctuation with the clause.
+        const tokens = s.split(/(,|;|:)/g);
+        const out = [];
+        let buf = "";
+
+        for (let i = 0; i < tokens.length; i++) {{
+          const tok = tokens[i];
+          if (tok === "," || tok === ";" || tok === ":") {{
+            buf = (buf + tok).trim();
+            if (buf) out.push(buf);
+            buf = "";
+          }} else {{
+            buf = (buf + " " + tok).trim();
+          }}
+        }}
+        if (buf.trim()) out.push(buf.trim());
+        return out.filter(Boolean);
+      }}
+
+      function buildQueueFromText(t) {{
+        const paragraphs = splitParagraphs(t);
+        const items = [];
+
+        for (let pi = 0; pi < paragraphs.length; pi++) {{
+          const sentences = splitSentences(paragraphs[pi]);
+
+          for (let si = 0; si < sentences.length; si++) {{
+            const sent = sentences[si];
+
+            if (flowMode && clausePauseMs > 0) {{
+              const clauses = splitClauses(sent);
+              for (let ci = 0; ci < clauses.length; ci++) {{
+                const isLastClause = ci === clauses.length - 1;
+                const isLastSentence = si === sentences.length - 1;
+                const isLastParagraph = pi === paragraphs.length - 1;
+
+                let pauseAfter = 0;
+                if (!isLastClause) pauseAfter = clausePauseMs;
+                else if (!isLastSentence) pauseAfter = sentencePauseMs;
+                else if (!isLastParagraph) pauseAfter = paragraphPauseMs;
+
+                items.push({{ text: clauses[ci], pauseAfter }});
+              }}
+            }} else if (flowMode) {{
+              const isLastSentence = si === sentences.length - 1;
+              const isLastParagraph = pi === paragraphs.length - 1;
+
+              let pauseAfter = 0;
+              if (!isLastSentence) pauseAfter = sentencePauseMs;
+              else if (!isLastParagraph) pauseAfter = paragraphPauseMs;
+
+              items.push({{ text: sent, pauseAfter }});
+            }} else {{
+              // No flow mode: single utterance (no queue splitting)
+              return [{{ text: normalizeText(t), pauseAfter: 0 }}];
+            }}
+          }}
+        }}
+
+        // If nothing parsed, fallback to whole text
+        return items.length ? items : [{{ text: normalizeText(t), pauseAfter: 0 }}];
+      }}
+
+      function clearBetweenTimer() {{
+        if (betweenTimer) {{
+          clearTimeout(betweenTimer);
+          betweenTimer = null;
+        }}
+      }}
+
       function stopAll() {{
         if (!ensureSpeechSupport()) return;
+
+        clearBetweenTimer();
+        betweenPaused = false;
+        betweenRemaining = 0;
+
         window.speechSynthesis.cancel();
+        queue = [];
+        idx = 0;
+
         setStatus("Stopped.");
         setPlayPauseLabel();
       }}
 
-      async function speakNew() {{
+      function pauseAll() {{
         if (!ensureSpeechSupport()) return;
 
         const synth = window.speechSynthesis;
-        synth.cancel();
 
+        // Pausing while in-between utterances (timer)
+        if (betweenTimer) {{
+          const now = Date.now();
+          betweenRemaining = Math.max(0, betweenDueAt - now);
+          clearBetweenTimer();
+          betweenPaused = true;
+          setStatus("Paused.");
+          setPlayPauseLabel();
+          return;
+        }}
+
+        // Pausing while speaking
+        if (synth.speaking && !synth.paused) {{
+          synth.pause();
+          setStatus("Paused.");
+          setPlayPauseLabel();
+        }}
+      }}
+
+      function resumeAll() {{
+        if (!ensureSpeechSupport()) return;
+
+        const synth = window.speechSynthesis;
+
+        // Resuming while in-between utterances
+        if (betweenPaused) {{
+          betweenPaused = false;
+          const delay = Math.max(0, betweenRemaining);
+          betweenRemaining = 0;
+          scheduleNext(delay);
+          setStatus("Speaking…");
+          setPlayPauseLabel();
+          return;
+        }}
+
+        // Resuming while speaking
+        if (synth.paused) {{
+          synth.resume();
+          setStatus("Speaking…");
+          setPlayPauseLabel();
+        }}
+      }}
+
+      function scheduleNext(delayMs) {{
+        clearBetweenTimer();
+
+        if (delayMs <= 0) {{
+          speakNext();
+          return;
+        }}
+
+        betweenDueAt = Date.now() + delayMs;
+        betweenTimer = setTimeout(() => {{
+          betweenTimer = null;
+          speakNext();
+        }}, delayMs);
+      }}
+
+      async function speakItem(itemText) {{
         const voices = await getVoicesAsync();
-        const utter = new SpeechSynthesisUtterance(TEXT);
 
+        const utter = new SpeechSynthesisUtterance(itemText);
         utter.rate = preferredRate;
         utter.pitch = preferredPitch;
         utter.lang = preferredLang;
@@ -440,7 +653,6 @@ def tts_component(
           setPlayPauseLabel();
         }};
         utter.onend = () => {{
-          setStatus("Done.");
           setPlayPauseLabel();
         }};
         utter.onerror = () => {{
@@ -448,32 +660,90 @@ def tts_component(
           setPlayPauseLabel();
         }};
 
-        synth.speak(utter);
+        window.speechSynthesis.speak(utter);
+      }}
+
+      function speakNext() {{
+        if (!ensureSpeechSupport()) return;
+
+        const synth = window.speechSynthesis;
+
+        if (idx >= queue.length) {{
+          setStatus("Done.");
+          setPlayPauseLabel();
+          return;
+        }}
+
+        const item = queue[idx];
+        idx += 1;
+
+        synth.cancel(); // avoid overlap edge-cases
+        speakItem(item.text);
+
+        // Schedule next chunk after the current utterance ends + pauseAfter.
+        // We can't reliably chain with utter.onend for every browser timing case when cancel() happens,
+        // so we poll speaking state and then schedule the next.
+        const pauseAfter = Math.max(0, item.pauseAfter || 0);
+
+        const watcher = setInterval(() => {{
+          if (!ensureSpeechSupport()) {{
+            clearInterval(watcher);
+            return;
+          }}
+          const s = window.speechSynthesis;
+
+          if (!s.speaking && !s.paused) {{
+            clearInterval(watcher);
+            scheduleNext(pauseAfter);
+          }}
+        }}, 120);
+      }}
+
+      function startFresh() {{
+        if (!ensureSpeechSupport()) return;
+
+        clearBetweenTimer();
+        betweenPaused = false;
+        betweenRemaining = 0;
+
+        window.speechSynthesis.cancel();
+
+        queue = buildQueueFromText(TEXT);
+        idx = 0;
+
+        speakNext();
         setPlayPauseLabel();
       }}
 
       function togglePlayPause() {{
         if (!ensureSpeechSupport()) return;
+
         const synth = window.speechSynthesis;
 
-        if (!synth.speaking) {{
-          speakNew();
+        if (betweenPaused || synth.paused) {{
+          resumeAll();
           return;
         }}
 
-        if (synth.paused) {{
-          synth.resume();
-          setStatus("Speaking…");
-        }} else {{
-          synth.pause();
-          setStatus("Paused.");
+        if (betweenTimer || (synth.speaking && !synth.paused)) {{
+          pauseAll();
+          return;
         }}
-        setPlayPauseLabel();
+
+        // Not speaking: resume queued progress if any, otherwise start fresh
+        if (queue.length && idx < queue.length) {{
+          setStatus("Speaking…");
+          speakNext();
+          setPlayPauseLabel();
+          return;
+        }}
+
+        startFresh();
       }}
 
       voiceSelect.addEventListener("change", () => {{
         try {{ localStorage.setItem(storageKey, voiceSelect.value || ""); }} catch (e) {{}}
-        if (ensureSpeechSupport() && window.speechSynthesis.speaking) {{
+        if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused)) {{
           stopAll();
         }} else {{
           setStatus("Voice selected.");
@@ -491,7 +761,7 @@ def tts_component(
         }} else {{
           setStatus("Reset (no default found).");
         }}
-        if (ensureSpeechSupport() && window.speechSynthesis.speaking) stopAll();
+        if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused)) stopAll();
         setPlayPauseLabel();
       }});
 
@@ -501,13 +771,13 @@ def tts_component(
       setInterval(() => {{
         if (!ensureSpeechSupport()) return;
         setPlayPauseLabel();
-      }}, 400);
+      }}, 350);
 
       initVoices();
       setPlayPauseLabel();
     </script>
     """
-    st.components.v1.html(html, height=130)
+    st.components.v1.html(html, height=140)
 
 
 # -----------------------------
@@ -520,23 +790,16 @@ st.caption("Sidebar: Subject (1) → Topic (2) → Subtopic (3) • Page: conten
 st.markdown(
     """
 <style>
-/* Make the SECOND column (right rail) sticky for the primary content row. */
-div[data-testid="stHorizontalBlock"] {
-  align-items: flex-start;
-}
+div[data-testid="stHorizontalBlock"] { align-items: flex-start; }
 
-/* Keep the right rail floating while scrolling (works well when there's a single main columns row). */
+/* Sticky right rail (2nd column) */
 div[data-testid="stHorizontalBlock"] > div:nth-child(2) {
   position: sticky;
-  top: 4.5rem; /* below Streamlit header */
+  top: 4.5rem;
   align-self: flex-start;
   z-index: 5;
 }
-
-/* Slight spacing so sticky rail doesn't visually jam into page edges */
-div[data-testid="stHorizontalBlock"] > div:nth-child(2) > div {
-  padding-top: 0.25rem;
-}
+div[data-testid="stHorizontalBlock"] > div:nth-child(2) > div { padding-top: 0.25rem; }
 </style>
 """,
     unsafe_allow_html=True,
@@ -625,12 +888,32 @@ with st.sidebar:
         index=0,
         help="Voice dropdown uses your installed voices. This sets the default preference/fallback.",
     )
-    rate = st.slider("Rate", 0.5, 2.0, 1.0, 0.1)
-    pitch = st.slider("Pitch", 0.5, 2.0, 0.8, 0.1, help="Lower pitch generally sounds deeper.")
+
+    rate = st.slider("Rate", 0.5, 2.0, 0.95, 0.05)
+    pitch = st.slider("Pitch", 0.5, 2.0, 0.78, 0.05, help="Lower pitch generally sounds deeper.")
     prefer_deep_male_gb = st.toggle(
         "Prefer deep male UK voice (default)",
         value=True,
         help="Heuristic selection: prefers en-GB male voices when present.",
+    )
+
+    st.divider()
+    st.subheader("Flow (pauses)")
+
+    flow_mode = st.toggle(
+        "Flow mode (sentence pacing)",
+        value=True,
+        help="Speaks sentence-by-sentence with short pauses, for a more 'coach-like' delivery.",
+    )
+    sentence_pause_ms = st.slider("Pause after sentence (ms)", 0, 1500, 320, 20)
+    paragraph_pause_ms = st.slider("Pause after paragraph (ms)", 0, 4000, 650, 50)
+    clause_pause_ms = st.slider(
+        "Optional pause after clause (ms)",
+        0,
+        800,
+        0,
+        10,
+        help="If > 0, splits sentences by commas/;/: and adds a light pause for clearer rhythm.",
     )
 
 cur_si, cur_ti, cur_ui = flat[st.session_state.flat_index]
@@ -660,13 +943,17 @@ with col_right:
             rate=rate,
             pitch=pitch,
             prefer_deep_male_gb=prefer_deep_male_gb,
+            flow_mode=flow_mode,
+            sentence_pause_ms=sentence_pause_ms,
+            paragraph_pause_ms=paragraph_pause_ms,
+            clause_pause_ms=clause_pause_ms,
         )
     else:
         st.caption("Nothing to read for this subtopic.")
 
     st.divider()
-
     st.markdown("**Navigate**")
+
     if st.button("⬅️ Back", disabled=(st.session_state.flat_index == 0), use_container_width=True):
         st.session_state.flat_index -= 1
         st.rerun()
