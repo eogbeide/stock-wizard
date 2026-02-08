@@ -10,6 +10,7 @@ DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Exam
 
 import io
 import re
+import uuid
 from typing import Optional, List, Dict, Tuple
 
 import requests
@@ -135,7 +136,6 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
 
             # Content line
             if cur_topic is not None and cur_subtopic is None:
-                # If topic exists but no subtopic yet, create implicit subtopic
                 ensure_subtopic("Overview")
             if cur_subtopic is not None:
                 cur_subtopic["chunks"].append(raw)
@@ -160,7 +160,14 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
 
     # finalize full_text
     if not subjects:
-        subjects = [{"subject": "Document", "topics": [{"topic": "Content", "subtopics": [{"subtopic": "Overview", "chunks": [], "full_text": ""}]}]}]
+        subjects = [
+            {
+                "subject": "Document",
+                "topics": [
+                    {"topic": "Content", "subtopics": [{"subtopic": "Overview", "chunks": [], "full_text": ""}]}
+                ],
+            }
+        ]
 
     for subj in subjects:
         if not subj.get("topics"):
@@ -207,45 +214,157 @@ def build_navigation(subjects: List[Dict]) -> Tuple[List[Dict], List[Tuple[int, 
 # -----------------------------
 # Browser TTS (Web Speech API)
 # -----------------------------
-def tts_component(text: str, voice_lang: str = "en-US", rate: float = 1.0, pitch: float = 1.0):
+def tts_component(
+    text: str,
+    voice_lang: str = "en-GB",
+    rate: float = 1.0,
+    pitch: float = 0.8,
+    prefer_deep_male_gb: bool = True,
+):
     """Text-to-speech in the user's browser (no API keys) using Web Speech API."""
     safe = text.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+    component_id = f"tts_{uuid.uuid4().hex}"
+
     html = f"""
-    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-      <button id="tts_play" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+    <div id="{component_id}" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+      <button id="{component_id}_play" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
         ▶️ Play
       </button>
-      <button id="tts_stop" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+      <button id="{component_id}_pause" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+        ⏸ Pause
+      </button>
+      <button id="{component_id}_resume" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+        🔊 Resume
+      </button>
+      <button id="{component_id}_stop" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
         ⏹ Stop
       </button>
       <span style="color:#666; font-size: 0.9rem;">(Uses your browser's text-to-speech)</span>
     </div>
 
     <script>
+      const ROOT_ID = "{component_id}";
       const text = `{safe}`;
-      const playBtn = document.getElementById("tts_play");
-      const stopBtn = document.getElementById("tts_stop");
 
-      function speak(t) {{
-        if (!("speechSynthesis" in window)) {{
+      const playBtn = document.getElementById(ROOT_ID + "_play");
+      const pauseBtn = document.getElementById(ROOT_ID + "_pause");
+      const resumeBtn = document.getElementById(ROOT_ID + "_resume");
+      const stopBtn = document.getElementById(ROOT_ID + "_stop");
+
+      const preferDeepMaleGb = {str(prefer_deep_male_gb).lower()};
+      const preferredLang = "{voice_lang}";
+      const preferredRate = {rate};
+      const preferredPitch = {pitch};
+
+      function ensureSpeechSupport() {{
+        if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {{
           alert("Your browser doesn't support speech synthesis.");
-          return;
+          return false;
         }}
-        window.speechSynthesis.cancel();
+        return true;
+      }}
+
+      function getVoicesAsync() {{
+        return new Promise((resolve) => {{
+          const synth = window.speechSynthesis;
+          let voices = synth.getVoices();
+
+          if (voices && voices.length) {{
+            resolve(voices);
+            return;
+          }}
+
+          const onVoicesChanged = () => {{
+            voices = synth.getVoices();
+            synth.removeEventListener("voiceschanged", onVoicesChanged);
+            resolve(voices || []);
+          }};
+
+          synth.addEventListener("voiceschanged", onVoicesChanged);
+          setTimeout(() => {{
+            voices = synth.getVoices();
+            synth.removeEventListener("voiceschanged", onVoicesChanged);
+            resolve(voices || []);
+          }}, 1000);
+        }});
+      }}
+
+      function pickPreferredVoice(voices) {{
+        if (!voices || !voices.length) return null;
+
+        const byLang = (langPrefix) =>
+          voices.filter(v => (v.lang || "").toLowerCase().startsWith(langPrefix.toLowerCase()));
+
+        const gbVoices = byLang("en-gb");
+        const enVoices = byLang("en");
+
+        if (preferDeepMaleGb) {{
+          const preferredNamePatterns = [
+            /google.*uk.*english.*male/i,
+            /microsoft.*(ryan|george|alfie).*online/i,
+            /microsoft.*(ryan|george|alfie)/i,
+            /^daniel$/i,
+            /daniel/i,
+            /male/i
+          ];
+
+          for (const re of preferredNamePatterns) {{
+            const found = gbVoices.find(v => re.test(v.name || ""));
+            if (found) return found;
+          }}
+          if (gbVoices.length) return gbVoices[0];
+        }}
+
+        // If user picked a lang, try match that first (e.g., en-GB, en-US, etc.)
+        const explicitLangPrefix = (preferredLang || "").toLowerCase();
+        if (explicitLangPrefix) {{
+          const exact = voices.find(v => (v.lang || "").toLowerCase() === explicitLangPrefix);
+          if (exact) return exact;
+
+          const prefix = voices.find(v => (v.lang || "").toLowerCase().startsWith(explicitLangPrefix));
+          if (prefix) return prefix;
+        }}
+
+        if (gbVoices.length) return gbVoices[0];
+        if (enVoices.length) return enVoices[0];
+        return voices[0];
+      }}
+
+      async function speak(t) {{
+        if (!ensureSpeechSupport()) return;
+
+        const synth = window.speechSynthesis;
+        synth.cancel();
+
         const utter = new SpeechSynthesisUtterance(t);
-        utter.lang = "{voice_lang}";
-        utter.rate = {rate};
-        utter.pitch = {pitch};
-        window.speechSynthesis.speak(utter);
+        utter.rate = preferredRate;
+        utter.pitch = preferredPitch;
+        utter.lang = preferredLang;
+
+        const voices = await getVoicesAsync();
+        const chosen = pickPreferredVoice(voices);
+
+        if (chosen) {{
+          utter.voice = chosen;
+          utter.lang = chosen.lang || utter.lang;
+        }}
+
+        synth.speak(utter);
       }}
 
       playBtn.addEventListener("click", () => speak(text));
+      pauseBtn.addEventListener("click", () => {{
+        if (ensureSpeechSupport()) window.speechSynthesis.pause();
+      }});
+      resumeBtn.addEventListener("click", () => {{
+        if (ensureSpeechSupport()) window.speechSynthesis.resume();
+      }});
       stopBtn.addEventListener("click", () => {{
-        if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+        if (ensureSpeechSupport()) window.speechSynthesis.cancel();
       }});
     </script>
     """
-    st.components.v1.html(html, height=80)
+    st.components.v1.html(html, height=90)
 
 
 # -----------------------------
@@ -340,9 +459,20 @@ with st.sidebar:
 
     st.divider()
     st.subheader("Text-to-Speech")
-    voice_lang = st.selectbox("Voice language", ["en-US", "en-GB", "en", "es-ES", "fr-FR"], index=0)
+
+    voice_lang = st.selectbox(
+        "Voice language",
+        ["en-GB", "en-US", "en", "es-ES", "fr-FR"],
+        index=0,
+        help="Default is en-GB (UK). The app will also try to pick a male UK voice when available.",
+    )
     rate = st.slider("Rate", 0.5, 2.0, 1.0, 0.1)
-    pitch = st.slider("Pitch", 0.5, 2.0, 1.0, 0.1)
+    pitch = st.slider("Pitch", 0.5, 2.0, 0.8, 0.1, help="Lower pitch generally sounds deeper.")
+    prefer_deep_male_gb = st.toggle(
+        "Prefer deep male UK voice",
+        value=True,
+        help="When available, tries common male en-GB voices (varies by OS/browser).",
+    )
 
 # Current content
 cur_si, cur_ti, cur_ui = flat[st.session_state.flat_index]
@@ -377,7 +507,13 @@ with col_left:
 with col_right:
     st.subheader("Listen")
     if cur_text:
-        tts_component(cur_text, voice_lang=voice_lang, rate=rate, pitch=pitch)
+        tts_component(
+            cur_text,
+            voice_lang=voice_lang,
+            rate=rate,
+            pitch=pitch,
+            prefer_deep_male_gb=prefer_deep_male_gb,
+        )
     else:
         st.caption("Nothing to read for this subtopic.")
 
