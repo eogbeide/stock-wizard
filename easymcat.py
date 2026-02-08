@@ -4,7 +4,8 @@
 # - Browser Text-to-Speech (installed voices dropdown)
 # - Flow reading: sentence/paragraph pauses (optionally clause pauses)
 # - Sticky floating Controls (Listen + Next/Back)
-# - NEW: Reads mathematical equations (including many Word “Equation” objects) via linearization + speakable math
+# - Reads mathematical equations (including many Word “Equation” objects) via linearization + speakable math
+# - NEW: Reads chemical formulas + simple chemical equations more clearly (H2O, NaCl, (NH4)2SO4, CuSO4·5H2O, Fe3+, etc.)
 #
 # Run:
 #   streamlit run easymcat.py
@@ -86,7 +87,6 @@ def omml_to_linear(el) -> str:
         den_txt = den_txt.strip()
         if num_txt or den_txt:
             return f"({num_txt})/({den_txt})"
-        # fallback
         return " ".join(t.text for t in el.findall(".//m:t", NS) if t.text)
 
     # superscript
@@ -148,10 +148,8 @@ def omml_to_linear(el) -> str:
             parts.append(chunk)
 
     if parts:
-        # join with a space to avoid squashing tokens
         return " ".join(p for p in parts if p).strip()
 
-    # fallback to m:t tokens anywhere
     toks = [t.text for t in el.findall(".//m:t", NS) if t.text]
     return " ".join(toks).strip()
 
@@ -168,12 +166,10 @@ def paragraph_text_with_math(p) -> str:
 
     out: List[str] = []
 
-    # iterate direct children to preserve order between text runs and math blocks
     for child in pel.iterchildren():
         loc = _local(getattr(child, "tag", ""))
 
         if loc in ("r", "hyperlink", "smartTag", "sdt"):
-            # collect visible text inside this container
             for t in child.findall(".//w:t", NS):
                 if t.text:
                     out.append(t.text)
@@ -181,13 +177,11 @@ def paragraph_text_with_math(p) -> str:
         elif loc in ("oMath", "oMathPara"):
             eq = omml_to_linear(child).strip()
             if eq:
-                # surround with spaces so it doesn't glue to adjacent words
                 out.append(" ")
                 out.append(eq)
                 out.append(" ")
 
         else:
-            # sometimes text hides in other containers; grab any w:t as fallback
             for t in child.findall(".//w:t", NS):
                 if t.text:
                     out.append(t.text)
@@ -202,22 +196,10 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
     subjects = [
       {
         "subject": str, "topics": [
-          {
-            "topic": str,
-            "subtopics": [
-              {"subtopic": str, "chunks": [str], "full_text": str}
-            ],
-          }
+          {"topic": str, "subtopics": [{"subtopic": str, "chunks": [str], "full_text": str}]}
         ]
       }
     ]
-
-    Preference:
-      - If the doc contains ANY Subject:/Topic:/Subtopic: lines, those define navigation.
-      - Otherwise fallback to Heading 1/2/3 for Subject/Topic/Subtopic.
-
-    Robustness:
-      - If content appears under a Topic before any Subtopic, we create an implicit Subtopic "Overview".
     """
     doc = Document(io.BytesIO(docx_bytes))
 
@@ -308,17 +290,13 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
         subjects = [
             {
                 "subject": "Document",
-                "topics": [
-                    {"topic": "Content", "subtopics": [{"subtopic": "Overview", "chunks": [], "full_text": ""}]}
-                ],
+                "topics": [{"topic": "Content", "subtopics": [{"subtopic": "Overview", "chunks": [], "full_text": ""}]}],
             }
         ]
 
     for subj in subjects:
         if not subj.get("topics"):
-            subj["topics"] = [
-                {"topic": "Overview", "subtopics": [{"subtopic": "Overview", "chunks": [], "full_text": ""}]}
-            ]
+            subj["topics"] = [{"topic": "Overview", "subtopics": [{"subtopic": "Overview", "chunks": [], "full_text": ""}]}]
         for top in subj["topics"]:
             if not top.get("subtopics"):
                 top["subtopics"] = [{"subtopic": "Overview", "chunks": [], "full_text": ""}]
@@ -329,14 +307,6 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
 
 
 def build_navigation(subjects: List[Dict]) -> Tuple[List[Dict], List[Tuple[int, int, int]]]:
-    """
-    nav = [
-      {"si": int, "subject": str, "topics": [
-        {"ti": int, "topic": str, "subtopics": [{"ui": int, "subtopic": str}, ...]}
-      ]}
-    ]
-    flat = [(si, ti, ui), ...]  # for Next/Back across subtopics
-    """
     nav: List[Dict] = []
     flat: List[Tuple[int, int, int]] = []
 
@@ -359,8 +329,54 @@ def build_navigation(subjects: List[Dict]) -> Tuple[List[Dict], List[Tuple[int, 
 
 
 # -----------------------------
-# Make math speakable (pre-TTS)
+# Speakable helpers: numbers, math, chemistry
 # -----------------------------
+_NUM_WORDS_0_19 = {
+    0: "zero",
+    1: "one",
+    2: "two",
+    3: "three",
+    4: "four",
+    5: "five",
+    6: "six",
+    7: "seven",
+    8: "eight",
+    9: "nine",
+    10: "ten",
+    11: "eleven",
+    12: "twelve",
+    13: "thirteen",
+    14: "fourteen",
+    15: "fifteen",
+    16: "sixteen",
+    17: "seventeen",
+    18: "eighteen",
+    19: "nineteen",
+}
+_TENS = {20: "twenty", 30: "thirty", 40: "forty", 50: "fifty", 60: "sixty", 70: "seventy", 80: "eighty", 90: "ninety"}
+
+
+def number_to_words(n: str) -> str:
+    """Best-effort small number-to-words for TTS."""
+    try:
+        val = int(n)
+    except Exception:
+        return " ".join(list(n))
+
+    if val < 0:
+        return "minus " + number_to_words(str(-val))
+    if val <= 19:
+        return _NUM_WORDS_0_19[val]
+    if val < 100:
+        tens = (val // 10) * 10
+        ones = val % 10
+        if ones == 0:
+            return _TENS.get(tens, str(val))
+        return f"{_TENS.get(tens, str(tens))} {_NUM_WORDS_0_19.get(ones, str(ones))}"
+    # For 100+ just speak digits (safer than odd “one hundred and …”)
+    return " ".join(list(str(val)))
+
+
 _SUPERSCRIPT_UNICODE = {
     "⁰": "^0",
     "¹": "^1",
@@ -373,6 +389,21 @@ _SUPERSCRIPT_UNICODE = {
     "⁸": "^8",
     "⁹": "^9",
 }
+
+_SUBSCRIPT_UNICODE = {
+    "₀": "0",
+    "₁": "1",
+    "₂": "2",
+    "₃": "3",
+    "₄": "4",
+    "₅": "5",
+    "₆": "6",
+    "₇": "7",
+    "₈": "8",
+    "₉": "9",
+}
+
+_SUPER_SIGNS = {"⁺": "+", "⁻": "-", "⁽": "(", "⁾": ")"}
 
 _GREEK = {
     "α": "alpha",
@@ -393,28 +424,59 @@ _GREEK = {
     "ω": "omega",
 }
 
+# Common element names (fallback is symbol itself)
+ELEMENT_NAMES = {
+    "H": "hydrogen",
+    "He": "helium",
+    "Li": "lithium",
+    "Be": "beryllium",
+    "B": "boron",
+    "C": "carbon",
+    "N": "nitrogen",
+    "O": "oxygen",
+    "F": "fluorine",
+    "Ne": "neon",
+    "Na": "sodium",
+    "Mg": "magnesium",
+    "Al": "aluminium",
+    "Si": "silicon",
+    "P": "phosphorus",
+    "S": "sulfur",
+    "Cl": "chlorine",
+    "Ar": "argon",
+    "K": "potassium",
+    "Ca": "calcium",
+    "Cr": "chromium",
+    "Mn": "manganese",
+    "Fe": "iron",
+    "Co": "cobalt",
+    "Ni": "nickel",
+    "Cu": "copper",
+    "Zn": "zinc",
+    "Br": "bromine",
+    "Ag": "silver",
+    "I": "iodine",
+    "Sn": "tin",
+    "Au": "gold",
+    "Hg": "mercury",
+    "Pb": "lead",
+}
+
+COMMON_ACRONYM_BLACKLIST = {"US", "UK", "EU", "UN", "USA", "UAE", "NATO"}
+
 
 def make_math_speakable(text: str, style: str = "Natural") -> str:
-    """
-    Convert common math notation into more speakable words for Web Speech TTS.
-    style:
-      - "Natural": squared/cubed, "to the power", "over", "square root of"
-      - "Literal": says operators more literally (e.g., "caret", "slash")
-    """
     if not text:
         return ""
 
     s = text
 
-    # normalize unicode superscripts
     for k, v in _SUPERSCRIPT_UNICODE.items():
         s = s.replace(k, v)
 
-    # greek symbols
     for sym, name in _GREEK.items():
         s = s.replace(sym, f" {name} ")
 
-    # common math symbols
     s = s.replace("≤", " less than or equal to ")
     s = s.replace("≥", " greater than or equal to ")
     s = s.replace("≠", " not equal to ")
@@ -428,7 +490,6 @@ def make_math_speakable(text: str, style: str = "Natural") -> str:
     s = s.replace("×", " times ")
     s = s.replace("·", " times ")
 
-    # handle sqrt(...) and root(deg, expr) from OMML linearization
     def _root_repl(m: re.Match) -> str:
         deg = m.group(1).strip()
         expr = m.group(2).strip()
@@ -444,7 +505,6 @@ def make_math_speakable(text: str, style: str = "Natural") -> str:
     s = re.sub(r"\bsqrt\s*\(\s*([^)]+)\)", r" square root of \1 ", s, flags=re.IGNORECASE)
 
     if style.lower().startswith("lit"):
-        # more literal operator phrasing
         s = s.replace("^", " caret ")
         s = s.replace("/", " slash ")
         s = s.replace("=", " equals ")
@@ -452,26 +512,245 @@ def make_math_speakable(text: str, style: str = "Natural") -> str:
         s = s.replace("-", " minus ")
         s = s.replace("*", " times ")
     else:
-        # Natural: exponents + fractions + operators
         s = s.replace("=", " equals ")
         s = s.replace("+", " plus ")
-        # keep hyphen words; only replace standalone minus-ish patterns later
         s = re.sub(r"(?<=\s)-(?=\s)", " minus ", s)
         s = s.replace("*", " times ")
 
-        # base^2, base^3, base^n
         s = re.sub(r"(\b[A-Za-z][A-Za-z0-9]*)\s*\^\s*2\b", r"\1 squared", s)
         s = re.sub(r"(\b[A-Za-z][A-Za-z0-9]*)\s*\^\s*3\b", r"\1 cubed", s)
         s = re.sub(r"(\b[A-Za-z0-9][A-Za-z0-9]*)\s*\^\s*([A-Za-z0-9]+)\b", r"\1 to the power \2", s)
 
-        # subscript: a_b -> "a sub b"
         s = re.sub(r"(\b[A-Za-z0-9]+)\s*_\s*([A-Za-z0-9]+)\b", r"\1 sub \2", s)
-
-        # fractions: (a)/(b) -> "a over b"
         s = re.sub(r"\(\s*([^)]+?)\s*\)\s*/\s*\(\s*([^)]+?)\s*\)", r" \1 over \2 ", s)
-
-        # generic slash used as fraction-ish when surrounded by spaces
         s = s.replace(" / ", " over ")
+
+    s = re.sub(r"[ \t]+", " ", s)
+    s = re.sub(r"\s+\n", "\n", s)
+    return s.strip()
+
+
+_FORMULA_RE = re.compile(
+    r"""
+    (?<![A-Za-z0-9])(
+      (?:\d+)?                                     # optional coefficient
+      (?:
+        (?:\([A-Za-z0-9+\-]+\)\d*)                  # (NH4)2
+        |
+        (?:[A-Z][a-z]?\d*)                          # Na2, Cl, O2
+      )+
+      (?:[·\.](?:\d+)?(?:[A-Z][a-z]?\d*)+)*         # ·5H2O  (also accepts .)
+      (?:\^?\d*[+\-])?                              # optional charge (Fe3+ or ^2-)
+    )(?![A-Za-z0-9])
+    """,
+    re.VERBOSE,
+)
+
+
+def _normalize_chem_unicode(s: str) -> str:
+    if not s:
+        return ""
+    for k, v in _SUBSCRIPT_UNICODE.items():
+        s = s.replace(k, v)
+    for k, v in _SUPER_SIGNS.items():
+        s = s.replace(k, v)
+    # keep math superscripts too (sometimes used for charges)
+    for k, v in _SUPERSCRIPT_UNICODE.items():
+        s = s.replace(k, v.replace("^", ""))  # ² -> 2 in chemistry context
+    # normalize hydration dot variants
+    s = s.replace("∙", "·")
+    return s
+
+
+def _is_likely_formula(tok: str, include_single_element: bool) -> bool:
+    if not tok:
+        return False
+    if tok in COMMON_ACRONYM_BLACKLIST:
+        return False
+
+    t = _normalize_chem_unicode(tok)
+    elements = re.findall(r"[A-Z][a-z]?", t)
+    if not elements:
+        return False
+
+    has_digit = bool(re.search(r"\d", t))
+    has_group = "(" in t or ")" in t
+    has_dot = "·" in t or "." in t
+    has_charge = bool(re.search(r"(\^?\d*[+\-])$", t))
+
+    # Conservative default:
+    # - allow single-element formulas if they include digits/charge (O2, Fe3+)
+    # - allow multi-element formulas even with no digits (NaCl)
+    if len(elements) >= 2:
+        return True
+    if len(elements) == 1 and (has_digit or has_group or has_dot or has_charge):
+        return True
+    if include_single_element and len(elements) == 1 and elements[0] in ELEMENT_NAMES:
+        return True
+
+    return False
+
+
+def _speak_element(sym: str, element_mode: str) -> str:
+    if element_mode == "Element names":
+        return ELEMENT_NAMES.get(sym, sym)
+    # Spell symbols: "Na" -> "N A" (TTS usually says “en ay”)
+    return " ".join(list(sym))
+
+
+def _speak_formula(tok: str, element_mode: str) -> str:
+    """
+    Turn H2SO4 into something like:
+      hydrogen two sulfur oxygen four
+    Turn (NH4)2SO4 into:
+      open bracket nitrogen hydrogen four close bracket two sulfur oxygen four
+    Turn Fe3+ into:
+      iron three plus charge
+    """
+    t = _normalize_chem_unicode(tok)
+
+    # Common state symbols
+    t = re.sub(r"\(aq\)", " (aq) ", t, flags=re.IGNORECASE)
+    t = re.sub(r"\(s\)", " (s) ", t, flags=re.IGNORECASE)
+    t = re.sub(r"\(l\)", " (l) ", t, flags=re.IGNORECASE)
+    t = re.sub(r"\(g\)", " (g) ", t, flags=re.IGNORECASE)
+
+    out: List[str] = []
+    i = 0
+    while i < len(t):
+        ch = t[i]
+
+        if ch.isspace():
+            i += 1
+            continue
+
+        # state symbols
+        if t[i : i + 4].lower() == "(aq)":
+            out.append("aqueous")
+            i += 4
+            continue
+        if t[i : i + 3].lower() == "(s)":
+            out.append("solid")
+            i += 3
+            continue
+        if t[i : i + 3].lower() == "(l)":
+            out.append("liquid")
+            i += 3
+            continue
+        if t[i : i + 3].lower() == "(g)":
+            out.append("gas")
+            i += 3
+            continue
+
+        if ch == "(":
+            out.append("open bracket")
+            i += 1
+            continue
+        if ch == ")":
+            out.append("close bracket")
+            i += 1
+            continue
+        if ch in ("·", "."):
+            out.append("dot")
+            i += 1
+            continue
+
+        # caret charge format: ^2- or ^-
+        if ch == "^":
+            j = i + 1
+            num = ""
+            while j < len(t) and t[j].isdigit():
+                num += t[j]
+                j += 1
+            sign = ""
+            if j < len(t) and t[j] in "+-":
+                sign = t[j]
+                j += 1
+            if sign:
+                if num:
+                    out.append(f"{number_to_words(num)} {'plus' if sign == '+' else 'minus'} charge")
+                else:
+                    out.append(f"{'plus' if sign == '+' else 'minus'} charge")
+            else:
+                out.append("charge")
+            i = j
+            continue
+
+        # digits (coefficients or subscripts)
+        if ch.isdigit():
+            j = i
+            num = ""
+            while j < len(t) and t[j].isdigit():
+                num += t[j]
+                j += 1
+            out.append(number_to_words(num))
+            i = j
+            continue
+
+        # element symbol
+        if ch.isalpha() and ch.isupper():
+            sym = ch
+            if i + 1 < len(t) and t[i + 1].isalpha() and t[i + 1].islower():
+                sym += t[i + 1]
+                i += 2
+            else:
+                i += 1
+            out.append(_speak_element(sym, element_mode))
+            continue
+
+        # trailing ionic signs
+        if ch in "+-":
+            out.append("plus" if ch == "+" else "minus")
+            # if this is at the end (or followed by space/punct), treat as charge
+            if i == len(t) - 1:
+                out.append("charge")
+            i += 1
+            continue
+
+        # anything else (rare)
+        out.append(ch)
+        i += 1
+
+    spoken = " ".join(out)
+    spoken = re.sub(r"[ \t]+", " ", spoken).strip()
+
+    # Polish ionic endings like "iron three plus charge" when + appears after number without caret
+    spoken = re.sub(r"\b(plus|minus)\s*$", r"\1 charge", spoken)
+
+    return spoken
+
+
+def make_chem_speakable(
+    text: str,
+    element_mode: str = "Element names",
+    include_single_element: bool = False,
+) -> str:
+    """
+    Detect likely chemical formulas and replace them with speakable versions.
+    Also makes common reaction arrows more TTS-friendly.
+    """
+    if not text:
+        return ""
+
+    s = _normalize_chem_unicode(text)
+
+    # reaction arrows
+    s = s.replace("⇌", " reversible reaction ")
+    s = s.replace("→", " yields ")
+    s = s.replace("⇒", " yields ")
+    s = s.replace("<-", " reacts to form ")
+    s = s.replace("->", " yields ")
+
+    # IMPORTANT: do formulas before math, so hydration dots, charges, and subscripts get handled nicely.
+    def repl(m: re.Match) -> str:
+        tok = m.group(1)
+        if not _is_likely_formula(tok, include_single_element=include_single_element):
+            return tok
+        spoken = _speak_formula(tok, element_mode=element_mode)
+        # add soft pauses so it reads clearer in flow mode
+        return f" {spoken} "
+
+    s = re.sub(_FORMULA_RE, repl, s)
 
     # clean spacing
     s = re.sub(r"[ \t]+", " ", s)
@@ -493,12 +772,6 @@ def tts_component(
     paragraph_pause_ms: int = 650,
     clause_pause_ms: int = 0,
 ):
-    """
-    Browser TTS:
-    - Real installed voices dropdown
-    - Play/Pause toggle + Stop
-    - Flow mode: speaks sentence-by-sentence with pauses (optional clause pauses)
-    """
     safe = text.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
     component_id = f"tts_{uuid.uuid4().hex}"
 
@@ -1048,7 +1321,6 @@ st.markdown(
     """
 <style>
 div[data-testid="stHorizontalBlock"] { align-items: flex-start; }
-
 /* Sticky right rail (2nd column) */
 div[data-testid="stHorizontalBlock"] > div:nth-child(2) {
   position: sticky;
@@ -1174,6 +1446,28 @@ with st.sidebar:
     )
 
     st.divider()
+    st.subheader("Chemistry reading")
+
+    read_chem = st.toggle(
+        "Speak chemical formulas clearly",
+        value=True,
+        help="Turns formulas like H2O / NaCl / (NH4)2SO4 / CuSO4·5H2O into clearer spoken text.",
+    )
+    chem_element_mode = st.selectbox(
+        "Chemical element style",
+        ["Element names", "Spell symbols"],
+        index=0,
+        disabled=not read_chem,
+        help="Element names: 'sodium chloride'. Spell symbols: 'N A C L'.",
+    )
+    include_single_element = st.toggle(
+        "Include single-element symbols (e.g., Fe)",
+        value=False,
+        disabled=not read_chem,
+        help="Off by default to reduce false positives (e.g., acronyms).",
+    )
+
+    st.divider()
     st.subheader("Math reading")
 
     read_math = st.toggle(
@@ -1182,6 +1476,8 @@ with st.sidebar:
         help="Converts math symbols to words and extracts many Word equation objects.",
     )
     math_style = st.selectbox("Math style", ["Natural", "Literal"], index=0, disabled=not read_math)
+
+    st.divider()
     show_tts_preview = st.toggle("Show TTS text preview", value=False)
 
 # Current content
@@ -1191,7 +1487,15 @@ cur_topic = subjects[cur_si]["topics"][cur_ti]["topic"]
 cur_subtopic = subjects[cur_si]["topics"][cur_ti]["subtopics"][cur_ui]["subtopic"]
 cur_text = (subjects[cur_si]["topics"][cur_ti]["subtopics"][cur_ui].get("full_text") or "").strip()
 
-tts_text = make_math_speakable(cur_text, style=math_style) if (cur_text and read_math) else cur_text
+tts_text = cur_text
+if tts_text and read_chem:
+    tts_text = make_chem_speakable(
+        tts_text,
+        element_mode=chem_element_mode,
+        include_single_element=include_single_element,
+    )
+if tts_text and read_math:
+    tts_text = make_math_speakable(tts_text, style=math_style)
 
 col_left, col_right = st.columns([2, 1], vertical_alignment="top")
 
