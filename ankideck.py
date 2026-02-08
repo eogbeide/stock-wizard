@@ -4,7 +4,9 @@
 # - Browser Text-to-Speech (installed voices dropdown)
 # - Flow reading: sentence/paragraph pauses (optionally clause pauses)
 # - Sticky floating Controls (Listen + Next/Back) on the page
-# - Reads mathematical symbols more clearly
+# - NEW: Narration-friendly formatting (paragraphs, headings, bullets) + fun, coach-like narration
+# - NEW: Smarter dash vs minus handling so " - " in prose doesn't become math "minus"
+# - Reads mathematical symbols more clearly (when enabled)
 # - Reads chemical formulas + simple chemical equations more clearly (H2O, NaCl, (NH4)2SO4, CuSO4·5H2O, Fe3+, etc.)
 #
 # Run:
@@ -15,7 +17,7 @@ DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/anki
 import io
 import re
 import uuid
-from typing import Optional, List, Dict, Tuple
+from typing import List, Dict, Tuple
 
 import requests
 import streamlit as st
@@ -26,7 +28,7 @@ try:
 except Exception:
     try:
         from PyPDF2 import PdfReader  # type: ignore
-    except Exception as e:
+    except Exception:
         PdfReader = None  # type: ignore
 
 
@@ -167,11 +169,68 @@ ELEMENT_NAMES = {
 COMMON_ACRONYM_BLACKLIST = {"US", "UK", "EU", "UN", "USA", "UAE", "NATO"}
 
 
+def _smart_dash_vs_minus(text: str) -> str:
+    """
+    Fix the classic TTS issue:
+      - In prose, "word - word" is usually a dash (aside), NOT subtraction.
+      - In math-like contexts, "a - b" should become "a minus b".
+    We do this by:
+      1) Converting prose " - " into an em dash " — " (so it won't be turned into minus later).
+      2) Leaving subtraction-looking " - " untouched for later conversion to "minus".
+    """
+    s = text
+
+    # normalize unicode dashes to " - " so one pass can reason about them
+    s = s.replace("–", " - ").replace("—", " - ").replace("−", " - ")
+
+    def get_left_token(prefix: str) -> str:
+        m = re.search(r"([A-Za-z0-9_]+)$", prefix)
+        return m.group(1) if m else ""
+
+    def get_right_token(suffix: str) -> str:
+        m = re.match(r"^([A-Za-z0-9_]+)", suffix)
+        return m.group(1) if m else ""
+
+    math_hint_re = re.compile(r"[=<>^/*_]|sqrt|root|\bcos\b|\bsin\b|\btan\b|\blog\b", re.IGNORECASE)
+
+    out = []
+    i = 0
+    while True:
+        j = s.find(" - ", i)
+        if j < 0:
+            out.append(s[i:])
+            break
+
+        left_ctx = s[max(0, j - 40) : j]
+        right_ctx = s[j + 3 : min(len(s), j + 3 + 40)]
+        left_tok = get_left_token(left_ctx)
+        right_tok = get_right_token(right_ctx)
+
+        # Heuristics for subtraction
+        subtraction = False
+        if left_tok and right_tok:
+            if re.search(r"\d", left_tok) or re.search(r"\d", right_tok):
+                subtraction = True
+            elif (len(left_tok) <= 2 and left_tok.isalpha()) and (len(right_tok) <= 2 and right_tok.isalpha()):
+                subtraction = True
+            elif math_hint_re.search(left_ctx + right_ctx):
+                subtraction = True
+
+        out.append(s[i:j])
+        out.append(" - " if subtraction else " — ")
+        i = j + 3
+
+    return "".join(out)
+
+
 def make_math_speakable(text: str, style: str = "Natural") -> str:
     if not text:
         return ""
 
     s = text
+
+    # IMPORTANT: handle prose dashes first so they don't become "minus"
+    s = _smart_dash_vs_minus(s)
 
     for k, v in _SUPERSCRIPT_UNICODE.items():
         s = s.replace(k, v)
@@ -207,18 +266,29 @@ def make_math_speakable(text: str, style: str = "Natural") -> str:
     s = re.sub(r"\bsqrt\s*\(\s*([^)]+)\)", r" square root of \1 ", s, flags=re.IGNORECASE)
 
     if style.lower().startswith("lit"):
+        # Keep hyphenated words safe: only treat " - " (spaced) as minus/dash
         s = s.replace("^", " caret ")
         s = s.replace("/", " slash ")
         s = s.replace("=", " equals ")
         s = s.replace("+", " plus ")
-        s = s.replace("-", " minus ")
         s = s.replace("*", " times ")
+
+        # Only convert remaining spaced minus (subtraction cases)
+        s = re.sub(r"(?<=\d)\s-\s(?=\d)", " minus ", s)
+        s = re.sub(r"(?<=\b[A-Za-z]\w{0,2})\s-\s(?=\b[A-Za-z]\w{0,2})", " minus ", s)
+
+        # Turn em dash into a spoken pause word (literal mode)
+        s = s.replace("—", " dash ")
     else:
         s = s.replace("=", " equals ")
         s = s.replace("+", " plus ")
-        s = re.sub(r"(?<=\s)-(?=\s)", " minus ", s)
         s = s.replace("*", " times ")
 
+        # Only convert subtraction-looking spaced hyphens
+        s = re.sub(r"(?<=\d)\s-\s(?=\d)", " minus ", s)
+        s = re.sub(r"(?<=\b[A-Za-z]\w{0,2})\s-\s(?=\b[A-Za-z]\w{0,2})", " minus ", s)
+
+        # Powers / subscripts
         s = re.sub(r"(\b[A-Za-z][A-Za-z0-9]*)\s*\^\s*2\b", r"\1 squared", s)
         s = re.sub(r"(\b[A-Za-z][A-Za-z0-9]*)\s*\^\s*3\b", r"\1 cubed", s)
         s = re.sub(r"(\b[A-Za-z0-9][A-Za-z0-9]*)\s*\^\s*([A-Za-z0-9]+)\b", r"\1 to the power \2", s)
@@ -226,6 +296,9 @@ def make_math_speakable(text: str, style: str = "Natural") -> str:
         s = re.sub(r"(\b[A-Za-z0-9]+)\s*_\s*([A-Za-z0-9]+)\b", r"\1 sub \2", s)
         s = re.sub(r"\(\s*([^)]+?)\s*\)\s*/\s*\(\s*([^)]+?)\s*\)", r" \1 over \2 ", s)
         s = s.replace(" / ", " over ")
+
+        # Make em dash a pause without saying "minus"
+        s = s.replace("—", " — ")
 
     s = re.sub(r"[ \t]+", " ", s)
     s = re.sub(r"\s+\n", "\n", s)
@@ -402,7 +475,6 @@ def _speak_formula(tok: str, element_mode: str) -> str:
     spoken = " ".join(out)
     spoken = re.sub(r"[ \t]+", " ", spoken).strip()
     spoken = re.sub(r"\b(plus|minus)\s*$", r"\1 charge", spoken)
-
     return spoken
 
 
@@ -434,6 +506,305 @@ def make_chem_speakable(
     s = re.sub(r"[ \t]+", " ", s)
     s = re.sub(r"\s+\n", "\n", s)
     return s.strip()
+
+
+# -----------------------------
+# Narration-friendly formatting for PDF pages
+# -----------------------------
+_MARKER_WORDS = ("IMPORTANT", "IMPORTANT:", "NOTE", "NOTE:", "TIP", "TIP:", "REMEMBER", "REMEMBER:", "KEY", "KEY:", "DEFINITION", "DEFINITION:")
+
+
+def _dehyphenate_linebreaks(s: str) -> str:
+    # "exam-\nple" -> "example"
+    return re.sub(r"(\w)-\n(\w)", r"\1\2", s)
+
+
+def _normalize_pdf_lines(raw: str) -> List[str]:
+    """
+    Keeps line structure (for bullets/headings), but fixes the most common PDF annoyances:
+    - hard wraps mid-sentence
+    - random spacing
+    """
+    if not raw:
+        return []
+
+    s = raw.replace("\r\n", "\n").replace("\r", "\n")
+    s = _dehyphenate_linebreaks(s)
+
+    # Strip trailing spaces per line, but keep blank lines
+    lines = [re.sub(r"[ \t]+$", "", ln) for ln in s.split("\n")]
+
+    # Normalize weird multiple spaces
+    lines = [re.sub(r"[ \t]{2,}", " ", ln).strip() for ln in lines]
+
+    # Join "soft-wrapped" lines into a single line:
+    joined: List[str] = []
+    i = 0
+    while i < len(lines):
+        ln = lines[i]
+        if not ln:
+            joined.append("")
+            i += 1
+            continue
+
+        # If this looks like a bullet/numbered item, keep as its own line
+        if _is_bullet_line(ln) or _is_heading_line(ln):
+            joined.append(ln)
+            i += 1
+            continue
+
+        buf = ln
+        j = i + 1
+        while j < len(lines):
+            nxt = lines[j]
+            if not nxt:
+                break
+            if _is_bullet_line(nxt) or _is_heading_line(nxt):
+                break
+
+            # Heuristic: if current line probably continues, join it
+            ends = buf[-1]
+            next_starts_lower = bool(re.match(r"^[a-z]", nxt))
+            next_starts_punct = bool(re.match(r"^[,.;:)\]]", nxt))
+            buf_ends_like_sentence = ends in ".!?"
+            buf_ends_like_label = ends == ":"
+
+            if (not buf_ends_like_sentence) and (not buf_ends_like_label) and (next_starts_lower or next_starts_punct):
+                buf = (buf + " " + nxt).strip()
+                j += 1
+                continue
+
+            # If next line starts with a marker word, break paragraph
+            if nxt.upper().startswith(_MARKER_WORDS):
+                break
+
+            # Otherwise: stop joining
+            break
+
+        joined.append(buf)
+        i = j
+
+    # Collapse multiple blank lines
+    out: List[str] = []
+    blank_run = 0
+    for ln in joined:
+        if ln == "":
+            blank_run += 1
+            if blank_run <= 2:
+                out.append("")
+        else:
+            blank_run = 0
+            out.append(ln)
+
+    # Trim leading/trailing blanks
+    while out and out[0] == "":
+        out.pop(0)
+    while out and out[-1] == "":
+        out.pop()
+
+    return out
+
+
+def _is_bullet_line(line: str) -> bool:
+    if not line:
+        return False
+    s = line.strip()
+
+    # classic bullets
+    if re.match(r"^[-•*·]\s+\S", s):
+        return True
+    # numbered bullets: 1.  2)  (3) etc.
+    if re.match(r"^\(?\d+\)?[.)]\s+\S", s):
+        return True
+    # lettered bullets: a)  b.  (c)
+    if re.match(r"^\(?[A-Za-z]\)?[.)]\s+\S", s):
+        return True
+    return False
+
+
+def _is_heading_line(line: str) -> bool:
+    if not line:
+        return False
+    s = line.strip()
+    if len(s) > 72:
+        return False
+    if s.endswith(":"):
+        return True
+    letters = re.sub(r"[^A-Za-z]+", "", s)
+    if letters and letters.isupper():
+        # short ALL CAPS headings
+        if 2 <= len(s.split()) <= 10:
+            return True
+    return False
+
+
+def _split_long_paragraph(text: str, max_chars: int = 420) -> List[str]:
+    t = re.sub(r"[ \t]+", " ", (text or "")).strip()
+    if not t:
+        return []
+    if len(t) <= max_chars:
+        return [t]
+
+    # simple sentence splitter
+    sents = re.split(r"(?<=[.!?])\s+", t)
+    out, buf = [], ""
+    for s in sents:
+        if not s:
+            continue
+        if not buf:
+            buf = s
+        elif len(buf) + 1 + len(s) <= max_chars:
+            buf = buf + " " + s
+        else:
+            out.append(buf.strip())
+            buf = s
+    if buf.strip():
+        out.append(buf.strip())
+    return out
+
+
+def _format_marker_for_display(line: str) -> str:
+    # Bold common markers at the start of a line
+    return re.sub(
+        r"^(important|note|tip|remember|key idea|key|definition)\s*:\s*",
+        lambda m: f"**{m.group(1).title()}:** ",
+        line.strip(),
+        flags=re.IGNORECASE,
+    )
+
+
+def _format_marker_for_tts(line: str) -> str:
+    # Turn marker into an audible pause without emojis
+    return re.sub(
+        r"^(important|note|tip|remember|key idea|key|definition)\s*:\s*",
+        lambda m: f"{m.group(1).title()}. ",
+        line.strip(),
+        flags=re.IGNORECASE,
+    )
+
+
+def structure_page_text(
+    raw_text: str,
+    page_num: int,
+    fun_mode: bool = True,
+    emphasize_display: bool = True,
+) -> Tuple[str, str]:
+    """
+    Returns:
+      display_markdown: pretty, structured markdown for the left panel
+      tts_base: structured plain text for TTS (paragraph breaks preserved)
+    """
+    lines = _normalize_pdf_lines(raw_text)
+    if not lines:
+        return "", ""
+
+    elements: List[Tuple[str, List[str]]] = []  # (type, payload)
+    para_buf: List[str] = []
+    bullet_buf: List[str] = []
+
+    def flush_para():
+        nonlocal para_buf
+        if para_buf:
+            p = " ".join([x.strip() for x in para_buf if x.strip()]).strip()
+            para_buf = []
+            for chunk in _split_long_paragraph(p):
+                if chunk:
+                    elements.append(("para", [chunk]))
+
+    def flush_bullets():
+        nonlocal bullet_buf
+        if bullet_buf:
+            elements.append(("bullets", bullet_buf[:]))
+            bullet_buf = []
+
+    for ln in lines:
+        if ln.strip() == "":
+            flush_para()
+            flush_bullets()
+            continue
+
+        if _is_heading_line(ln):
+            flush_para()
+            flush_bullets()
+            elements.append(("heading", [ln.strip().rstrip(":")]))
+            continue
+
+        if _is_bullet_line(ln):
+            flush_para()
+            # keep collecting bullets as a group
+            s = ln.strip()
+            s = re.sub(r"^[-•*·]\s+", "", s)
+            s = re.sub(r"^\(?\d+\)?[.)]\s+", "", s)
+            s = re.sub(r"^\(?[A-Za-z]\)?[.)]\s+", "", s)
+            bullet_buf.append(s.strip())
+            continue
+
+        # normal line
+        flush_bullets()
+        para_buf.append(ln.strip())
+
+    flush_para()
+    flush_bullets()
+
+    # Build DISPLAY markdown
+    md_parts: List[str] = []
+    if fun_mode:
+        md_parts.append(f"**🎧 Page {page_num} — let’s make this one feel easy.**")
+        md_parts.append("")
+
+    for typ, payload in elements:
+        if typ == "heading":
+            title = payload[0].strip()
+            if fun_mode:
+                md_parts.append(f"### 🎯 {title}")
+            else:
+                md_parts.append(f"### {title}")
+            md_parts.append("")
+        elif typ == "para":
+            line = payload[0].strip()
+            if emphasize_display:
+                line = _format_marker_for_display(line)
+            md_parts.append(line)
+            md_parts.append("")
+        elif typ == "bullets":
+            if fun_mode:
+                md_parts.append("**Quick hits:**")
+            else:
+                md_parts.append("**Key points:**")
+            for b in payload:
+                b2 = _format_marker_for_display(b) if emphasize_display else b
+                md_parts.append(f"- {b2}")
+            md_parts.append("")
+
+    display_markdown = "\n".join(md_parts).strip()
+
+    # Build TTS base text (no emojis; keep paragraph breaks for pacing)
+    tts_parts: List[str] = []
+    if fun_mode:
+        tts_parts.append(f"Page {page_num}. Let's walk through this like a story.")
+        tts_parts.append("")
+
+    for typ, payload in elements:
+        if typ == "heading":
+            title = payload[0].strip()
+            tts_parts.append(f"Section. {title}.")
+            tts_parts.append("")
+        elif typ == "para":
+            line = _format_marker_for_tts(payload[0])
+            tts_parts.append(line)
+            tts_parts.append("")
+        elif typ == "bullets":
+            tts_parts.append("Quick hits.")
+            for i, b in enumerate(payload, start=1):
+                tts_parts.append(f"{i}. {_format_marker_for_tts(b)}")
+            tts_parts.append("")
+
+    tts_base = "\n".join(tts_parts).strip()
+
+    # One last pass to make em dashes behave like pauses in TTS
+    tts_base = tts_base.replace("—", " — ")
+
+    return display_markdown, tts_base
 
 
 # -----------------------------
@@ -997,27 +1368,10 @@ def fetch_pdf_bytes(url: str) -> bytes:
     return r.content
 
 
-def _clean_pdf_text(s: str) -> str:
-    if not s:
-        return ""
-    # normalize line endings
-    s = s.replace("\r\n", "\n").replace("\r", "\n")
-    # de-hyphenate common PDF line breaks: "exam-\nple" -> "example"
-    s = re.sub(r"(\w)-\n(\w)", r"\1\2", s)
-    # collapse "single line breaks" into spaces, keep paragraph breaks
-    s = re.sub(r"[ \t]+\n", "\n", s)
-    s = re.sub(r"\n[ \t]+", "\n", s)
-    s = re.sub(r"\n{3,}", "\n\n", s)
-    # many PDFs put line breaks every line; turn lone newlines into spaces
-    s = re.sub(r"(?<!\n)\n(?!\n)", " ", s)
-    s = re.sub(r"[ \t]{2,}", " ", s)
-    return s.strip()
-
-
 def parse_pdf_to_pages(pdf_bytes: bytes) -> List[Dict]:
     """
     Returns:
-      pages = [{"page": 1-based int, "text": str}, ...]
+      pages = [{"page": 1-based int, "raw": str}, ...]
     """
     if PdfReader is None:
         raise RuntimeError("No PDF reader installed. Install 'pypdf' (recommended) or 'PyPDF2'.")
@@ -1026,10 +1380,10 @@ def parse_pdf_to_pages(pdf_bytes: bytes) -> List[Dict]:
     pages: List[Dict] = []
     for i, page in enumerate(getattr(reader, "pages", [])):
         try:
-            txt = page.extract_text() or ""
+            raw = page.extract_text() or ""
         except Exception:
-            txt = ""
-        pages.append({"page": i + 1, "text": _clean_pdf_text(txt)})
+            raw = ""
+        pages.append({"page": i + 1, "raw": raw})
     return pages
 
 
@@ -1038,7 +1392,7 @@ def parse_pdf_to_pages(pdf_bytes: bytes) -> List[Dict]:
 # -----------------------------
 st.set_page_config(page_title="PDF Study Reader", layout="wide")
 st.title("PDF Study Reader")
-st.caption("Sidebar: Page navigation • Page: content + floating Controls (Listen + Next/Back)")
+st.caption("Sidebar: Page navigation • Page: structured content + floating Controls (Listen + Next/Back)")
 
 st.markdown(
     """
@@ -1073,6 +1427,33 @@ with st.sidebar:
     uploaded = st.file_uploader("Upload PDF (optional)", type=["pdf"])
     url = st.text_input("PDF URL", value=DEFAULT_URL, disabled=uploaded is not None)
 
+    st.divider()
+    st.subheader("Page formatting")
+
+    narration_format = st.toggle(
+        "Narration-friendly formatting",
+        value=True,
+        help="Rebuilds the page into headings, paragraphs, and bullet lists for smoother narration.",
+    )
+    fun_mode = st.toggle(
+        "Fun narrative mode",
+        value=True,
+        help="Adds a light, coach-like narration framing (no emojis in TTS).",
+        disabled=not narration_format,
+    )
+    emphasize_display = st.toggle(
+        "Emphasize key phrases on page",
+        value=True,
+        help="Highlights markers like Important / Note / Tip / Definition in the left panel.",
+        disabled=not narration_format,
+    )
+    show_raw_extraction = st.toggle(
+        "Show raw extracted text (debug)",
+        value=False,
+        help="Useful if a page looks weird and you want to see what the PDF extractor returned.",
+    )
+
+    st.divider()
     st.caption("Navigation is by page number. Use Next/Back controls on the page to move sequentially.")
 
 # Load PDF pages
@@ -1100,7 +1481,6 @@ st.session_state.page_index = max(0, min(st.session_state.page_index, num_pages 
 with st.sidebar:
     st.header("Navigate")
     page_options = [f"Page {i}" for i in range(1, num_pages + 1)]
-    current_label = f"Page {st.session_state.page_index + 1}"
     default_idx = st.session_state.page_index
 
     selected_label = st.selectbox("Page", page_options, index=default_idx)
@@ -1175,7 +1555,7 @@ with st.sidebar:
     read_math = st.toggle(
         "Speak equations clearly",
         value=True,
-        help="Converts math symbols to words (PDFs won't have Word equation objects).",
+        help="Converts math symbols to words.",
     )
     math_style = st.selectbox("Math style", ["Natural", "Literal"], index=0, disabled=not read_math)
 
@@ -1184,9 +1564,25 @@ with st.sidebar:
 
 # Current page content
 cur_page_num = st.session_state.page_index + 1
-cur_text = (pages[st.session_state.page_index].get("text") or "").strip()
+raw_page_text = (pages[st.session_state.page_index].get("raw") or "").strip()
 
-tts_text = cur_text
+display_md = ""
+base_tts = ""
+
+if raw_page_text and narration_format:
+    display_md, base_tts = structure_page_text(
+        raw_page_text,
+        page_num=cur_page_num,
+        fun_mode=fun_mode,
+        emphasize_display=emphasize_display,
+    )
+else:
+    # Fallback: just use raw text (still safe)
+    display_md = raw_page_text
+    base_tts = raw_page_text
+
+# Build TTS text through chemistry then math
+tts_text = base_tts
 if tts_text and read_chem:
     tts_text = make_chem_speakable(
         tts_text,
@@ -1201,9 +1597,17 @@ col_left, col_right = st.columns([2, 1], vertical_alignment="top")
 with col_left:
     st.subheader(f"Page {cur_page_num} of {num_pages}")
 
-    if cur_text:
-        st.write(cur_text)
-        if show_tts_preview and tts_text and tts_text != cur_text:
+    if raw_page_text:
+        if narration_format:
+            st.markdown(display_md if display_md else raw_page_text)
+        else:
+            st.write(raw_page_text)
+
+        if show_raw_extraction:
+            with st.expander("Raw extracted text (debug)"):
+                st.write(raw_page_text)
+
+        if show_tts_preview and tts_text and tts_text.strip():
             with st.expander("TTS preview (what will be spoken)"):
                 st.write(tts_text)
     else:
@@ -1213,7 +1617,7 @@ with col_right:
     st.subheader("Controls")
 
     st.markdown("**Listen**")
-    if tts_text:
+    if tts_text and tts_text.strip():
         tts_component(
             tts_text,
             preferred_lang=preferred_lang,
