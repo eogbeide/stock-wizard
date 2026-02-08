@@ -1,6 +1,6 @@
 # easymcat.py
 # Streamlit DOCX Reader + Subject dropdown + Topic dropdown + Subtopic dropdown
-# + Browser Text-to-Speech (actual installed voices dropdown) + Next/Back
+# + Browser Text-to-Speech (actual installed voices dropdown) + Next/Back (sticky floating controls)
 #
 # Run:
 #   streamlit run easymcat.py
@@ -358,8 +358,7 @@ def tts_component(
           try {{ return localStorage.getItem(storageKey); }} catch (e) {{ return null; }}
         }})();
 
-        const options = voices.map((v, idx) => ({{
-          idx,
+        const options = voices.map((v) => ({{
           uri: v.voiceURI || "",
           label: voiceLabel(v),
           voice: v
@@ -499,7 +498,6 @@ def tts_component(
       playPauseBtn.addEventListener("click", togglePlayPause);
       stopBtn.addEventListener("click", stopAll);
 
-      // Keep label accurate even if user uses browser controls / speech events.
       setInterval(() => {{
         if (!ensureSpeechSupport()) return;
         setPlayPauseLabel();
@@ -517,7 +515,32 @@ def tts_component(
 # -----------------------------
 st.set_page_config(page_title="DOCX Study Reader", layout="wide")
 st.title("DOCX Study Reader")
-st.caption("Sidebar: Subject (1) → Topic (2) → Subtopic (3) • Page: content + Text-to-Speech + Next/Back")
+st.caption("Sidebar: Subject (1) → Topic (2) → Subtopic (3) • Page: content + floating Controls (Listen + Next/Back)")
+
+st.markdown(
+    """
+<style>
+/* Make the SECOND column (right rail) sticky for the primary content row. */
+div[data-testid="stHorizontalBlock"] {
+  align-items: flex-start;
+}
+
+/* Keep the right rail floating while scrolling (works well when there's a single main columns row). */
+div[data-testid="stHorizontalBlock"] > div:nth-child(2) {
+  position: sticky;
+  top: 4.5rem; /* below Streamlit header */
+  align-self: flex-start;
+  z-index: 5;
+}
+
+/* Slight spacing so sticky rail doesn't visually jam into page edges */
+div[data-testid="stHorizontalBlock"] > div:nth-child(2) > div {
+  padding-top: 0.25rem;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
 
 
 @st.cache_data(show_spinner=True)
@@ -626,20 +649,10 @@ with col_left:
     else:
         st.info("No paragraph text under this subtopic.")
 
-    st.divider()
-
-    b1, b2, _ = st.columns([1, 1, 6])
-    with b1:
-        if st.button("⬅️ Back", disabled=(st.session_state.flat_index == 0), use_container_width=True):
-            st.session_state.flat_index -= 1
-            st.rerun()
-    with b2:
-        if st.button("Next ➡️", disabled=(st.session_state.flat_index == len(flat) - 1), use_container_width=True):
-            st.session_state.flat_index += 1
-            st.rerun()
-
 with col_right:
-    st.subheader("Listen")
+    st.subheader("Controls")
+
+    st.markdown("**Listen**")
     if cur_text:
         tts_component(
             cur_text,
@@ -650,6 +663,17 @@ with col_right:
         )
     else:
         st.caption("Nothing to read for this subtopic.")
+
+    st.divider()
+
+    st.markdown("**Navigate**")
+    if st.button("⬅️ Back", disabled=(st.session_state.flat_index == 0), use_container_width=True):
+        st.session_state.flat_index -= 1
+        st.rerun()
+
+    if st.button("Next ➡️", disabled=(st.session_state.flat_index == len(flat) - 1), use_container_width=True):
+        st.session_state.flat_index += 1
+        st.rerun()
 
     st.divider()
     st.caption("Progress")
