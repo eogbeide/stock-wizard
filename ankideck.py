@@ -8,6 +8,7 @@
 # - Reads chemical formulas + simple chemical equations more clearly (H2O, NaCl, (NH4)2SO4, CuSO4·5H2O, Fe3+, etc.)
 # - Better PDF text extraction + page text structuring into easy-to-narrate paragraphs & bullet “story mode”
 # - NEW: Dedicated Resume button + robust multi-pause/multi-resume without restarting
+# - NEW: Time progress + draggable scrubber (seek forward/back + pause by dragging)
 #
 # Run:
 #   streamlit run easymcat.py
@@ -668,6 +669,21 @@ def tts_component(
       </div>
 
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <span id="{component_id}_time" style="color:#444; font-size:0.9rem; min-width:110px;">0:00 / 0:00</span>
+        <input
+          id="{component_id}_seek"
+          type="range"
+          min="0"
+          max="0"
+          value="0"
+          step="100"
+          style="flex: 1; min-width: 220px; accent-color: #555;"
+          aria-label="Seek"
+        />
+        <span style="color:#888; font-size:0.85rem;">Drag to seek (auto-pauses)</span>
+      </div>
+
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
         <label style="color:#444; font-size:0.9rem;">Voice</label>
         <select id="{component_id}_voice" style="min-width: 260px; padding:8px 10px; border-radius:8px; border:1px solid #ddd;">
           <option value="">Loading voices…</option>
@@ -688,6 +704,9 @@ def tts_component(
       const pauseBtn = document.getElementById(ROOT_ID + "_pause");
       const stopBtn = document.getElementById(ROOT_ID + "_stop");
 
+      const seekEl = document.getElementById(ROOT_ID + "_seek");
+      const timeEl = document.getElementById(ROOT_ID + "_time");
+
       const voiceSelect = document.getElementById(ROOT_ID + "_voice");
       const resetVoiceBtn = document.getElementById(ROOT_ID + "_resetvoice");
       const statusEl = document.getElementById(ROOT_ID + "_status");
@@ -702,20 +721,38 @@ def tts_component(
       const paragraphPauseMs = Math.max(0, {paragraph_pause_ms});
       const clausePauseMs = Math.max(0, {clause_pause_ms});
 
+      // Scrub precision: smaller chunks => more accurate seeking
+      const enableScrub = true;
+      const microChunkWords = 12;
+
       const storageKey = "easymcat_tts_voice_uri";
 
       let queue = [];
       let idx = 0;
 
+      // Between-items timer state (pauseAfter)
       let betweenTimer = null;
       let betweenDueAt = 0;
       let betweenRemaining = 0;
       let betweenPaused = false;
 
-      // Track current utterance state
-      let lastItemText = "";
-      let lastItemHadEnd = true;   // if false, we paused mid-utterance
-      let isManuallyStopping = false;
+      // Track utterance time accounting (for progress)
+      let utterStartAt = 0;
+      let utterPausedAt = 0;
+      let utterPausedAccum = 0;
+
+      // Timeline estimation
+      let timeline = [];     // [{speakMs, pauseMs, totalMs}]
+      let starts = [];       // cumulative start per item
+      let totalMs = 0;
+
+      // Current "now" context
+      let currentItemIndex = -1;
+      let manualSeekPosMs = 0;
+      let manualSeekPosValid = false;
+
+      // Dragging state
+      let userDragging = false;
 
       function setStatus(msg) {{
         statusEl.textContent = msg;
@@ -729,8 +766,45 @@ def tts_component(
         return true;
       }}
 
-      function hasActiveQueue() {{
-        return queue && queue.length && idx <= queue.length;
+      function clamp(n, lo, hi) {{
+        return Math.max(lo, Math.min(hi, n));
+      }}
+
+      function msToClock(ms) {{
+        const total = Math.max(0, Math.round(ms / 1000));
+        const h = Math.floor(total / 3600);
+        const m = Math.floor((total % 3600) / 60);
+        const s = total % 60;
+        const mm = h > 0 ? String(m).padStart(2, "0") : String(m);
+        const ss = String(s).padStart(2, "0");
+        return h > 0 ? `${{h}}:${{mm}}:${{ss}}` : `${{mm}}:${{ss}}`;
+      }}
+
+      function setTimeUI(posMs) {{
+        const p = clamp(posMs, 0, totalMs || 0);
+        timeEl.textContent = `${{msToClock(p)}} / ${{msToClock(totalMs)}}`;
+      }}
+
+      function estimateSpeechMs(text) {{
+        // Heuristic: estimate based on words; scales with speech rate.
+        const words = ((text || "").trim().match(/\\S+/g) || []).length;
+        const wpmBase = 170;
+        const wpm = Math.max(80, wpmBase * Math.max(0.2, preferredRate));
+        const minutes = words / wpm;
+        const ms = minutes * 60 * 1000;
+        return Math.max(280, ms);
+      }}
+
+      function splitIntoWordChunks(text, maxWords) {{
+        const t = (text || "").trim();
+        if (!t) return [];
+        const words = t.split(/\\s+/g);
+        if (words.length <= maxWords) return [t];
+        const out = [];
+        for (let i = 0; i < words.length; i += maxWords) {{
+          out.push(words.slice(i, i + maxWords).join(" "));
+        }}
+        return out;
       }}
 
       function getVoicesAsync() {{
@@ -952,12 +1026,35 @@ def tts_component(
 
               items.push({{ text: sent, pauseAfter }});
             }} else {{
-              return [{{ text: normalizeText(t), pauseAfter: 0 }}];
+              // Single-item mode
+              items.push({{ text: normalizeText(t), pauseAfter: 0 }});
+              // break out
+              pi = paragraphs.length;
+              break;
             }}
           }}
         }}
 
-        return items.length ? items : [{{ text: normalizeText(t), pauseAfter: 0 }}];
+        const base = items.length ? items : [{{ text: normalizeText(t), pauseAfter: 0 }}];
+
+        if (!enableScrub) return base;
+
+        // Make seeking finer: split each item into smaller word chunks.
+        const refined = [];
+        for (const it of base) {{
+          const chunks = splitIntoWordChunks(it.text || "", microChunkWords);
+          if (!chunks.length) continue;
+
+          if (chunks.length === 1) {{
+            refined.push({{ text: chunks[0], pauseAfter: Math.max(0, it.pauseAfter || 0) }});
+          }} else {{
+            for (let k = 0; k < chunks.length; k++) {{
+              refined.push({{ text: chunks[k], pauseAfter: 0 }});
+            }}
+            refined[refined.length - 1].pauseAfter = Math.max(0, it.pauseAfter || 0);
+          }}
+        }}
+        return refined.length ? refined : base;
       }}
 
       function clearBetweenTimer() {{
@@ -967,24 +1064,62 @@ def tts_component(
         }}
       }}
 
-      function stopAll() {{
-        if (!ensureSpeechSupport()) return;
+      function rebuildTimeline() {{
+        timeline = [];
+        starts = [];
+        totalMs = 0;
 
-        isManuallyStopping = true;
+        let cum = 0;
+        for (let i = 0; i < queue.length; i++) {{
+          const speakMs = estimateSpeechMs(queue[i].text || "");
+          const pauseMs = Math.max(0, queue[i].pauseAfter || 0);
+          const total = speakMs + pauseMs;
+          timeline.push({{ speakMs, pauseMs, totalMs: total }});
+          starts.push(cum);
+          cum += total;
+        }}
+        totalMs = cum;
+
+        seekEl.max = String(Math.max(0, totalMs));
+        seekEl.value = "0";
+        setTimeUI(0);
+      }}
+
+      function cancelPlaybackKeepQueue() {{
+        if (!ensureSpeechSupport()) return;
 
         clearBetweenTimer();
         betweenPaused = false;
         betweenRemaining = 0;
 
-        lastItemText = "";
-        lastItemHadEnd = true;
+        utterStartAt = 0;
+        utterPausedAt = 0;
+        utterPausedAccum = 0;
+
+        window.speechSynthesis.cancel();
+      }}
+
+      function stopAll() {{
+        if (!ensureSpeechSupport()) return;
+
+        clearBetweenTimer();
+        betweenPaused = false;
+        betweenRemaining = 0;
+
+        utterStartAt = 0;
+        utterPausedAt = 0;
+        utterPausedAccum = 0;
+
+        manualSeekPosValid = false;
+        manualSeekPosMs = 0;
 
         window.speechSynthesis.cancel();
         queue = [];
         idx = 0;
+        currentItemIndex = -1;
 
+        rebuildTimeline(); // resets seek UI
         setStatus("Stopped.");
-        isManuallyStopping = false;
       }}
 
       function pauseAll() {{
@@ -1004,7 +1139,7 @@ def tts_component(
 
         // If currently speaking, pause speech
         if (synth.speaking && !synth.paused) {{
-          lastItemHadEnd = false; // we're pausing mid-utterance
+          utterPausedAt = Date.now();
           synth.pause();
           setStatus("Paused.");
           return;
@@ -1046,16 +1181,18 @@ def tts_component(
         }}
 
         utter.onstart = () => {{
+          utterStartAt = Date.now();
+          utterPausedAccum = 0;
+          utterPausedAt = 0;
           setStatus("Speaking…");
         }};
 
         utter.onend = () => {{
-          lastItemHadEnd = true;
+          // no-op; progress uses watcher
         }};
 
         utter.onerror = () => {{
           setStatus("TTS error.");
-          lastItemHadEnd = true;
         }};
 
         window.speechSynthesis.speak(utter);
@@ -1066,18 +1203,26 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
-        if (idx >= queue.length) {{
-          setStatus("Done.");
+        if (!queue.length) {{
+          setStatus("Nothing to read.");
           return;
         }}
 
+        if (idx >= queue.length) {{
+          setStatus("Done.");
+          manualSeekPosValid = false;
+          manualSeekPosMs = totalMs;
+          return;
+        }}
+
+        // Clear any manual seek "cursor" once we begin speaking from it
+        manualSeekPosValid = false;
+
         const item = queue[idx];
+        currentItemIndex = idx;
         idx += 1;
 
-        lastItemText = item.text || "";
-        lastItemHadEnd = true;
-
-        // Important: don't cancel while paused; only cancel when we are actively moving to a new item
+        // Important: don't cancel while paused; only cancel when moving to a new item
         if (!synth.paused) {{
           synth.cancel();
         }}
@@ -1114,13 +1259,22 @@ def tts_component(
         betweenPaused = false;
         betweenRemaining = 0;
 
-        lastItemText = "";
-        lastItemHadEnd = true;
+        utterStartAt = 0;
+        utterPausedAt = 0;
+        utterPausedAccum = 0;
+
+        manualSeekPosValid = false;
+        manualSeekPosMs = 0;
 
         window.speechSynthesis.cancel();
 
         queue = buildQueueFromText(TEXT);
         idx = 0;
+        currentItemIndex = -1;
+
+        rebuildTimeline();
+        seekEl.value = "0";
+        setTimeUI(0);
 
         speakNext();
       }}
@@ -1142,13 +1296,16 @@ def tts_component(
 
         // Resume a paused utterance
         if (synth.paused) {{
+          if (utterPausedAt) {{
+            utterPausedAccum += (Date.now() - utterPausedAt);
+            utterPausedAt = 0;
+          }}
           synth.resume();
           setStatus("Speaking…");
           return;
         }}
 
-        // If not paused but we have an active queue and we're not speaking,
-        // continue from current idx without rebuilding the queue.
+        // If not paused but we have a queue and we're not speaking, continue
         if (queue.length && idx < queue.length && !synth.speaking) {{
           setStatus("Speaking…");
           speakNext();
@@ -1178,7 +1335,7 @@ def tts_component(
           return;
         }}
 
-        // If we have a queue and are mid-way (stopped speaking due to UI), continue
+        // If we have a queue and are mid-way, continue
         if (queue.length && idx < queue.length) {{
           setStatus("Speaking…");
           speakNext();
@@ -1188,6 +1345,130 @@ def tts_component(
         // Otherwise start new
         startFresh();
       }}
+
+      function findIndexForMs(ms) {{
+        const t = clamp(ms, 0, totalMs);
+        if (!starts.length) return 0;
+        // Linear scan is fine for typical page sizes; binary search if you want later.
+        for (let i = starts.length - 1; i >= 0; i--) {{
+          if (t >= starts[i]) return i;
+        }}
+        return 0;
+      }}
+
+      function seekToMs(ms) {{
+        if (!ensureSpeechSupport()) return;
+
+        // If not started, build queue/timeline first (but do not autoplay).
+        if (!queue.length) {{
+          queue = buildQueueFromText(TEXT);
+          idx = 0;
+          currentItemIndex = -1;
+          rebuildTimeline();
+        }}
+
+        const t = clamp(ms, 0, totalMs);
+        const targetIndex = findIndexForMs(t);
+
+        cancelPlaybackKeepQueue();
+
+        idx = targetIndex;
+        currentItemIndex = -1;
+
+        manualSeekPosValid = true;
+        manualSeekPosMs = t;
+
+        seekEl.value = String(Math.round(t));
+        setTimeUI(t);
+
+        setStatus("Seeked. Press Resume to continue.");
+      }}
+
+      function computeProgressMs() {{
+        if (!queue.length || !timeline.length) {{
+          return 0;
+        }}
+
+        // If user has seeked and we haven't started speaking yet, show that exact cursor
+        if (manualSeekPosValid) {{
+          return clamp(manualSeekPosMs, 0, totalMs);
+        }}
+
+        const synth = window.speechSynthesis;
+
+        // Between-items countdown (silent pauseAfter)
+        if (betweenTimer || betweenPaused) {{
+          const i = currentItemIndex;
+          if (i >= 0 && i < timeline.length) {{
+            const base = starts[i] + timeline[i].speakMs;
+            const remaining = betweenTimer ? Math.max(0, betweenDueAt - Date.now()) : Math.max(0, betweenRemaining);
+            const elapsedPause = clamp(timeline[i].pauseMs - remaining, 0, timeline[i].pauseMs);
+            return clamp(base + elapsedPause, 0, totalMs);
+          }}
+        }}
+
+        // Speaking or paused mid-utterance
+        if (synth.speaking || synth.paused) {{
+          const i = currentItemIndex;
+          if (i >= 0 && i < timeline.length) {{
+            const elapsed = clamp(Date.now() - utterStartAt - utterPausedAccum, 0, timeline[i].speakMs);
+            return clamp(starts[i] + elapsed, 0, totalMs);
+          }}
+        }}
+
+        // Not speaking: use idx cursor as progress
+        if (idx >= timeline.length) return totalMs;
+        return clamp(starts[idx] || 0, 0, totalMs);
+      }}
+
+      function updateProgressUI() {{
+        if (userDragging) return;
+        const pos = computeProgressMs();
+        if (seekEl.max !== String(Math.max(0, totalMs))) {{
+          seekEl.max = String(Math.max(0, totalMs));
+        }}
+        seekEl.value = String(Math.round(pos));
+        setTimeUI(pos);
+      }}
+
+      // Update progress periodically
+      setInterval(() => {{
+        try {{
+          updateProgressUI();
+        }} catch (e) {{}}
+      }}, 200);
+
+      // Scrubber interactions (drag => auto-pause + seek; stays paused after drag)
+      function beginDrag() {{
+        userDragging = true;
+        pauseAll();
+        setStatus("Paused (seeking)…");
+      }}
+
+      function endDrag() {{
+        userDragging = false;
+        const target = Number(seekEl.value || "0");
+        seekToMs(target);
+      }}
+
+      seekEl.addEventListener("mousedown", beginDrag);
+      seekEl.addEventListener("touchstart", beginDrag, {{ passive: true }});
+
+      seekEl.addEventListener("input", () => {{
+        // While dragging, show the "target time" live
+        const target = Number(seekEl.value || "0");
+        setTimeUI(target);
+      }});
+
+      seekEl.addEventListener("mouseup", endDrag);
+      seekEl.addEventListener("touchend", endDrag);
+
+      // Also handle keyboard / click seek changes
+      seekEl.addEventListener("change", () => {{
+        if (userDragging) return;
+        const target = Number(seekEl.value || "0");
+        seekToMs(target);
+      }});
 
       // UI wiring
       playPauseBtn.addEventListener("click", togglePlayPause);
@@ -1219,9 +1500,14 @@ def tts_component(
       }});
 
       initVoices();
+
+      // Initialize seek UI for first render (no queue yet)
+      timeEl.textContent = "0:00 / 0:00";
+      seekEl.max = "0";
+      seekEl.value = "0";
     </script>
     """
-    st.components.v1.html(html, height=150)
+    st.components.v1.html(html, height=210)
 
 
 # -----------------------------
