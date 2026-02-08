@@ -18,6 +18,7 @@ DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/anki
 import io
 import re
 import uuid
+import json
 from typing import List, Dict, Tuple
 
 import requests
@@ -647,1064 +648,1062 @@ def tts_component(
     paragraph_pause_ms: int = 650,
     clause_pause_ms: int = 0,
 ):
-    safe = text.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+    """
+    Fixes:
+    - tokenize.TokenError / f-string brace issues by avoiding f-strings for the large HTML/JS template.
+    - Pause/Resume continues from the exact paused position:
+        - If paused mid-utterance: uses speechSynthesis.pause()/resume() (true continuation)
+        - If paused during between-sentence delay: stores remaining delay and resumes it
+    - Slider drag auto-pauses and seeks; Resume continues from seek point.
+    - UI styling matches the attached card/button layout.
+    """
     component_id = f"tts_{uuid.uuid4().hex}"
 
-    # IMPORTANT: This is a Python f-string. Any literal JS `{` or `}` must be doubled as `{{` / `}}`.
-    html = f"""
-    <div id="{component_id}" class="tts-root">
-      <style>
-        /* Card */
-        #{component_id}.tts-root {{
-          font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
-        }}
-        #{component_id} .tts-card {{
-          background: radial-gradient(1200px 500px at 20% 15%, rgba(255,255,255,0.07), rgba(0,0,0,0.10));
-          border: 1px solid rgba(255,255,255,0.12);
-          border-radius: 20px;
-          padding: 18px 18px 14px 18px;
-          box-shadow: 0 10px 30px rgba(0,0,0,0.22);
-        }}
-        #{component_id} .tts-row {{
-          display: flex;
-          gap: 14px;
-          align-items: center;
-          flex-wrap: wrap;
-        }}
-        #{component_id} .tts-row + .tts-row {{
-          margin-top: 12px;
-        }}
+    # Safer than template literals: JSON string literal for JS.
+    # Also guard against accidental </script> in content.
+    cleaned_text = (text or "").replace("</script", "<\\/script")
+    text_json = json.dumps(cleaned_text)
 
-        /* Big buttons like the screenshot */
-        #{component_id} .tts-btn {{
-          appearance: none;
-          border: 1px solid rgba(255,255,255,0.22);
-          background: rgba(255,255,255,0.95);
-          color: rgba(0,0,0,0.92);
-          border-radius: 16px;
-          padding: 14px 18px;
-          font-size: 22px;
-          font-weight: 650;
-          line-height: 1;
-          cursor: pointer;
-          box-shadow: 0 6px 14px rgba(0,0,0,0.22);
-          transition: transform 80ms ease, opacity 120ms ease, filter 120ms ease;
-        }}
-        #{component_id} .tts-btn:active {{
-          transform: translateY(1px);
-        }}
-        #{component_id} .tts-btn[disabled] {{
-          opacity: 0.35;
-          cursor: not-allowed;
-          filter: grayscale(35%);
-          box-shadow: none;
-        }}
-        #{component_id} .tts-btn.stop {{
-          padding: 14px 18px;
-        }}
+    tmpl = r"""
+<div id="__CID__" class="tts-root">
+  <style>
+    /* Card */
+    #__CID__.tts-root {
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+    }
+    #__CID__ .tts-card {
+      background: radial-gradient(1200px 500px at 20% 15%, rgba(255,255,255,0.07), rgba(0,0,0,0.10));
+      border: 1px solid rgba(255,255,255,0.12);
+      border-radius: 20px;
+      padding: 18px 18px 14px 18px;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.22);
+    }
+    #__CID__ .tts-row {
+      display: flex;
+      gap: 14px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    #__CID__ .tts-row + .tts-row {
+      margin-top: 12px;
+    }
 
-        /* Status line */
-        #{component_id} .tts-status {{
-          margin-top: 14px;
-          color: rgba(255,255,255,0.55);
-          font-size: 20px;
-          font-weight: 520;
-        }}
+    /* Big buttons like the screenshot */
+    #__CID__ .tts-btn {
+      appearance: none;
+      border: 1px solid rgba(255,255,255,0.22);
+      background: rgba(255,255,255,0.95);
+      color: rgba(0,0,0,0.92);
+      border-radius: 16px;
+      padding: 14px 18px;
+      font-size: 22px;
+      font-weight: 650;
+      line-height: 1;
+      cursor: pointer;
+      box-shadow: 0 6px 14px rgba(0,0,0,0.22);
+      transition: transform 80ms ease, opacity 120ms ease, filter 120ms ease;
+    }
+    #__CID__ .tts-btn:active { transform: translateY(1px); }
+    #__CID__ .tts-btn[disabled] {
+      opacity: 0.35;
+      cursor: not-allowed;
+      filter: grayscale(35%);
+      box-shadow: none;
+    }
+    #__CID__ .tts-btn.stop { padding: 14px 18px; }
 
-        /* 10s buttons row */
-        #{component_id} .tts-skip {{
-          margin-top: 16px;
-          display: flex;
-          gap: 16px;
-          align-items: center;
-          flex-wrap: wrap;
-        }}
+    /* Status line */
+    #__CID__ .tts-status {
+      margin-top: 14px;
+      color: rgba(255,255,255,0.55);
+      font-size: 20px;
+      font-weight: 520;
+    }
 
-        /* Slider row */
-        #{component_id} .tts-slider {{
-          width: 100%;
-          margin-top: 16px;
-        }}
-        #{component_id} input[type="range"] {{
-          width: 100%;
-        }}
+    /* 10s buttons row */
+    #__CID__ .tts-skip {
+      margin-top: 16px;
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
 
-        #{component_id} .tts-times {{
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-top: 8px;
-          color: rgba(255,255,255,0.40);
-          font-size: 20px;
-          font-weight: 520;
-        }}
+    /* Slider row */
+    #__CID__ .tts-slider {
+      width: 100%;
+      margin-top: 16px;
+    }
+    #__CID__ input[type="range"] { width: 100%; }
 
-        /* Voice section */
-        #{component_id} .tts-voice-label {{
-          margin-top: 14px;
-          color: rgba(255,255,255,0.35);
-          font-size: 20px;
-          font-weight: 520;
-        }}
-        #{component_id} select {{
-          width: 100%;
-          margin-top: 10px;
-          padding: 12px 14px;
-          border-radius: 14px;
-          border: 1px solid rgba(255,255,255,0.18);
-          background: rgba(255,255,255,0.08);
-          color: rgba(255,255,255,0.92);
-          font-size: 16px;
-          outline: none;
-        }}
-        #{component_id} option {{
-          color: #111;
-        }}
-        #{component_id} .tts-reset {{
-          margin-top: 12px;
-        }}
-        #{component_id} .tts-reset .tts-btn {{
-          font-size: 16px;
-          padding: 10px 14px;
-          border-radius: 12px;
-        }}
-      </style>
+    #__CID__ .tts-times {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 8px;
+      color: rgba(255,255,255,0.40);
+      font-size: 20px;
+      font-weight: 520;
+    }
 
-      <div class="tts-card">
-        <div class="tts-row">
-          <button id="{component_id}_play" class="tts-btn">▶️ Play</button>
-          <button id="{component_id}_pause" class="tts-btn" disabled>⏸ Pause</button>
-          <button id="{component_id}_resume" class="tts-btn" disabled>🔊 Resume</button>
-        </div>
+    /* Voice section */
+    #__CID__ .tts-voice-label {
+      margin-top: 14px;
+      color: rgba(255,255,255,0.35);
+      font-size: 20px;
+      font-weight: 520;
+    }
+    #__CID__ select {
+      width: 100%;
+      margin-top: 10px;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid rgba(255,255,255,0.18);
+      background: rgba(255,255,255,0.08);
+      color: rgba(255,255,255,0.92);
+      font-size: 16px;
+      outline: none;
+    }
+    #__CID__ option { color: #111; }
+    #__CID__ .tts-reset { margin-top: 12px; }
+    #__CID__ .tts-reset .tts-btn {
+      font-size: 16px;
+      padding: 10px 14px;
+      border-radius: 12px;
+    }
+  </style>
 
-        <div class="tts-row">
-          <button id="{component_id}_stop" class="tts-btn stop" disabled>■ Stop</button>
-        </div>
+  <div class="tts-card">
+    <div class="tts-row">
+      <button id="__CID___play" class="tts-btn">▶️ Play</button>
+      <button id="__CID___pause" class="tts-btn" disabled>⏸ Pause</button>
+      <button id="__CID___resume" class="tts-btn" disabled>🔊 Resume</button>
+    </div>
 
-        <div id="{component_id}_status" class="tts-status">Loading voices…</div>
+    <div class="tts-row">
+      <button id="__CID___stop" class="tts-btn stop" disabled>■ Stop</button>
+    </div>
 
-        <div class="tts-skip">
-          <button id="{component_id}_back10" class="tts-btn" disabled>⏪ 10s</button>
-          <button id="{component_id}_fwd10" class="tts-btn" disabled>10s ⏩</button>
-        </div>
+    <div id="__CID___status" class="tts-status">Loading voices…</div>
 
-        <div class="tts-slider">
-          <input id="{component_id}_seek" type="range" min="0" max="0" value="0" step="100" aria-label="Seek" />
-          <div class="tts-times">
-            <span id="{component_id}_tL">0:00</span>
-            <span id="{component_id}_tR">0:00</span>
-          </div>
-        </div>
+    <div class="tts-skip">
+      <button id="__CID___back10" class="tts-btn" disabled>⏪ 10s</button>
+      <button id="__CID___fwd10" class="tts-btn" disabled>10s ⏩</button>
+    </div>
 
-        <div class="tts-voice-label">Voice</div>
-        <select id="{component_id}_voice">
-          <option value="">Loading voices…</option>
-        </select>
-
-        <div class="tts-reset">
-          <button id="{component_id}_resetvoice" class="tts-btn">Reset default</button>
-        </div>
+    <div class="tts-slider">
+      <input id="__CID___seek" type="range" min="0" max="0" value="0" step="100" aria-label="Seek" />
+      <div class="tts-times">
+        <span id="__CID___tL">0:00</span>
+        <span id="__CID___tR">0:00</span>
       </div>
     </div>
 
-    <script>
-      const ROOT_ID = "{component_id}";
-      const TEXT = `{safe}`;
+    <div class="tts-voice-label">Voice</div>
+    <select id="__CID___voice">
+      <option value="">Loading voices…</option>
+    </select>
 
-      const playBtn = document.getElementById(ROOT_ID + "_play");
-      const pauseBtn = document.getElementById(ROOT_ID + "_pause");
-      const resumeBtn = document.getElementById(ROOT_ID + "_resume");
-      const stopBtn = document.getElementById(ROOT_ID + "_stop");
-      const back10Btn = document.getElementById(ROOT_ID + "_back10");
-      const fwd10Btn = document.getElementById(ROOT_ID + "_fwd10");
+    <div class="tts-reset">
+      <button id="__CID___resetvoice" class="tts-btn">Reset default</button>
+    </div>
+  </div>
 
-      const seekEl = document.getElementById(ROOT_ID + "_seek");
-      const tL = document.getElementById(ROOT_ID + "_tL");
-      const tR = document.getElementById(ROOT_ID + "_tR");
+  <script>
+    const ROOT_ID = "__CID__";
+    const TEXT = __TEXT_JSON__;
 
-      const voiceSelect = document.getElementById(ROOT_ID + "_voice");
-      const resetVoiceBtn = document.getElementById(ROOT_ID + "_resetvoice");
-      const statusEl = document.getElementById(ROOT_ID + "_status");
+    const playBtn = document.getElementById(ROOT_ID + "_play");
+    const pauseBtn = document.getElementById(ROOT_ID + "_pause");
+    const resumeBtn = document.getElementById(ROOT_ID + "_resume");
+    const stopBtn = document.getElementById(ROOT_ID + "_stop");
+    const back10Btn = document.getElementById(ROOT_ID + "_back10");
+    const fwd10Btn = document.getElementById(ROOT_ID + "_fwd10");
 
-      const preferredLang = "{preferred_lang}";
-      const preferredRate = {rate};
-      const preferredPitch = {pitch};
-      const preferDeepMaleGb = {str(prefer_deep_male_gb).lower()};
+    const seekEl = document.getElementById(ROOT_ID + "_seek");
+    const tL = document.getElementById(ROOT_ID + "_tL");
+    const tR = document.getElementById(ROOT_ID + "_tR");
 
-      const flowMode = {str(flow_mode).lower()};
-      const sentencePauseMs = Math.max(0, {sentence_pause_ms});
-      const paragraphPauseMs = Math.max(0, {paragraph_pause_ms});
-      const clausePauseMs = Math.max(0, {clause_pause_ms});
+    const voiceSelect = document.getElementById(ROOT_ID + "_voice");
+    const resetVoiceBtn = document.getElementById(ROOT_ID + "_resetvoice");
+    const statusEl = document.getElementById(ROOT_ID + "_status");
 
-      // Scrub precision: smaller chunks => more accurate seeking
-      const enableScrub = true;
-      const microChunkWords = 12;
+    const preferredLang = "__PREFERRED_LANG__";
+    const preferredRate = __RATE__;
+    const preferredPitch = __PITCH__;
+    const preferDeepMaleGb = __PREFER_DEEP__;
 
-      const storageKey = "easymcat_tts_voice_uri";
+    const flowMode = __FLOW_MODE__;
+    const sentencePauseMs = Math.max(0, __SENT_PAUSE__);
+    const paragraphPauseMs = Math.max(0, __PARA_PAUSE__);
+    const clausePauseMs = Math.max(0, __CLAUSE_PAUSE__);
 
-      let queue = [];
-      let idx = 0;
+    // Scrub precision: smaller chunks => more accurate seeking
+    const enableScrub = true;
+    const microChunkWords = 12;
 
-      // Between-items timer state (pauseAfter)
-      let betweenTimer = null;
-      let betweenDueAt = 0;
-      let betweenRemaining = 0;
-      let betweenPaused = false;
+    const storageKey = "easymcat_tts_voice_uri";
 
-      // Track utterance time accounting (for progress)
-      let utterStartAt = 0;
-      let utterPausedAt = 0;
-      let utterPausedAccum = 0;
+    let queue = [];
+    let idx = 0;
 
-      // Timeline estimation
-      let timeline = [];     // timeline items: speakMs, pauseMs, totalMs
-      let starts = [];       // cumulative start per item
-      let totalMs = 0;
+    // Between-items timer state (pauseAfter)
+    let betweenTimer = null;
+    let betweenDueAt = 0;
+    let betweenRemaining = 0;
+    let betweenPaused = false;
 
-      // Current "now" context
-      let currentItemIndex = -1;
-      let manualSeekPosMs = 0;
-      let manualSeekPosValid = false;
+    // Track utterance time accounting (for progress)
+    let utterStartAt = 0;
+    let utterPausedAt = 0;
+    let utterPausedAccum = 0;
 
-      // Dragging state
-      let userDragging = false;
+    // Timeline estimation
+    let timeline = [];   // [{speakMs, pauseMs, totalMs}]
+    let starts = [];     // cumulative start per item
+    let totalMs = 0;
 
-      // Session token to ignore onend events after cancel/seek/stop
-      let playSession = 0;
+    // Current "now" context
+    let currentItemIndex = -1;
+    let manualSeekPosMs = 0;
+    let manualSeekPosValid = false;
 
-      function setStatus(msg) {{
-        statusEl.textContent = msg;
-      }}
+    // Dragging state
+    let userDragging = false;
 
-      function ensureSpeechSupport() {{
-        if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {{
-          alert("Your browser doesn't support speech synthesis.");
-          return false;
-        }}
-        return true;
-      }}
+    // Session token to ignore onend events after cancel/seek/stop
+    let playSession = 0;
 
-      function clamp(n, lo, hi) {{
-        return Math.max(lo, Math.min(hi, n));
-      }}
+    function setStatus(msg) {
+      statusEl.textContent = msg;
+    }
 
-      function msToClock(ms) {{
-        const total = Math.max(0, Math.round(ms / 1000));
-        const h = Math.floor(total / 3600);
-        const m = Math.floor((total % 3600) / 60);
-        const s = total % 60;
-        const mm = h > 0 ? String(m).padStart(2, "0") : String(m);
-        const ss = String(s).padStart(2, "0");
-        return h > 0 ? `${{h}}:${{mm}}:${{ss}}` : `${{mm}}:${{ss}}`;
-      }}
+    function ensureSpeechSupport() {
+      if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
+        alert("Your browser doesn't support speech synthesis.");
+        return false;
+      }
+      return true;
+    }
 
-      function setTimeUI(posMs) {{
-        const p = clamp(posMs, 0, totalMs || 0);
-        tL.textContent = msToClock(p);
-        tR.textContent = msToClock(totalMs || 0);
-      }}
+    function clamp(n, lo, hi) {
+      return Math.max(lo, Math.min(hi, n));
+    }
 
-      function estimateSpeechMs(text) {{
-        // Heuristic: estimate based on words; scales with speech rate.
-        const words = ((text || "").trim().match(/\\S+/g) || []).length;
-        const wpmBase = 170;
-        const wpm = Math.max(80, wpmBase * Math.max(0.2, preferredRate));
-        const minutes = words / wpm;
-        const ms = minutes * 60 * 1000;
-        return Math.max(280, ms);
-      }}
+    function msToClock(ms) {
+      const total = Math.max(0, Math.round(ms / 1000));
+      const h = Math.floor(total / 3600);
+      const m = Math.floor((total % 3600) / 60);
+      const s = total % 60;
+      const mm = h > 0 ? String(m).padStart(2, "0") : String(m);
+      const ss = String(s).padStart(2, "0");
+      return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+    }
 
-      function splitIntoWordChunks(text, maxWords) {{
-        const t = (text || "").trim();
-        if (!t) return [];
-        const words = t.split(/\\s+/g);
-        if (words.length <= maxWords) return [t];
-        const out = [];
-        for (let i = 0; i < words.length; i += maxWords) {{
-          out.push(words.slice(i, i + maxWords).join(" "));
-        }}
-        return out;
-      }}
+    function setTimeUI(posMs) {
+      const p = clamp(posMs, 0, totalMs || 0);
+      tL.textContent = msToClock(p);
+      tR.textContent = msToClock(totalMs || 0);
+    }
 
-      function getVoicesAsync() {{
-        return new Promise((resolve) => {{
-          const synth = window.speechSynthesis;
-          let voices = synth.getVoices();
+    function estimateSpeechMs(text) {
+      // Heuristic: estimate based on words; scales with speech rate.
+      const words = ((text || "").trim().match(/\S+/g) || []).length;
+      const wpmBase = 170;
+      const wpm = Math.max(80, wpmBase * Math.max(0.2, preferredRate));
+      const minutes = words / wpm;
+      const ms = minutes * 60 * 1000;
+      return Math.max(280, ms);
+    }
 
-          if (voices && voices.length) {{
-            resolve(voices);
-            return;
-          }}
+    function splitIntoWordChunks(text, maxWords) {
+      const t = (text || "").trim();
+      if (!t) return [];
+      const words = t.split(/\s+/g);
+      if (words.length <= maxWords) return [t];
+      const out = [];
+      for (let i = 0; i < words.length; i += maxWords) {
+        out.push(words.slice(i, i + maxWords).join(" "));
+      }
+      return out;
+    }
 
-          const onVoicesChanged = () => {{
-            voices = synth.getVoices();
-            synth.removeEventListener("voiceschanged", onVoicesChanged);
-            resolve(voices || []);
-          }};
+    function getVoicesAsync() {
+      return new Promise((resolve) => {
+        const synth = window.speechSynthesis;
+        let voices = synth.getVoices();
 
-          synth.addEventListener("voiceschanged", onVoicesChanged);
-          setTimeout(() => {{
-            voices = synth.getVoices();
-            synth.removeEventListener("voiceschanged", onVoicesChanged);
-            resolve(voices || []);
-          }}, 1200);
-        }});
-      }}
+        if (voices && voices.length) {
+          resolve(voices);
+          return;
+        }
 
-      function voiceLabel(v) {{
-        const name = v.name || "Unnamed";
-        const lang = v.lang || "";
-        return lang ? `${{name}} (${{lang}})` : name;
-      }}
+        const onVoicesChanged = () => {
+          voices = synth.getVoices();
+          synth.removeEventListener("voiceschanged", onVoicesChanged);
+          resolve(voices || []);
+        };
 
-      function pickDefaultVoice(voices) {{
-        if (!voices || !voices.length) return null;
+        synth.addEventListener("voiceschanged", onVoicesChanged);
+        setTimeout(() => {
+          voices = synth.getVoices();
+          synth.removeEventListener("voiceschanged", onVoicesChanged);
+          resolve(voices || []);
+        }, 1200);
+      });
+    }
 
-        const normLang = (s) => (s || "").toLowerCase();
-        const byLangPrefix = (prefix) =>
-          voices.filter(v => normLang(v.lang).startsWith(prefix.toLowerCase()));
+    function voiceLabel(v) {
+      const name = v.name || "Unnamed";
+      const lang = v.lang || "";
+      return lang ? `${name} (${lang})` : name;
+    }
 
-        const gbVoices = byLangPrefix("en-gb");
-        const enVoices = byLangPrefix("en");
-        const preferredPrefix = preferredLang ? preferredLang.toLowerCase() : "";
-        const preferredMatches = preferredPrefix ? byLangPrefix(preferredPrefix) : [];
+    function pickDefaultVoice(voices) {
+      if (!voices || !voices.length) return null;
 
-        const maleNamePatterns = [
-          /google.*uk.*english.*male/i,
-          /microsoft.*(ryan|george|alfie).*online/i,
-          /microsoft.*(ryan|george|alfie)/i,
-          /daniel/i,
-          /male/i
-        ];
+      const normLang = (s) => (s || "").toLowerCase();
+      const byLangPrefix = (prefix) =>
+        voices.filter(v => normLang(v.lang).startsWith(prefix.toLowerCase()));
 
-        if (preferDeepMaleGb) {{
-          for (const re of maleNamePatterns) {{
-            const found = gbVoices.find(v => re.test(v.name || ""));
-            if (found) return found;
-          }}
-          if (gbVoices.length) return gbVoices[0];
-        }}
+      const gbVoices = byLangPrefix("en-gb");
+      const enVoices = byLangPrefix("en");
+      const preferredPrefix = preferredLang ? preferredLang.toLowerCase() : "";
+      const preferredMatches = preferredPrefix ? byLangPrefix(preferredPrefix) : [];
 
-        if (preferredMatches.length) return preferredMatches[0];
+      const maleNamePatterns = [
+        /google.*uk.*english.*male/i,
+        /microsoft.*(ryan|george|alfie).*online/i,
+        /microsoft.*(ryan|george|alfie)/i,
+        /daniel/i,
+        /male/i
+      ];
+
+      if (preferDeepMaleGb) {
+        for (const re of maleNamePatterns) {
+          const found = gbVoices.find(v => re.test(v.name || ""));
+          if (found) return found;
+        }
         if (gbVoices.length) return gbVoices[0];
-        if (enVoices.length) return enVoices[0];
-        return voices[0];
-      }}
+      }
 
-      function populateVoices(voices) {{
-        voiceSelect.innerHTML = "";
+      if (preferredMatches.length) return preferredMatches[0];
+      if (gbVoices.length) return gbVoices[0];
+      if (enVoices.length) return enVoices[0];
+      return voices[0];
+    }
 
-        const savedUri = (() => {{
-          try {{ return localStorage.getItem(storageKey); }} catch (e) {{ return null; }}
-        }})();
+    function populateVoices(voices) {
+      voiceSelect.innerHTML = "";
 
-        const options = voices.map((v) => ({{
-          uri: v.voiceURI || "",
-          label: voiceLabel(v),
-          voice: v
-        }}));
+      const savedUri = (() => {
+        try { return localStorage.getItem(storageKey); } catch (e) { return null; }
+      })();
 
-        options.sort((a, b) => a.label.localeCompare(b.label));
+      const options = voices.map((v) => ({
+        uri: v.voiceURI || "",
+        label: voiceLabel(v),
+        voice: v
+      }));
 
-        for (const opt of options) {{
-          const el = document.createElement("option");
-          el.value = opt.uri;
-          el.textContent = opt.label;
-          voiceSelect.appendChild(el);
-        }}
+      options.sort((a, b) => a.label.localeCompare(b.label));
 
-        const hasSaved = savedUri && options.some(o => o.uri === savedUri);
-        if (hasSaved) {{
-          voiceSelect.value = savedUri;
-          setStatus("Voice loaded (saved).");
-          return;
-        }}
+      for (const opt of options) {
+        const el = document.createElement("option");
+        el.value = opt.uri;
+        el.textContent = opt.label;
+        voiceSelect.appendChild(el);
+      }
 
-        const def = pickDefaultVoice(voices);
-        if (def && def.voiceURI) {{
-          voiceSelect.value = def.voiceURI;
-          setStatus("Voice loaded (default: Google UK Male if available).");
-        }} else {{
-          setStatus("Voice loaded.");
-        }}
-      }}
+      const hasSaved = savedUri && options.some(o => o.uri === savedUri);
+      if (hasSaved) {
+        voiceSelect.value = savedUri;
+        setStatus("Voice loaded (saved).");
+        return;
+      }
 
-      async function initVoices() {{
-        if (!ensureSpeechSupport()) {{
-          setStatus("Speech not supported.");
-          return;
-        }}
-        const voices = await getVoicesAsync();
-        if (!voices || !voices.length) {{
-          voiceSelect.innerHTML = '<option value="">No voices found</option>';
-          setStatus("No voices found.");
-          return;
-        }}
-        populateVoices(voices);
-        updateButtons();
-      }}
+      const def = pickDefaultVoice(voices);
+      if (def && def.voiceURI) {
+        voiceSelect.value = def.voiceURI;
+        setStatus("Voice loaded (default: Google UK Male if available).");
+      } else {
+        setStatus("Voice loaded.");
+      }
+    }
 
-      function getSelectedVoice(voices) {{
-        const uri = voiceSelect.value || "";
-        if (!uri) return null;
-        return voices.find(v => (v.voiceURI || "") === uri) || null;
-      }}
+    function getSelectedVoice(voices) {
+      const uri = voiceSelect.value || "";
+      if (!uri) return null;
+      return voices.find(v => (v.voiceURI || "") === uri) || null;
+    }
 
-      function normalizeText(t) {{
-        return (t || "")
-          .replace(/\\r\\n/g, "\\n")
-          .replace(/\\r/g, "\\n")
-          .replace(/[ \\t]+/g, " ")
-          .replace(/\\n[ \\t]+/g, "\\n")
-          .trim();
-      }}
+    function normalizeText(t) {
+      return (t || "")
+        .replace(/\r\n/g, "\n")
+        .replace(/\r/g, "\n")
+        .replace(/[ \t]+/g, " ")
+        .replace(/\n[ \t]+/g, "\n")
+        .trim();
+    }
 
-      function splitParagraphs(t) {{
-        const cleaned = normalizeText(t);
-        if (!cleaned) return [];
-        return cleaned
-          .split(/\\n\\s*\\n+/g)
-          .map(p => p.trim())
-          .filter(Boolean);
-      }}
+    function splitParagraphs(t) {
+      const cleaned = normalizeText(t);
+      if (!cleaned) return [];
+      return cleaned
+        .split(/\n\s*\n+/g)
+        .map(p => p.trim())
+        .filter(Boolean);
+    }
 
-      function splitSentences(paragraph) {{
-        const p = (paragraph || "").trim();
-        if (!p) return [];
+    function splitSentences(paragraph) {
+      const p = (paragraph || "").trim();
+      if (!p) return [];
 
-        if (typeof Intl !== "undefined" && Intl.Segmenter) {{
-          try {{
-            const seg = new Intl.Segmenter("en", {{ granularity: "sentence" }});
-            const parts = [];
-            for (const s of seg.segment(p)) {{
-              const chunk = (s.segment || "").trim();
-              if (chunk) parts.push(chunk);
-            }}
-            if (parts.length) return parts;
-          }} catch (e) {{}}
-        }}
+      if (typeof Intl !== "undefined" && Intl.Segmenter) {
+        try {
+          const seg = new Intl.Segmenter("en", { granularity: "sentence" });
+          const parts = [];
+          for (const s of seg.segment(p)) {
+            const chunk = (s.segment || "").trim();
+            if (chunk) parts.push(chunk);
+          }
+          if (parts.length) return parts;
+        } catch (e) {}
+      }
 
-        return p
-          .split(/(?<=[.!?])\\s+/g)
-          .map(s => s.trim())
-          .filter(Boolean);
-      }}
+      return p
+        .split(/(?<=[.!?])\s+/g)
+        .map(s => s.trim())
+        .filter(Boolean);
+    }
 
-      function splitClauses(sentence) {{
-        const s = (sentence || "").trim();
-        if (!s) return [];
+    function splitClauses(sentence) {
+      const s = (sentence || "").trim();
+      if (!s) return [];
 
-        const tokens = s.split(/(,|;|:)/g);
-        const out = [];
-        let buf = "";
+      const tokens = s.split(/(,|;|:)/g);
+      const out = [];
+      let buf = "";
 
-        for (let i = 0; i < tokens.length; i++) {{
-          const tok = tokens[i];
-          if (tok === "," || tok === ";" || tok === ":") {{
-            buf = (buf + tok).trim();
-            if (buf) out.push(buf);
-            buf = "";
-          }} else {{
-            buf = (buf + " " + tok).trim();
-          }}
-        }}
-        if (buf.trim()) out.push(buf.trim());
-        return out.filter(Boolean);
-      }}
+      for (let i = 0; i < tokens.length; i++) {
+        const tok = tokens[i];
+        if (tok === "," || tok === ";" || tok === ":") {
+          buf = (buf + tok).trim();
+          if (buf) out.push(buf);
+          buf = "";
+        } else {
+          buf = (buf + " " + tok).trim();
+        }
+      }
+      if (buf.trim()) out.push(buf.trim());
+      return out.filter(Boolean);
+    }
 
-      function buildQueueFromText(t) {{
-        const paragraphs = splitParagraphs(t);
-        const items = [];
+    function buildQueueFromText(t) {
+      const paragraphs = splitParagraphs(t);
+      const items = [];
 
-        for (let pi = 0; pi < paragraphs.length; pi++) {{
-          const sentences = splitSentences(paragraphs[pi]);
+      for (let pi = 0; pi < paragraphs.length; pi++) {
+        const sentences = splitSentences(paragraphs[pi]);
 
-          for (let si = 0; si < sentences.length; si++) {{
-            const sent = sentences[si];
+        for (let si = 0; si < sentences.length; si++) {
+          const sent = sentences[si];
 
-            if (flowMode && clausePauseMs > 0) {{
-              const clauses = splitClauses(sent);
-              for (let ci = 0; ci < clauses.length; ci++) {{
-                const isLastClause = ci === clauses.length - 1;
-                const isLastSentence = si === sentences.length - 1;
-                const isLastParagraph = pi === paragraphs.length - 1;
-
-                let pauseAfter = 0;
-                if (!isLastClause) pauseAfter = clausePauseMs;
-                else if (!isLastSentence) pauseAfter = sentencePauseMs;
-                else if (!isLastParagraph) pauseAfter = paragraphPauseMs; // FIX: correct variable
-
-                items.push({{ text: clauses[ci], pauseAfter }});
-              }}
-            }} else if (flowMode) {{
+          if (flowMode && clausePauseMs > 0) {
+            const clauses = splitClauses(sent);
+            for (let ci = 0; ci < clauses.length; ci++) {
+              const isLastClause = ci === clauses.length - 1;
               const isLastSentence = si === sentences.length - 1;
               const isLastParagraph = pi === paragraphs.length - 1;
 
               let pauseAfter = 0;
-              if (!isLastSentence) pauseAfter = sentencePauseMs;
+              if (!isLastClause) pauseAfter = clausePauseMs;
+              else if (!isLastSentence) pauseAfter = sentencePauseMs;
               else if (!isLastParagraph) pauseAfter = paragraphPauseMs;
 
-              items.push({{ text: sent, pauseAfter }});
-            }} else {{
-              items.push({{ text: normalizeText(t), pauseAfter: 0 }});
-              pi = paragraphs.length;
-              break;
-            }}
-          }}
-        }}
+              items.push({ text: clauses[ci], pauseAfter });
+            }
+          } else if (flowMode) {
+            const isLastSentence = si === sentences.length - 1;
+            const isLastParagraph = pi === paragraphs.length - 1;
 
-        const base = items.length ? items : [{{ text: normalizeText(t), pauseAfter: 0 }}];
+            let pauseAfter = 0;
+            if (!isLastSentence) pauseAfter = sentencePauseMs;
+            else if (!isLastParagraph) pauseAfter = paragraphPauseMs;
 
-        if (!enableScrub) return base;
+            items.push({ text: sent, pauseAfter });
+          } else {
+            items.push({ text: normalizeText(t), pauseAfter: 0 });
+            pi = paragraphs.length;
+            break;
+          }
+        }
+      }
 
-        const refined = [];
-        for (const it of base) {{
-          const chunks = splitIntoWordChunks(it.text || "", microChunkWords);
-          if (!chunks.length) continue;
+      const base = items.length ? items : [{ text: normalizeText(t), pauseAfter: 0 }];
 
-          if (chunks.length === 1) {{
-            refined.push({{ text: chunks[0], pauseAfter: Math.max(0, it.pauseAfter || 0) }});
-          }} else {{
-            for (let k = 0; k < chunks.length; k++) {{
-              refined.push({{ text: chunks[k], pauseAfter: 0 }});
-            }}
-            refined[refined.length - 1].pauseAfter = Math.max(0, it.pauseAfter || 0);
-          }}
-        }}
-        return refined.length ? refined : base;
-      }}
+      if (!enableScrub) return base;
 
-      function clearBetweenTimer() {{
-        if (betweenTimer) {{
-          clearTimeout(betweenTimer);
-          betweenTimer = null;
-        }}
-      }}
+      const refined = [];
+      for (const it of base) {
+        const chunks = splitIntoWordChunks(it.text || "", microChunkWords);
+        if (!chunks.length) continue;
 
-      function rebuildTimeline() {{
-        timeline = [];
-        starts = [];
-        totalMs = 0;
+        if (chunks.length === 1) {
+          refined.push({ text: chunks[0], pauseAfter: Math.max(0, it.pauseAfter || 0) });
+        } else {
+          for (let k = 0; k < chunks.length; k++) {
+            refined.push({ text: chunks[k], pauseAfter: 0 });
+          }
+          refined[refined.length - 1].pauseAfter = Math.max(0, it.pauseAfter || 0);
+        }
+      }
+      return refined.length ? refined : base;
+    }
 
-        let cum = 0;
-        for (let i = 0; i < queue.length; i++) {{
-          const speakMs = estimateSpeechMs(queue[i].text || "");
-          const pauseMs = Math.max(0, queue[i].pauseAfter || 0);
-          const total = speakMs + pauseMs;
-          timeline.push({{ speakMs, pauseMs, totalMs: total }});
-          starts.push(cum);
-          cum += total;
-        }}
-        totalMs = cum;
+    function clearBetweenTimer() {
+      if (betweenTimer) {
+        clearTimeout(betweenTimer);
+        betweenTimer = null;
+      }
+    }
 
-        seekEl.max = String(Math.max(0, totalMs));
-        seekEl.value = "0";
-        setTimeUI(0);
-      }}
+    function rebuildTimeline() {
+      timeline = [];
+      starts = [];
+      totalMs = 0;
 
-      function isActivePlayback() {{
-        const s = window.speechSynthesis;
-        return !!(betweenTimer || betweenPaused || s.speaking || s.paused);
-      }}
+      let cum = 0;
+      for (let i = 0; i < queue.length; i++) {
+        const speakMs = estimateSpeechMs(queue[i].text || "");
+        const pauseMs = Math.max(0, queue[i].pauseAfter || 0);
+        const total = speakMs + pauseMs;
+        timeline.push({ speakMs, pauseMs, totalMs: total });
+        starts.push(cum);
+        cum += total;
+      }
+      totalMs = cum;
 
-      function updateButtons() {{
-        const s = window.speechSynthesis;
-        const hasText = !!normalizeText(TEXT);
-        const hasQueue = queue.length > 0;
-        const playing = !!(s.speaking && !s.paused);
-        const paused = !!(s.paused || betweenPaused);
+      seekEl.max = String(Math.max(0, totalMs));
+      seekEl.value = "0";
+      setTimeUI(0);
+    }
 
-        playBtn.disabled = !hasText;
-        pauseBtn.disabled = !(playing || betweenTimer);
-        resumeBtn.disabled = !(paused || (hasQueue && idx < queue.length && !playing && !betweenTimer));
-        stopBtn.disabled = !(hasQueue && isActivePlayback());
+    function isActivePlayback() {
+      const s = window.speechSynthesis;
+      return !!(betweenTimer || betweenPaused || s.speaking || s.paused);
+    }
 
-        back10Btn.disabled = !(hasQueue && (totalMs > 0));
-        fwd10Btn.disabled = !(hasQueue && (totalMs > 0));
-      }}
+    function updateButtons() {
+      const s = window.speechSynthesis;
+      const hasText = !!normalizeText(TEXT);
+      const hasQueue = queue.length > 0;
+      const playing = !!(s.speaking && !s.paused);
+      const paused = !!(s.paused || betweenPaused);
 
-      function bumpSession() {{
-        playSession += 1;
-        return playSession;
-      }}
+      playBtn.disabled = !hasText;
+      pauseBtn.disabled = !(playing || betweenTimer);
+      resumeBtn.disabled = !(paused || (hasQueue && idx < queue.length && !playing && !betweenTimer));
+      stopBtn.disabled = !(hasQueue && isActivePlayback());
 
-      function cancelPlaybackKeepQueue() {{
-        if (!ensureSpeechSupport()) return;
+      back10Btn.disabled = !(hasQueue && (totalMs > 0));
+      fwd10Btn.disabled = !(hasQueue && (totalMs > 0));
+    }
 
-        bumpSession();
+    function bumpSession() {
+      playSession += 1;
+      return playSession;
+    }
+
+    function cancelPlaybackKeepQueue() {
+      if (!ensureSpeechSupport()) return;
+
+      bumpSession();
+      clearBetweenTimer();
+      betweenPaused = false;
+      betweenRemaining = 0;
+
+      utterStartAt = 0;
+      utterPausedAt = 0;
+      utterPausedAccum = 0;
+
+      window.speechSynthesis.cancel();
+      updateButtons();
+    }
+
+    function stopAll() {
+      if (!ensureSpeechSupport()) return;
+
+      bumpSession();
+      clearBetweenTimer();
+      betweenPaused = false;
+      betweenRemaining = 0;
+
+      utterStartAt = 0;
+      utterPausedAt = 0;
+      utterPausedAccum = 0;
+
+      manualSeekPosValid = false;
+      manualSeekPosMs = 0;
+
+      window.speechSynthesis.cancel();
+      queue = [];
+      idx = 0;
+      currentItemIndex = -1;
+
+      rebuildTimeline();
+      setStatus("Stopped.");
+      updateButtons();
+    }
+
+    function pauseAll() {
+      if (!ensureSpeechSupport()) return;
+
+      const synth = window.speechSynthesis;
+
+      // If we are between items, "pause" the remaining delay
+      if (betweenTimer) {
+        const now = Date.now();
+        betweenRemaining = Math.max(0, betweenDueAt - now);
         clearBetweenTimer();
-        betweenPaused = false;
-        betweenRemaining = 0;
+        betweenPaused = true;
+        setStatus("Paused.");
+        updateButtons();
+        return;
+      }
 
-        utterStartAt = 0;
-        utterPausedAt = 0;
+      // If currently speaking, pause (native pause) so Resume continues mid-utterance
+      if (synth.speaking && !synth.paused) {
+        utterPausedAt = Date.now(); // freeze progress
+        synth.pause();
+        setStatus("Paused.");
+        updateButtons();
+        return;
+      }
+
+      // Already paused
+      if (synth.paused || betweenPaused) {
+        setStatus("Paused.");
+        updateButtons();
+      }
+    }
+
+    function scheduleNext(delayMs) {
+      clearBetweenTimer();
+
+      if (delayMs <= 0) {
+        speakNext();
+        return;
+      }
+
+      betweenDueAt = Date.now() + delayMs;
+      betweenTimer = setTimeout(() => {
+        betweenTimer = null;
+        speakNext();
+      }, delayMs);
+      updateButtons();
+    }
+
+    async function speakItem(itemText, pauseAfter, sessionId) {
+      const voices = await getVoicesAsync();
+
+      const utter = new SpeechSynthesisUtterance(itemText);
+      utter.rate = preferredRate;
+      utter.pitch = preferredPitch;
+      utter.lang = preferredLang;
+
+      const chosen = getSelectedVoice(voices) || pickDefaultVoice(voices);
+      if (chosen) {
+        utter.voice = chosen;
+        if (chosen.lang) utter.lang = chosen.lang;
+      }
+
+      utter.onstart = () => {
+        utterStartAt = Date.now();
         utterPausedAccum = 0;
-
-        window.speechSynthesis.cancel();
-        updateButtons();
-      }}
-
-      function stopAll() {{
-        if (!ensureSpeechSupport()) return;
-
-        bumpSession();
-        clearBetweenTimer();
-        betweenPaused = false;
-        betweenRemaining = 0;
-
-        utterStartAt = 0;
         utterPausedAt = 0;
-        utterPausedAccum = 0;
-
-        manualSeekPosValid = false;
-        manualSeekPosMs = 0;
-
-        window.speechSynthesis.cancel();
-        queue = [];
-        idx = 0;
-        currentItemIndex = -1;
-
-        rebuildTimeline();
-        setStatus("Stopped.");
-        updateButtons();
-      }}
-
-      function pauseAll() {{
-        if (!ensureSpeechSupport()) return;
-
-        const synth = window.speechSynthesis;
-
-        // If we are between items, "pause" the remaining delay
-        if (betweenTimer) {{
-          const now = Date.now();
-          betweenRemaining = Math.max(0, betweenDueAt - now);
-          clearBetweenTimer();
-          betweenPaused = true;
-          setStatus("Paused.");
-          updateButtons();
-          return;
-        }}
-
-        // If currently speaking, pause (native pause) so Resume continues mid-utterance
-        if (synth.speaking && !synth.paused) {{
-          utterPausedAt = Date.now(); // freeze progress
-          synth.pause();
-          setStatus("Paused.");
-          updateButtons();
-          return;
-        }}
-
-        // Already paused
-        if (synth.paused || betweenPaused) {{
-          setStatus("Paused.");
-          updateButtons();
-        }}
-      }}
-
-      function scheduleNext(delayMs) {{
-        clearBetweenTimer();
-
-        if (delayMs <= 0) {{
-          speakNext();
-          return;
-        }}
-
-        betweenDueAt = Date.now() + delayMs;
-        betweenTimer = setTimeout(() => {{
-          betweenTimer = null;
-          speakNext();
-        }}, delayMs);
-        updateButtons();
-      }}
-
-      async function speakItem(itemText, pauseAfter, sessionId, itemIndex) {{
-        const voices = await getVoicesAsync();
-
-        const utter = new SpeechSynthesisUtterance(itemText);
-        utter.rate = preferredRate;
-        utter.pitch = preferredPitch;
-        utter.lang = preferredLang;
-
-        const chosen = getSelectedVoice(voices) || pickDefaultVoice(voices);
-        if (chosen) {{
-          utter.voice = chosen;
-          if (chosen.lang) utter.lang = chosen.lang;
-        }}
-
-        utter.onstart = () => {{
-          // reset timing for this utterance
-          utterStartAt = Date.now();
-          utterPausedAccum = 0;
-          utterPausedAt = 0;
-          setStatus("Speaking…");
-          updateButtons();
-        }};
-
-        // KEY FIX:
-        // Use onend to continue the queue instead of a watcher interval that dies on pause.
-        utter.onend = () => {{
-          // Ignore events from old sessions (cancel/stop/seek)
-          if (sessionId !== playSession) return;
-
-          // If we're paused between items, don't auto-continue yet.
-          if (betweenPaused) return;
-
-          // If user paused the synth at the exact end edge, wait for resume.
-          const s = window.speechSynthesis;
-          if (s.paused) {{
-            setStatus("Paused.");
-            updateButtons();
-            return;
-          }}
-
-          scheduleNext(Math.max(0, pauseAfter || 0));
-        }};
-
-        utter.onerror = () => {{
-          if (sessionId !== playSession) return;
-          setStatus("TTS error.");
-          updateButtons();
-        }};
-
-        window.speechSynthesis.speak(utter);
-      }}
-
-      function speakNext() {{
-        if (!ensureSpeechSupport()) return;
-
-        const synth = window.speechSynthesis;
-
-        if (!queue.length) {{
-          setStatus("Nothing to read.");
-          updateButtons();
-          return;
-        }}
-
-        if (idx >= queue.length) {{
-          setStatus("Done.");
-          manualSeekPosValid = false;
-          manualSeekPosMs = totalMs;
-          updateButtons();
-          return;
-        }}
-
-        manualSeekPosValid = false;
-
-        const item = queue[idx];
-        const pauseAfter = Math.max(0, item.pauseAfter || 0);
-
-        currentItemIndex = idx;
-        idx += 1;
-
-        // Don't cancel if paused; but if currently speaking and not paused, cancel to avoid overlap.
-        if (synth.speaking && !synth.paused) {{
-          bumpSession();
-          synth.cancel();
-        }}
-
-        const sessionId = playSession;
         setStatus("Speaking…");
         updateButtons();
-        speakItem(item.text, pauseAfter, sessionId, currentItemIndex);
-      }}
+      };
 
-      function startFresh() {{
-        if (!ensureSpeechSupport()) return;
+      // KEY: Continue queue via onend; pause/resume does not lose position.
+      utter.onend = () => {
+        if (sessionId !== playSession) return;
 
-        bumpSession();
-        clearBetweenTimer();
-        betweenPaused = false;
-        betweenRemaining = 0;
+        // If paused between items, wait for Resume.
+        if (betweenPaused) return;
 
-        utterStartAt = 0;
-        utterPausedAt = 0;
-        utterPausedAccum = 0;
+        const s = window.speechSynthesis;
+        if (s.paused) {
+          setStatus("Paused.");
+          updateButtons();
+          return;
+        }
 
+        scheduleNext(Math.max(0, pauseAfter || 0));
+      };
+
+      utter.onerror = () => {
+        if (sessionId !== playSession) return;
+        setStatus("TTS error.");
+        updateButtons();
+      };
+
+      window.speechSynthesis.speak(utter);
+    }
+
+    function speakNext() {
+      if (!ensureSpeechSupport()) return;
+
+      const synth = window.speechSynthesis;
+
+      if (!queue.length) {
+        setStatus("Nothing to read.");
+        updateButtons();
+        return;
+      }
+
+      if (idx >= queue.length) {
+        setStatus("Done.");
         manualSeekPosValid = false;
-        manualSeekPosMs = 0;
+        manualSeekPosMs = totalMs;
+        updateButtons();
+        return;
+      }
 
-        window.speechSynthesis.cancel();
+      manualSeekPosValid = false;
 
-        queue = buildQueueFromText(TEXT);
-        idx = 0;
-        currentItemIndex = -1;
+      const item = queue[idx];
+      const pauseAfter = Math.max(0, item.pauseAfter || 0);
 
-        rebuildTimeline();
-        seekEl.value = "0";
-        setTimeUI(0);
+      currentItemIndex = idx;
+      idx += 1;
 
+      // Avoid overlap
+      if (synth.speaking && !synth.paused) {
+        bumpSession();
+        synth.cancel();
+      }
+
+      const sessionId = playSession;
+      setStatus("Speaking…");
+      updateButtons();
+      speakItem(item.text, pauseAfter, sessionId);
+    }
+
+    function startFresh() {
+      if (!ensureSpeechSupport()) return;
+
+      bumpSession();
+      clearBetweenTimer();
+      betweenPaused = false;
+      betweenRemaining = 0;
+
+      utterStartAt = 0;
+      utterPausedAt = 0;
+      utterPausedAccum = 0;
+
+      manualSeekPosValid = false;
+      manualSeekPosMs = 0;
+
+      window.speechSynthesis.cancel();
+
+      queue = buildQueueFromText(TEXT);
+      idx = 0;
+      currentItemIndex = -1;
+
+      rebuildTimeline();
+      seekEl.value = "0";
+      setTimeUI(0);
+
+      setStatus("Speaking…");
+      updateButtons();
+      speakNext();
+    }
+
+    function resumeAll() {
+      if (!ensureSpeechSupport()) return;
+
+      const synth = window.speechSynthesis;
+
+      // If paused during between-item delay, resume remaining delay
+      if (betweenPaused) {
+        betweenPaused = false;
+        const delay = Math.max(0, betweenRemaining);
+        betweenRemaining = 0;
+        setStatus("Speaking…");
+        updateButtons();
+        scheduleNext(delay);
+        return;
+      }
+
+      // If paused mid-utterance, native resume continues exactly from pause point
+      if (synth.paused) {
+        if (utterPausedAt) {
+          utterPausedAccum += (Date.now() - utterPausedAt);
+          utterPausedAt = 0;
+        }
+        synth.resume();
+        setStatus("Speaking…");
+        updateButtons();
+        return;
+      }
+
+      // If queue exists and we're not currently speaking, continue
+      if (queue.length && idx < queue.length && !synth.speaking) {
         setStatus("Speaking…");
         updateButtons();
         speakNext();
-      }}
+        return;
+      }
 
-      function resumeAll() {{
-        if (!ensureSpeechSupport()) return;
+      // If nothing started yet, start fresh
+      if (!queue.length) startFresh();
+    }
 
-        const synth = window.speechSynthesis;
+    function findIndexForMs(ms) {
+      const t = clamp(ms, 0, totalMs);
+      if (!starts.length) return 0;
+      for (let i = starts.length - 1; i >= 0; i--) {
+        if (t >= starts[i]) return i;
+      }
+      return 0;
+    }
 
-        if (betweenPaused) {{
-          betweenPaused = false;
-          const delay = Math.max(0, betweenRemaining);
-          betweenRemaining = 0;
-          setStatus("Speaking…");
-          updateButtons();
-          scheduleNext(delay);
-          return;
-        }}
+    function seekToMs(ms, keepPaused=true) {
+      if (!ensureSpeechSupport()) return;
 
-        if (synth.paused) {{
-          // Freeze time was held in utterPausedAt; add to paused accumulation
-          if (utterPausedAt) {{
-            utterPausedAccum += (Date.now() - utterPausedAt);
-            utterPausedAt = 0;
-          }}
-          synth.resume();
-          setStatus("Speaking…");
-          updateButtons();
-          return;
-        }}
-
-        // If queue exists and we're not currently speaking, continue
-        if (queue.length && idx < queue.length && !synth.speaking) {{
-          setStatus("Speaking…");
-          updateButtons();
-          speakNext();
-          return;
-        }}
-
-        // If nothing started yet, start fresh
-        if (!queue.length) {{
-          startFresh();
-        }}
-      }}
-
-      function findIndexForMs(ms) {{
-        const t = clamp(ms, 0, totalMs);
-        if (!starts.length) return 0;
-        for (let i = starts.length - 1; i >= 0; i--) {{
-          if (t >= starts[i]) return i;
-        }}
-        return 0;
-      }}
-
-      function seekToMs(ms, keepPaused=true) {{
-        if (!ensureSpeechSupport()) return;
-
-        if (!queue.length) {{
-          queue = buildQueueFromText(TEXT);
-          idx = 0;
-          currentItemIndex = -1;
-          rebuildTimeline();
-        }}
-
-        const t = clamp(ms, 0, totalMs);
-        const targetIndex = findIndexForMs(t);
-
-        // Cancel current speech/timers but keep the built queue
-        cancelPlaybackKeepQueue();
-
-        idx = targetIndex;
+      if (!queue.length) {
+        queue = buildQueueFromText(TEXT);
+        idx = 0;
         currentItemIndex = -1;
+        rebuildTimeline();
+      }
 
-        manualSeekPosValid = true;
-        manualSeekPosMs = t;
+      const t = clamp(ms, 0, totalMs);
+      const targetIndex = findIndexForMs(t);
 
-        seekEl.value = String(Math.round(t));
-        setTimeUI(t);
+      cancelPlaybackKeepQueue();
 
-        if (keepPaused) {{
-          setStatus("Seeked. Press Resume to continue.");
-        }} else {{
-          setStatus("Speaking…");
-        }}
-        updateButtons();
+      idx = targetIndex;
+      currentItemIndex = -1;
 
-        if (!keepPaused) {{
-          resumeAll();
-        }}
-      }}
+      manualSeekPosValid = true;
+      manualSeekPosMs = t;
 
-      function computeProgressMs() {{
-        if (!queue.length || !timeline.length) {{
-          return 0;
-        }}
+      seekEl.value = String(Math.round(t));
+      setTimeUI(t);
 
-        if (manualSeekPosValid) {{
-          return clamp(manualSeekPosMs, 0, totalMs);
-        }}
+      if (keepPaused) setStatus("Seeked. Press Resume to continue.");
+      else setStatus("Speaking…");
 
-        const synth = window.speechSynthesis;
-
-        if (betweenTimer || betweenPaused) {{
-          const i = currentItemIndex;
-          if (i >= 0 && i < timeline.length) {{
-            const base = starts[i] + timeline[i].speakMs;
-            const remaining = betweenTimer ? Math.max(0, betweenDueAt - Date.now()) : Math.max(0, betweenRemaining);
-            const elapsedPause = clamp(timeline[i].pauseMs - remaining, 0, timeline[i].pauseMs);
-            return clamp(base + elapsedPause, 0, totalMs);
-          }}
-        }}
-
-        if (synth.speaking || synth.paused) {{
-          const i = currentItemIndex;
-          if (i >= 0 && i < timeline.length) {{
-            // FIX: while paused, freeze at utterPausedAt so the clock doesn't keep advancing
-            const now = synth.paused && utterPausedAt ? utterPausedAt : Date.now();
-            const elapsed = clamp(now - utterStartAt - utterPausedAccum, 0, timeline[i].speakMs);
-            return clamp(starts[i] + elapsed, 0, totalMs);
-          }}
-        }}
-
-        if (idx >= timeline.length) return totalMs;
-        return clamp(starts[idx] || 0, 0, totalMs);
-      }}
-
-      function updateProgressUI() {{
-        if (userDragging) return;
-        const pos = computeProgressMs();
-        if (seekEl.max !== String(Math.max(0, totalMs))) {{
-          seekEl.max = String(Math.max(0, totalMs));
-        }}
-        seekEl.value = String(Math.round(pos));
-        setTimeUI(pos);
-        updateButtons();
-      }}
-
-      setInterval(() => {{
-        try {{
-          updateProgressUI();
-        }} catch (e) {{}}
-      }}, 200);
-
-      function beginDrag() {{
-        userDragging = true;
-        pauseAll();
-        setStatus("Paused (seeking)…");
-        updateButtons();
-      }}
-
-      function endDrag() {{
-        userDragging = false;
-        const target = Number(seekEl.value || "0");
-        seekToMs(target, true);
-      }}
-
-      function jumpByMs(deltaMs) {{
-        if (!queue.length) {{
-          queue = buildQueueFromText(TEXT);
-          idx = 0;
-          currentItemIndex = -1;
-          rebuildTimeline();
-        }}
-
-        const synth = window.speechSynthesis;
-        const wasSpeaking = !!(synth.speaking && !synth.paused) || !!betweenTimer;
-        const wasPaused = !!(synth.paused || betweenPaused);
-
-        const pos = computeProgressMs();
-        const target = clamp(pos + deltaMs, 0, totalMs);
-
-        // If we were actively speaking, we seek and continue automatically.
-        // If we were paused, we seek but remain paused.
-        if (wasSpeaking) {{
-          seekToMs(target, false);
-        }} else {{
-          seekToMs(target, true);
-          if (!wasPaused && !isActivePlayback()) {{
-            // idle: keep idle
-          }}
-        }}
-      }}
-
-      seekEl.addEventListener("mousedown", beginDrag);
-      seekEl.addEventListener("touchstart", beginDrag, {{ passive: true }});
-
-      seekEl.addEventListener("input", () => {{
-        const target = Number(seekEl.value || "0");
-        setTimeUI(target);
-      }});
-
-      seekEl.addEventListener("mouseup", endDrag);
-      seekEl.addEventListener("touchend", endDrag);
-
-      seekEl.addEventListener("change", () => {{
-        if (userDragging) return;
-        const target = Number(seekEl.value || "0");
-        seekToMs(target, true);
-      }});
-
-      // Button wiring
-      playBtn.addEventListener("click", () => {{
-        if (!ensureSpeechSupport()) return;
-
-        const synth = window.speechSynthesis;
-
-        // If paused, resume from pause point
-        if (betweenPaused || synth.paused) {{
-          resumeAll();
-          return;
-        }}
-
-        // If currently speaking, treat Play as "restart page" (simple + predictable)
-        if (synth.speaking && !synth.paused) {{
-          startFresh();
-          return;
-        }}
-
-        // If queue exists and not finished, continue
-        if (queue.length && idx < queue.length) {{
-          resumeAll();
-          return;
-        }}
-
-        // Otherwise start
-        startFresh();
-      }});
-
-      pauseBtn.addEventListener("click", pauseAll);
-      resumeBtn.addEventListener("click", resumeAll);
-      stopBtn.addEventListener("click", stopAll);
-
-      back10Btn.addEventListener("click", () => jumpByMs(-10000));
-      fwd10Btn.addEventListener("click", () => jumpByMs(10000));
-
-      voiceSelect.addEventListener("change", () => {{
-        try {{ localStorage.setItem(storageKey, voiceSelect.value || ""); }} catch (e) {{}}
-
-        // If playing, stop so new voice applies cleanly
-        if (ensureSpeechSupport() && isActivePlayback()) {{
-          stopAll();
-        }} else {{
-          setStatus("Voice selected.");
-          updateButtons();
-        }}
-      }});
-
-      resetVoiceBtn.addEventListener("click", async () => {{
-        try {{ localStorage.removeItem(storageKey); }} catch (e) {{}}
-        const voices = await getVoicesAsync();
-        const def = pickDefaultVoice(voices);
-        if (def && def.voiceURI) {{
-          voiceSelect.value = def.voiceURI;
-          setStatus("Voice loaded (default: Google UK Male if available).");
-        }} else {{
-          setStatus("Reset (no default found).");
-        }}
-        if (ensureSpeechSupport() && isActivePlayback()) stopAll();
-        updateButtons();
-      }});
-
-      initVoices();
-
-      // Init time UI
-      tL.textContent = "0:00";
-      tR.textContent = "0:00";
-      seekEl.max = "0";
-      seekEl.value = "0";
       updateButtons();
-    </script>
-    """
+
+      if (!keepPaused) resumeAll();
+    }
+
+    function computeProgressMs() {
+      if (!queue.length || !timeline.length) return 0;
+
+      if (manualSeekPosValid) {
+        return clamp(manualSeekPosMs, 0, totalMs);
+      }
+
+      const synth = window.speechSynthesis;
+
+      if (betweenTimer || betweenPaused) {
+        const i = currentItemIndex;
+        if (i >= 0 && i < timeline.length) {
+          const base = starts[i] + timeline[i].speakMs;
+          const remaining = betweenTimer
+            ? Math.max(0, betweenDueAt - Date.now())
+            : Math.max(0, betweenRemaining);
+          const elapsedPause = clamp(timeline[i].pauseMs - remaining, 0, timeline[i].pauseMs);
+          return clamp(base + elapsedPause, 0, totalMs);
+        }
+      }
+
+      if (synth.speaking || synth.paused) {
+        const i = currentItemIndex;
+        if (i >= 0 && i < timeline.length) {
+          const now = (synth.paused && utterPausedAt) ? utterPausedAt : Date.now();
+          const elapsed = clamp(now - utterStartAt - utterPausedAccum, 0, timeline[i].speakMs);
+          return clamp(starts[i] + elapsed, 0, totalMs);
+        }
+      }
+
+      if (idx >= timeline.length) return totalMs;
+      return clamp(starts[idx] || 0, 0, totalMs);
+    }
+
+    function updateProgressUI() {
+      if (userDragging) return;
+      const pos = computeProgressMs();
+      if (seekEl.max !== String(Math.max(0, totalMs))) {
+        seekEl.max = String(Math.max(0, totalMs));
+      }
+      seekEl.value = String(Math.round(pos));
+      setTimeUI(pos);
+      updateButtons();
+    }
+
+    setInterval(() => {
+      try { updateProgressUI(); } catch (e) {}
+    }, 200);
+
+    function beginDrag() {
+      userDragging = true;
+      pauseAll();
+      setStatus("Paused (seeking)…");
+      updateButtons();
+    }
+
+    function endDrag() {
+      userDragging = false;
+      const target = Number(seekEl.value || "0");
+      seekToMs(target, true);
+    }
+
+    function jumpByMs(deltaMs) {
+      if (!queue.length) {
+        queue = buildQueueFromText(TEXT);
+        idx = 0;
+        currentItemIndex = -1;
+        rebuildTimeline();
+      }
+
+      const synth = window.speechSynthesis;
+      const wasSpeaking = !!(synth.speaking && !synth.paused) || !!betweenTimer;
+      const wasPaused = !!(synth.paused || betweenPaused);
+
+      const pos = computeProgressMs();
+      const target = clamp(pos + deltaMs, 0, totalMs);
+
+      if (wasSpeaking) {
+        seekToMs(target, false); // keep going
+      } else {
+        seekToMs(target, true);  // remain paused/idle
+        if (!wasPaused && !isActivePlayback()) {
+          // idle: keep idle
+        }
+      }
+    }
+
+    seekEl.addEventListener("mousedown", beginDrag);
+    seekEl.addEventListener("touchstart", beginDrag, { passive: true });
+
+    seekEl.addEventListener("input", () => {
+      const target = Number(seekEl.value || "0");
+      setTimeUI(target);
+    });
+
+    seekEl.addEventListener("mouseup", endDrag);
+    seekEl.addEventListener("touchend", endDrag);
+
+    seekEl.addEventListener("change", () => {
+      if (userDragging) return;
+      const target = Number(seekEl.value || "0");
+      seekToMs(target, true);
+    });
+
+    playBtn.addEventListener("click", () => {
+      if (!ensureSpeechSupport()) return;
+
+      const synth = window.speechSynthesis;
+
+      // If paused, resume
+      if (betweenPaused || synth.paused) {
+        resumeAll();
+        return;
+      }
+
+      // If speaking, restart page (predictable)
+      if (synth.speaking && !synth.paused) {
+        startFresh();
+        return;
+      }
+
+      // If queue exists and not finished, continue
+      if (queue.length && idx < queue.length) {
+        resumeAll();
+        return;
+      }
+
+      // Otherwise start
+      startFresh();
+    });
+
+    pauseBtn.addEventListener("click", pauseAll);
+    resumeBtn.addEventListener("click", resumeAll);
+    stopBtn.addEventListener("click", stopAll);
+
+    back10Btn.addEventListener("click", () => jumpByMs(-10000));
+    fwd10Btn.addEventListener("click", () => jumpByMs(10000));
+
+    voiceSelect.addEventListener("change", () => {
+      try { localStorage.setItem(storageKey, voiceSelect.value || ""); } catch (e) {}
+
+      // If playing, stop so new voice applies cleanly
+      if (ensureSpeechSupport() && isActivePlayback()) {
+        stopAll();
+      } else {
+        setStatus("Voice selected.");
+        updateButtons();
+      }
+    });
+
+    resetVoiceBtn.addEventListener("click", async () => {
+      try { localStorage.removeItem(storageKey); } catch (e) {}
+      const voices = await getVoicesAsync();
+      const def = pickDefaultVoice(voices);
+      if (def && def.voiceURI) {
+        voiceSelect.value = def.voiceURI;
+        setStatus("Voice loaded (default: Google UK Male if available).");
+      } else {
+        setStatus("Reset (no default found).");
+      }
+      if (ensureSpeechSupport() && isActivePlayback()) stopAll();
+      updateButtons();
+    });
+
+    async function initVoices() {
+      if (!ensureSpeechSupport()) {
+        setStatus("Speech not supported.");
+        return;
+      }
+      const voices = await getVoicesAsync();
+      if (!voices || !voices.length) {
+        voiceSelect.innerHTML = '<option value="">No voices found</option>';
+        setStatus("No voices found.");
+        return;
+      }
+      populateVoices(voices);
+      updateButtons();
+    }
+
+    // init
+    initVoices();
+    tL.textContent = "0:00";
+    tR.textContent = "0:00";
+    seekEl.max = "0";
+    seekEl.value = "0";
+    updateButtons();
+  </script>
+</div>
+"""
+
+    html = tmpl
+    html = html.replace("__CID__", component_id)
+    html = html.replace("__TEXT_JSON__", text_json)
+    html = html.replace("__PREFERRED_LANG__", preferred_lang)
+    html = html.replace("__RATE__", str(float(rate)))
+    html = html.replace("__PITCH__", str(float(pitch)))
+    html = html.replace("__PREFER_DEEP__", "true" if prefer_deep_male_gb else "false")
+    html = html.replace("__FLOW_MODE__", "true" if flow_mode else "false")
+    html = html.replace("__SENT_PAUSE__", str(int(sentence_pause_ms)))
+    html = html.replace("__PARA_PAUSE__", str(int(paragraph_pause_ms)))
+    html = html.replace("__CLAUSE_PAUSE__", str(int(clause_pause_ms)))
+
     st.components.v1.html(html, height=420)
 
 
