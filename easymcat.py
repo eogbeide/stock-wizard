@@ -10,6 +10,8 @@
 # - Story mode (narration-friendly page formatting)
 # - Separate Resume button after Pause
 # - Prevent bracketed letters like (A), (B), (C) from being misread as chemical formulas unless truly chemistry-contextual
+# - NEW: Speak option letters clearly as "letter A/B/..." (so they are not interpreted as chemical symbols)
+# - NEW: TTS progress timeline with draggable scrubber + ±10s jump (seeks by sentence/segment boundaries)
 #
 # Run:
 #   streamlit run easymcat.py
@@ -378,8 +380,42 @@ def make_story_mode(text: str) -> str:
 
 
 # -----------------------------
-# Speakable helpers: numbers, math, chemistry
+# Speakable helpers: letters/labels, numbers, math, chemistry
 # -----------------------------
+def make_letter_labels_speakable(text: str) -> str:
+    """
+    Ensure option/label letters are spoken as letters, not mistaken as chemistry tokens.
+    Examples:
+      (A) -> "letter A"
+      [B] -> "letter B"
+      A) / A. at start of line -> "letter A."
+      Option A -> "Option letter A"
+      Answer: C -> "Answer: letter C"
+    """
+    if not text:
+        return ""
+
+    s = text
+
+    # (A) / (B) etc
+    s = re.sub(r"(?<![A-Za-z0-9])\(\s*([A-Z])\s*\)(?![A-Za-z0-9])", r" letter \1 ", s)
+
+    # [A] / [B]
+    s = re.sub(r"(?<![A-Za-z0-9])\[\s*([A-Z])\s*\](?![A-Za-z0-9])", r" letter \1 ", s)
+
+    # Line-leading "A)" / "B." / "C:" (common in MCQ formatting)
+    s = re.sub(r"(?m)^\s*([A-Z])\s*[\)\.\:]\s*", lambda m: f"letter {m.group(1)}. ", s)
+
+    # "Option A", "Choice B"
+    s = re.sub(r"\b(option|choice|choices)\s+([A-Z])\b", r"\1 letter \2", s, flags=re.IGNORECASE)
+
+    # "Answer: A"
+    s = re.sub(r"\b(answer|ans)\s*[:\-]\s*([A-Z])\b", r"\1: letter \2", s, flags=re.IGNORECASE)
+
+    s = re.sub(r"[ \t]+", " ", s)
+    return s.strip()
+
+
 _NUM_WORDS_0_19 = {
     0: "zero",
     1: "one",
@@ -597,6 +633,37 @@ ELEMENT_SYMBOLS = set(ELEMENT_NAMES.keys())
 
 COMMON_ACRONYM_BLACKLIST = {"US", "UK", "EU", "UN", "USA", "UAE", "NATO", "MCAT", "SAT", "ACT", "JAMB", "WAEC"}
 
+# Only convert bare single-element tokens in chemistry context if they are "safe" (unlikely to be an English word).
+SAFE_SINGLE_ELEMENT_WHITELIST = {
+    "Fe",
+    "Na",
+    "Cl",
+    "Ca",
+    "Mg",
+    "Zn",
+    "Cu",
+    "Ag",
+    "Au",
+    "Pb",
+    "Sn",
+    "Hg",
+    "Al",
+    "Si",
+    "K",
+    "Li",
+    "Ba",
+    "Sr",
+    "Mn",
+    "Co",
+    "Ni",
+    "Cr",
+    "Pt",
+    "Ti",
+    "V",
+    "W",
+    "U",
+}
+
 # Chemistry-context hints: used ONLY to allow ambiguous short tokens in chemistry-like text
 CHEM_CONTEXT_WORDS = [
     "chemistry",
@@ -765,9 +832,26 @@ _FORMULA_RE = re.compile(
       )+
       (?:[·\.](?:\d+)?(?:[A-Z][a-z]?\d*)+)*         # ·5H2O  (also accepts .)
       (?:\^?\d*[+\-])?                              # optional charge (Fe3+ or ^2-)
+      (?:\((?:aq|s|l|g)\))?                         # optional state if glued: (aq)/(s)/(l)/(g)
     )(?![A-Za-z0-9])
     """,
-    re.VERBOSE,
+    re.VERBOSE | re.IGNORECASE,
+)
+
+# Match state tokens AFTER a plausible formula, even with whitespace: "H2O (l)"
+_STATE_AFTER_FORMULA_RE = re.compile(
+    r"""
+    (?P<form>
+      (?:\d+)?(?:
+        (?:\([A-Za-z0-9+\-]+\)\d*)|(?:[A-Z][a-z]?\d*)
+      )+(?:[·\.](?:\d+)?(?:[A-Z][a-z]?\d*)+)*
+      (?:\^?\d*[+\-])?
+    )
+    \s*\(
+      (?P<state>aq|s|l|g)
+    \)
+    """,
+    re.VERBOSE | re.IGNORECASE,
 )
 
 
@@ -789,11 +873,21 @@ def _extract_element_symbols_strict(tok: str) -> Optional[List[str]]:
     """
     Strictly parse element symbols in order.
     Returns None if it contains invalid 'element-looking' tokens.
+
+    NOTE: ignores common state markers like (aq), (s), (l), (g) when attached to a formula.
     """
     t = _normalize_chem_unicode(tok)
     symbols: List[str] = []
     i = 0
     while i < len(t):
+        # ignore state markers
+        if t[i : i + 4].lower() == "(aq)":
+            i += 4
+            continue
+        if t[i : i + 3].lower() in ("(s)", "(l)", "(g)"):
+            i += 3
+            continue
+
         ch = t[i]
 
         if ch.isspace():
@@ -827,7 +921,8 @@ def _is_likely_formula(tok: str, include_single_element: bool, chem_context: boo
     """
     Conservative formula detection that:
       - avoids bracketed letters like (A), (B), (C) being treated as formulas
-      - allows ambiguous all-caps short formulas (OH, CO, NO) ONLY in chemistry-context text
+      - allows ambiguous short tokens ONLY in chemistry-context AND with extra hints
+      - keeps "bare single element" conversion very strict to avoid words like "As", "In", "He"
     """
     if not tok:
         return False
@@ -837,16 +932,16 @@ def _is_likely_formula(tok: str, include_single_element: bool, chem_context: boo
     if t in COMMON_ACRONYM_BLACKLIST:
         return False
 
-    # Hard guards for "letters in brackets"
+    # Hard guards for option letters in brackets
     if re.fullmatch(r"[\(\[]\s*[A-Z]\s*[\)\]]", t):
         return False
 
-    # Roman numerals in parentheses are usually enumeration
+    # Roman numerals in parentheses are usually enumeration (unless other chemistry hints exist)
     if re.fullmatch(r"\(\s*[IVXLCM]+\s*\)", t) and not re.search(r"[\d]|[+\-^]|[·\.]", t):
         return False
 
-    # Any bracketed pure-letter token with no digits/charge/dot is usually outlining,
-    # except in a chemistry context (where (OH) etc can occur).
+    # Bracketed pure-letter token with no digits/charge/dot is usually outlining,
+    # except in chemistry context AND length>1 (e.g. (OH) could appear in chemistry).
     m_br = re.fullmatch(r"([\(\[])\s*([A-Za-z]+)\s*([\)\]])", t)
     if m_br and not re.search(r"[\d]|[+\-^]|[·\.]", t):
         inner = m_br.group(2)
@@ -865,23 +960,24 @@ def _is_likely_formula(tok: str, include_single_element: bool, chem_context: boo
     has_charge = bool(re.search(r"(\^?\d*[+\-])$", t))
     has_lower = bool(re.search(r"[a-z]", t))  # indicates 2-letter symbols like Na, Cl
     all_caps_letters_only = bool(re.fullmatch(r"[A-Z]+", t))
+    has_state = bool(re.search(r"\((aq|s|l|g)\)\s*$", t, flags=re.IGNORECASE))
 
     # Prevent plain ALL-CAPS words unless context or stronger hints exist
-    if all_caps_letters_only and not (has_digit or has_group or has_dot or has_charge or has_lower or chem_context):
+    if all_caps_letters_only and not (has_digit or has_group or has_dot or has_charge or has_lower or has_state or chem_context):
         return False
 
     # Multi-element formulas:
     if len(symbols) >= 2:
-        if has_digit or has_group or has_dot or has_charge or has_lower:
+        if has_digit or has_group or has_dot or has_charge or has_lower or has_state:
             return True
         return bool(chem_context)
 
     # Single element:
-    if has_digit or has_charge or has_dot:
+    if has_digit or has_charge or has_dot or has_state:
         return True
 
-    # Allow single-element symbols ONLY when explicitly enabled AND in chemistry context
-    if include_single_element and chem_context:
+    # Bare single-element: allow only if explicitly enabled AND chemistry-context AND in a safe whitelist
+    if include_single_element and chem_context and symbols[0] in SAFE_SINGLE_ELEMENT_WHITELIST:
         return True
 
     return False
@@ -898,14 +994,15 @@ def _speak_formula(tok: str, element_mode: str) -> str:
     Turn H2SO4 into: hydrogen two sulfur oxygen four
     Turn (NH4)2SO4 into: open bracket nitrogen hydrogen four close bracket two sulfur oxygen four
     Turn Fe3+ into: iron three plus charge
+    Turn H2O(l) or H2O (l) into: hydrogen two oxygen liquid
     """
     t = _normalize_chem_unicode(tok)
 
-    # state symbols
-    t = re.sub(r"\(aq\)", " (aq) ", t, flags=re.IGNORECASE)
-    t = re.sub(r"\(s\)", " (s) ", t, flags=re.IGNORECASE)
-    t = re.sub(r"\(l\)", " (l) ", t, flags=re.IGNORECASE)
-    t = re.sub(r"\(g\)", " (g) ", t, flags=re.IGNORECASE)
+    # normalize state symbols
+    t = re.sub(r"\(\s*aq\s*\)", "(aq)", t, flags=re.IGNORECASE)
+    t = re.sub(r"\(\s*s\s*\)", "(s)", t, flags=re.IGNORECASE)
+    t = re.sub(r"\(\s*l\s*\)", "(l)", t, flags=re.IGNORECASE)
+    t = re.sub(r"\(\s*g\s*\)", "(g)", t, flags=re.IGNORECASE)
 
     out: List[str] = []
     i = 0
@@ -1010,7 +1107,9 @@ def make_chem_speakable(
 ) -> str:
     """
     Detect likely chemical formulas and replace them with speakable versions.
-    Uses chemistry-context heuristics to avoid misreading bracketed letters or outline markers.
+    Also:
+      - Only reads (aq)/(s)/(l)/(g) as states when they appear after a compound/formula
+      - Leaves other bracket letters alone (and you can separately force "letter A" via make_letter_labels_speakable)
     """
     if not text:
         return ""
@@ -1023,6 +1122,9 @@ def make_chem_speakable(
     s = s.replace("⇒", " yields ")
     s = s.replace("<-", " reacts to form ")
     s = s.replace("->", " yields ")
+
+    # glue "H2O (l)" -> "H2O(l)" so state reading works, but only when the left side looks like a formula
+    s = re.sub(_STATE_AFTER_FORMULA_RE, lambda m: f"{m.group('form')}({m.group('state')})", s)
 
     global_chem_context = bool(CHEM_CONTEXT_RE.search(s))
 
@@ -1053,6 +1155,7 @@ def make_chem_speakable(
 # - Mobile improvements: robust default voice selection & storage by URI OR name/lang
 # - Prefer Google UK English Male (en-GB) then Google UK English Female (en-GB) when available
 # - Separate Play / Pause / Resume / Stop
+# - NEW: Draggable progress scrubber (estimated timeline) + ±10s jump (seeks by segment boundaries)
 # -----------------------------
 def tts_component(
     text: str,
@@ -1087,6 +1190,30 @@ def tts_component(
       </div>
 
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <button id="{component_id}_rew" style="padding:7px 10px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+          ⏪ 10s
+        </button>
+
+        <input
+          id="{component_id}_progress"
+          type="range"
+          min="0"
+          max="0"
+          step="0.25"
+          value="0"
+          style="flex:1; min-width:200px;"
+          aria-label="Speech progress"
+        />
+
+        <button id="{component_id}_fwd" style="padding:7px 10px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+          10s ⏩
+        </button>
+
+        <span id="{component_id}_time" style="color:#444; font-size:0.9rem; white-space:nowrap;">0:00 / 0:00</span>
+        <span id="{component_id}_chunk" style="color:#888; font-size:0.85rem; white-space:nowrap;">(0/0)</span>
+      </div>
+
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
         <label style="color:#444; font-size:0.9rem;">Voice</label>
         <select id="{component_id}_voice" style="min-width: 260px; padding:8px 10px; border-radius:8px; border:1px solid #ddd;">
           <option value="">Loading voices…</option>
@@ -1106,9 +1233,16 @@ def tts_component(
       const pauseBtn = document.getElementById(ROOT_ID + "_pause");
       const resumeBtn = document.getElementById(ROOT_ID + "_resume");
       const stopBtn = document.getElementById(ROOT_ID + "_stop");
+      const rewBtn = document.getElementById(ROOT_ID + "_rew");
+      const fwdBtn = document.getElementById(ROOT_ID + "_fwd");
+
       const voiceSelect = document.getElementById(ROOT_ID + "_voice");
       const resetVoiceBtn = document.getElementById(ROOT_ID + "_resetvoice");
       const statusEl = document.getElementById(ROOT_ID + "_status");
+
+      const progressEl = document.getElementById(ROOT_ID + "_progress");
+      const timeEl = document.getElementById(ROOT_ID + "_time");
+      const chunkEl = document.getElementById(ROOT_ID + "_chunk");
 
       const preferredLang = "{preferred_lang}";
       const preferredRate = {rate};
@@ -1122,13 +1256,31 @@ def tts_component(
 
       const storageKey = "easymcat_tts_voice_sel_v3_google_uk_default";
 
+      // queue segments: [{text, pauseAfter}]
       let queue = [];
       let idx = 0;
+
+      // timing (estimated)
+      let timelineStarts = [0];   // length = queue.length + 1
+      let timelineDur = [];       // length = queue.length
+      let totalSeconds = 0;
+
+      // live playback tracking
+      let progressTimer = null;
+
+      let utterStartAt = 0;
+      let currentItemIndex = -1;
+      let currentItemSpeakEst = 0;      // seconds (speak only)
+      let currentItemPauseEst = 0;      // seconds (pause after)
+      let pauseStartAt = 0;             // ms
+      let inPausePhase = false;
 
       let betweenTimer = null;
       let betweenDueAt = 0;
       let betweenRemaining = 0;
       let betweenPaused = false;
+
+      let seekHoldPaused = false;       // if user seeks while paused, we restart and re-pause quickly
 
       function setStatus(msg) {{
         statusEl.textContent = msg;
@@ -1253,6 +1405,107 @@ def tts_component(
         return items.length ? items : [{{ text: normalizeText(t), pauseAfter: 0 }}];
       }}
 
+      // ---- Estimated timeline ----
+      function wordCount(s) {{
+        const t = (s || "").trim();
+        if (!t) return 0;
+        return t.split(/\\s+/g).filter(Boolean).length;
+      }}
+
+      function estimateSpeakSeconds(text) {{
+        // baseline speaking speed ~170 wpm at rate=1.0
+        const wpm = 170;
+        const words = wordCount(text);
+        const r = Math.max(0.25, preferredRate || 1.0);
+        const sec = (words * 60.0) / (wpm * r);
+        // never show 0 for tiny chunks (keeps scrubber usable)
+        return Math.max(0.45, sec);
+      }}
+
+      function rebuildTimeline() {{
+        timelineStarts = [0];
+        timelineDur = [];
+        totalSeconds = 0;
+
+        for (let i = 0; i < queue.length; i++) {{
+          const speakS = estimateSpeakSeconds(queue[i].text);
+          const pauseS = Math.max(0, (queue[i].pauseAfter || 0) / 1000.0);
+          const dur = speakS + pauseS;
+          timelineDur.push(dur);
+          totalSeconds += dur;
+          timelineStarts.push(totalSeconds);
+        }}
+
+        progressEl.max = String(Math.max(0, totalSeconds));
+        chunkEl.textContent = `(0/${queue.length})`;
+        updateTimeUI();
+      }}
+
+      function clamp(n, lo, hi) {{
+        return Math.max(lo, Math.min(hi, n));
+      }}
+
+      function fmtTime(sec) {{
+        const s = Math.max(0, Math.floor(sec));
+        const m = Math.floor(s / 60);
+        const r = s % 60;
+        return `${{m}}:${{String(r).padStart(2, "0")}}`;
+      }}
+
+      function getPlayheadSeconds() {{
+        // If currently speaking an item
+        if (currentItemIndex >= 0) {{
+          const startS = timelineStarts[currentItemIndex] || 0;
+
+          if (inPausePhase) {{
+            const elapsedPause = (Date.now() - pauseStartAt) / 1000.0;
+            return clamp(startS + currentItemSpeakEst + elapsedPause, 0, totalSeconds);
+          }}
+
+          if (utterStartAt > 0) {{
+            const elapsedSpeak = (Date.now() - utterStartAt) / 1000.0;
+            return clamp(startS + elapsedSpeak, 0, startS + currentItemSpeakEst);
+          }}
+        }}
+
+        // If paused between items (waiting timer but paused)
+        if (betweenPaused && currentItemIndex >= 0) {{
+          const startS = timelineStarts[currentItemIndex] || 0;
+          return clamp(startS + currentItemSpeakEst + (currentItemPauseEst - (betweenRemaining / 1000.0)), 0, totalSeconds);
+        }}
+
+        // Otherwise playhead is simply at start of next index
+        return clamp(timelineStarts[idx] || 0, 0, totalSeconds);
+      }}
+
+      function updateTimeUI() {{
+        const ph = getPlayheadSeconds();
+        progressEl.value = String(ph);
+        timeEl.textContent = `${{fmtTime(ph)}} / ${{fmtTime(totalSeconds)}}`;
+        chunkEl.textContent = `(${{Math.min(idx, queue.length)}}/${{queue.length}})`;
+      }}
+
+      function startProgressTimer() {{
+        if (progressTimer) return;
+        progressTimer = setInterval(updateTimeUI, 150);
+      }}
+
+      function stopProgressTimer() {{
+        if (progressTimer) {{
+          clearInterval(progressTimer);
+          progressTimer = null;
+        }}
+      }}
+
+      function indexFromSeconds(sec) {{
+        const t = clamp(sec, 0, totalSeconds);
+        // find first start > t, then step back one, but we want the segment containing t
+        for (let i = 0; i < timelineStarts.length - 1; i++) {{
+          if (timelineStarts[i + 1] >= t) return i;
+        }}
+        return Math.max(0, queue.length - 1);
+      }}
+
       // -------- Voice handling (mobile-friendly) --------
       function voiceLabel(v) {{
         const name = v.name || "Unnamed";
@@ -1317,14 +1570,12 @@ def tts_component(
         const preferredPrefix = preferredLang ? preferredLang.toLowerCase() : "";
         const preferredMatches = preferredPrefix ? byLangPrefix(preferredPrefix) : [];
 
-        // HARD preference: Google UK English Male, then Female (en-GB)
         const googleUkMale = gbVoices.find(v => /google uk english male/i.test(v.name || ""));
         if (googleUkMale) return googleUkMale;
 
         const googleUkFemale = gbVoices.find(v => /google uk english female/i.test(v.name || ""));
         if (googleUkFemale) return googleUkFemale;
 
-        // Next: deep-male heuristic for GB
         const maleNamePatterns = [
           /google.*uk.*english.*male/i,
           /microsoft.*(ryan|george|alfie).*online/i,
@@ -1432,19 +1683,32 @@ def tts_component(
       }}
 
       // -------- Playback controls --------
+      function resetLiveTracking() {{
+        utterStartAt = 0;
+        currentItemIndex = -1;
+        currentItemSpeakEst = 0;
+        currentItemPauseEst = 0;
+        pauseStartAt = 0;
+        inPausePhase = false;
+      }}
+
       function stopAll() {{
         if (!ensureSpeechSupport()) return;
 
         clearBetweenTimer();
         betweenPaused = false;
         betweenRemaining = 0;
+        seekHoldPaused = false;
+
+        stopProgressTimer();
+        resetLiveTracking();
 
         window.speechSynthesis.cancel();
-        queue = [];
         idx = 0;
 
         setStatus("Stopped.");
         updateButtons();
+        updateTimeUI();
       }}
 
       function pauseAll() {{
@@ -1452,6 +1716,7 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
+        // pause while waiting between chunks
         if (betweenTimer) {{
           const now = Date.now();
           betweenRemaining = Math.max(0, betweenDueAt - now);
@@ -1459,13 +1724,16 @@ def tts_component(
           betweenPaused = true;
           setStatus("Paused.");
           updateButtons();
+          updateTimeUI();
           return;
         }}
 
+        // pause while speaking
         if (synth.speaking && !synth.paused) {{
           synth.pause();
           setStatus("Paused.");
           updateButtons();
+          updateTimeUI();
         }}
       }}
 
@@ -1474,6 +1742,7 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
+        // resume between chunks
         if (betweenPaused) {{
           betweenPaused = false;
           const delay = Math.max(0, betweenRemaining);
@@ -1484,6 +1753,7 @@ def tts_component(
           return;
         }}
 
+        // resume while speaking
         if (synth.paused) {{
           synth.resume();
           setStatus("Speaking…");
@@ -1491,6 +1761,7 @@ def tts_component(
           return;
         }}
 
+        // if not speaking but we have remaining queue
         if (queue.length && idx < queue.length && !synth.speaking) {{
           setStatus("Speaking…");
           speakNext();
@@ -1529,6 +1800,21 @@ def tts_component(
         utter.onstart = () => {{
           setStatus("Speaking…");
           updateButtons();
+          startProgressTimer();
+
+          // If user sought while paused, re-pause quickly.
+          if (seekHoldPaused) {{
+            setTimeout(() => {{
+              try {{
+                if (window.speechSynthesis && window.speechSynthesis.speaking && !window.speechSynthesis.paused) {{
+                  window.speechSynthesis.pause();
+                  setStatus("Paused.");
+                  updateButtons();
+                }}
+              }} catch (e) {{}}
+              seekHoldPaused = false;
+            }}, 30);
+          }}
         }};
         utter.onend = () => {{
           updateButtons();
@@ -1541,6 +1827,20 @@ def tts_component(
         window.speechSynthesis.speak(utter);
       }}
 
+      function setCurrentItemLiveInfo(itemIndex, item) {{
+        currentItemIndex = itemIndex;
+        inPausePhase = false;
+        utterStartAt = Date.now();
+        currentItemSpeakEst = estimateSpeakSeconds(item.text);
+        currentItemPauseEst = Math.max(0, (item.pauseAfter || 0) / 1000.0);
+        pauseStartAt = 0;
+      }}
+
+      function beginPausePhase() {{
+        inPausePhase = true;
+        pauseStartAt = Date.now();
+      }}
+
       function speakNext() {{
         if (!ensureSpeechSupport()) return;
 
@@ -1549,16 +1849,19 @@ def tts_component(
         if (idx >= queue.length) {{
           setStatus("Done.");
           updateButtons();
+          updateTimeUI();
           return;
         }}
 
-        const item = queue[idx];
-        idx += 1;
+        const itemIndex = idx;
+        const item = queue[itemIndex];
+        idx = itemIndex + 1;
 
-        synth.cancel();
+        synth.cancel(); // avoid overlap edge-cases
+        setCurrentItemLiveInfo(itemIndex, item);
         speakItem(item.text);
 
-        const pauseAfter = Math.max(0, item.pauseAfter || 0);
+        const pauseAfterMs = Math.max(0, item.pauseAfter || 0);
 
         const watcher = setInterval(() => {{
           if (!ensureSpeechSupport()) {{
@@ -1566,27 +1869,18 @@ def tts_component(
             return;
           }}
           const s = window.speechSynthesis;
+
           if (!s.speaking && !s.paused) {{
             clearInterval(watcher);
-            scheduleNext(pauseAfter);
+
+            // start pause phase to advance scrubber through inter-item delay
+            if (pauseAfterMs > 0) {{
+              beginPausePhase();
+            }}
+
+            scheduleNext(pauseAfterMs);
           }}
         }}, 120);
-      }}
-
-      function startFresh() {{
-        if (!ensureSpeechSupport()) return;
-
-        clearBetweenTimer();
-        betweenPaused = false;
-        betweenRemaining = 0;
-
-        window.speechSynthesis.cancel();
-
-        queue = buildQueueFromText(TEXT);
-        idx = 0;
-
-        speakNext();
-        updateButtons();
       }}
 
       function play() {{
@@ -1594,11 +1888,13 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
+        // If paused, Play behaves like Resume
         if (betweenPaused || synth.paused) {{
           resumeAll();
           return;
         }}
 
+        // If we have remaining queue, continue
         if (queue.length && idx < queue.length && !synth.speaking) {{
           setStatus("Speaking…");
           speakNext();
@@ -1606,7 +1902,24 @@ def tts_component(
           return;
         }}
 
-        startFresh();
+        // Fresh start
+        window.speechSynthesis.cancel();
+        clearBetweenTimer();
+        betweenPaused = false;
+        betweenRemaining = 0;
+        seekHoldPaused = false;
+        resetLiveTracking();
+
+        if (!queue.length) {{
+          queue = buildQueueFromText(TEXT);
+          idx = 0;
+          rebuildTimeline();
+        }} else {{
+          idx = 0;
+        }}
+
+        speakNext();
+        updateButtons();
       }}
 
       function updateButtons() {{
@@ -1615,6 +1928,7 @@ def tts_component(
           pauseBtn.disabled = true;
           resumeBtn.disabled = true;
           stopBtn.disabled = false;
+          progressEl.disabled = true;
           return;
         }}
 
@@ -1627,10 +1941,73 @@ def tts_component(
         pauseBtn.disabled = !speakingNow && !betweenTimer;
         resumeBtn.disabled = !pausedNow;
         stopBtn.disabled = !hasWork;
+
+        progressEl.disabled = !queue.length;
+        rewBtn.disabled = !queue.length;
+        fwdBtn.disabled = !queue.length;
       }}
 
+      function seekTo(seconds, autoStart=true) {{
+        if (!ensureSpeechSupport()) return;
+        if (!queue.length) return;
+
+        const synth = window.speechSynthesis;
+        const target = clamp(seconds, 0, totalSeconds);
+        const newIndex = indexFromSeconds(target);
+
+        // remember whether user was paused
+        const wasPaused = synth.paused || betweenPaused;
+
+        // cancel current speech + timers
+        clearBetweenTimer();
+        betweenPaused = false;
+        betweenRemaining = 0;
+
+        synth.cancel();
+        resetLiveTracking();
+
+        idx = clamp(newIndex, 0, queue.length);
+        progressEl.value = String(timelineStarts[idx] || 0);
+        updateTimeUI();
+
+        if (autoStart) {{
+          if (wasPaused) {{
+            seekHoldPaused = true;
+          }}
+          speakNext();
+          setStatus(wasPaused ? "Paused." : "Speaking…");
+        }} else {{
+          setStatus("Ready.");
+        }}
+
+        updateButtons();
+      }}
+
+      function jumpBy(deltaSeconds) {{
+        const cur = parseFloat(progressEl.value || "0");
+        seekTo(cur + deltaSeconds, true);
+      }}
+
+      // Progress bar interactions:
+      let isScrubbing = false;
+      progressEl.addEventListener("input", () => {{
+        // live update label while dragging without constantly restarting TTS
+        isScrubbing = true;
+        updateTimeUI();
+      }});
+      progressEl.addEventListener("change", () => {{
+        const v = parseFloat(progressEl.value || "0");
+        isScrubbing = false;
+        seekTo(v, true);
+      }});
+
+      rewBtn.addEventListener("click", () => jumpBy(-10));
+      fwdBtn.addEventListener("click", () => jumpBy(+10));
+
+      // Save selection
       voiceSelect.addEventListener("change", () => {{
         try {{ localStorage.setItem(storageKey, voiceSelect.value || ""); }} catch (e) {{}}
+        // If speaking, stop so user can restart with new voice (mobile safer)
         if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused)) {{
           stopAll();
         }} else {{
@@ -1658,12 +2035,19 @@ def tts_component(
       resumeBtn.addEventListener("click", resumeAll);
       stopBtn.addEventListener("click", stopAll);
 
+      // init on load
+      queue = buildQueueFromText(TEXT);
+      idx = 0;
+      rebuildTimeline();
+
       initVoices();
       updateButtons();
+      updateTimeUI();
+      startProgressTimer();
       setInterval(updateButtons, 400);
     </script>
     """
-    st.components.v1.html(html, height=165)
+    st.components.v1.html(html, height=230)
 
 
 # -----------------------------
@@ -1811,12 +2195,21 @@ with st.sidebar:
     )
 
     st.divider()
+    st.subheader("Letter labels")
+
+    speak_letters = st.toggle(
+        "Speak option letters clearly (A, B, C...)",
+        value=True,
+        help="Converts (A)/(B)/A)/Option A/Answer: C into 'letter A/B/C' for clearer narration and to avoid chemistry mix-ups.",
+    )
+
+    st.divider()
     st.subheader("Chemistry reading")
 
     read_chem = st.toggle(
         "Speak chemical formulas clearly",
         value=True,
-        help="Turns formulas like H2O / NaCl / (NH4)2SO4 / CuSO4·5H2O into clearer spoken text. Avoids bracketed letters like (A) being misread.",
+        help="Turns formulas like H2O / NaCl / (NH4)2SO4 / CuSO4·5H2O into clearer spoken text. Reads (aq)/(s)/(l)/(g) as states only after a compound.",
     )
     chem_element_mode = st.selectbox(
         "Chemical element style",
@@ -1829,7 +2222,7 @@ with st.sidebar:
         "Include single-element symbols (e.g., Fe)",
         value=False,
         disabled=not read_chem,
-        help="Off by default to reduce false positives; when enabled, only triggers in chemistry-context passages.",
+        help="Still conservative: only converts safe single elements in chemistry-context to reduce false positives.",
     )
 
     st.divider()
@@ -1856,6 +2249,10 @@ tts_text = cur_text
 
 if tts_text and story_mode:
     tts_text = make_story_mode(tts_text)
+
+# Make letter labels explicit BEFORE chemistry parsing so they don't get confused
+if tts_text and speak_letters:
+    tts_text = make_letter_labels_speakable(tts_text)
 
 if tts_text and read_chem:
     tts_text = make_chem_speakable(
@@ -1885,7 +2282,6 @@ with col_right:
 
     st.markdown("**Listen**")
     if tts_text:
-        # ✅ FIXED: pass the text as the first positional arg (no invalid keyword args)
         tts_component(
             tts_text,
             preferred_lang=preferred_lang,
