@@ -2007,7 +2007,7 @@ st.markdown(
 # UPDATED (THIS REQUEST):
 #  - Removed tabs: NPX 0.5-Cross Scanner, Fib NPX 0.0 Signal Scanner, Ichimoku Kijun Scanner
 #  - Added tabs: HMA Buy, NPX 0.0-Cross Scanner
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17, tab18 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
