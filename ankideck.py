@@ -651,49 +651,159 @@ def tts_component(
     component_id = f"tts_{uuid.uuid4().hex}"
 
     # IMPORTANT: This is a Python f-string. Any literal JS `{` or `}` must be doubled as `{{` / `}}`.
-    # The previous NameError came from a JS comment containing `{speakMs,...}` inside the f-string.
     html = f"""
-    <div id="{component_id}" style="display:flex; flex-direction:column; gap:10px;">
-      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <button id="{component_id}_playpause" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
-          ▶️ Play
-        </button>
-        <button id="{component_id}_resume" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
-          🔊 Resume
-        </button>
-        <button id="{component_id}_pause" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
-          ⏸ Pause
-        </button>
-        <button id="{component_id}_stop" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
-          ⏹ Stop
-        </button>
-        <span id="{component_id}_status" style="color:#666; font-size: 0.9rem;">Ready</span>
-      </div>
+    <div id="{component_id}" class="tts-root">
+      <style>
+        /* Card */
+        #{component_id}.tts-root {{
+          font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+        }}
+        #{component_id} .tts-card {{
+          background: radial-gradient(1200px 500px at 20% 15%, rgba(255,255,255,0.07), rgba(0,0,0,0.10));
+          border: 1px solid rgba(255,255,255,0.12);
+          border-radius: 20px;
+          padding: 18px 18px 14px 18px;
+          box-shadow: 0 10px 30px rgba(0,0,0,0.22);
+        }}
+        #{component_id} .tts-row {{
+          display: flex;
+          gap: 14px;
+          align-items: center;
+          flex-wrap: wrap;
+        }}
+        #{component_id} .tts-row + .tts-row {{
+          margin-top: 12px;
+        }}
 
-      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <span id="{component_id}_time" style="color:#444; font-size:0.9rem; min-width:110px;">0:00 / 0:00</span>
-        <input
-          id="{component_id}_seek"
-          type="range"
-          min="0"
-          max="0"
-          value="0"
-          step="100"
-          style="flex: 1; min-width: 220px; accent-color: #555;"
-          aria-label="Seek"
-        />
-        <span style="color:#888; font-size:0.85rem;">Drag to seek (auto-pauses)</span>
-      </div>
+        /* Big buttons like the screenshot */
+        #{component_id} .tts-btn {{
+          appearance: none;
+          border: 1px solid rgba(255,255,255,0.22);
+          background: rgba(255,255,255,0.95);
+          color: rgba(0,0,0,0.92);
+          border-radius: 16px;
+          padding: 14px 18px;
+          font-size: 22px;
+          font-weight: 650;
+          line-height: 1;
+          cursor: pointer;
+          box-shadow: 0 6px 14px rgba(0,0,0,0.22);
+          transition: transform 80ms ease, opacity 120ms ease, filter 120ms ease;
+        }}
+        #{component_id} .tts-btn:active {{
+          transform: translateY(1px);
+        }}
+        #{component_id} .tts-btn[disabled] {{
+          opacity: 0.35;
+          cursor: not-allowed;
+          filter: grayscale(35%);
+          box-shadow: none;
+        }}
+        #{component_id} .tts-btn.stop {{
+          padding: 14px 18px;
+        }}
 
-      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <label style="color:#444; font-size:0.9rem;">Voice</label>
-        <select id="{component_id}_voice" style="min-width: 260px; padding:8px 10px; border-radius:8px; border:1px solid #ddd;">
+        /* Status line */
+        #{component_id} .tts-status {{
+          margin-top: 14px;
+          color: rgba(255,255,255,0.55);
+          font-size: 20px;
+          font-weight: 520;
+        }}
+
+        /* 10s buttons row */
+        #{component_id} .tts-skip {{
+          margin-top: 16px;
+          display: flex;
+          gap: 16px;
+          align-items: center;
+          flex-wrap: wrap;
+        }}
+
+        /* Slider row */
+        #{component_id} .tts-slider {{
+          width: 100%;
+          margin-top: 16px;
+        }}
+        #{component_id} input[type="range"] {{
+          width: 100%;
+        }}
+
+        #{component_id} .tts-times {{
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-top: 8px;
+          color: rgba(255,255,255,0.40);
+          font-size: 20px;
+          font-weight: 520;
+        }}
+
+        /* Voice section */
+        #{component_id} .tts-voice-label {{
+          margin-top: 14px;
+          color: rgba(255,255,255,0.35);
+          font-size: 20px;
+          font-weight: 520;
+        }}
+        #{component_id} select {{
+          width: 100%;
+          margin-top: 10px;
+          padding: 12px 14px;
+          border-radius: 14px;
+          border: 1px solid rgba(255,255,255,0.18);
+          background: rgba(255,255,255,0.08);
+          color: rgba(255,255,255,0.92);
+          font-size: 16px;
+          outline: none;
+        }}
+        #{component_id} option {{
+          color: #111;
+        }}
+        #{component_id} .tts-reset {{
+          margin-top: 12px;
+        }}
+        #{component_id} .tts-reset .tts-btn {{
+          font-size: 16px;
+          padding: 10px 14px;
+          border-radius: 12px;
+        }}
+      </style>
+
+      <div class="tts-card">
+        <div class="tts-row">
+          <button id="{component_id}_play" class="tts-btn">▶️ Play</button>
+          <button id="{component_id}_pause" class="tts-btn" disabled>⏸ Pause</button>
+          <button id="{component_id}_resume" class="tts-btn" disabled>🔊 Resume</button>
+        </div>
+
+        <div class="tts-row">
+          <button id="{component_id}_stop" class="tts-btn stop" disabled>■ Stop</button>
+        </div>
+
+        <div id="{component_id}_status" class="tts-status">Loading voices…</div>
+
+        <div class="tts-skip">
+          <button id="{component_id}_back10" class="tts-btn" disabled>⏪ 10s</button>
+          <button id="{component_id}_fwd10" class="tts-btn" disabled>10s ⏩</button>
+        </div>
+
+        <div class="tts-slider">
+          <input id="{component_id}_seek" type="range" min="0" max="0" value="0" step="100" aria-label="Seek" />
+          <div class="tts-times">
+            <span id="{component_id}_tL">0:00</span>
+            <span id="{component_id}_tR">0:00</span>
+          </div>
+        </div>
+
+        <div class="tts-voice-label">Voice</div>
+        <select id="{component_id}_voice">
           <option value="">Loading voices…</option>
         </select>
-        <button id="{component_id}_resetvoice" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
-          Reset default
-        </button>
-        <span style="color:#888; font-size: 0.85rem;">(Installed voices vary by OS/browser)</span>
+
+        <div class="tts-reset">
+          <button id="{component_id}_resetvoice" class="tts-btn">Reset default</button>
+        </div>
       </div>
     </div>
 
@@ -701,13 +811,16 @@ def tts_component(
       const ROOT_ID = "{component_id}";
       const TEXT = `{safe}`;
 
-      const playPauseBtn = document.getElementById(ROOT_ID + "_playpause");
-      const resumeBtn = document.getElementById(ROOT_ID + "_resume");
+      const playBtn = document.getElementById(ROOT_ID + "_play");
       const pauseBtn = document.getElementById(ROOT_ID + "_pause");
+      const resumeBtn = document.getElementById(ROOT_ID + "_resume");
       const stopBtn = document.getElementById(ROOT_ID + "_stop");
+      const back10Btn = document.getElementById(ROOT_ID + "_back10");
+      const fwd10Btn = document.getElementById(ROOT_ID + "_fwd10");
 
       const seekEl = document.getElementById(ROOT_ID + "_seek");
-      const timeEl = document.getElementById(ROOT_ID + "_time");
+      const tL = document.getElementById(ROOT_ID + "_tL");
+      const tR = document.getElementById(ROOT_ID + "_tR");
 
       const voiceSelect = document.getElementById(ROOT_ID + "_voice");
       const resetVoiceBtn = document.getElementById(ROOT_ID + "_resetvoice");
@@ -756,6 +869,9 @@ def tts_component(
       // Dragging state
       let userDragging = false;
 
+      // Session token to ignore onend events after cancel/seek/stop
+      let playSession = 0;
+
       function setStatus(msg) {{
         statusEl.textContent = msg;
       }}
@@ -784,7 +900,8 @@ def tts_component(
 
       function setTimeUI(posMs) {{
         const p = clamp(posMs, 0, totalMs || 0);
-        timeEl.textContent = `${{msToClock(p)}} / ${{msToClock(totalMs)}}`;
+        tL.textContent = msToClock(p);
+        tR.textContent = msToClock(totalMs || 0);
       }}
 
       function estimateSpeechMs(text) {{
@@ -906,7 +1023,7 @@ def tts_component(
         const def = pickDefaultVoice(voices);
         if (def && def.voiceURI) {{
           voiceSelect.value = def.voiceURI;
-          setStatus("Voice loaded (default).");
+          setStatus("Voice loaded (default: Google UK Male if available).");
         }} else {{
           setStatus("Voice loaded.");
         }}
@@ -924,6 +1041,7 @@ def tts_component(
           return;
         }}
         populateVoices(voices);
+        updateButtons();
       }}
 
       function getSelectedVoice(voices) {{
@@ -1014,7 +1132,7 @@ def tts_component(
                 let pauseAfter = 0;
                 if (!isLastClause) pauseAfter = clausePauseMs;
                 else if (!isLastSentence) pauseAfter = sentencePauseMs;
-                else if (!isLastParagraph) pauseAfter = paragraph_pause_ms;
+                else if (!isLastParagraph) pauseAfter = paragraphPauseMs; // FIX: correct variable
 
                 items.push({{ text: clauses[ci], pauseAfter }});
               }}
@@ -1084,9 +1202,36 @@ def tts_component(
         setTimeUI(0);
       }}
 
+      function isActivePlayback() {{
+        const s = window.speechSynthesis;
+        return !!(betweenTimer || betweenPaused || s.speaking || s.paused);
+      }}
+
+      function updateButtons() {{
+        const s = window.speechSynthesis;
+        const hasText = !!normalizeText(TEXT);
+        const hasQueue = queue.length > 0;
+        const playing = !!(s.speaking && !s.paused);
+        const paused = !!(s.paused || betweenPaused);
+
+        playBtn.disabled = !hasText;
+        pauseBtn.disabled = !(playing || betweenTimer);
+        resumeBtn.disabled = !(paused || (hasQueue && idx < queue.length && !playing && !betweenTimer));
+        stopBtn.disabled = !(hasQueue && isActivePlayback());
+
+        back10Btn.disabled = !(hasQueue && (totalMs > 0));
+        fwd10Btn.disabled = !(hasQueue && (totalMs > 0));
+      }}
+
+      function bumpSession() {{
+        playSession += 1;
+        return playSession;
+      }}
+
       function cancelPlaybackKeepQueue() {{
         if (!ensureSpeechSupport()) return;
 
+        bumpSession();
         clearBetweenTimer();
         betweenPaused = false;
         betweenRemaining = 0;
@@ -1096,11 +1241,13 @@ def tts_component(
         utterPausedAccum = 0;
 
         window.speechSynthesis.cancel();
+        updateButtons();
       }}
 
       function stopAll() {{
         if (!ensureSpeechSupport()) return;
 
+        bumpSession();
         clearBetweenTimer();
         betweenPaused = false;
         betweenRemaining = 0;
@@ -1119,6 +1266,7 @@ def tts_component(
 
         rebuildTimeline();
         setStatus("Stopped.");
+        updateButtons();
       }}
 
       function pauseAll() {{
@@ -1126,24 +1274,30 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
+        // If we are between items, "pause" the remaining delay
         if (betweenTimer) {{
           const now = Date.now();
           betweenRemaining = Math.max(0, betweenDueAt - now);
           clearBetweenTimer();
           betweenPaused = true;
-          setStatus("Paused (between items).");
+          setStatus("Paused.");
+          updateButtons();
           return;
         }}
 
+        // If currently speaking, pause (native pause) so Resume continues mid-utterance
         if (synth.speaking && !synth.paused) {{
-          utterPausedAt = Date.now();
+          utterPausedAt = Date.now(); // freeze progress
           synth.pause();
           setStatus("Paused.");
+          updateButtons();
           return;
         }}
 
+        // Already paused
         if (synth.paused || betweenPaused) {{
           setStatus("Paused.");
+          updateButtons();
         }}
       }}
 
@@ -1160,9 +1314,10 @@ def tts_component(
           betweenTimer = null;
           speakNext();
         }}, delayMs);
+        updateButtons();
       }}
 
-      async function speakItem(itemText) {{
+      async function speakItem(itemText, pauseAfter, sessionId, itemIndex) {{
         const voices = await getVoicesAsync();
 
         const utter = new SpeechSynthesisUtterance(itemText);
@@ -1177,14 +1332,38 @@ def tts_component(
         }}
 
         utter.onstart = () => {{
+          // reset timing for this utterance
           utterStartAt = Date.now();
           utterPausedAccum = 0;
           utterPausedAt = 0;
           setStatus("Speaking…");
+          updateButtons();
+        }};
+
+        // KEY FIX:
+        // Use onend to continue the queue instead of a watcher interval that dies on pause.
+        utter.onend = () => {{
+          // Ignore events from old sessions (cancel/stop/seek)
+          if (sessionId !== playSession) return;
+
+          // If we're paused between items, don't auto-continue yet.
+          if (betweenPaused) return;
+
+          // If user paused the synth at the exact end edge, wait for resume.
+          const s = window.speechSynthesis;
+          if (s.paused) {{
+            setStatus("Paused.");
+            updateButtons();
+            return;
+          }}
+
+          scheduleNext(Math.max(0, pauseAfter || 0));
         }};
 
         utter.onerror = () => {{
+          if (sessionId !== playSession) return;
           setStatus("TTS error.");
+          updateButtons();
         }};
 
         window.speechSynthesis.speak(utter);
@@ -1197,6 +1376,7 @@ def tts_component(
 
         if (!queue.length) {{
           setStatus("Nothing to read.");
+          updateButtons();
           return;
         }}
 
@@ -1204,45 +1384,34 @@ def tts_component(
           setStatus("Done.");
           manualSeekPosValid = false;
           manualSeekPosMs = totalMs;
+          updateButtons();
           return;
         }}
 
         manualSeekPosValid = false;
 
         const item = queue[idx];
+        const pauseAfter = Math.max(0, item.pauseAfter || 0);
+
         currentItemIndex = idx;
         idx += 1;
 
-        if (!synth.paused) {{
+        // Don't cancel if paused; but if currently speaking and not paused, cancel to avoid overlap.
+        if (synth.speaking && !synth.paused) {{
+          bumpSession();
           synth.cancel();
         }}
 
-        speakItem(item.text);
-
-        const pauseAfter = Math.max(0, item.pauseAfter || 0);
-
-        const watcher = setInterval(() => {{
-          if (!ensureSpeechSupport()) {{
-            clearInterval(watcher);
-            return;
-          }}
-          const s = window.speechSynthesis;
-
-          if (s.paused) {{
-            clearInterval(watcher);
-            return;
-          }}
-
-          if (!s.speaking && !s.paused) {{
-            clearInterval(watcher);
-            scheduleNext(pauseAfter);
-          }}
-        }}, 120);
+        const sessionId = playSession;
+        setStatus("Speaking…");
+        updateButtons();
+        speakItem(item.text, pauseAfter, sessionId, currentItemIndex);
       }}
 
       function startFresh() {{
         if (!ensureSpeechSupport()) return;
 
+        bumpSession();
         clearBetweenTimer();
         betweenPaused = false;
         betweenRemaining = 0;
@@ -1264,6 +1433,8 @@ def tts_component(
         seekEl.value = "0";
         setTimeUI(0);
 
+        setStatus("Speaking…");
+        updateButtons();
         speakNext();
       }}
 
@@ -1277,53 +1448,35 @@ def tts_component(
           const delay = Math.max(0, betweenRemaining);
           betweenRemaining = 0;
           setStatus("Speaking…");
+          updateButtons();
           scheduleNext(delay);
           return;
         }}
 
         if (synth.paused) {{
+          // Freeze time was held in utterPausedAt; add to paused accumulation
           if (utterPausedAt) {{
             utterPausedAccum += (Date.now() - utterPausedAt);
             utterPausedAt = 0;
           }}
           synth.resume();
           setStatus("Speaking…");
+          updateButtons();
           return;
         }}
 
+        // If queue exists and we're not currently speaking, continue
         if (queue.length && idx < queue.length && !synth.speaking) {{
           setStatus("Speaking…");
+          updateButtons();
           speakNext();
           return;
         }}
 
+        // If nothing started yet, start fresh
         if (!queue.length) {{
           startFresh();
         }}
-      }}
-
-      function togglePlayPause() {{
-        if (!ensureSpeechSupport()) return;
-
-        const synth = window.speechSynthesis;
-
-        if (betweenPaused || synth.paused) {{
-          resumeAll();
-          return;
-        }}
-
-        if (betweenTimer || (synth.speaking && !synth.paused)) {{
-          pauseAll();
-          return;
-        }}
-
-        if (queue.length && idx < queue.length) {{
-          setStatus("Speaking…");
-          speakNext();
-          return;
-        }}
-
-        startFresh();
       }}
 
       function findIndexForMs(ms) {{
@@ -1335,7 +1488,7 @@ def tts_component(
         return 0;
       }}
 
-      function seekToMs(ms) {{
+      function seekToMs(ms, keepPaused=true) {{
         if (!ensureSpeechSupport()) return;
 
         if (!queue.length) {{
@@ -1348,6 +1501,7 @@ def tts_component(
         const t = clamp(ms, 0, totalMs);
         const targetIndex = findIndexForMs(t);
 
+        // Cancel current speech/timers but keep the built queue
         cancelPlaybackKeepQueue();
 
         idx = targetIndex;
@@ -1359,7 +1513,16 @@ def tts_component(
         seekEl.value = String(Math.round(t));
         setTimeUI(t);
 
-        setStatus("Seeked. Press Resume to continue.");
+        if (keepPaused) {{
+          setStatus("Seeked. Press Resume to continue.");
+        }} else {{
+          setStatus("Speaking…");
+        }}
+        updateButtons();
+
+        if (!keepPaused) {{
+          resumeAll();
+        }}
       }}
 
       function computeProgressMs() {{
@@ -1386,7 +1549,9 @@ def tts_component(
         if (synth.speaking || synth.paused) {{
           const i = currentItemIndex;
           if (i >= 0 && i < timeline.length) {{
-            const elapsed = clamp(Date.now() - utterStartAt - utterPausedAccum, 0, timeline[i].speakMs);
+            // FIX: while paused, freeze at utterPausedAt so the clock doesn't keep advancing
+            const now = synth.paused && utterPausedAt ? utterPausedAt : Date.now();
+            const elapsed = clamp(now - utterStartAt - utterPausedAccum, 0, timeline[i].speakMs);
             return clamp(starts[i] + elapsed, 0, totalMs);
           }}
         }}
@@ -1403,6 +1568,7 @@ def tts_component(
         }}
         seekEl.value = String(Math.round(pos));
         setTimeUI(pos);
+        updateButtons();
       }}
 
       setInterval(() => {{
@@ -1415,12 +1581,40 @@ def tts_component(
         userDragging = true;
         pauseAll();
         setStatus("Paused (seeking)…");
+        updateButtons();
       }}
 
       function endDrag() {{
         userDragging = false;
         const target = Number(seekEl.value || "0");
-        seekToMs(target);
+        seekToMs(target, true);
+      }}
+
+      function jumpByMs(deltaMs) {{
+        if (!queue.length) {{
+          queue = buildQueueFromText(TEXT);
+          idx = 0;
+          currentItemIndex = -1;
+          rebuildTimeline();
+        }}
+
+        const synth = window.speechSynthesis;
+        const wasSpeaking = !!(synth.speaking && !synth.paused) || !!betweenTimer;
+        const wasPaused = !!(synth.paused || betweenPaused);
+
+        const pos = computeProgressMs();
+        const target = clamp(pos + deltaMs, 0, totalMs);
+
+        // If we were actively speaking, we seek and continue automatically.
+        // If we were paused, we seek but remain paused.
+        if (wasSpeaking) {{
+          seekToMs(target, false);
+        }} else {{
+          seekToMs(target, true);
+          if (!wasPaused && !isActivePlayback()) {{
+            // idle: keep idle
+          }}
+        }}
       }}
 
       seekEl.addEventListener("mousedown", beginDrag);
@@ -1437,20 +1631,53 @@ def tts_component(
       seekEl.addEventListener("change", () => {{
         if (userDragging) return;
         const target = Number(seekEl.value || "0");
-        seekToMs(target);
+        seekToMs(target, true);
       }});
 
-      playPauseBtn.addEventListener("click", togglePlayPause);
+      // Button wiring
+      playBtn.addEventListener("click", () => {{
+        if (!ensureSpeechSupport()) return;
+
+        const synth = window.speechSynthesis;
+
+        // If paused, resume from pause point
+        if (betweenPaused || synth.paused) {{
+          resumeAll();
+          return;
+        }}
+
+        // If currently speaking, treat Play as "restart page" (simple + predictable)
+        if (synth.speaking && !synth.paused) {{
+          startFresh();
+          return;
+        }}
+
+        // If queue exists and not finished, continue
+        if (queue.length && idx < queue.length) {{
+          resumeAll();
+          return;
+        }}
+
+        // Otherwise start
+        startFresh();
+      }});
+
       pauseBtn.addEventListener("click", pauseAll);
       resumeBtn.addEventListener("click", resumeAll);
       stopBtn.addEventListener("click", stopAll);
 
+      back10Btn.addEventListener("click", () => jumpByMs(-10000));
+      fwd10Btn.addEventListener("click", () => jumpByMs(10000));
+
       voiceSelect.addEventListener("change", () => {{
         try {{ localStorage.setItem(storageKey, voiceSelect.value || ""); }} catch (e) {{}}
-        if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused || betweenTimer || betweenPaused)) {{
+
+        // If playing, stop so new voice applies cleanly
+        if (ensureSpeechSupport() && isActivePlayback()) {{
           stopAll();
         }} else {{
           setStatus("Voice selected.");
+          updateButtons();
         }}
       }});
 
@@ -1460,21 +1687,25 @@ def tts_component(
         const def = pickDefaultVoice(voices);
         if (def && def.voiceURI) {{
           voiceSelect.value = def.voiceURI;
-          setStatus("Reset to default voice.");
+          setStatus("Voice loaded (default: Google UK Male if available).");
         }} else {{
           setStatus("Reset (no default found).");
         }}
-        if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused || betweenTimer || betweenPaused)) stopAll();
+        if (ensureSpeechSupport() && isActivePlayback()) stopAll();
+        updateButtons();
       }});
 
       initVoices();
 
-      timeEl.textContent = "0:00 / 0:00";
+      // Init time UI
+      tL.textContent = "0:00";
+      tR.textContent = "0:00";
       seekEl.max = "0";
       seekEl.value = "0";
+      updateButtons();
     </script>
     """
-    st.components.v1.html(html, height=210)
+    st.components.v1.html(html, height=420)
 
 
 # -----------------------------
