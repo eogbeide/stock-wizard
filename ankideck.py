@@ -6,8 +6,8 @@
 # - Sticky floating Controls (Listen + Next/Back) on the page
 # - Reads mathematical symbols more clearly (without turning prose dashes into “minus”)
 # - Reads chemical formulas + simple chemical equations more clearly (H2O, NaCl, (NH4)2SO4, CuSO4·5H2O, Fe3+, etc.)
-# - NEW: Better PDF text extraction + page text structuring into easy-to-narrate paragraphs & bullet “story mode”
-# - NEW: Explicit Resume button in TTS controls
+# - Better PDF text extraction + page text structuring into easy-to-narrate paragraphs & bullet “story mode”
+# - NEW: Dedicated Resume button + robust multi-pause/multi-resume without restarting
 #
 # Run:
 #   streamlit run easymcat.py
@@ -17,7 +17,7 @@ DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/anki
 import io
 import re
 import uuid
-from typing import Optional, List, Dict, Tuple
+from typing import List, Dict, Tuple
 
 import requests
 import streamlit as st
@@ -77,7 +77,6 @@ def number_to_words(n: str) -> str:
         if ones == 0:
             return _TENS.get(tens, str(val))
         return f"{_TENS.get(tens, str(tens))} {_NUM_WORDS_0_19.get(ones, str(ones))}"
-    # For 100+ just speak digits (safer than odd “one hundred and …”)
     return " ".join(list(str(val)))
 
 
@@ -128,7 +127,6 @@ _GREEK = {
     "ω": "omega",
 }
 
-# Common element names (fallback is symbol itself)
 ELEMENT_NAMES = {
     "H": "hydrogen",
     "He": "helium",
@@ -182,27 +180,21 @@ def _smart_dash_vs_minus(s: str) -> str:
     if not s:
         return ""
 
-    # normalize unicode dashes
     s = s.replace("–", "—")
 
     def repl(m: re.Match) -> str:
         left = m.group(1)
         right = m.group(2)
 
-        # digit - digit (or decimal)
         if re.fullmatch(r"\d+(?:\.\d+)?", left) and re.fullmatch(r"\d+(?:\.\d+)?", right):
             return f"{left} - {right}"
 
-        # short token - short token (math-ish)
         if re.fullmatch(r"[A-Za-z0-9]{1,3}", left) and re.fullmatch(r"[A-Za-z0-9]{1,3}", right):
             return f"{left} - {right}"
 
-        # prose dash
         return f"{left} — {right}"
 
-    # replace spaced hyphens between word-ish tokens
     s = re.sub(r"\b([A-Za-z0-9]{2,})\s-\s([A-Za-z0-9]{2,})\b", repl, s)
-
     return s
 
 
@@ -216,17 +208,14 @@ def _replace_minus_in_math_context(s: str) -> str:
     if not s:
         return ""
 
-    # 1) digit - digit
     s = re.sub(r"(\d)\s-\s(\d)", r"\1 minus \2", s)
 
-    # 2) short token - short token
     def _tok_minus(m: re.Match) -> str:
         a = m.group(1)
         b = m.group(2)
         return f"{a} minus {b}"
 
     s = re.sub(r"\b([A-Za-z0-9]{1,3})\s-\s([A-Za-z0-9]{1,3})\b", _tok_minus, s)
-
     return s
 
 
@@ -234,10 +223,7 @@ def make_math_speakable(text: str, style: str = "Natural") -> str:
     if not text:
         return ""
 
-    s = text
-
-    # First protect prose dashes from becoming "minus"
-    s = _smart_dash_vs_minus(s)
+    s = _smart_dash_vs_minus(text)
 
     for k, v in _SUPERSCRIPT_UNICODE.items():
         s = s.replace(k, v)
@@ -283,7 +269,6 @@ def make_math_speakable(text: str, style: str = "Natural") -> str:
         s = s.replace("=", " equals ")
         s = s.replace("+", " plus ")
         s = s.replace("*", " times ")
-
         s = _replace_minus_in_math_context(s)
 
         s = re.sub(r"(\b[A-Za-z][A-Za-z0-9]*)\s*\^\s*2\b", r"\1 squared", s)
@@ -294,9 +279,7 @@ def make_math_speakable(text: str, style: str = "Natural") -> str:
         s = re.sub(r"\(\s*([^)]+?)\s*\)\s*/\s*\(\s*([^)]+?)\s*\)", r" \1 over \2 ", s)
         s = s.replace(" / ", " over ")
 
-    # Preserve em dash as a pause
     s = s.replace("—", " — ")
-
     s = re.sub(r"[ \t]+", " ", s)
     s = re.sub(r"\s+\n", "\n", s)
     return s.strip()
@@ -327,7 +310,7 @@ def _normalize_chem_unicode(s: str) -> str:
     for k, v in _SUPER_SIGNS.items():
         s = s.replace(k, v)
     for k, v in _SUPERSCRIPT_UNICODE.items():
-        s = s.replace(k, v.replace("^", ""))  # ² -> 2 in chemistry context
+        s = s.replace(k, v.replace("^", ""))
     s = s.replace("∙", "·")
     return s
 
@@ -498,7 +481,7 @@ def make_chem_speakable(
 
 
 # -----------------------------
-# Page structuring helpers (display + narration)
+# Page structuring helpers
 # -----------------------------
 _BULLET_RE = re.compile(r"^\s*(?:•|\u2022|-\s+|–\s+|\*\s+|·\s+)\s*(.+?)\s*$")
 _NUMBERED_RE = re.compile(r"^\s*(\d+)[\)\.]\s+(.+?)\s*$")
@@ -526,14 +509,6 @@ def _chunk_sentences(sentences: List[str], max_sentences: int = 2) -> List[str]:
 
 
 def structure_page_text(raw: str, fun_mode: bool = True) -> Tuple[str, str]:
-    """
-    Returns:
-      display_markdown, narration_text
-
-    - Keeps bullets readable (and fun to listen to).
-    - Breaks dense blocks into smaller paragraphs.
-    - Adds light narrative wrappers without changing meaning.
-    """
     if not raw:
         return "", ""
 
@@ -683,6 +658,9 @@ def tts_component(
         <button id="{component_id}_resume" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
           🔊 Resume
         </button>
+        <button id="{component_id}_pause" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+          ⏸ Pause
+        </button>
         <button id="{component_id}_stop" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
           ⏹ Stop
         </button>
@@ -707,7 +685,9 @@ def tts_component(
 
       const playPauseBtn = document.getElementById(ROOT_ID + "_playpause");
       const resumeBtn = document.getElementById(ROOT_ID + "_resume");
+      const pauseBtn = document.getElementById(ROOT_ID + "_pause");
       const stopBtn = document.getElementById(ROOT_ID + "_stop");
+
       const voiceSelect = document.getElementById(ROOT_ID + "_voice");
       const resetVoiceBtn = document.getElementById(ROOT_ID + "_resetvoice");
       const statusEl = document.getElementById(ROOT_ID + "_status");
@@ -732,6 +712,11 @@ def tts_component(
       let betweenRemaining = 0;
       let betweenPaused = false;
 
+      // Track current utterance state
+      let lastItemText = "";
+      let lastItemHadEnd = true;   // if false, we paused mid-utterance
+      let isManuallyStopping = false;
+
       function setStatus(msg) {{
         statusEl.textContent = msg;
       }}
@@ -744,23 +729,8 @@ def tts_component(
         return true;
       }}
 
-      function setPlayPauseLabel() {{
-        if (!("speechSynthesis" in window)) {{
-          playPauseBtn.textContent = "▶️ Play";
-          return;
-        }}
-        const synth = window.speechSynthesis;
-
-        if (betweenPaused) {{
-          playPauseBtn.textContent = "🔊 Resume";
-          return;
-        }}
-
-        if (synth.speaking) {{
-          playPauseBtn.textContent = synth.paused ? "🔊 Resume" : "⏸ Pause";
-        }} else {{
-          playPauseBtn.textContent = "▶️ Play";
-        }}
+      function hasActiveQueue() {{
+        return queue && queue.length && idx <= queue.length;
       }}
 
       function getVoicesAsync() {{
@@ -1000,16 +970,21 @@ def tts_component(
       function stopAll() {{
         if (!ensureSpeechSupport()) return;
 
+        isManuallyStopping = true;
+
         clearBetweenTimer();
         betweenPaused = false;
         betweenRemaining = 0;
+
+        lastItemText = "";
+        lastItemHadEnd = true;
 
         window.speechSynthesis.cancel();
         queue = [];
         idx = 0;
 
         setStatus("Stopped.");
-        setPlayPauseLabel();
+        isManuallyStopping = false;
       }}
 
       function pauseAll() {{
@@ -1017,42 +992,27 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
+        // If we are between items (timer running), pause the timer
         if (betweenTimer) {{
           const now = Date.now();
           betweenRemaining = Math.max(0, betweenDueAt - now);
           clearBetweenTimer();
           betweenPaused = true;
-          setStatus("Paused.");
-          setPlayPauseLabel();
+          setStatus("Paused (between items).");
           return;
         }}
 
+        // If currently speaking, pause speech
         if (synth.speaking && !synth.paused) {{
+          lastItemHadEnd = false; // we're pausing mid-utterance
           synth.pause();
           setStatus("Paused.");
-          setPlayPauseLabel();
-        }}
-      }}
-
-      function resumeAll() {{
-        if (!ensureSpeechSupport()) return;
-
-        const synth = window.speechSynthesis;
-
-        if (betweenPaused) {{
-          betweenPaused = false;
-          const delay = Math.max(0, betweenRemaining);
-          betweenRemaining = 0;
-          scheduleNext(delay);
-          setStatus("Speaking…");
-          setPlayPauseLabel();
           return;
         }}
 
-        if (synth.paused) {{
-          synth.resume();
-          setStatus("Speaking…");
-          setPlayPauseLabel();
+        // If already paused, do nothing
+        if (synth.paused || betweenPaused) {{
+          setStatus("Paused.");
         }}
       }}
 
@@ -1087,14 +1047,15 @@ def tts_component(
 
         utter.onstart = () => {{
           setStatus("Speaking…");
-          setPlayPauseLabel();
         }};
+
         utter.onend = () => {{
-          setPlayPauseLabel();
+          lastItemHadEnd = true;
         }};
+
         utter.onerror = () => {{
           setStatus("TTS error.");
-          setPlayPauseLabel();
+          lastItemHadEnd = true;
         }};
 
         window.speechSynthesis.speak(utter);
@@ -1107,14 +1068,20 @@ def tts_component(
 
         if (idx >= queue.length) {{
           setStatus("Done.");
-          setPlayPauseLabel();
           return;
         }}
 
         const item = queue[idx];
         idx += 1;
 
-        synth.cancel();
+        lastItemText = item.text || "";
+        lastItemHadEnd = true;
+
+        // Important: don't cancel while paused; only cancel when we are actively moving to a new item
+        if (!synth.paused) {{
+          synth.cancel();
+        }}
+
         speakItem(item.text);
 
         const pauseAfter = Math.max(0, item.pauseAfter || 0);
@@ -1126,6 +1093,13 @@ def tts_component(
           }}
           const s = window.speechSynthesis;
 
+          // If user paused, don't schedule next
+          if (s.paused) {{
+            clearInterval(watcher);
+            return;
+          }}
+
+          // If not speaking (and not paused), schedule the next
           if (!s.speaking && !s.paused) {{
             clearInterval(watcher);
             scheduleNext(pauseAfter);
@@ -1140,13 +1114,51 @@ def tts_component(
         betweenPaused = false;
         betweenRemaining = 0;
 
+        lastItemText = "";
+        lastItemHadEnd = true;
+
         window.speechSynthesis.cancel();
 
         queue = buildQueueFromText(TEXT);
         idx = 0;
 
         speakNext();
-        setPlayPauseLabel();
+      }}
+
+      function resumeAll() {{
+        if (!ensureSpeechSupport()) return;
+
+        const synth = window.speechSynthesis;
+
+        // Resume between-items pause
+        if (betweenPaused) {{
+          betweenPaused = false;
+          const delay = Math.max(0, betweenRemaining);
+          betweenRemaining = 0;
+          setStatus("Speaking…");
+          scheduleNext(delay);
+          return;
+        }}
+
+        // Resume a paused utterance
+        if (synth.paused) {{
+          synth.resume();
+          setStatus("Speaking…");
+          return;
+        }}
+
+        // If not paused but we have an active queue and we're not speaking,
+        // continue from current idx without rebuilding the queue.
+        if (queue.length && idx < queue.length && !synth.speaking) {{
+          setStatus("Speaking…");
+          speakNext();
+          return;
+        }}
+
+        // If nothing has started yet, start fresh
+        if (!queue.length) {{
+          startFresh();
+        }}
       }}
 
       function togglePlayPause() {{
@@ -1154,59 +1166,42 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
+        // If paused, resume
         if (betweenPaused || synth.paused) {{
           resumeAll();
           return;
         }}
 
+        // If currently speaking or between items, pause
         if (betweenTimer || (synth.speaking && !synth.paused)) {{
           pauseAll();
           return;
         }}
 
+        // If we have a queue and are mid-way (stopped speaking due to UI), continue
         if (queue.length && idx < queue.length) {{
           setStatus("Speaking…");
           speakNext();
-          setPlayPauseLabel();
           return;
         }}
 
+        // Otherwise start new
         startFresh();
       }}
 
-      function resumeOrStart() {{
-        if (!ensureSpeechSupport()) return;
-
-        const synth = window.speechSynthesis;
-
-        if (betweenPaused || synth.paused) {{
-          resumeAll();
-          return;
-        }}
-
-        if (synth.speaking && !synth.paused) {{
-          setStatus("Already speaking…");
-          setPlayPauseLabel();
-          return;
-        }}
-
-        if (queue.length && idx < queue.length) {{
-          setStatus("Speaking…");
-          speakNext();
-          setPlayPauseLabel();
-          return;
-        }}
-
-        startFresh();
-      }}
+      // UI wiring
+      playPauseBtn.addEventListener("click", togglePlayPause);
+      pauseBtn.addEventListener("click", pauseAll);
+      resumeBtn.addEventListener("click", resumeAll);
+      stopBtn.addEventListener("click", stopAll);
 
       voiceSelect.addEventListener("change", () => {{
         try {{ localStorage.setItem(storageKey, voiceSelect.value || ""); }} catch (e) {{}}
-        if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused)) {{
+        // Voice changes mid-speech can be flaky; stop to avoid strange state.
+        if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused || betweenTimer || betweenPaused)) {{
           stopAll();
         }} else {{
           setStatus("Voice selected.");
-          setPlayPauseLabel();
         }}
       }});
 
@@ -1220,24 +1215,13 @@ def tts_component(
         }} else {{
           setStatus("Reset (no default found).");
         }}
-        if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused)) stopAll();
-        setPlayPauseLabel();
+        if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused || betweenTimer || betweenPaused)) stopAll();
       }});
 
-      playPauseBtn.addEventListener("click", togglePlayPause);
-      resumeBtn.addEventListener("click", resumeOrStart);
-      stopBtn.addEventListener("click", stopAll);
-
-      setInterval(() => {{
-        if (!ensureSpeechSupport()) return;
-        setPlayPauseLabel();
-      }}, 350);
-
       initVoices();
-      setPlayPauseLabel();
     </script>
     """
-    st.components.v1.html(html, height=140)
+    st.components.v1.html(html, height=150)
 
 
 # -----------------------------
@@ -1264,20 +1248,17 @@ def parse_pdf_to_pages(pdf_bytes: bytes) -> List[Dict]:
     for i, page in enumerate(getattr(reader, "pages", [])):
         raw = ""
 
-        # 1) Standard extraction
         try:
             raw = page.extract_text() or ""
         except Exception:
             raw = ""
 
-        # 2) pypdf layout-mode fallback (often better for spacing/columns)
         if not raw.strip():
             try:
                 raw = page.extract_text(extraction_mode="layout") or ""
             except Exception:
                 pass
 
-        # 3) Final attempt
         if not raw.strip():
             try:
                 raw = (page.extract_text() or "").strip()
@@ -1328,11 +1309,9 @@ with st.sidebar:
     st.header("Document Source")
     uploaded = st.file_uploader("Upload PDF (optional)", type=["pdf"])
     url = st.text_input("PDF URL", value=DEFAULT_URL, disabled=uploaded is not None)
-
     st.caption("Navigation is by page number. Use Next/Back controls on the page to move sequentially.")
 
 
-# Load PDF pages
 try:
     if uploaded is not None:
         pages = load_pages_from_upload(uploaded.getvalue())
@@ -1348,12 +1327,10 @@ if not pages:
 
 num_pages = len(pages)
 
-# Session state for page index
 if "page_index" not in st.session_state:
     st.session_state.page_index = 0
 st.session_state.page_index = max(0, min(st.session_state.page_index, num_pages - 1))
 
-# Sidebar navigation by page number + options
 with st.sidebar:
     st.header("Navigate")
     page_options = [f"Page {i}" for i in range(1, num_pages + 1)]
@@ -1453,7 +1430,6 @@ with st.sidebar:
     show_tts_preview = st.toggle("Show TTS text preview", value=False)
 
 
-# Current page content
 cur_page_num = st.session_state.page_index + 1
 raw_text = (pages[st.session_state.page_index].get("raw") or "").strip()
 
@@ -1465,7 +1441,6 @@ if not raw_text.strip():
 
 tts_text = base_tts_text
 
-# Apply chemistry before math (so hydration dots/charges are handled cleanly)
 if tts_text and read_chem:
     tts_text = make_chem_speakable(
         tts_text,
