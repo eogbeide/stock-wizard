@@ -4,6 +4,7 @@
 # - Browser Text-to-Speech (installed voices dropdown)
 # - Flow reading: sentence/paragraph pauses (optionally clause pauses)
 # - Sticky floating Controls (Listen + Next/Back)
+# - NEW: Reads mathematical equations (including many Word “Equation” objects) via linearization + speakable math
 #
 # Run:
 #   streamlit run easymcat.py
@@ -27,6 +28,12 @@ SUBJECT_RE = re.compile(r"^\s*subject\s*[:\-]\s*(.+?)\s*$", flags=re.IGNORECASE)
 TOPIC_RE = re.compile(r"^\s*topic\s*[:\-]\s*(.+?)\s*$", flags=re.IGNORECASE)
 SUBTOPIC_RE = re.compile(r"^\s*(?:sub\s*topic|subtopic)\s*[:\-]\s*(.+?)\s*$", flags=re.IGNORECASE)
 
+# WordprocessingML + Office Math namespaces
+NS = {
+    "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+    "m": "http://schemas.openxmlformats.org/officeDocument/2006/math",
+}
+
 
 def heading_level(style_name: str) -> Optional[int]:
     """Return heading level if style_name looks like 'Heading 1', 'Heading 2', etc."""
@@ -45,6 +52,148 @@ def fetch_docx_bytes(url: str) -> bytes:
     r = requests.get(url, timeout=30)
     r.raise_for_status()
     return r.content
+
+
+def _local(tag: str) -> str:
+    return tag.split("}")[-1] if tag else ""
+
+
+def omml_to_linear(el) -> str:
+    """
+    Convert common Office Math (OMML) structures into a simple linear text:
+      - Fractions -> (num)/(den)
+      - Superscripts -> base^sup
+      - Subscripts -> base_sub
+      - Roots -> sqrt(expr) or root(deg, expr)
+    Falls back to concatenating contained text tokens.
+    """
+    if el is None:
+        return ""
+
+    loc = _local(getattr(el, "tag", ""))
+
+    # leaf text in OMML
+    if loc == "t":
+        return el.text or ""
+
+    # fraction
+    if loc == "f":
+        num = el.find("m:num", NS)
+        den = el.find("m:den", NS)
+        num_txt = omml_to_linear(num) if num is not None else ""
+        den_txt = omml_to_linear(den) if den is not None else ""
+        num_txt = num_txt.strip()
+        den_txt = den_txt.strip()
+        if num_txt or den_txt:
+            return f"({num_txt})/({den_txt})"
+        # fallback
+        return " ".join(t.text for t in el.findall(".//m:t", NS) if t.text)
+
+    # superscript
+    if loc == "sSup":
+        base = el.find("m:e", NS)
+        sup = el.find("m:sup", NS)
+        b = omml_to_linear(base).strip()
+        s = omml_to_linear(sup).strip()
+        if b or s:
+            return f"{b}^{s}"
+        return " ".join(t.text for t in el.findall(".//m:t", NS) if t.text)
+
+    # subscript
+    if loc == "sSub":
+        base = el.find("m:e", NS)
+        sub = el.find("m:sub", NS)
+        b = omml_to_linear(base).strip()
+        s = omml_to_linear(sub).strip()
+        if b or s:
+            return f"{b}_{s}"
+        return " ".join(t.text for t in el.findall(".//m:t", NS) if t.text)
+
+    # root
+    if loc == "rad":
+        deg = el.find("m:deg", NS)
+        expr = el.find("m:e", NS)
+        deg_txt = omml_to_linear(deg).strip() if deg is not None else ""
+        expr_txt = omml_to_linear(expr).strip() if expr is not None else ""
+        if deg_txt:
+            return f"root({deg_txt}, {expr_txt})"
+        return f"sqrt({expr_txt})"
+
+    # n-ary (sum/integral) - best effort
+    if loc == "nary":
+        chr_el = el.find("m:chr", NS)
+        op = ""
+        if chr_el is not None:
+            op = chr_el.get(f"{{{NS['m']}}}val") or chr_el.get("m:val") or ""
+        sub = el.find("m:sub", NS)
+        sup = el.find("m:sup", NS)
+        expr = el.find("m:e", NS)
+        sub_txt = omml_to_linear(sub).strip() if sub is not None else ""
+        sup_txt = omml_to_linear(sup).strip() if sup is not None else ""
+        expr_txt = omml_to_linear(expr).strip() if expr is not None else ""
+        core = op or "operator"
+        if sub_txt:
+            core += f"_{sub_txt}"
+        if sup_txt:
+            core += f"^{sup_txt}"
+        if expr_txt:
+            core += f"({expr_txt})"
+        return core
+
+    # container nodes: just recurse children
+    parts = []
+    for c in getattr(el, "iterchildren", lambda: [])():
+        chunk = omml_to_linear(c)
+        if chunk:
+            parts.append(chunk)
+
+    if parts:
+        # join with a space to avoid squashing tokens
+        return " ".join(p for p in parts if p).strip()
+
+    # fallback to m:t tokens anywhere
+    toks = [t.text for t in el.findall(".//m:t", NS) if t.text]
+    return " ".join(toks).strip()
+
+
+def paragraph_text_with_math(p) -> str:
+    """
+    Extract text from a python-docx paragraph including Word equation objects.
+    We keep normal runs in order and replace OMML equation blocks with a linear string.
+    """
+    try:
+        pel = p._p  # lxml element
+    except Exception:
+        return (p.text or "").strip()
+
+    out: List[str] = []
+
+    # iterate direct children to preserve order between text runs and math blocks
+    for child in pel.iterchildren():
+        loc = _local(getattr(child, "tag", ""))
+
+        if loc in ("r", "hyperlink", "smartTag", "sdt"):
+            # collect visible text inside this container
+            for t in child.findall(".//w:t", NS):
+                if t.text:
+                    out.append(t.text)
+
+        elif loc in ("oMath", "oMathPara"):
+            eq = omml_to_linear(child).strip()
+            if eq:
+                # surround with spaces so it doesn't glue to adjacent words
+                out.append(" ")
+                out.append(eq)
+                out.append(" ")
+
+        else:
+            # sometimes text hides in other containers; grab any w:t as fallback
+            for t in child.findall(".//w:t", NS):
+                if t.text:
+                    out.append(t.text)
+
+    joined = "".join(out)
+    return joined.strip() if joined.strip() else (p.text or "").strip()
 
 
 def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
@@ -74,7 +223,7 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
 
     has_markers = False
     for p in doc.paragraphs:
-        raw = (p.text or "").strip()
+        raw = paragraph_text_with_math(p)
         if not raw:
             continue
         if SUBJECT_RE.match(raw) or TOPIC_RE.match(raw) or SUBTOPIC_RE.match(raw):
@@ -114,7 +263,7 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
         cur_subtopic = sub
 
     for p in doc.paragraphs:
-        raw = (p.text or "").strip()
+        raw = paragraph_text_with_math(p)
         if not raw:
             continue
 
@@ -207,6 +356,127 @@ def build_navigation(subjects: List[Dict]) -> Tuple[List[Dict], List[Tuple[int, 
                     flat.append((si, t["ti"], s["ui"]))
 
     return nav, flat
+
+
+# -----------------------------
+# Make math speakable (pre-TTS)
+# -----------------------------
+_SUPERSCRIPT_UNICODE = {
+    "⁰": "^0",
+    "¹": "^1",
+    "²": "^2",
+    "³": "^3",
+    "⁴": "^4",
+    "⁵": "^5",
+    "⁶": "^6",
+    "⁷": "^7",
+    "⁸": "^8",
+    "⁹": "^9",
+}
+
+_GREEK = {
+    "α": "alpha",
+    "β": "beta",
+    "γ": "gamma",
+    "δ": "delta",
+    "ε": "epsilon",
+    "θ": "theta",
+    "λ": "lambda",
+    "μ": "mu",
+    "π": "pi",
+    "ρ": "rho",
+    "σ": "sigma",
+    "τ": "tau",
+    "φ": "phi",
+    "χ": "chi",
+    "ψ": "psi",
+    "ω": "omega",
+}
+
+
+def make_math_speakable(text: str, style: str = "Natural") -> str:
+    """
+    Convert common math notation into more speakable words for Web Speech TTS.
+    style:
+      - "Natural": squared/cubed, "to the power", "over", "square root of"
+      - "Literal": says operators more literally (e.g., "caret", "slash")
+    """
+    if not text:
+        return ""
+
+    s = text
+
+    # normalize unicode superscripts
+    for k, v in _SUPERSCRIPT_UNICODE.items():
+        s = s.replace(k, v)
+
+    # greek symbols
+    for sym, name in _GREEK.items():
+        s = s.replace(sym, f" {name} ")
+
+    # common math symbols
+    s = s.replace("≤", " less than or equal to ")
+    s = s.replace("≥", " greater than or equal to ")
+    s = s.replace("≠", " not equal to ")
+    s = s.replace("≈", " approximately equal to ")
+    s = s.replace("∝", " proportional to ")
+    s = s.replace("∞", " infinity ")
+    s = s.replace("→", " tends to ")
+    s = s.replace("∑", " summation ")
+    s = s.replace("∫", " integral ")
+    s = s.replace("√", " square root of ")
+    s = s.replace("×", " times ")
+    s = s.replace("·", " times ")
+
+    # handle sqrt(...) and root(deg, expr) from OMML linearization
+    def _root_repl(m: re.Match) -> str:
+        deg = m.group(1).strip()
+        expr = m.group(2).strip()
+        if deg == "2":
+            return f" square root of {expr} "
+        if deg == "3":
+            return f" cube root of {expr} "
+        if deg == "4":
+            return f" fourth root of {expr} "
+        return f" {deg}th root of {expr} "
+
+    s = re.sub(r"\broot\s*\(\s*([0-9]+)\s*,\s*([^)]+)\)", _root_repl, s, flags=re.IGNORECASE)
+    s = re.sub(r"\bsqrt\s*\(\s*([^)]+)\)", r" square root of \1 ", s, flags=re.IGNORECASE)
+
+    if style.lower().startswith("lit"):
+        # more literal operator phrasing
+        s = s.replace("^", " caret ")
+        s = s.replace("/", " slash ")
+        s = s.replace("=", " equals ")
+        s = s.replace("+", " plus ")
+        s = s.replace("-", " minus ")
+        s = s.replace("*", " times ")
+    else:
+        # Natural: exponents + fractions + operators
+        s = s.replace("=", " equals ")
+        s = s.replace("+", " plus ")
+        # keep hyphen words; only replace standalone minus-ish patterns later
+        s = re.sub(r"(?<=\s)-(?=\s)", " minus ", s)
+        s = s.replace("*", " times ")
+
+        # base^2, base^3, base^n
+        s = re.sub(r"(\b[A-Za-z][A-Za-z0-9]*)\s*\^\s*2\b", r"\1 squared", s)
+        s = re.sub(r"(\b[A-Za-z][A-Za-z0-9]*)\s*\^\s*3\b", r"\1 cubed", s)
+        s = re.sub(r"(\b[A-Za-z0-9][A-Za-z0-9]*)\s*\^\s*([A-Za-z0-9]+)\b", r"\1 to the power \2", s)
+
+        # subscript: a_b -> "a sub b"
+        s = re.sub(r"(\b[A-Za-z0-9]+)\s*_\s*([A-Za-z0-9]+)\b", r"\1 sub \2", s)
+
+        # fractions: (a)/(b) -> "a over b"
+        s = re.sub(r"\(\s*([^)]+?)\s*\)\s*/\s*\(\s*([^)]+?)\s*\)", r" \1 over \2 ", s)
+
+        # generic slash used as fraction-ish when surrounded by spaces
+        s = s.replace(" / ", " over ")
+
+    # clean spacing
+    s = re.sub(r"[ \t]+", " ", s)
+    s = re.sub(r"\s+\n", "\n", s)
+    return s.strip()
 
 
 # -----------------------------
@@ -462,7 +732,6 @@ def tts_component(
         const p = (paragraph || "").trim();
         if (!p) return [];
 
-        // Prefer Intl.Segmenter when available (best sentence boundaries)
         if (typeof Intl !== "undefined" && Intl.Segmenter) {{
           try {{
             const seg = new Intl.Segmenter("en", {{ granularity: "sentence" }});
@@ -475,7 +744,6 @@ def tts_component(
           }} catch (e) {{}}
         }}
 
-        // Fallback: split after . ! ? followed by whitespace
         return p
           .split(/(?<=[.!?])\\s+/g)
           .map(s => s.trim())
@@ -486,7 +754,6 @@ def tts_component(
         const s = (sentence || "").trim();
         if (!s) return [];
 
-        // Keep punctuation with the clause.
         const tokens = s.split(/(,|;|:)/g);
         const out = [];
         let buf = "";
@@ -539,13 +806,11 @@ def tts_component(
 
               items.push({{ text: sent, pauseAfter }});
             }} else {{
-              // No flow mode: single utterance (no queue splitting)
               return [{{ text: normalizeText(t), pauseAfter: 0 }}];
             }}
           }}
         }}
 
-        // If nothing parsed, fallback to whole text
         return items.length ? items : [{{ text: normalizeText(t), pauseAfter: 0 }}];
       }}
 
@@ -576,7 +841,6 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
-        // Pausing while in-between utterances (timer)
         if (betweenTimer) {{
           const now = Date.now();
           betweenRemaining = Math.max(0, betweenDueAt - now);
@@ -587,7 +851,6 @@ def tts_component(
           return;
         }}
 
-        // Pausing while speaking
         if (synth.speaking && !synth.paused) {{
           synth.pause();
           setStatus("Paused.");
@@ -600,7 +863,6 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
-        // Resuming while in-between utterances
         if (betweenPaused) {{
           betweenPaused = false;
           const delay = Math.max(0, betweenRemaining);
@@ -611,7 +873,6 @@ def tts_component(
           return;
         }}
 
-        // Resuming while speaking
         if (synth.paused) {{
           synth.resume();
           setStatus("Speaking…");
@@ -677,12 +938,9 @@ def tts_component(
         const item = queue[idx];
         idx += 1;
 
-        synth.cancel(); // avoid overlap edge-cases
+        synth.cancel();
         speakItem(item.text);
 
-        // Schedule next chunk after the current utterance ends + pauseAfter.
-        // We can't reliably chain with utter.onend for every browser timing case when cancel() happens,
-        // so we poll speaking state and then schedule the next.
         const pauseAfter = Math.max(0, item.pauseAfter || 0);
 
         const watcher = setInterval(() => {{
@@ -730,7 +988,6 @@ def tts_component(
           return;
         }}
 
-        // Not speaking: resume queued progress if any, otherwise start fresh
         if (queue.length && idx < queue.length) {{
           setStatus("Speaking…");
           speakNext();
@@ -916,11 +1173,25 @@ with st.sidebar:
         help="If > 0, splits sentences by commas/;/: and adds a light pause for clearer rhythm.",
     )
 
+    st.divider()
+    st.subheader("Math reading")
+
+    read_math = st.toggle(
+        "Speak equations clearly",
+        value=True,
+        help="Converts math symbols to words and extracts many Word equation objects.",
+    )
+    math_style = st.selectbox("Math style", ["Natural", "Literal"], index=0, disabled=not read_math)
+    show_tts_preview = st.toggle("Show TTS text preview", value=False)
+
+# Current content
 cur_si, cur_ti, cur_ui = flat[st.session_state.flat_index]
 cur_subject = subjects[cur_si]["subject"]
 cur_topic = subjects[cur_si]["topics"][cur_ti]["topic"]
 cur_subtopic = subjects[cur_si]["topics"][cur_ti]["subtopics"][cur_ui]["subtopic"]
 cur_text = (subjects[cur_si]["topics"][cur_ti]["subtopics"][cur_ui].get("full_text") or "").strip()
+
+tts_text = make_math_speakable(cur_text, style=math_style) if (cur_text and read_math) else cur_text
 
 col_left, col_right = st.columns([2, 1], vertical_alignment="top")
 
@@ -929,6 +1200,9 @@ with col_left:
 
     if cur_text:
         st.write(cur_text)
+        if show_tts_preview and tts_text and tts_text != cur_text:
+            with st.expander("TTS preview (what will be spoken)"):
+                st.write(tts_text)
     else:
         st.info("No paragraph text under this subtopic.")
 
@@ -936,9 +1210,9 @@ with col_right:
     st.subheader("Controls")
 
     st.markdown("**Listen**")
-    if cur_text:
+    if tts_text:
         tts_component(
-            cur_text,
+            tts_text,
             preferred_lang=preferred_lang,
             rate=rate,
             pitch=pitch,
