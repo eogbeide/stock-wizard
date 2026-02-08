@@ -15,7 +15,7 @@
 #
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/ankideck.pdf"
 
-import ioe
+import io
 import re
 import uuid
 from typing import List, Dict, Tuple
