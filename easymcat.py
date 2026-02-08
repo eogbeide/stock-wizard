@@ -1,6 +1,6 @@
 # easymcat.py
 # Streamlit DOCX Reader + Subject dropdown + Topic dropdown + Subtopic dropdown
-# + Text-to-Speech + Next/Back
+# + Browser Text-to-Speech (actual installed voices dropdown) + Next/Back
 #
 # Run:
 #   streamlit run easymcat.py
@@ -71,7 +71,6 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
     """
     doc = Document(io.BytesIO(docx_bytes))
 
-    # detect explicit markers anywhere
     has_markers = False
     for p in doc.paragraphs:
         raw = (p.text or "").strip()
@@ -134,14 +133,12 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
                 ensure_subtopic(stm.group(1))
                 continue
 
-            # Content line
             if cur_topic is not None and cur_subtopic is None:
                 ensure_subtopic("Overview")
             if cur_subtopic is not None:
                 cur_subtopic["chunks"].append(raw)
             continue
 
-        # fallback: headings
         lvl = heading_level(getattr(p.style, "name", ""))
         if lvl == 1:
             ensure_subject(raw)
@@ -153,12 +150,10 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
             ensure_subtopic(raw)
             continue
 
-        # regular content in fallback mode
         if cur_subtopic is None:
             ensure_subtopic("Overview")
         cur_subtopic["chunks"].append(raw)
 
-    # finalize full_text
     if not subjects:
         subjects = [
             {
@@ -216,45 +211,72 @@ def build_navigation(subjects: List[Dict]) -> Tuple[List[Dict], List[Tuple[int, 
 # -----------------------------
 def tts_component(
     text: str,
-    voice_lang: str = "en-GB",
+    preferred_lang: str = "en-GB",
     rate: float = 1.0,
     pitch: float = 0.8,
     prefer_deep_male_gb: bool = True,
 ):
-    """Text-to-speech in the user's browser (no API keys) using Web Speech API."""
+    """Browser TTS with real installed voices dropdown + Play/Pause toggle + Stop."""
     safe = text.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
     component_id = f"tts_{uuid.uuid4().hex}"
 
     html = f"""
-    <div id="{component_id}" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-      <button id="{component_id}_play" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
-        ▶️ Play
-      </button>
-      <button id="{component_id}_pause" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
-        ⏸ Pause
-      </button>
-      <button id="{component_id}_resume" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
-        🔊 Resume
-      </button>
-      <button id="{component_id}_stop" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
-        ⏹ Stop
-      </button>
-      <span style="color:#666; font-size: 0.9rem;">(Uses your browser's text-to-speech)</span>
+    <div id="{component_id}" style="display:flex; flex-direction:column; gap:10px;">
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <button id="{component_id}_playpause" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+          ▶️ Play
+        </button>
+        <button id="{component_id}_stop" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+          ⏹ Stop
+        </button>
+        <span id="{component_id}_status" style="color:#666; font-size: 0.9rem;">Ready</span>
+      </div>
+
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <label style="color:#444; font-size:0.9rem;">Voice</label>
+        <select id="{component_id}_voice" style="min-width: 260px; padding:8px 10px; border-radius:8px; border:1px solid #ddd;">
+          <option value="">Loading voices…</option>
+        </select>
+        <button id="{component_id}_resetvoice" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+          Reset default
+        </button>
+        <span style="color:#888; font-size: 0.85rem;">(Installed voices vary by OS/browser)</span>
+      </div>
     </div>
 
     <script>
       const ROOT_ID = "{component_id}";
-      const text = `{safe}`;
+      const TEXT = `{safe}`;
 
-      const playBtn = document.getElementById(ROOT_ID + "_play");
-      const pauseBtn = document.getElementById(ROOT_ID + "_pause");
-      const resumeBtn = document.getElementById(ROOT_ID + "_resume");
+      const playPauseBtn = document.getElementById(ROOT_ID + "_playpause");
       const stopBtn = document.getElementById(ROOT_ID + "_stop");
+      const voiceSelect = document.getElementById(ROOT_ID + "_voice");
+      const resetVoiceBtn = document.getElementById(ROOT_ID + "_resetvoice");
+      const statusEl = document.getElementById(ROOT_ID + "_status");
 
-      const preferDeepMaleGb = {str(prefer_deep_male_gb).lower()};
-      const preferredLang = "{voice_lang}";
+      const preferredLang = "{preferred_lang}";
       const preferredRate = {rate};
       const preferredPitch = {pitch};
+      const preferDeepMaleGb = {str(prefer_deep_male_gb).lower()};
+
+      const storageKey = "easymcat_tts_voice_uri";
+
+      function setStatus(msg) {{
+        statusEl.textContent = msg;
+      }}
+
+      function setPlayPauseLabel() {{
+        if (!("speechSynthesis" in window)) {{
+          playPauseBtn.textContent = "▶️ Play";
+          return;
+        }}
+        const synth = window.speechSynthesis;
+        if (synth.speaking) {{
+          playPauseBtn.textContent = synth.paused ? "🔊 Resume" : "⏸ Pause";
+        }} else {{
+          playPauseBtn.textContent = "▶️ Play";
+        }}
+      }}
 
       function ensureSpeechSupport() {{
         if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {{
@@ -285,86 +307,209 @@ def tts_component(
             voices = synth.getVoices();
             synth.removeEventListener("voiceschanged", onVoicesChanged);
             resolve(voices || []);
-          }}, 1000);
+          }}, 1200);
         }});
       }}
 
-      function pickPreferredVoice(voices) {{
+      function voiceLabel(v) {{
+        const name = v.name || "Unnamed";
+        const lang = v.lang || "";
+        return lang ? `${{name}} (${{lang}})` : name;
+      }}
+
+      function pickDefaultVoice(voices) {{
         if (!voices || !voices.length) return null;
 
-        const byLang = (langPrefix) =>
-          voices.filter(v => (v.lang || "").toLowerCase().startsWith(langPrefix.toLowerCase()));
+        const normLang = (s) => (s || "").toLowerCase();
+        const byLangPrefix = (prefix) =>
+          voices.filter(v => normLang(v.lang).startsWith(prefix.toLowerCase()));
 
-        const gbVoices = byLang("en-gb");
-        const enVoices = byLang("en");
+        const gbVoices = byLangPrefix("en-gb");
+        const enVoices = byLangPrefix("en");
+        const preferredPrefix = preferredLang ? preferredLang.toLowerCase() : "";
+        const preferredMatches = preferredPrefix ? byLangPrefix(preferredPrefix) : [];
+
+        const maleNamePatterns = [
+          /google.*uk.*english.*male/i,
+          /microsoft.*(ryan|george|alfie).*online/i,
+          /microsoft.*(ryan|george|alfie)/i,
+          /daniel/i,
+          /male/i
+        ];
 
         if (preferDeepMaleGb) {{
-          const preferredNamePatterns = [
-            /google.*uk.*english.*male/i,
-            /microsoft.*(ryan|george|alfie).*online/i,
-            /microsoft.*(ryan|george|alfie)/i,
-            /^daniel$/i,
-            /daniel/i,
-            /male/i
-          ];
-
-          for (const re of preferredNamePatterns) {{
+          for (const re of maleNamePatterns) {{
             const found = gbVoices.find(v => re.test(v.name || ""));
             if (found) return found;
           }}
           if (gbVoices.length) return gbVoices[0];
         }}
 
-        // If user picked a lang, try match that first (e.g., en-GB, en-US, etc.)
-        const explicitLangPrefix = (preferredLang || "").toLowerCase();
-        if (explicitLangPrefix) {{
-          const exact = voices.find(v => (v.lang || "").toLowerCase() === explicitLangPrefix);
-          if (exact) return exact;
-
-          const prefix = voices.find(v => (v.lang || "").toLowerCase().startsWith(explicitLangPrefix));
-          if (prefix) return prefix;
-        }}
-
+        if (preferredMatches.length) return preferredMatches[0];
         if (gbVoices.length) return gbVoices[0];
         if (enVoices.length) return enVoices[0];
         return voices[0];
       }}
 
-      async function speak(t) {{
+      function populateVoices(voices) {{
+        voiceSelect.innerHTML = "";
+
+        const savedUri = (() => {{
+          try {{ return localStorage.getItem(storageKey); }} catch (e) {{ return null; }}
+        }})();
+
+        const options = voices.map((v, idx) => ({{
+          idx,
+          uri: v.voiceURI || "",
+          label: voiceLabel(v),
+          voice: v
+        }}));
+
+        options.sort((a, b) => a.label.localeCompare(b.label));
+
+        for (const opt of options) {{
+          const el = document.createElement("option");
+          el.value = opt.uri;
+          el.textContent = opt.label;
+          voiceSelect.appendChild(el);
+        }}
+
+        const hasSaved = savedUri && options.some(o => o.uri === savedUri);
+        if (hasSaved) {{
+          voiceSelect.value = savedUri;
+          setStatus("Voice loaded (saved selection).");
+          return;
+        }}
+
+        const def = pickDefaultVoice(voices);
+        if (def && def.voiceURI) {{
+          voiceSelect.value = def.voiceURI;
+          setStatus("Voice loaded (default selection).");
+        }} else {{
+          setStatus("Voice loaded.");
+        }}
+      }}
+
+      async function initVoices() {{
+        if (!ensureSpeechSupport()) {{
+          setStatus("Speech not supported.");
+          return;
+        }}
+        const voices = await getVoicesAsync();
+        if (!voices || !voices.length) {{
+          voiceSelect.innerHTML = '<option value="">No voices found</option>';
+          setStatus("No voices found.");
+          return;
+        }}
+        populateVoices(voices);
+      }}
+
+      function getSelectedVoice(voices) {{
+        const uri = voiceSelect.value || "";
+        if (!uri) return null;
+        return voices.find(v => (v.voiceURI || "") === uri) || null;
+      }}
+
+      function stopAll() {{
+        if (!ensureSpeechSupport()) return;
+        window.speechSynthesis.cancel();
+        setStatus("Stopped.");
+        setPlayPauseLabel();
+      }}
+
+      async function speakNew() {{
         if (!ensureSpeechSupport()) return;
 
         const synth = window.speechSynthesis;
         synth.cancel();
 
-        const utter = new SpeechSynthesisUtterance(t);
+        const voices = await getVoicesAsync();
+        const utter = new SpeechSynthesisUtterance(TEXT);
+
         utter.rate = preferredRate;
         utter.pitch = preferredPitch;
         utter.lang = preferredLang;
 
-        const voices = await getVoicesAsync();
-        const chosen = pickPreferredVoice(voices);
-
+        const chosen = getSelectedVoice(voices) || pickDefaultVoice(voices);
         if (chosen) {{
           utter.voice = chosen;
-          utter.lang = chosen.lang || utter.lang;
+          if (chosen.lang) utter.lang = chosen.lang;
         }}
 
+        utter.onstart = () => {{
+          setStatus("Speaking…");
+          setPlayPauseLabel();
+        }};
+        utter.onend = () => {{
+          setStatus("Done.");
+          setPlayPauseLabel();
+        }};
+        utter.onerror = () => {{
+          setStatus("TTS error.");
+          setPlayPauseLabel();
+        }};
+
         synth.speak(utter);
+        setPlayPauseLabel();
       }}
 
-      playBtn.addEventListener("click", () => speak(text));
-      pauseBtn.addEventListener("click", () => {{
-        if (ensureSpeechSupport()) window.speechSynthesis.pause();
+      function togglePlayPause() {{
+        if (!ensureSpeechSupport()) return;
+        const synth = window.speechSynthesis;
+
+        if (!synth.speaking) {{
+          speakNew();
+          return;
+        }}
+
+        if (synth.paused) {{
+          synth.resume();
+          setStatus("Speaking…");
+        }} else {{
+          synth.pause();
+          setStatus("Paused.");
+        }}
+        setPlayPauseLabel();
+      }}
+
+      voiceSelect.addEventListener("change", () => {{
+        try {{ localStorage.setItem(storageKey, voiceSelect.value || ""); }} catch (e) {{}}
+        if (ensureSpeechSupport() && window.speechSynthesis.speaking) {{
+          stopAll();
+        }} else {{
+          setStatus("Voice selected.");
+          setPlayPauseLabel();
+        }}
       }});
-      resumeBtn.addEventListener("click", () => {{
-        if (ensureSpeechSupport()) window.speechSynthesis.resume();
+
+      resetVoiceBtn.addEventListener("click", async () => {{
+        try {{ localStorage.removeItem(storageKey); }} catch (e) {{}}
+        const voices = await getVoicesAsync();
+        const def = pickDefaultVoice(voices);
+        if (def && def.voiceURI) {{
+          voiceSelect.value = def.voiceURI;
+          setStatus("Reset to default voice.");
+        }} else {{
+          setStatus("Reset (no default found).");
+        }}
+        if (ensureSpeechSupport() && window.speechSynthesis.speaking) stopAll();
+        setPlayPauseLabel();
       }});
-      stopBtn.addEventListener("click", () => {{
-        if (ensureSpeechSupport()) window.speechSynthesis.cancel();
-      }});
+
+      playPauseBtn.addEventListener("click", togglePlayPause);
+      stopBtn.addEventListener("click", stopAll);
+
+      // Keep label accurate even if user uses browser controls / speech events.
+      setInterval(() => {{
+        if (!ensureSpeechSupport()) return;
+        setPlayPauseLabel();
+      }}, 400);
+
+      initVoices();
+      setPlayPauseLabel();
     </script>
     """
-    st.components.v1.html(html, height=90)
+    st.components.v1.html(html, height=130)
 
 
 # -----------------------------
@@ -385,7 +530,6 @@ with st.sidebar:
     url = st.text_input("DOCX URL", value=DEFAULT_URL)
     st.write("Navigation comes from **Subject:** / **Topic:** / **Subtopic:** lines (if present), otherwise Heading 1/2/3.")
 
-# Load document
 try:
     subjects = load_structure_from_url(url)
 except Exception as e:
@@ -404,21 +548,15 @@ if not nav or not flat:
     )
     st.stop()
 
-# Session state
 if "flat_index" not in st.session_state:
     st.session_state.flat_index = 0
 st.session_state.flat_index = max(0, min(st.session_state.flat_index, len(flat) - 1))
 
-# Current position
 cur_si, cur_ti, cur_ui = flat[st.session_state.flat_index]
 
-# -----------------------------
-# Sidebar: Subject dropdown (1st) + Topic dropdown (2nd) + Subtopic dropdown (3rd)
-# -----------------------------
 with st.sidebar:
     st.header("Navigate")
 
-    # 1) Subject dropdown
     subject_options = [x["subject"] for x in nav]
     cur_subject_nav_idx = next(i for i, x in enumerate(nav) if x["si"] == cur_si)
     selected_subject = st.selectbox("Subject", subject_options, index=cur_subject_nav_idx)
@@ -427,7 +565,6 @@ with st.sidebar:
     subj_node = nav[subj_nav_idx]
     new_si = subj_node["si"]
 
-    # 2) Topic dropdown (depends on Subject)
     topic_options = [t["topic"] for t in subj_node["topics"]]
     if new_si == cur_si:
         topic_default_idx = next((i for i, t in enumerate(subj_node["topics"]) if t["ti"] == cur_ti), 0)
@@ -439,7 +576,6 @@ with st.sidebar:
     topic_node = subj_node["topics"][topic_nav_idx]
     new_ti = topic_node["ti"]
 
-    # 3) Subtopic dropdown (depends on Topic)
     subtopic_options = [s["subtopic"] for s in topic_node["subtopics"]]
     if new_si == cur_si and new_ti == cur_ti:
         subtopic_default_idx = next((i for i, s in enumerate(topic_node["subtopics"]) if s["ui"] == cur_ui), 0)
@@ -460,28 +596,26 @@ with st.sidebar:
     st.divider()
     st.subheader("Text-to-Speech")
 
-    voice_lang = st.selectbox(
-        "Voice language",
+    preferred_lang = st.selectbox(
+        "Preferred language",
         ["en-GB", "en-US", "en", "es-ES", "fr-FR"],
         index=0,
-        help="Default is en-GB (UK). The app will also try to pick a male UK voice when available.",
+        help="Voice dropdown uses your installed voices. This sets the default preference/fallback.",
     )
     rate = st.slider("Rate", 0.5, 2.0, 1.0, 0.1)
     pitch = st.slider("Pitch", 0.5, 2.0, 0.8, 0.1, help="Lower pitch generally sounds deeper.")
     prefer_deep_male_gb = st.toggle(
-        "Prefer deep male UK voice",
+        "Prefer deep male UK voice (default)",
         value=True,
-        help="When available, tries common male en-GB voices (varies by OS/browser).",
+        help="Heuristic selection: prefers en-GB male voices when present.",
     )
 
-# Current content
 cur_si, cur_ti, cur_ui = flat[st.session_state.flat_index]
 cur_subject = subjects[cur_si]["subject"]
 cur_topic = subjects[cur_si]["topics"][cur_ti]["topic"]
 cur_subtopic = subjects[cur_si]["topics"][cur_ti]["subtopics"][cur_ui]["subtopic"]
 cur_text = (subjects[cur_si]["topics"][cur_ti]["subtopics"][cur_ui].get("full_text") or "").strip()
 
-# Layout
 col_left, col_right = st.columns([2, 1], vertical_alignment="top")
 
 with col_left:
@@ -509,7 +643,7 @@ with col_right:
     if cur_text:
         tts_component(
             cur_text,
-            voice_lang=voice_lang,
+            preferred_lang=preferred_lang,
             rate=rate,
             pitch=pitch,
             prefer_deep_male_gb=prefer_deep_male_gb,
