@@ -5,7 +5,7 @@ def make_story_mode(text: str) -> str:
     - Softens headings like 'Key points:' into a spoken lead-in
     - Reduces choppy line breaks (keeps paragraph breaks)
     """
-    if nottt text:
+    if not text:
         return ""
 
     lines = text.splitlines()
