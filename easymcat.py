@@ -5,7 +5,10 @@
 # - Flow reading: sentence/paragraph pauses (optionally clause pauses)
 # - Sticky floating Controls (Listen + Next/Back)
 # - Reads mathematical equations (including many Word “Equation” objects) via linearization + speakable math
-# - NEW: Reads chemical formulas + simple chemical equations more clearly (H2O, NaCl, (NH4)2SO4, CuSO4·5H2O, Fe3+, etc.)
+# - Reads chemical formulas + simple chemical equations more clearly (H2O, NaCl, (NH4)2SO4, CuSO4·5H2O, Fe3+, etc.)
+# - NEW: Mobile-friendly voice selection (works better on phones/tablets) + prefers Google UK English Male/Female when available
+# - NEW: Story mode (narration-friendly page formatting)
+# - NEW: Separate Resume button after Pause
 #
 # Run:
 #   streamlit run easymcat.py
@@ -20,7 +23,6 @@ from typing import Optional, List, Dict, Tuple
 import requests
 import streamlit as st
 from docx import Document
-
 
 # -----------------------------
 # DOCX parsing helpers
@@ -140,7 +142,7 @@ def omml_to_linear(el) -> str:
             core += f"({expr_txt})"
         return core
 
-    # container nodes: just recurse children
+    # container nodes: recurse children
     parts = []
     for c in getattr(el, "iterchildren", lambda: [])():
         chunk = omml_to_linear(c)
@@ -194,11 +196,7 @@ def parse_docx_to_structure(docx_bytes: bytes) -> List[Dict]:
     """
     Structure:
     subjects = [
-      {
-        "subject": str, "topics": [
-          {"topic": str, "subtopics": [{"subtopic": str, "chunks": [str], "full_text": str}]}
-        ]
-      }
+      {"subject": str, "topics": [{"topic": str, "subtopics": [{"subtopic": str, "chunks": [str], "full_text": str}]}]}
     ]
     """
     doc = Document(io.BytesIO(docx_bytes))
@@ -329,6 +327,56 @@ def build_navigation(subjects: List[Dict]) -> Tuple[List[Dict], List[Tuple[int, 
 
 
 # -----------------------------
+# Page formatting: Story mode
+# -----------------------------
+def make_story_mode(text: str) -> str:
+    """
+    Make text more narration-friendly for TTS:
+    - Turns bullet/numbered list items into sentences
+    - Softens heading lines like 'Key points:' into a spoken lead-in
+    - Reduces choppy line breaks (keeps paragraph breaks)
+    """
+    if not text:
+        return ""
+
+    lines = text.splitlines()
+    out: List[str] = []
+
+    bullet_re = re.compile(r"^\s*(?:[-•*–—]|\(?\d+\)?[.)])\s+(.*)$")
+    heading_re = re.compile(r"^\s*([A-Za-z][A-Za-z0-9 \-/]{2,60})\s*:\s*$")
+
+    for raw in lines:
+        line = (raw or "").strip()
+
+        if not line:
+            if out and out[-1] != "\n\n":
+                out.append("\n\n")
+            continue
+
+        hm = heading_re.match(line)
+        if hm:
+            title = hm.group(1).strip()
+            out.append(f"{title}. ")
+            continue
+
+        bm = bullet_re.match(line)
+        if bm:
+            item = (bm.group(1) or "").strip()
+            if item:
+                if not re.search(r"[.!?]$", item):
+                    item += "."
+                out.append(item + " ")
+            continue
+
+        out.append(line + " ")
+
+    s = "".join(out)
+    s = re.sub(r"[ \t]+", " ", s)
+    s = re.sub(r" *\n\n *", "\n\n", s)
+    return s.strip()
+
+
+# -----------------------------
 # Speakable helpers: numbers, math, chemistry
 # -----------------------------
 _NUM_WORDS_0_19 = {
@@ -373,7 +421,6 @@ def number_to_words(n: str) -> str:
         if ones == 0:
             return _TENS.get(tens, str(val))
         return f"{_TENS.get(tens, str(tens))} {_NUM_WORDS_0_19.get(ones, str(ones))}"
-    # For 100+ just speak digits (safer than odd “one hundred and …”)
     return " ".join(list(str(val)))
 
 
@@ -424,7 +471,7 @@ _GREEK = {
     "ω": "omega",
 }
 
-# Common element names (fallback is symbol itself)
+# Full element symbols + names (prevents false positives like "MCAT" becoming a "formula")
 ELEMENT_NAMES = {
     "H": "hydrogen",
     "He": "helium",
@@ -446,6 +493,9 @@ ELEMENT_NAMES = {
     "Ar": "argon",
     "K": "potassium",
     "Ca": "calcium",
+    "Sc": "scandium",
+    "Ti": "titanium",
+    "V": "vanadium",
     "Cr": "chromium",
     "Mn": "manganese",
     "Fe": "iron",
@@ -453,16 +503,98 @@ ELEMENT_NAMES = {
     "Ni": "nickel",
     "Cu": "copper",
     "Zn": "zinc",
+    "Ga": "gallium",
+    "Ge": "germanium",
+    "As": "arsenic",
+    "Se": "selenium",
     "Br": "bromine",
+    "Kr": "krypton",
+    "Rb": "rubidium",
+    "Sr": "strontium",
+    "Y": "yttrium",
+    "Zr": "zirconium",
+    "Nb": "niobium",
+    "Mo": "molybdenum",
+    "Tc": "technetium",
+    "Ru": "ruthenium",
+    "Rh": "rhodium",
+    "Pd": "palladium",
     "Ag": "silver",
-    "I": "iodine",
+    "Cd": "cadmium",
+    "In": "indium",
     "Sn": "tin",
+    "Sb": "antimony",
+    "Te": "tellurium",
+    "I": "iodine",
+    "Xe": "xenon",
+    "Cs": "caesium",
+    "Ba": "barium",
+    "La": "lanthanum",
+    "Ce": "cerium",
+    "Pr": "praseodymium",
+    "Nd": "neodymium",
+    "Pm": "promethium",
+    "Sm": "samarium",
+    "Eu": "europium",
+    "Gd": "gadolinium",
+    "Tb": "terbium",
+    "Dy": "dysprosium",
+    "Ho": "holmium",
+    "Er": "erbium",
+    "Tm": "thulium",
+    "Yb": "ytterbium",
+    "Lu": "lutetium",
+    "Hf": "hafnium",
+    "Ta": "tantalum",
+    "W": "tungsten",
+    "Re": "rhenium",
+    "Os": "osmium",
+    "Ir": "iridium",
+    "Pt": "platinum",
     "Au": "gold",
     "Hg": "mercury",
+    "Tl": "thallium",
     "Pb": "lead",
+    "Bi": "bismuth",
+    "Po": "polonium",
+    "At": "astatine",
+    "Rn": "radon",
+    "Fr": "francium",
+    "Ra": "radium",
+    "Ac": "actinium",
+    "Th": "thorium",
+    "Pa": "protactinium",
+    "U": "uranium",
+    "Np": "neptunium",
+    "Pu": "plutonium",
+    "Am": "americium",
+    "Cm": "curium",
+    "Bk": "berkelium",
+    "Cf": "californium",
+    "Es": "einsteinium",
+    "Fm": "fermium",
+    "Md": "mendelevium",
+    "No": "nobelium",
+    "Lr": "lawrencium",
+    "Rf": "rutherfordium",
+    "Db": "dubnium",
+    "Sg": "seaborgium",
+    "Bh": "bohrium",
+    "Hs": "hassium",
+    "Mt": "meitnerium",
+    "Ds": "darmstadtium",
+    "Rg": "roentgenium",
+    "Cn": "copernicium",
+    "Nh": "nihonium",
+    "Fl": "flerovium",
+    "Mc": "moscovium",
+    "Lv": "livermorium",
+    "Ts": "tennessine",
+    "Og": "oganesson",
 }
+ELEMENT_SYMBOLS = set(ELEMENT_NAMES.keys())
 
-COMMON_ACRONYM_BLACKLIST = {"US", "UK", "EU", "UN", "USA", "UAE", "NATO"}
+COMMON_ACRONYM_BLACKLIST = {"US", "UK", "EU", "UN", "USA", "UAE", "NATO", "MCAT", "SAT", "ACT", "JAMB", "WAEC"}
 
 
 def make_math_speakable(text: str, style: str = "Natural") -> str:
@@ -557,59 +689,103 @@ def _normalize_chem_unicode(s: str) -> str:
     # keep math superscripts too (sometimes used for charges)
     for k, v in _SUPERSCRIPT_UNICODE.items():
         s = s.replace(k, v.replace("^", ""))  # ² -> 2 in chemistry context
-    # normalize hydration dot variants
     s = s.replace("∙", "·")
     return s
+
+
+def _extract_element_symbols_strict(tok: str) -> Optional[List[str]]:
+    """
+    Strictly parse element symbols in order.
+    Returns None if it contains invalid 'element-looking' tokens (prevents false positives like "MCAT").
+    """
+    t = _normalize_chem_unicode(tok)
+    symbols: List[str] = []
+    i = 0
+    while i < len(t):
+        ch = t[i]
+
+        if ch.isspace():
+            i += 1
+            continue
+        if ch.isdigit() or ch in "()[]{}·.+-^":
+            i += 1
+            continue
+
+        if ch.isalpha():
+            # element symbols must start uppercase in formula tokens we consider
+            if not ch.isupper():
+                return None
+            sym = ch
+            if i + 1 < len(t) and t[i + 1].isalpha() and t[i + 1].islower():
+                sym += t[i + 1]
+                i += 2
+            else:
+                i += 1
+
+            if sym not in ELEMENT_SYMBOLS:
+                return None
+            symbols.append(sym)
+            continue
+
+        # unknown char
+        i += 1
+
+    return symbols if symbols else None
 
 
 def _is_likely_formula(tok: str, include_single_element: bool) -> bool:
     if not tok:
         return False
-    if tok in COMMON_ACRONYM_BLACKLIST:
+
+    t = _normalize_chem_unicode(tok).strip()
+
+    # avoid common all-caps words
+    if t in COMMON_ACRONYM_BLACKLIST:
         return False
 
-    t = _normalize_chem_unicode(tok)
-    elements = re.findall(r"[A-Z][a-z]?", t)
-    if not elements:
+    symbols = _extract_element_symbols_strict(t)
+    if not symbols:
         return False
 
     has_digit = bool(re.search(r"\d", t))
     has_group = "(" in t or ")" in t
     has_dot = "·" in t or "." in t
     has_charge = bool(re.search(r"(\^?\d*[+\-])$", t))
+    has_lower = bool(re.search(r"[a-z]", t))  # indicates 2-letter symbols like Na, Cl
 
-    # Conservative default:
-    # - allow single-element formulas if they include digits/charge (O2, Fe3+)
-    # - allow multi-element formulas even with no digits (NaCl)
-    if len(elements) >= 2:
-        return True
-    if len(elements) == 1 and (has_digit or has_group or has_dot or has_charge):
-        return True
-    if include_single_element and len(elements) == 1 and elements[0] in ELEMENT_NAMES:
-        return True
+    # prevent treating plain ALL-CAPS words as formulas unless there are strong chemistry hints
+    all_caps_letters_only = bool(re.fullmatch(r"[A-Z]+", t))
+    if all_caps_letters_only and not (has_digit or has_group or has_dot or has_charge):
+        # "MCAT", "DNA", etc should not be considered formulas
+        return False
 
+    if len(symbols) >= 2:
+        # multi-element formulas: require at least one strong hint OR 2-letter symbol (lowercase present)
+        return bool(has_digit or has_group or has_dot or has_charge or has_lower)
+
+    # single element:
+    if has_digit or has_group or has_dot or has_charge:
+        return True
+    if include_single_element:
+        return symbols[0] in ELEMENT_SYMBOLS
     return False
 
 
 def _speak_element(sym: str, element_mode: str) -> str:
     if element_mode == "Element names":
         return ELEMENT_NAMES.get(sym, sym)
-    # Spell symbols: "Na" -> "N A" (TTS usually says “en ay”)
     return " ".join(list(sym))
 
 
 def _speak_formula(tok: str, element_mode: str) -> str:
     """
-    Turn H2SO4 into something like:
-      hydrogen two sulfur oxygen four
-    Turn (NH4)2SO4 into:
-      open bracket nitrogen hydrogen four close bracket two sulfur oxygen four
-    Turn Fe3+ into:
-      iron three plus charge
+    Turn H2SO4 into: hydrogen two sulfur oxygen four
+    Turn (NH4)2SO4 into: open bracket nitrogen hydrogen four close bracket two sulfur oxygen four
+    Turn Fe3+ into: iron three plus charge
     """
     t = _normalize_chem_unicode(tok)
 
-    # Common state symbols
+    # state symbols
     t = re.sub(r"\(aq\)", " (aq) ", t, flags=re.IGNORECASE)
     t = re.sub(r"\(s\)", " (s) ", t, flags=re.IGNORECASE)
     t = re.sub(r"\(l\)", " (l) ", t, flags=re.IGNORECASE)
@@ -624,7 +800,6 @@ def _speak_formula(tok: str, element_mode: str) -> str:
             i += 1
             continue
 
-        # state symbols
         if t[i : i + 4].lower() == "(aq)":
             out.append("aqueous")
             i += 4
@@ -676,7 +851,6 @@ def _speak_formula(tok: str, element_mode: str) -> str:
             i = j
             continue
 
-        # digits (coefficients or subscripts)
         if ch.isdigit():
             j = i
             num = ""
@@ -687,7 +861,6 @@ def _speak_formula(tok: str, element_mode: str) -> str:
             i = j
             continue
 
-        # element symbol
         if ch.isalpha() and ch.isupper():
             sym = ch
             if i + 1 < len(t) and t[i + 1].isalpha() and t[i + 1].islower():
@@ -698,25 +871,19 @@ def _speak_formula(tok: str, element_mode: str) -> str:
             out.append(_speak_element(sym, element_mode))
             continue
 
-        # trailing ionic signs
         if ch in "+-":
             out.append("plus" if ch == "+" else "minus")
-            # if this is at the end (or followed by space/punct), treat as charge
             if i == len(t) - 1:
                 out.append("charge")
             i += 1
             continue
 
-        # anything else (rare)
         out.append(ch)
         i += 1
 
     spoken = " ".join(out)
     spoken = re.sub(r"[ \t]+", " ", spoken).strip()
-
-    # Polish ionic endings like "iron three plus charge" when + appears after number without caret
     spoken = re.sub(r"\b(plus|minus)\s*$", r"\1 charge", spoken)
-
     return spoken
 
 
@@ -741,18 +908,15 @@ def make_chem_speakable(
     s = s.replace("<-", " reacts to form ")
     s = s.replace("->", " yields ")
 
-    # IMPORTANT: do formulas before math, so hydration dots, charges, and subscripts get handled nicely.
     def repl(m: re.Match) -> str:
         tok = m.group(1)
         if not _is_likely_formula(tok, include_single_element=include_single_element):
             return tok
         spoken = _speak_formula(tok, element_mode=element_mode)
-        # add soft pauses so it reads clearer in flow mode
         return f" {spoken} "
 
     s = re.sub(_FORMULA_RE, repl, s)
 
-    # clean spacing
     s = re.sub(r"[ \t]+", " ", s)
     s = re.sub(r"\s+\n", "\n", s)
     return s.strip()
@@ -760,6 +924,9 @@ def make_chem_speakable(
 
 # -----------------------------
 # Browser TTS (Web Speech API)
+# - Mobile improvements: more robust default voice selection & storage by URI OR name/lang
+# - Prefer Google UK English Male (en-GB) then Google UK English Female (en-GB) when available
+# - Separate Play / Pause / Resume / Stop
 # -----------------------------
 def tts_component(
     text: str,
@@ -778,8 +945,14 @@ def tts_component(
     html = f"""
     <div id="{component_id}" style="display:flex; flex-direction:column; gap:10px;">
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <button id="{component_id}_playpause" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+        <button id="{component_id}_play" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
           ▶️ Play
+        </button>
+        <button id="{component_id}_pause" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+          ⏸ Pause
+        </button>
+        <button id="{component_id}_resume" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+          🔊 Resume
         </button>
         <button id="{component_id}_stop" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
           ⏹ Stop
@@ -803,7 +976,9 @@ def tts_component(
       const ROOT_ID = "{component_id}";
       const TEXT = `{safe}`;
 
-      const playPauseBtn = document.getElementById(ROOT_ID + "_playpause");
+      const playBtn = document.getElementById(ROOT_ID + "_play");
+      const pauseBtn = document.getElementById(ROOT_ID + "_pause");
+      const resumeBtn = document.getElementById(ROOT_ID + "_resume");
       const stopBtn = document.getElementById(ROOT_ID + "_stop");
       const voiceSelect = document.getElementById(ROOT_ID + "_voice");
       const resetVoiceBtn = document.getElementById(ROOT_ID + "_resetvoice");
@@ -819,7 +994,9 @@ def tts_component(
       const paragraphPauseMs = Math.max(0, {paragraph_pause_ms});
       const clausePauseMs = Math.max(0, {clause_pause_ms});
 
-      const storageKey = "easymcat_tts_voice_uri";
+      // Bumped key so older saved values don’t override the new default preference.
+      // Also helps across mobile browsers where voiceURI can change.
+      const storageKey = "easymcat_tts_voice_sel_v3_google_uk_default";
 
       let queue = [];
       let idx = 0;
@@ -841,146 +1018,11 @@ def tts_component(
         return true;
       }}
 
-      function setPlayPauseLabel() {{
-        if (!("speechSynthesis" in window)) {{
-          playPauseBtn.textContent = "▶️ Play";
-          return;
+      function clearBetweenTimer() {{
+        if (betweenTimer) {{
+          clearTimeout(betweenTimer);
+          betweenTimer = null;
         }}
-        const synth = window.speechSynthesis;
-
-        if (betweenPaused) {{
-          playPauseBtn.textContent = "🔊 Resume";
-          return;
-        }}
-
-        if (synth.speaking) {{
-          playPauseBtn.textContent = synth.paused ? "🔊 Resume" : "⏸ Pause";
-        }} else {{
-          playPauseBtn.textContent = "▶️ Play";
-        }}
-      }}
-
-      function getVoicesAsync() {{
-        return new Promise((resolve) => {{
-          const synth = window.speechSynthesis;
-          let voices = synth.getVoices();
-
-          if (voices && voices.length) {{
-            resolve(voices);
-            return;
-          }}
-
-          const onVoicesChanged = () => {{
-            voices = synth.getVoices();
-            synth.removeEventListener("voiceschanged", onVoicesChanged);
-            resolve(voices || []);
-          }};
-
-          synth.addEventListener("voiceschanged", onVoicesChanged);
-          setTimeout(() => {{
-            voices = synth.getVoices();
-            synth.removeEventListener("voiceschanged", onVoicesChanged);
-            resolve(voices || []);
-          }}, 1200);
-        }});
-      }}
-
-      function voiceLabel(v) {{
-        const name = v.name || "Unnamed";
-        const lang = v.lang || "";
-        return lang ? `${{name}} (${{lang}})` : name;
-      }}
-
-      function pickDefaultVoice(voices) {{
-        if (!voices || !voices.length) return null;
-
-        const normLang = (s) => (s || "").toLowerCase();
-        const byLangPrefix = (prefix) =>
-          voices.filter(v => normLang(v.lang).startsWith(prefix.toLowerCase()));
-
-        const gbVoices = byLangPrefix("en-gb");
-        const enVoices = byLangPrefix("en");
-        const preferredPrefix = preferredLang ? preferredLang.toLowerCase() : "";
-        const preferredMatches = preferredPrefix ? byLangPrefix(preferredPrefix) : [];
-
-        const maleNamePatterns = [
-          /google.*uk.*english.*male/i,
-          /microsoft.*(ryan|george|alfie).*online/i,
-          /microsoft.*(ryan|george|alfie)/i,
-          /daniel/i,
-          /male/i
-        ];
-
-        if (preferDeepMaleGb) {{
-          for (const re of maleNamePatterns) {{
-            const found = gbVoices.find(v => re.test(v.name || ""));
-            if (found) return found;
-          }}
-          if (gbVoices.length) return gbVoices[0];
-        }}
-
-        if (preferredMatches.length) return preferredMatches[0];
-        if (gbVoices.length) return gbVoices[0];
-        if (enVoices.length) return enVoices[0];
-        return voices[0];
-      }}
-
-      function populateVoices(voices) {{
-        voiceSelect.innerHTML = "";
-
-        const savedUri = (() => {{
-          try {{ return localStorage.getItem(storageKey); }} catch (e) {{ return null; }}
-        }})();
-
-        const options = voices.map((v) => ({{
-          uri: v.voiceURI || "",
-          label: voiceLabel(v),
-          voice: v
-        }}));
-
-        options.sort((a, b) => a.label.localeCompare(b.label));
-
-        for (const opt of options) {{
-          const el = document.createElement("option");
-          el.value = opt.uri;
-          el.textContent = opt.label;
-          voiceSelect.appendChild(el);
-        }}
-
-        const hasSaved = savedUri && options.some(o => o.uri === savedUri);
-        if (hasSaved) {{
-          voiceSelect.value = savedUri;
-          setStatus("Voice loaded (saved).");
-          return;
-        }}
-
-        const def = pickDefaultVoice(voices);
-        if (def && def.voiceURI) {{
-          voiceSelect.value = def.voiceURI;
-          setStatus("Voice loaded (default).");
-        }} else {{
-          setStatus("Voice loaded.");
-        }}
-      }}
-
-      async function initVoices() {{
-        if (!ensureSpeechSupport()) {{
-          setStatus("Speech not supported.");
-          return;
-        }}
-        const voices = await getVoicesAsync();
-        if (!voices || !voices.length) {{
-          voiceSelect.innerHTML = '<option value="">No voices found</option>';
-          setStatus("No voices found.");
-          return;
-        }}
-        populateVoices(voices);
-      }}
-
-      function getSelectedVoice(voices) {{
-        const uri = voiceSelect.value || "";
-        if (!uri) return null;
-        return voices.find(v => (v.voiceURI || "") === uri) || null;
       }}
 
       function normalizeText(t) {{
@@ -1087,13 +1129,188 @@ def tts_component(
         return items.length ? items : [{{ text: normalizeText(t), pauseAfter: 0 }}];
       }}
 
-      function clearBetweenTimer() {{
-        if (betweenTimer) {{
-          clearTimeout(betweenTimer);
-          betweenTimer = null;
+      // -------- Voice handling (mobile-friendly) --------
+      function voiceLabel(v) {{
+        const name = v.name || "Unnamed";
+        const lang = v.lang || "";
+        return lang ? `${{name}} (${{lang}})` : name;
+      }}
+
+      function voiceKey(v) {{
+        const uri = v.voiceURI || "";
+        const name = v.name || "";
+        const lang = v.lang || "";
+        if (uri) return "uri:" + uri;
+        return "name:" + name + "||" + lang;
+      }}
+
+      function parseVoiceKey(k) {{
+        const s = k || "";
+        if (s.startsWith("uri:")) return {{ type: "uri", val: s.slice(4) }};
+        if (s.startsWith("name:")) {{
+          const rest = s.slice(5);
+          const parts = rest.split("||");
+          return {{ type: "name", name: parts[0] || "", lang: parts[1] || "" }};
+        }}
+        return {{ type: "unknown", raw: s }};
+      }}
+
+      function getVoicesAsync() {{
+        return new Promise((resolve) => {{
+          const synth = window.speechSynthesis;
+          let voices = synth.getVoices();
+
+          if (voices && voices.length) {{
+            resolve(voices);
+            return;
+          }}
+
+          const onVoicesChanged = () => {{
+            voices = synth.getVoices();
+            synth.removeEventListener("voiceschanged", onVoicesChanged);
+            resolve(voices || []);
+          }};
+
+          synth.addEventListener("voiceschanged", onVoicesChanged);
+
+          // Mobile sometimes needs a bit longer.
+          setTimeout(() => {{
+            voices = synth.getVoices();
+            synth.removeEventListener("voiceschanged", onVoicesChanged);
+            resolve(voices || []);
+          }}, 2000);
+        }});
+      }}
+
+      function pickDefaultVoice(voices) {{
+        if (!voices || !voices.length) return null;
+
+        const norm = (s) => (s || "").toLowerCase();
+        const byLangPrefix = (prefix) =>
+          voices.filter(v => norm(v.lang).startsWith(prefix.toLowerCase()));
+
+        const gbVoices = byLangPrefix("en-gb");
+        const enVoices = byLangPrefix("en");
+        const preferredPrefix = preferredLang ? preferredLang.toLowerCase() : "";
+        const preferredMatches = preferredPrefix ? byLangPrefix(preferredPrefix) : [];
+
+        // HARD preference: Google UK English Male, then Female (en-GB)
+        const googleUkMale = gbVoices.find(v => /google uk english male/i.test(v.name || ""));
+        if (googleUkMale) return googleUkMale;
+
+        const googleUkFemale = gbVoices.find(v => /google uk english female/i.test(v.name || ""));
+        if (googleUkFemale) return googleUkFemale;
+
+        // Next: your existing deep-male heuristic for GB
+        const maleNamePatterns = [
+          /google.*uk.*english.*male/i,
+          /microsoft.*(ryan|george|alfie).*online/i,
+          /microsoft.*(ryan|george|alfie)/i,
+          /daniel/i,
+          /male/i
+        ];
+
+        if (preferDeepMaleGb) {{
+          for (const re of maleNamePatterns) {{
+            const found = gbVoices.find(v => re.test(v.name || ""));
+            if (found) return found;
+          }}
+          if (gbVoices.length) return gbVoices[0];
+        }}
+
+        if (preferredMatches.length) return preferredMatches[0];
+        if (gbVoices.length) return gbVoices[0];
+        if (enVoices.length) return enVoices[0];
+        return voices[0];
+      }}
+
+      function rankVoice(v) {{
+        const name = (v.name || "").toLowerCase();
+        const lang = (v.lang || "").toLowerCase();
+        if (lang.startsWith("en-gb") && name.includes("google uk english male")) return 0;
+        if (lang.startsWith("en-gb") && name.includes("google uk english female")) return 1;
+        return 2;
+      }}
+
+      function populateVoices(voices) {{
+        voiceSelect.innerHTML = "";
+
+        const savedKey = (() => {{
+          try {{ return localStorage.getItem(storageKey); }} catch (e) {{ return null; }}
+        }})();
+
+        const options = voices.map((v) => ({{
+          key: voiceKey(v),
+          label: voiceLabel(v),
+          voice: v
+        }}));
+
+        options.sort((a, b) => {{
+          const ra = rankVoice(a.voice), rb = rankVoice(b.voice);
+          if (ra !== rb) return ra - rb;
+          return a.label.localeCompare(b.label);
+        }});
+
+        for (const opt of options) {{
+          const el = document.createElement("option");
+          el.value = opt.key;
+          el.textContent = opt.label;
+          voiceSelect.appendChild(el);
+        }}
+
+        const hasSaved = savedKey && options.some(o => o.key === savedKey);
+        if (hasSaved) {{
+          voiceSelect.value = savedKey;
+          setStatus("Voice loaded (saved).");
+          return;
+        }}
+
+        const def = pickDefaultVoice(voices);
+        if (def) {{
+          const defKey = voiceKey(def);
+          voiceSelect.value = defKey;
+          setStatus("Voice loaded (default: Google UK Male if available).");
+        }} else {{
+          setStatus("Voice loaded.");
         }}
       }}
 
+      async function initVoices() {{
+        if (!ensureSpeechSupport()) {{
+          setStatus("Speech not supported.");
+          return [];
+        }}
+        const voices = await getVoicesAsync();
+        if (!voices || !voices.length) {{
+          voiceSelect.innerHTML = '<option value="">No voices found</option>';
+          setStatus("No voices found (device/browser may limit voices).");
+          return [];
+        }}
+        populateVoices(voices);
+        return voices;
+      }}
+
+      function getSelectedVoice(voices) {{
+        const key = voiceSelect.value || "";
+        if (!key) return null;
+        const parsed = parseVoiceKey(key);
+
+        if (parsed.type === "uri") {{
+          return voices.find(v => (v.voiceURI || "") === parsed.val) || null;
+        }}
+        if (parsed.type === "name") {{
+          const n = (parsed.name || "").toLowerCase();
+          const l = (parsed.lang || "").toLowerCase();
+          // match name+lang loosely (helps on mobile where voiceURI is unstable)
+          return voices.find(v =>
+            ((v.name || "").toLowerCase() === n) &&
+            ((v.lang || "").toLowerCase() === l)
+          ) || voices.find(v => ((v.name || "").toLowerCase() === n)) || null;
+        }}
+        return null;
+      }}
+
+      // -------- Playback controls --------
       function stopAll() {{
         if (!ensureSpeechSupport()) return;
 
@@ -1106,7 +1323,7 @@ def tts_component(
         idx = 0;
 
         setStatus("Stopped.");
-        setPlayPauseLabel();
+        updateButtons();
       }}
 
       function pauseAll() {{
@@ -1114,20 +1331,22 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
+        // pause while waiting between chunks
         if (betweenTimer) {{
           const now = Date.now();
           betweenRemaining = Math.max(0, betweenDueAt - now);
           clearBetweenTimer();
           betweenPaused = true;
           setStatus("Paused.");
-          setPlayPauseLabel();
+          updateButtons();
           return;
         }}
 
+        // pause while speaking
         if (synth.speaking && !synth.paused) {{
           synth.pause();
           setStatus("Paused.");
-          setPlayPauseLabel();
+          updateButtons();
         }}
       }}
 
@@ -1136,20 +1355,30 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
+        // resume between chunks
         if (betweenPaused) {{
           betweenPaused = false;
           const delay = Math.max(0, betweenRemaining);
           betweenRemaining = 0;
           scheduleNext(delay);
           setStatus("Speaking…");
-          setPlayPauseLabel();
+          updateButtons();
           return;
         }}
 
+        // resume while speaking
         if (synth.paused) {{
           synth.resume();
           setStatus("Speaking…");
-          setPlayPauseLabel();
+          updateButtons();
+          return;
+        }}
+
+        // if not speaking but we have remaining queue
+        if (queue.length && idx < queue.length && !synth.speaking) {{
+          setStatus("Speaking…");
+          speakNext();
+          updateButtons();
         }}
       }}
 
@@ -1169,8 +1398,7 @@ def tts_component(
       }}
 
       async function speakItem(itemText) {{
-        const voices = await getVoicesAsync();
-
+        const voices = await initVoices(); // ensure voices are ready (helps mobile)
         const utter = new SpeechSynthesisUtterance(itemText);
         utter.rate = preferredRate;
         utter.pitch = preferredPitch;
@@ -1184,14 +1412,14 @@ def tts_component(
 
         utter.onstart = () => {{
           setStatus("Speaking…");
-          setPlayPauseLabel();
+          updateButtons();
         }};
         utter.onend = () => {{
-          setPlayPauseLabel();
+          updateButtons();
         }};
         utter.onerror = () => {{
           setStatus("TTS error.");
-          setPlayPauseLabel();
+          updateButtons();
         }};
 
         window.speechSynthesis.speak(utter);
@@ -1204,14 +1432,14 @@ def tts_component(
 
         if (idx >= queue.length) {{
           setStatus("Done.");
-          setPlayPauseLabel();
+          updateButtons();
           return;
         }}
 
         const item = queue[idx];
         idx += 1;
 
-        synth.cancel();
+        synth.cancel(); // avoid overlap edge-cases
         speakItem(item.text);
 
         const pauseAfter = Math.max(0, item.pauseAfter || 0);
@@ -1222,7 +1450,6 @@ def tts_component(
             return;
           }}
           const s = window.speechSynthesis;
-
           if (!s.speaking && !s.paused) {{
             clearInterval(watcher);
             scheduleNext(pauseAfter);
@@ -1243,71 +1470,89 @@ def tts_component(
         idx = 0;
 
         speakNext();
-        setPlayPauseLabel();
+        updateButtons();
       }}
 
-      function togglePlayPause() {{
+      function play() {{
         if (!ensureSpeechSupport()) return;
 
         const synth = window.speechSynthesis;
 
+        // If paused, Play behaves like Resume
         if (betweenPaused || synth.paused) {{
           resumeAll();
           return;
         }}
 
-        if (betweenTimer || (synth.speaking && !synth.paused)) {{
-          pauseAll();
-          return;
-        }}
-
-        if (queue.length && idx < queue.length) {{
+        // If we have remaining queue, continue
+        if (queue.length && idx < queue.length && !synth.speaking) {{
           setStatus("Speaking…");
           speakNext();
-          setPlayPauseLabel();
+          updateButtons();
           return;
         }}
 
         startFresh();
       }}
 
+      function updateButtons() {{
+        if (!("speechSynthesis" in window)) {{
+          playBtn.disabled = false;
+          pauseBtn.disabled = true;
+          resumeBtn.disabled = true;
+          stopBtn.disabled = false;
+          return;
+        }}
+
+        const synth = window.speechSynthesis;
+        const speakingNow = synth.speaking && !synth.paused;
+        const pausedNow = synth.paused || betweenPaused;
+        const hasWork = (queue.length && idx < queue.length) || speakingNow || pausedNow || !!betweenTimer;
+
+        playBtn.disabled = speakingNow;                 // don’t spam Play while speaking
+        pauseBtn.disabled = !speakingNow && !betweenTimer;  // allow pause while betweenTimer too
+        resumeBtn.disabled = !pausedNow;
+        stopBtn.disabled = !hasWork;
+      }}
+
+      // Save selection
       voiceSelect.addEventListener("change", () => {{
         try {{ localStorage.setItem(storageKey, voiceSelect.value || ""); }} catch (e) {{}}
+        // If speaking, stop so user can restart with new voice (mobile safer)
         if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused)) {{
           stopAll();
         }} else {{
           setStatus("Voice selected.");
-          setPlayPauseLabel();
+          updateButtons();
         }}
       }});
 
       resetVoiceBtn.addEventListener("click", async () => {{
         try {{ localStorage.removeItem(storageKey); }} catch (e) {{}}
-        const voices = await getVoicesAsync();
+        const voices = await initVoices();
         const def = pickDefaultVoice(voices);
-        if (def && def.voiceURI) {{
-          voiceSelect.value = def.voiceURI;
-          setStatus("Reset to default voice.");
+        if (def) {{
+          voiceSelect.value = voiceKey(def);
+          setStatus("Reset to default voice (Google UK Male if available).");
         }} else {{
           setStatus("Reset (no default found).");
         }}
         if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused)) stopAll();
-        setPlayPauseLabel();
+        updateButtons();
       }});
 
-      playPauseBtn.addEventListener("click", togglePlayPause);
+      playBtn.addEventListener("click", play);
+      pauseBtn.addEventListener("click", pauseAll);
+      resumeBtn.addEventListener("click", resumeAll);
       stopBtn.addEventListener("click", stopAll);
 
-      setInterval(() => {{
-        if (!ensureSpeechSupport()) return;
-        setPlayPauseLabel();
-      }}, 350);
-
+      // init on load
       initVoices();
-      setPlayPauseLabel();
+      updateButtons();
+      setInterval(updateButtons, 400);
     </script>
     """
-    st.components.v1.html(html, height=140)
+    st.components.v1.html(html, height=165)
 
 
 # -----------------------------
@@ -1415,7 +1660,7 @@ with st.sidebar:
         "Preferred language",
         ["en-GB", "en-US", "en", "es-ES", "fr-FR"],
         index=0,
-        help="Voice dropdown uses your installed voices. This sets the default preference/fallback.",
+        help="Voice dropdown uses your installed voices. This sets the language preference/fallback.",
     )
 
     rate = st.slider("Rate", 0.5, 2.0, 0.95, 0.05)
@@ -1423,7 +1668,7 @@ with st.sidebar:
     prefer_deep_male_gb = st.toggle(
         "Prefer deep male UK voice (default)",
         value=True,
-        help="Heuristic selection: prefers en-GB male voices when present.",
+        help="Also prioritises Google UK English Male/Female (en-GB) when available on device.",
     )
 
     st.divider()
@@ -1446,12 +1691,21 @@ with st.sidebar:
     )
 
     st.divider()
+    st.subheader("Page formatting")
+
+    story_mode = st.toggle(
+        "Make it narration-friendly (story mode)",
+        value=False,
+        help="Smooths bullets/line breaks into more natural narration for TTS.",
+    )
+
+    st.divider()
     st.subheader("Chemistry reading")
 
     read_chem = st.toggle(
         "Speak chemical formulas clearly",
         value=True,
-        help="Turns formulas like H2O / NaCl / (NH4)2SO4 / CuSO4·5H2O into clearer spoken text.",
+        help="Turns formulas like H2O / NaCl / (NH4)2SO4 / CuSO4·5H2O into clearer spoken text. Uses strict element-symbol validation to avoid false positives.",
     )
     chem_element_mode = st.selectbox(
         "Chemical element style",
@@ -1464,7 +1718,7 @@ with st.sidebar:
         "Include single-element symbols (e.g., Fe)",
         value=False,
         disabled=not read_chem,
-        help="Off by default to reduce false positives (e.g., acronyms).",
+        help="Off by default to reduce false positives (e.g., common words).",
     )
 
     st.divider()
@@ -1488,12 +1742,17 @@ cur_subtopic = subjects[cur_si]["topics"][cur_ti]["subtopics"][cur_ui]["subtopic
 cur_text = (subjects[cur_si]["topics"][cur_ti]["subtopics"][cur_ui].get("full_text") or "").strip()
 
 tts_text = cur_text
+
+if tts_text and story_mode:
+    tts_text = make_story_mode(tts_text)
+
 if tts_text and read_chem:
     tts_text = make_chem_speakable(
         tts_text,
         element_mode=chem_element_mode,
         include_single_element=include_single_element,
     )
+
 if tts_text and read_math:
     tts_text = make_math_speakable(tts_text, style=math_style)
 
