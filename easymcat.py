@@ -11,7 +11,7 @@
 #
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/Exam_Crackers.docx"
 
-import io
+import iob
 import re
 import uuid
 from typing import Optional, List, Dict, Tuple
