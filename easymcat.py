@@ -2,7 +2,7 @@
 # Streamlit DOCX Study Reader
 # - Subject/Topic/Subtopic navigation (markers or Heading 1/2/3)
 # - Browser Text-to-Speech (installed voices dropdown)
-# - Flow reading: sentence/paragraph pauses (optionally clause pauses)
+# - Conversation narration: chatty / debate style (two-speaker alternating), with pacing pauses
 # - Sticky floating Controls (Listen + Next/Back)
 #
 # Run:
@@ -222,15 +222,23 @@ def tts_component(
     sentence_pause_ms: int = 320,
     paragraph_pause_ms: int = 650,
     clause_pause_ms: int = 0,
+    narration_mode: str = "Chatty",  # "Standard" | "Chatty" | "Debate"
+    turn_pause_ms: int = 260,
 ):
     """
     Browser TTS:
-    - Real installed voices dropdown
+    - Installed voices dropdown
     - Play/Pause toggle + Stop
-    - Flow mode: speaks sentence-by-sentence with pauses (optional clause pauses)
+    - Flow mode: sentence pacing with pauses (optional clause pauses)
+    - Narration mode:
+        - Standard: reads normally
+        - Chatty: two-speaker conversational alternation
+        - Debate: two-speaker alternation with light pushback / “but hold on” vibe
     """
     safe = text.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
     component_id = f"tts_{uuid.uuid4().hex}"
+
+    narration_mode_js = narration_mode.replace("\\", "").replace("`", "").replace("${", "")
 
     html = f"""
     <div id="{component_id}" style="display:flex; flex-direction:column; gap:10px;">
@@ -244,15 +252,29 @@ def tts_component(
         <span id="{component_id}_status" style="color:#666; font-size: 0.9rem;">Ready</span>
       </div>
 
-      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <label style="color:#444; font-size:0.9rem;">Voice</label>
-        <select id="{component_id}_voice" style="min-width: 260px; padding:8px 10px; border-radius:8px; border:1px solid #ddd;">
-          <option value="">Loading voices…</option>
-        </select>
-        <button id="{component_id}_resetvoice" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
-          Reset default
-        </button>
-        <span style="color:#888; font-size: 0.85rem;">(Installed voices vary by OS/browser)</span>
+      <div id="{component_id}_voiceblock" style="display:flex; flex-direction:column; gap:8px;">
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <label style="color:#444; font-size:0.9rem; min-width:72px;">Voice A</label>
+          <select id="{component_id}_voice_a" style="min-width: 320px; padding:8px 10px; border-radius:8px; border:1px solid #ddd;">
+            <option value="">Loading voices…</option>
+          </select>
+        </div>
+
+        <div id="{component_id}_voiceb_row" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <label style="color:#444; font-size:0.9rem; min-width:72px;">Voice B</label>
+          <select id="{component_id}_voice_b" style="min-width: 320px; padding:8px 10px; border-radius:8px; border:1px solid #ddd;">
+            <option value="">Loading voices…</option>
+          </select>
+        </div>
+
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <button id="{component_id}_resetvoice" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+            Reset defaults
+          </button>
+          <span style="color:#888; font-size: 0.85rem;">
+            (A/B alternate in Chatty/Debate. If B not available, it reuses A with a different tone.)
+          </span>
+        </div>
       </div>
     </div>
 
@@ -262,9 +284,12 @@ def tts_component(
 
       const playPauseBtn = document.getElementById(ROOT_ID + "_playpause");
       const stopBtn = document.getElementById(ROOT_ID + "_stop");
-      const voiceSelect = document.getElementById(ROOT_ID + "_voice");
-      const resetVoiceBtn = document.getElementById(ROOT_ID + "_resetvoice");
       const statusEl = document.getElementById(ROOT_ID + "_status");
+
+      const voiceSelectA = document.getElementById(ROOT_ID + "_voice_a");
+      const voiceSelectB = document.getElementById(ROOT_ID + "_voice_b");
+      const voiceBRow = document.getElementById(ROOT_ID + "_voiceb_row");
+      const resetVoiceBtn = document.getElementById(ROOT_ID + "_resetvoice");
 
       const preferredLang = "{preferred_lang}";
       const preferredRate = {rate};
@@ -276,7 +301,12 @@ def tts_component(
       const paragraphPauseMs = Math.max(0, {paragraph_pause_ms});
       const clausePauseMs = Math.max(0, {clause_pause_ms});
 
-      const storageKey = "easymcat_tts_voice_uri";
+      const narrationMode = "{narration_mode_js}";
+      const conversationMode = (narrationMode === "Chatty" || narrationMode === "Debate");
+      const turnPauseMs = Math.max(0, {turn_pause_ms});
+
+      const storageKeyA = "easymcat_tts_voice_uri_a";
+      const storageKeyB = "easymcat_tts_voice_uri_b";
 
       let queue = [];
       let idx = 0;
@@ -315,6 +345,10 @@ def tts_component(
         }} else {{
           playPauseBtn.textContent = "▶️ Play";
         }}
+      }}
+
+      function showHideVoiceB() {{
+        voiceBRow.style.display = conversationMode ? "flex" : "none";
       }}
 
       function getVoicesAsync() {{
@@ -382,60 +416,98 @@ def tts_component(
         return voices[0];
       }}
 
-      function populateVoices(voices) {{
-        voiceSelect.innerHTML = "";
+      function pickSecondaryVoice(voices, primary) {{
+        if (!voices || !voices.length) return null;
+        if (!primary) return pickDefaultVoice(voices);
 
-        const savedUri = (() => {{
-          try {{ return localStorage.getItem(storageKey); }} catch (e) {{ return null; }}
-        }})();
+        const primaryUri = primary.voiceURI || "";
+        const normLang = (s) => (s || "").toLowerCase();
+        const primaryLang = normLang(primary.lang);
 
-        const options = voices.map((v) => ({{
-          uri: v.voiceURI || "",
-          label: voiceLabel(v),
-          voice: v
-        }}));
+        // Prefer same language, different voice
+        const sameLang = voices.filter(v => normLang(v.lang) === primaryLang && (v.voiceURI || "") !== primaryUri);
+        if (sameLang.length) return sameLang[0];
 
-        options.sort((a, b) => a.label.localeCompare(b.label));
+        // Then any English voice that differs
+        const english = voices.filter(v => normLang(v.lang).startsWith("en") && (v.voiceURI || "") !== primaryUri);
+        if (english.length) return english[0];
 
-        for (const opt of options) {{
-          const el = document.createElement("option");
-          el.value = opt.uri;
-          el.textContent = opt.label;
-          voiceSelect.appendChild(el);
-        }}
+        // Then anything different
+        const anyOther = voices.find(v => (v.voiceURI || "") !== primaryUri);
+        return anyOther || primary;
+      }}
 
-        const hasSaved = savedUri && options.some(o => o.uri === savedUri);
-        if (hasSaved) {{
-          voiceSelect.value = savedUri;
-          setStatus("Voice loaded (saved).");
-          return;
-        }}
-
-        const def = pickDefaultVoice(voices);
-        if (def && def.voiceURI) {{
-          voiceSelect.value = def.voiceURI;
-          setStatus("Voice loaded (default).");
-        }} else {{
-          setStatus("Voice loaded.");
+      function populateSelect(selectEl, voices) {{
+        selectEl.innerHTML = "";
+        for (const v of voices) {{
+          const opt = document.createElement("option");
+          opt.value = v.voiceURI || "";
+          opt.textContent = voiceLabel(v);
+          selectEl.appendChild(opt);
         }}
       }}
 
+      function getSaved(key) {{
+        try {{ return localStorage.getItem(key); }} catch (e) {{ return null; }}
+      }}
+
+      function setSaved(key, value) {{
+        try {{ localStorage.setItem(key, value || ""); }} catch (e) {{}}
+      }}
+
+      function removeSaved(key) {{
+        try {{ localStorage.removeItem(key); }} catch (e) {{}}
+      }}
+
+      function setDefaultsForAandB(voices) {{
+        const defA = pickDefaultVoice(voices);
+        const defB = pickSecondaryVoice(voices, defA);
+
+        if (defA && defA.voiceURI) voiceSelectA.value = defA.voiceURI;
+        if (defB && defB.voiceURI) voiceSelectB.value = defB.voiceURI;
+
+        setSaved(storageKeyA, voiceSelectA.value || "");
+        setSaved(storageKeyB, voiceSelectB.value || "");
+      }}
+
       async function initVoices() {{
+        showHideVoiceB();
+
         if (!ensureSpeechSupport()) {{
           setStatus("Speech not supported.");
           return;
         }}
+
         const voices = await getVoicesAsync();
         if (!voices || !voices.length) {{
-          voiceSelect.innerHTML = '<option value="">No voices found</option>';
+          voiceSelectA.innerHTML = '<option value="">No voices found</option>';
+          voiceSelectB.innerHTML = '<option value="">No voices found</option>';
           setStatus("No voices found.");
           return;
         }}
-        populateVoices(voices);
+
+        // Populate both selects with the same full list
+        populateSelect(voiceSelectA, voices);
+        populateSelect(voiceSelectB, voices);
+
+        const savedA = getSaved(storageKeyA);
+        const savedB = getSaved(storageKeyB);
+
+        const hasA = savedA && voices.some(v => (v.voiceURI || "") === savedA);
+        const hasB = savedB && voices.some(v => (v.voiceURI || "") === savedB);
+
+        if (hasA) voiceSelectA.value = savedA;
+        if (hasB) voiceSelectB.value = savedB;
+
+        if (!hasA || !hasB) {{
+          setDefaultsForAandB(voices);
+          setStatus("Voices loaded (defaults).");
+        }} else {{
+          setStatus("Voices loaded (saved).");
+        }}
       }}
 
-      function getSelectedVoice(voices) {{
-        const uri = voiceSelect.value || "";
+      function getVoiceByUri(voices, uri) {{
         if (!uri) return null;
         return voices.find(v => (v.voiceURI || "") === uri) || null;
       }}
@@ -462,7 +534,6 @@ def tts_component(
         const p = (paragraph || "").trim();
         if (!p) return [];
 
-        // Prefer Intl.Segmenter when available (best sentence boundaries)
         if (typeof Intl !== "undefined" && Intl.Segmenter) {{
           try {{
             const seg = new Intl.Segmenter("en", {{ granularity: "sentence" }});
@@ -475,7 +546,6 @@ def tts_component(
           }} catch (e) {{}}
         }}
 
-        // Fallback: split after . ! ? followed by whitespace
         return p
           .split(/(?<=[.!?])\\s+/g)
           .map(s => s.trim())
@@ -486,7 +556,6 @@ def tts_component(
         const s = (sentence || "").trim();
         if (!s) return [];
 
-        // Keep punctuation with the clause.
         const tokens = s.split(/(,|;|:)/g);
         const out = [];
         let buf = "";
@@ -505,48 +574,125 @@ def tts_component(
         return out.filter(Boolean);
       }}
 
+      function pickPrefix(speaker, i) {{
+        const chatA = ["Alright,", "Okay,", "So,", "Now,", "Here’s the thing—", "Let’s be real—"];
+        const chatB = ["Yeah,", "Right,", "Sure,", "Totally,", "And look—", "Honestly—"];
+
+        const debateA = ["Alright,", "So,", "Let’s say this plainly—", "Here’s my take—", "Now,", "Okay—"];
+        const debateB = ["But hold on—", "Wait a second—", "I’m not sure about that—", "Fair, but—", "Counterpoint—", "Right, but—"];
+
+        const listA = (narrationMode === "Debate") ? debateA : chatA;
+        const listB = (narrationMode === "Debate") ? debateB : chatB;
+
+        const arr = (speaker === "A") ? listA : listB;
+        return arr[i % arr.length];
+      }}
+
+      function decorateForConversation(sentence, speaker, globalIndex) {{
+        const s = (sentence || "").trim();
+        if (!s) return s;
+
+        // Keep questions as-is; otherwise add a casual lead-in for rhythm.
+        const prefix = pickPrefix(speaker, globalIndex);
+
+        // If sentence already begins with a discourse marker, don't double-prefix.
+        if (/^(okay|alright|so|now|yeah|right|but|wait|honestly|sure)\\b/i.test(s)) return s;
+
+        return `${{prefix}} ${{s}}`;
+      }}
+
       function buildQueueFromText(t) {{
         const paragraphs = splitParagraphs(t);
         const items = [];
+
+        if (!paragraphs.length) {{
+          const one = normalizeText(t);
+          return one ? [{{ text: one, pauseAfter: 0, speaker: "A" }}] : [];
+        }}
+
+        let globalSentenceIndex = 0;
+
+        if (conversationMode) {{
+          // Tiny opener to set the vibe (short, not too “AI-y”).
+          items.push({{
+            text: (narrationMode === "Debate")
+              ? "Alright—let’s test this idea together."
+              : "Alright—let’s talk this through.",
+            pauseAfter: Math.max(120, turnPauseMs),
+            speaker: "A"
+          }});
+        }}
 
         for (let pi = 0; pi < paragraphs.length; pi++) {{
           const sentences = splitSentences(paragraphs[pi]);
 
           for (let si = 0; si < sentences.length; si++) {{
-            const sent = sentences[si];
+            const sentRaw = sentences[si];
+            const speaker = conversationMode ? ((globalSentenceIndex % 2 === 0) ? "A" : "B") : "A";
+            const sent = conversationMode ? decorateForConversation(sentRaw, speaker, globalSentenceIndex) : sentRaw;
 
+            const isLastSentence = si === sentences.length - 1;
+            const isLastParagraph = pi === paragraphs.length - 1;
+
+            // Base pause by structure
+            let pauseAfter = 0;
+            if (!isLastSentence) pauseAfter = sentencePauseMs;
+            else if (!isLastParagraph) pauseAfter = paragraphPauseMs;
+
+            // Add turn pause when alternating speakers (feels like “your turn / my turn”)
+            if (conversationMode) pauseAfter += turnPauseMs;
+
+            // Optional clause splitting (keeps the SAME speaker within sentence; prefix only on first clause)
             if (flowMode && clausePauseMs > 0) {{
-              const clauses = splitClauses(sent);
-              for (let ci = 0; ci < clauses.length; ci++) {{
-                const isLastClause = ci === clauses.length - 1;
-                const isLastSentence = si === sentences.length - 1;
-                const isLastParagraph = pi === paragraphs.length - 1;
+              const clauses = splitClauses(sentRaw);
+              if (clauses.length >= 2) {{
+                for (let ci = 0; ci < clauses.length; ci++) {{
+                  const isLastClause = ci === clauses.length - 1;
+                  const firstClause = ci === 0;
 
-                let pauseAfter = 0;
-                if (!isLastClause) pauseAfter = clausePauseMs;
-                else if (!isLastSentence) pauseAfter = sentencePauseMs;
-                else if (!isLastParagraph) pauseAfter = paragraphPauseMs;
+                  let clauseText = clauses[ci];
+                  if (conversationMode && firstClause) {{
+                    clauseText = decorateForConversation(clauses[ci], speaker, globalSentenceIndex);
+                  }}
 
-                items.push({{ text: clauses[ci], pauseAfter }});
+                  let clausePause = 0;
+                  if (!isLastClause) clausePause = clausePauseMs;
+                  else clausePause = pauseAfter;
+
+                  items.push({{
+                    text: clauseText,
+                    pauseAfter: clausePause,
+                    speaker
+                  }});
+                }}
+
+                globalSentenceIndex += 1;
+                continue;
               }}
-            }} else if (flowMode) {{
-              const isLastSentence = si === sentences.length - 1;
-              const isLastParagraph = pi === paragraphs.length - 1;
-
-              let pauseAfter = 0;
-              if (!isLastSentence) pauseAfter = sentencePauseMs;
-              else if (!isLastParagraph) pauseAfter = paragraphPauseMs;
-
-              items.push({{ text: sent, pauseAfter }});
-            }} else {{
-              // No flow mode: single utterance (no queue splitting)
-              return [{{ text: normalizeText(t), pauseAfter: 0 }}];
             }}
+
+            // Default sentence item
+            items.push({{
+              text: sent,
+              pauseAfter: flowMode ? pauseAfter : 0,
+              speaker
+            }});
+
+            globalSentenceIndex += 1;
           }}
         }}
 
-        // If nothing parsed, fallback to whole text
-        return items.length ? items : [{{ text: normalizeText(t), pauseAfter: 0 }}];
+        if (!flowMode) {{
+          // If flow mode off, keep it as one utterance, but preserve convo vibe if enabled.
+          const whole = normalizeText(t);
+          if (!whole) return [];
+          const spoken = conversationMode
+            ? ("Alright—here it is. " + whole)
+            : whole;
+          return [{{ text: spoken, pauseAfter: 0, speaker: "A" }}];
+        }}
+
+        return items;
       }}
 
       function clearBetweenTimer() {{
@@ -576,7 +722,6 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
-        // Pausing while in-between utterances (timer)
         if (betweenTimer) {{
           const now = Date.now();
           betweenRemaining = Math.max(0, betweenDueAt - now);
@@ -587,7 +732,6 @@ def tts_component(
           return;
         }}
 
-        // Pausing while speaking
         if (synth.speaking && !synth.paused) {{
           synth.pause();
           setStatus("Paused.");
@@ -600,7 +744,6 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
-        // Resuming while in-between utterances
         if (betweenPaused) {{
           betweenPaused = false;
           const delay = Math.max(0, betweenRemaining);
@@ -611,7 +754,6 @@ def tts_component(
           return;
         }}
 
-        // Resuming while speaking
         if (synth.paused) {{
           synth.resume();
           setStatus("Speaking…");
@@ -634,22 +776,61 @@ def tts_component(
         }}, delayMs);
       }}
 
-      async function speakItem(itemText) {{
+      function speakerTone(speaker) {{
+        // Keep A deeper and steadier; B slightly brighter/faster for “conversation”.
+        // If user picks same voice for both, this still makes them feel like two people.
+        const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+        if (!conversationMode) {{
+          return {{
+            rate: preferredRate,
+            pitch: preferredPitch
+          }};
+        }}
+        if (speaker === "A") {{
+          return {{
+            rate: clamp(preferredRate - 0.03, 0.5, 2.0),
+            pitch: clamp(preferredPitch - 0.05, 0.5, 2.0)
+          }};
+        }}
+        return {{
+          rate: clamp(preferredRate + 0.05, 0.5, 2.0),
+          pitch: clamp(preferredPitch + 0.18, 0.5, 2.0)
+        }};
+      }}
+
+      async function speakItem(item) {{
         const voices = await getVoicesAsync();
 
-        const utter = new SpeechSynthesisUtterance(itemText);
-        utter.rate = preferredRate;
-        utter.pitch = preferredPitch;
+        const utter = new SpeechSynthesisUtterance(item.text);
+
+        const tone = speakerTone(item.speaker);
+        utter.rate = tone.rate;
+        utter.pitch = tone.pitch;
         utter.lang = preferredLang;
 
-        const chosen = getSelectedVoice(voices) || pickDefaultVoice(voices);
+        const uriA = voiceSelectA.value || "";
+        const uriB = voiceSelectB.value || "";
+
+        const preferredUri = (conversationMode && item.speaker === "B") ? uriB : uriA;
+
+        let chosen = getVoiceByUri(voices, preferredUri);
+        if (!chosen) {{
+          const defA = pickDefaultVoice(voices);
+          const defB = pickSecondaryVoice(voices, defA);
+          chosen = (conversationMode && item.speaker === "B") ? (defB || defA) : defA;
+        }}
+
         if (chosen) {{
           utter.voice = chosen;
           if (chosen.lang) utter.lang = chosen.lang;
         }}
 
         utter.onstart = () => {{
-          setStatus("Speaking…");
+          if (conversationMode) {{
+            setStatus(item.speaker === "A" ? "Speaking… (A)" : "Speaking… (B)");
+          }} else {{
+            setStatus("Speaking…");
+          }}
           setPlayPauseLabel();
         }};
         utter.onend = () => {{
@@ -677,12 +858,9 @@ def tts_component(
         const item = queue[idx];
         idx += 1;
 
-        synth.cancel(); // avoid overlap edge-cases
-        speakItem(item.text);
+        synth.cancel();
+        speakItem(item);
 
-        // Schedule next chunk after the current utterance ends + pauseAfter.
-        // We can't reliably chain with utter.onend for every browser timing case when cancel() happens,
-        // so we poll speaking state and then schedule the next.
         const pauseAfter = Math.max(0, item.pauseAfter || 0);
 
         const watcher = setInterval(() => {{
@@ -691,7 +869,6 @@ def tts_component(
             return;
           }}
           const s = window.speechSynthesis;
-
           if (!s.speaking && !s.paused) {{
             clearInterval(watcher);
             scheduleNext(pauseAfter);
@@ -710,6 +887,12 @@ def tts_component(
 
         queue = buildQueueFromText(TEXT);
         idx = 0;
+
+        if (!queue.length) {{
+          setStatus("Nothing to read.");
+          setPlayPauseLabel();
+          return;
+        }}
 
         speakNext();
         setPlayPauseLabel();
@@ -730,7 +913,6 @@ def tts_component(
           return;
         }}
 
-        // Not speaking: resume queued progress if any, otherwise start fresh
         if (queue.length && idx < queue.length) {{
           setStatus("Speaking…");
           speakNext();
@@ -741,27 +923,29 @@ def tts_component(
         startFresh();
       }}
 
-      voiceSelect.addEventListener("change", () => {{
-        try {{ localStorage.setItem(storageKey, voiceSelect.value || ""); }} catch (e) {{}}
-        if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused)) {{
+      function onVoiceChanged() {{
+        setSaved(storageKeyA, voiceSelectA.value || "");
+        setSaved(storageKeyB, voiceSelectB.value || "");
+        if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused || betweenTimer || betweenPaused)) {{
           stopAll();
         }} else {{
           setStatus("Voice selected.");
           setPlayPauseLabel();
         }}
-      }});
+      }}
+
+      voiceSelectA.addEventListener("change", onVoiceChanged);
+      voiceSelectB.addEventListener("change", onVoiceChanged);
 
       resetVoiceBtn.addEventListener("click", async () => {{
-        try {{ localStorage.removeItem(storageKey); }} catch (e) {{}}
+        removeSaved(storageKeyA);
+        removeSaved(storageKeyB);
+
         const voices = await getVoicesAsync();
-        const def = pickDefaultVoice(voices);
-        if (def && def.voiceURI) {{
-          voiceSelect.value = def.voiceURI;
-          setStatus("Reset to default voice.");
-        }} else {{
-          setStatus("Reset (no default found).");
-        }}
-        if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused)) stopAll();
+        setDefaultsForAandB(voices);
+
+        if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused || betweenTimer || betweenPaused)) stopAll();
+        setStatus("Reset to defaults.");
         setPlayPauseLabel();
       }});
 
@@ -777,7 +961,7 @@ def tts_component(
       setPlayPauseLabel();
     </script>
     """
-    st.components.v1.html(html, height=140)
+    st.components.v1.html(html, height=175)
 
 
 # -----------------------------
@@ -889,13 +1073,25 @@ with st.sidebar:
         help="Voice dropdown uses your installed voices. This sets the default preference/fallback.",
     )
 
+    narration_mode = st.selectbox(
+        "Narration style",
+        ["Standard", "Chatty", "Debate"],
+        index=1,
+        help="Chatty/Debate alternate between two speakers and add conversational lead-ins.",
+    )
+
     rate = st.slider("Rate", 0.5, 2.0, 0.95, 0.05)
     pitch = st.slider("Pitch", 0.5, 2.0, 0.78, 0.05, help="Lower pitch generally sounds deeper.")
     prefer_deep_male_gb = st.toggle(
-        "Prefer deep male UK voice (default)",
+        "Prefer deep male UK voice (default for Voice A)",
         value=True,
         help="Heuristic selection: prefers en-GB male voices when present.",
     )
+
+    if narration_mode in ("Chatty", "Debate"):
+        turn_pause_ms = st.slider("Pause between speakers (ms)", 0, 1200, 260, 20)
+    else:
+        turn_pause_ms = 0
 
     st.divider()
     st.subheader("Flow (pauses)")
@@ -903,7 +1099,7 @@ with st.sidebar:
     flow_mode = st.toggle(
         "Flow mode (sentence pacing)",
         value=True,
-        help="Speaks sentence-by-sentence with short pauses, for a more 'coach-like' delivery.",
+        help="Speaks sentence-by-sentence with short pauses for clarity and rhythm.",
     )
     sentence_pause_ms = st.slider("Pause after sentence (ms)", 0, 1500, 320, 20)
     paragraph_pause_ms = st.slider("Pause after paragraph (ms)", 0, 4000, 650, 50)
@@ -913,7 +1109,7 @@ with st.sidebar:
         800,
         0,
         10,
-        help="If > 0, splits sentences by commas/;/: and adds a light pause for clearer rhythm.",
+        help="If > 0, splits sentences by commas/;/: and adds a light pause for a more natural cadence.",
     )
 
 cur_si, cur_ti, cur_ui = flat[st.session_state.flat_index]
@@ -947,6 +1143,8 @@ with col_right:
             sentence_pause_ms=sentence_pause_ms,
             paragraph_pause_ms=paragraph_pause_ms,
             clause_pause_ms=clause_pause_ms,
+            narration_mode=narration_mode,
+            turn_pause_ms=turn_pause_ms,
         )
     else:
         st.caption("Nothing to read for this subtopic.")
