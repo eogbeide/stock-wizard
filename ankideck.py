@@ -1,4 +1,4 @@
-# easymcat.py
+# ankideck.py
 # Streamlit PDF Study Reader
 # - Sidebar navigation by PAGE NUMBER
 # - Browser Text-to-Speech (installed voices dropdown)
@@ -7,11 +7,11 @@
 # - Reads mathematical symbols more clearly (without turning prose dashes into “minus”)
 # - Reads chemical formulas + simple chemical equations more clearly (H2O, NaCl, (NH4)2SO4, CuSO4·5H2O, Fe3+, etc.)
 # - Better PDF text extraction + page text structuring into easy-to-narrate paragraphs & bullet “story mode”
-# - NEW: Dedicated Resume button + robust multi-pause/multi-resume without restarting
+# - Dedicated Resume button + robust multi-pause/multi-resume without restarting
 # - NEW: Time progress + draggable scrubber (seek forward/back + pause by dragging)
 #
 # Run:
-#   streamlit run easymcat.py
+#   streamlit run ankideck.py
 #
 DEFAULT_URL = "https://raw.githubusercontent.com/eogbeide/stock-wizard/main/ankideck.pdf"
 
@@ -650,6 +650,8 @@ def tts_component(
     safe = text.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
     component_id = f"tts_{uuid.uuid4().hex}"
 
+    # IMPORTANT: This is a Python f-string. Any literal JS `{` or `}` must be doubled as `{{` / `}}`.
+    # The previous NameError came from a JS comment containing `{speakMs,...}` inside the f-string.
     html = f"""
     <div id="{component_id}" style="display:flex; flex-direction:column; gap:10px;">
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
@@ -742,7 +744,7 @@ def tts_component(
       let utterPausedAccum = 0;
 
       // Timeline estimation
-      let timeline = [];     // [{speakMs, pauseMs, totalMs}]
+      let timeline = [];     // timeline items: speakMs, pauseMs, totalMs
       let starts = [];       // cumulative start per item
       let totalMs = 0;
 
@@ -1012,7 +1014,7 @@ def tts_component(
                 let pauseAfter = 0;
                 if (!isLastClause) pauseAfter = clausePauseMs;
                 else if (!isLastSentence) pauseAfter = sentencePauseMs;
-                else if (!isLastParagraph) pauseAfter = paragraphPauseMs;
+                else if (!isLastParagraph) pauseAfter = paragraph_pause_ms;
 
                 items.push({{ text: clauses[ci], pauseAfter }});
               }}
@@ -1026,9 +1028,7 @@ def tts_component(
 
               items.push({{ text: sent, pauseAfter }});
             }} else {{
-              // Single-item mode
               items.push({{ text: normalizeText(t), pauseAfter: 0 }});
-              // break out
               pi = paragraphs.length;
               break;
             }}
@@ -1039,7 +1039,6 @@ def tts_component(
 
         if (!enableScrub) return base;
 
-        // Make seeking finer: split each item into smaller word chunks.
         const refined = [];
         for (const it of base) {{
           const chunks = splitIntoWordChunks(it.text || "", microChunkWords);
@@ -1118,7 +1117,7 @@ def tts_component(
         idx = 0;
         currentItemIndex = -1;
 
-        rebuildTimeline(); // resets seek UI
+        rebuildTimeline();
         setStatus("Stopped.");
       }}
 
@@ -1127,7 +1126,6 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
-        // If we are between items (timer running), pause the timer
         if (betweenTimer) {{
           const now = Date.now();
           betweenRemaining = Math.max(0, betweenDueAt - now);
@@ -1137,7 +1135,6 @@ def tts_component(
           return;
         }}
 
-        // If currently speaking, pause speech
         if (synth.speaking && !synth.paused) {{
           utterPausedAt = Date.now();
           synth.pause();
@@ -1145,7 +1142,6 @@ def tts_component(
           return;
         }}
 
-        // If already paused, do nothing
         if (synth.paused || betweenPaused) {{
           setStatus("Paused.");
         }}
@@ -1187,10 +1183,6 @@ def tts_component(
           setStatus("Speaking…");
         }};
 
-        utter.onend = () => {{
-          // no-op; progress uses watcher
-        }};
-
         utter.onerror = () => {{
           setStatus("TTS error.");
         }};
@@ -1215,14 +1207,12 @@ def tts_component(
           return;
         }}
 
-        // Clear any manual seek "cursor" once we begin speaking from it
         manualSeekPosValid = false;
 
         const item = queue[idx];
         currentItemIndex = idx;
         idx += 1;
 
-        // Important: don't cancel while paused; only cancel when moving to a new item
         if (!synth.paused) {{
           synth.cancel();
         }}
@@ -1238,13 +1228,11 @@ def tts_component(
           }}
           const s = window.speechSynthesis;
 
-          // If user paused, don't schedule next
           if (s.paused) {{
             clearInterval(watcher);
             return;
           }}
 
-          // If not speaking (and not paused), schedule the next
           if (!s.speaking && !s.paused) {{
             clearInterval(watcher);
             scheduleNext(pauseAfter);
@@ -1284,7 +1272,6 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
-        // Resume between-items pause
         if (betweenPaused) {{
           betweenPaused = false;
           const delay = Math.max(0, betweenRemaining);
@@ -1294,7 +1281,6 @@ def tts_component(
           return;
         }}
 
-        // Resume a paused utterance
         if (synth.paused) {{
           if (utterPausedAt) {{
             utterPausedAccum += (Date.now() - utterPausedAt);
@@ -1305,14 +1291,12 @@ def tts_component(
           return;
         }}
 
-        // If not paused but we have a queue and we're not speaking, continue
         if (queue.length && idx < queue.length && !synth.speaking) {{
           setStatus("Speaking…");
           speakNext();
           return;
         }}
 
-        // If nothing has started yet, start fresh
         if (!queue.length) {{
           startFresh();
         }}
@@ -1323,33 +1307,28 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
-        // If paused, resume
         if (betweenPaused || synth.paused) {{
           resumeAll();
           return;
         }}
 
-        // If currently speaking or between items, pause
         if (betweenTimer || (synth.speaking && !synth.paused)) {{
           pauseAll();
           return;
         }}
 
-        // If we have a queue and are mid-way, continue
         if (queue.length && idx < queue.length) {{
           setStatus("Speaking…");
           speakNext();
           return;
         }}
 
-        // Otherwise start new
         startFresh();
       }}
 
       function findIndexForMs(ms) {{
         const t = clamp(ms, 0, totalMs);
         if (!starts.length) return 0;
-        // Linear scan is fine for typical page sizes; binary search if you want later.
         for (let i = starts.length - 1; i >= 0; i--) {{
           if (t >= starts[i]) return i;
         }}
@@ -1359,7 +1338,6 @@ def tts_component(
       function seekToMs(ms) {{
         if (!ensureSpeechSupport()) return;
 
-        // If not started, build queue/timeline first (but do not autoplay).
         if (!queue.length) {{
           queue = buildQueueFromText(TEXT);
           idx = 0;
@@ -1389,14 +1367,12 @@ def tts_component(
           return 0;
         }}
 
-        // If user has seeked and we haven't started speaking yet, show that exact cursor
         if (manualSeekPosValid) {{
           return clamp(manualSeekPosMs, 0, totalMs);
         }}
 
         const synth = window.speechSynthesis;
 
-        // Between-items countdown (silent pauseAfter)
         if (betweenTimer || betweenPaused) {{
           const i = currentItemIndex;
           if (i >= 0 && i < timeline.length) {{
@@ -1407,7 +1383,6 @@ def tts_component(
           }}
         }}
 
-        // Speaking or paused mid-utterance
         if (synth.speaking || synth.paused) {{
           const i = currentItemIndex;
           if (i >= 0 && i < timeline.length) {{
@@ -1416,7 +1391,6 @@ def tts_component(
           }}
         }}
 
-        // Not speaking: use idx cursor as progress
         if (idx >= timeline.length) return totalMs;
         return clamp(starts[idx] || 0, 0, totalMs);
       }}
@@ -1431,14 +1405,12 @@ def tts_component(
         setTimeUI(pos);
       }}
 
-      // Update progress periodically
       setInterval(() => {{
         try {{
           updateProgressUI();
         }} catch (e) {{}}
       }}, 200);
 
-      // Scrubber interactions (drag => auto-pause + seek; stays paused after drag)
       function beginDrag() {{
         userDragging = true;
         pauseAll();
@@ -1455,7 +1427,6 @@ def tts_component(
       seekEl.addEventListener("touchstart", beginDrag, {{ passive: true }});
 
       seekEl.addEventListener("input", () => {{
-        // While dragging, show the "target time" live
         const target = Number(seekEl.value || "0");
         setTimeUI(target);
       }});
@@ -1463,14 +1434,12 @@ def tts_component(
       seekEl.addEventListener("mouseup", endDrag);
       seekEl.addEventListener("touchend", endDrag);
 
-      // Also handle keyboard / click seek changes
       seekEl.addEventListener("change", () => {{
         if (userDragging) return;
         const target = Number(seekEl.value || "0");
         seekToMs(target);
       }});
 
-      // UI wiring
       playPauseBtn.addEventListener("click", togglePlayPause);
       pauseBtn.addEventListener("click", pauseAll);
       resumeBtn.addEventListener("click", resumeAll);
@@ -1478,7 +1447,6 @@ def tts_component(
 
       voiceSelect.addEventListener("change", () => {{
         try {{ localStorage.setItem(storageKey, voiceSelect.value || ""); }} catch (e) {{}}
-        // Voice changes mid-speech can be flaky; stop to avoid strange state.
         if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused || betweenTimer || betweenPaused)) {{
           stopAll();
         }} else {{
@@ -1501,7 +1469,6 @@ def tts_component(
 
       initVoices();
 
-      // Initialize seek UI for first render (no queue yet)
       timeEl.textContent = "0:00 / 0:00";
       seekEl.max = "0";
       seekEl.value = "0";
