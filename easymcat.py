@@ -10,8 +10,8 @@
 # - Story mode (narration-friendly page formatting)
 # - Separate Resume button after Pause
 # - Prevent bracketed letters like (A), (B), (C) from being misread as chemical formulas unless truly chemistry-contextual
-# - NEW: Speak option letters clearly as "letter A/B/..." (so they are not interpreted as chemical symbols)
-# - NEW: TTS progress timeline with draggable scrubber + ±10s jump (seeks by sentence/segment boundaries)
+# - Speak option letters clearly as "letter A/B/..." (so they are not interpreted as chemical symbols)
+# - TTS progress timeline with draggable scrubber + ±10s jump (seeks by sentence/segment boundaries; timeline is an estimate)
 #
 # Run:
 #   streamlit run easymcat.py
@@ -78,11 +78,9 @@ def omml_to_linear(el) -> str:
 
     loc = _local(getattr(el, "tag", ""))
 
-    # leaf text in OMML
     if loc == "t":
         return el.text or ""
 
-    # fraction
     if loc == "f":
         num = el.find("m:num", NS)
         den = el.find("m:den", NS)
@@ -94,7 +92,6 @@ def omml_to_linear(el) -> str:
             return f"({num_txt})/({den_txt})"
         return " ".join(t.text for t in el.findall(".//m:t", NS) if t.text)
 
-    # superscript
     if loc == "sSup":
         base = el.find("m:e", NS)
         sup = el.find("m:sup", NS)
@@ -104,7 +101,6 @@ def omml_to_linear(el) -> str:
             return f"{b}^{s}"
         return " ".join(t.text for t in el.findall(".//m:t", NS) if t.text)
 
-    # subscript
     if loc == "sSub":
         base = el.find("m:e", NS)
         sub = el.find("m:sub", NS)
@@ -114,7 +110,6 @@ def omml_to_linear(el) -> str:
             return f"{b}_{s}"
         return " ".join(t.text for t in el.findall(".//m:t", NS) if t.text)
 
-    # root
     if loc == "rad":
         deg = el.find("m:deg", NS)
         expr = el.find("m:e", NS)
@@ -124,7 +119,6 @@ def omml_to_linear(el) -> str:
             return f"root({deg_txt}, {expr_txt})"
         return f"sqrt({expr_txt})"
 
-    # n-ary (sum/integral) - best effort
     if loc == "nary":
         chr_el = el.find("m:chr", NS)
         op = ""
@@ -145,7 +139,6 @@ def omml_to_linear(el) -> str:
             core += f"({expr_txt})"
         return core
 
-    # container nodes: recurse children
     parts = []
     for c in getattr(el, "iterchildren", lambda: [])():
         chunk = omml_to_linear(c)
@@ -333,12 +326,6 @@ def build_navigation(subjects: List[Dict]) -> Tuple[List[Dict], List[Tuple[int, 
 # Page formatting: Story mode
 # -----------------------------
 def make_story_mode(text: str) -> str:
-    """
-    Make text more narration-friendly for TTS:
-    - Turns bullet/numbered list items into sentences
-    - Softens heading lines like 'Key points:' into a spoken lead-in
-    - Reduces choppy line breaks (keeps paragraph breaks)
-    """
     if not text:
         return ""
 
@@ -385,31 +372,16 @@ def make_story_mode(text: str) -> str:
 def make_letter_labels_speakable(text: str) -> str:
     """
     Ensure option/label letters are spoken as letters, not mistaken as chemistry tokens.
-    Examples:
-      (A) -> "letter A"
-      [B] -> "letter B"
-      A) / A. at start of line -> "letter A."
-      Option A -> "Option letter A"
-      Answer: C -> "Answer: letter C"
     """
     if not text:
         return ""
 
     s = text
 
-    # (A) / (B) etc
     s = re.sub(r"(?<![A-Za-z0-9])\(\s*([A-Z])\s*\)(?![A-Za-z0-9])", r" letter \1 ", s)
-
-    # [A] / [B]
     s = re.sub(r"(?<![A-Za-z0-9])\[\s*([A-Z])\s*\](?![A-Za-z0-9])", r" letter \1 ", s)
-
-    # Line-leading "A)" / "B." / "C:" (common in MCQ formatting)
     s = re.sub(r"(?m)^\s*([A-Z])\s*[\)\.\:]\s*", lambda m: f"letter {m.group(1)}. ", s)
-
-    # "Option A", "Choice B"
     s = re.sub(r"\b(option|choice|choices)\s+([A-Z])\b", r"\1 letter \2", s, flags=re.IGNORECASE)
-
-    # "Answer: A"
     s = re.sub(r"\b(answer|ans)\s*[:\-]\s*([A-Z])\b", r"\1: letter \2", s, flags=re.IGNORECASE)
 
     s = re.sub(r"[ \t]+", " ", s)
@@ -442,7 +414,6 @@ _TENS = {20: "twenty", 30: "thirty", 40: "forty", 50: "fifty", 60: "sixty", 70: 
 
 
 def number_to_words(n: str) -> str:
-    """Best-effort small number-to-words for TTS."""
     try:
         val = int(n)
     except Exception:
@@ -473,7 +444,6 @@ _SUPERSCRIPT_UNICODE = {
     "⁸": "^8",
     "⁹": "^9",
 }
-
 _SUBSCRIPT_UNICODE = {
     "₀": "0",
     "₁": "1",
@@ -486,7 +456,6 @@ _SUBSCRIPT_UNICODE = {
     "₈": "8",
     "₉": "9",
 }
-
 _SUPER_SIGNS = {"⁺": "+", "⁻": "-", "⁽": "(", "⁾": ")"}
 
 _GREEK = {
@@ -633,7 +602,6 @@ ELEMENT_SYMBOLS = set(ELEMENT_NAMES.keys())
 
 COMMON_ACRONYM_BLACKLIST = {"US", "UK", "EU", "UN", "USA", "UAE", "NATO", "MCAT", "SAT", "ACT", "JAMB", "WAEC"}
 
-# Only convert bare single-element tokens in chemistry context if they are "safe" (unlikely to be an English word).
 SAFE_SINGLE_ELEMENT_WHITELIST = {
     "Fe",
     "Na",
@@ -664,7 +632,6 @@ SAFE_SINGLE_ELEMENT_WHITELIST = {
     "U",
 }
 
-# Chemistry-context hints: used ONLY to allow ambiguous short tokens in chemistry-like text
 CHEM_CONTEXT_WORDS = [
     "chemistry",
     "chemical",
@@ -838,7 +805,6 @@ _FORMULA_RE = re.compile(
     re.VERBOSE | re.IGNORECASE,
 )
 
-# Match state tokens AFTER a plausible formula, even with whitespace: "H2O (l)"
 _STATE_AFTER_FORMULA_RE = re.compile(
     r"""
     (?P<form>
@@ -862,7 +828,6 @@ def _normalize_chem_unicode(s: str) -> str:
         s = s.replace(k, v)
     for k, v in _SUPER_SIGNS.items():
         s = s.replace(k, v)
-    # keep math superscripts too (sometimes used for charges)
     for k, v in _SUPERSCRIPT_UNICODE.items():
         s = s.replace(k, v.replace("^", ""))  # ² -> 2 in chemistry context
     s = s.replace("∙", "·")
@@ -870,17 +835,10 @@ def _normalize_chem_unicode(s: str) -> str:
 
 
 def _extract_element_symbols_strict(tok: str) -> Optional[List[str]]:
-    """
-    Strictly parse element symbols in order.
-    Returns None if it contains invalid 'element-looking' tokens.
-
-    NOTE: ignores common state markers like (aq), (s), (l), (g) when attached to a formula.
-    """
     t = _normalize_chem_unicode(tok)
     symbols: List[str] = []
     i = 0
     while i < len(t):
-        # ignore state markers
         if t[i : i + 4].lower() == "(aq)":
             i += 4
             continue
@@ -906,7 +864,6 @@ def _extract_element_symbols_strict(tok: str) -> Optional[List[str]]:
                 i += 2
             else:
                 i += 1
-
             if sym not in ELEMENT_SYMBOLS:
                 return None
             symbols.append(sym)
@@ -918,12 +875,6 @@ def _extract_element_symbols_strict(tok: str) -> Optional[List[str]]:
 
 
 def _is_likely_formula(tok: str, include_single_element: bool, chem_context: bool) -> bool:
-    """
-    Conservative formula detection that:
-      - avoids bracketed letters like (A), (B), (C) being treated as formulas
-      - allows ambiguous short tokens ONLY in chemistry-context AND with extra hints
-      - keeps "bare single element" conversion very strict to avoid words like "As", "In", "He"
-    """
     if not tok:
         return False
 
@@ -932,16 +883,12 @@ def _is_likely_formula(tok: str, include_single_element: bool, chem_context: boo
     if t in COMMON_ACRONYM_BLACKLIST:
         return False
 
-    # Hard guards for option letters in brackets
     if re.fullmatch(r"[\(\[]\s*[A-Z]\s*[\)\]]", t):
         return False
 
-    # Roman numerals in parentheses are usually enumeration (unless other chemistry hints exist)
     if re.fullmatch(r"\(\s*[IVXLCM]+\s*\)", t) and not re.search(r"[\d]|[+\-^]|[·\.]", t):
         return False
 
-    # Bracketed pure-letter token with no digits/charge/dot is usually outlining,
-    # except in chemistry context AND length>1 (e.g. (OH) could appear in chemistry).
     m_br = re.fullmatch(r"([\(\[])\s*([A-Za-z]+)\s*([\)\]])", t)
     if m_br and not re.search(r"[\d]|[+\-^]|[·\.]", t):
         inner = m_br.group(2)
@@ -958,25 +905,21 @@ def _is_likely_formula(tok: str, include_single_element: bool, chem_context: boo
     has_group = "(" in t or ")" in t
     has_dot = "·" in t or "." in t
     has_charge = bool(re.search(r"(\^?\d*[+\-])$", t))
-    has_lower = bool(re.search(r"[a-z]", t))  # indicates 2-letter symbols like Na, Cl
+    has_lower = bool(re.search(r"[a-z]", t))
     all_caps_letters_only = bool(re.fullmatch(r"[A-Z]+", t))
     has_state = bool(re.search(r"\((aq|s|l|g)\)\s*$", t, flags=re.IGNORECASE))
 
-    # Prevent plain ALL-CAPS words unless context or stronger hints exist
     if all_caps_letters_only and not (has_digit or has_group or has_dot or has_charge or has_lower or has_state or chem_context):
         return False
 
-    # Multi-element formulas:
     if len(symbols) >= 2:
         if has_digit or has_group or has_dot or has_charge or has_lower or has_state:
             return True
         return bool(chem_context)
 
-    # Single element:
     if has_digit or has_charge or has_dot or has_state:
         return True
 
-    # Bare single-element: allow only if explicitly enabled AND chemistry-context AND in a safe whitelist
     if include_single_element and chem_context and symbols[0] in SAFE_SINGLE_ELEMENT_WHITELIST:
         return True
 
@@ -990,15 +933,8 @@ def _speak_element(sym: str, element_mode: str) -> str:
 
 
 def _speak_formula(tok: str, element_mode: str) -> str:
-    """
-    Turn H2SO4 into: hydrogen two sulfur oxygen four
-    Turn (NH4)2SO4 into: open bracket nitrogen hydrogen four close bracket two sulfur oxygen four
-    Turn Fe3+ into: iron three plus charge
-    Turn H2O(l) or H2O (l) into: hydrogen two oxygen liquid
-    """
     t = _normalize_chem_unicode(tok)
 
-    # normalize state symbols
     t = re.sub(r"\(\s*aq\s*\)", "(aq)", t, flags=re.IGNORECASE)
     t = re.sub(r"\(\s*s\s*\)", "(s)", t, flags=re.IGNORECASE)
     t = re.sub(r"\(\s*l\s*\)", "(l)", t, flags=re.IGNORECASE)
@@ -1043,7 +979,6 @@ def _speak_formula(tok: str, element_mode: str) -> str:
             i += 1
             continue
 
-        # caret charge format: ^2- or ^-
         if ch == "^":
             j = i + 1
             num = ""
@@ -1105,25 +1040,17 @@ def make_chem_speakable(
     element_mode: str = "Element names",
     include_single_element: bool = False,
 ) -> str:
-    """
-    Detect likely chemical formulas and replace them with speakable versions.
-    Also:
-      - Only reads (aq)/(s)/(l)/(g) as states when they appear after a compound/formula
-      - Leaves other bracket letters alone (and you can separately force "letter A" via make_letter_labels_speakable)
-    """
     if not text:
         return ""
 
     s = _normalize_chem_unicode(text)
 
-    # reaction arrows
     s = s.replace("⇌", " reversible reaction ")
     s = s.replace("→", " yields ")
     s = s.replace("⇒", " yields ")
     s = s.replace("<-", " reacts to form ")
     s = s.replace("->", " yields ")
 
-    # glue "H2O (l)" -> "H2O(l)" so state reading works, but only when the left side looks like a formula
     s = re.sub(_STATE_AFTER_FORMULA_RE, lambda m: f"{m.group('form')}({m.group('state')})", s)
 
     global_chem_context = bool(CHEM_CONTEXT_RE.search(s))
@@ -1155,7 +1082,7 @@ def make_chem_speakable(
 # - Mobile improvements: robust default voice selection & storage by URI OR name/lang
 # - Prefer Google UK English Male (en-GB) then Google UK English Female (en-GB) when available
 # - Separate Play / Pause / Resume / Stop
-# - NEW: Draggable progress scrubber (estimated timeline) + ±10s jump (seeks by segment boundaries)
+# - Draggable progress scrubber + ±10s jump (timeline is an estimate; seeking restarts at segment boundaries)
 # -----------------------------
 def tts_component(
     text: str,
@@ -1256,7 +1183,7 @@ def tts_component(
 
       const storageKey = "easymcat_tts_voice_sel_v3_google_uk_default";
 
-      // queue segments: [{text, pauseAfter}]
+      // queue segments: objects with fields "text" and "pauseAfter"  (NO curly braces here -> avoids Python f-string errors)
       let queue = [];
       let idx = 0;
 
@@ -1280,7 +1207,7 @@ def tts_component(
       let betweenRemaining = 0;
       let betweenPaused = false;
 
-      let seekHoldPaused = false;       // if user seeks while paused, we restart and re-pause quickly
+      let seekHoldPaused = false;
 
       function setStatus(msg) {{
         statusEl.textContent = msg;
@@ -1405,7 +1332,6 @@ def tts_component(
         return items.length ? items : [{{ text: normalizeText(t), pauseAfter: 0 }}];
       }}
 
-      // ---- Estimated timeline ----
       function wordCount(s) {{
         const t = (s || "").trim();
         if (!t) return 0;
@@ -1413,12 +1339,10 @@ def tts_component(
       }}
 
       function estimateSpeakSeconds(text) {{
-        // baseline speaking speed ~170 wpm at rate=1.0
         const wpm = 170;
         const words = wordCount(text);
         const r = Math.max(0.25, preferredRate || 1.0);
         const sec = (words * 60.0) / (wpm * r);
-        // never show 0 for tiny chunks (keeps scrubber usable)
         return Math.max(0.45, sec);
       }}
 
@@ -1437,7 +1361,7 @@ def tts_component(
         }}
 
         progressEl.max = String(Math.max(0, totalSeconds));
-        chunkEl.textContent = `(0/${queue.length})`;
+        chunkEl.textContent = `(0/${{queue.length}})`;
         updateTimeUI();
       }}
 
@@ -1453,7 +1377,6 @@ def tts_component(
       }}
 
       function getPlayheadSeconds() {{
-        // If currently speaking an item
         if (currentItemIndex >= 0) {{
           const startS = timelineStarts[currentItemIndex] || 0;
 
@@ -1468,19 +1391,19 @@ def tts_component(
           }}
         }}
 
-        // If paused between items (waiting timer but paused)
         if (betweenPaused && currentItemIndex >= 0) {{
           const startS = timelineStarts[currentItemIndex] || 0;
           return clamp(startS + currentItemSpeakEst + (currentItemPauseEst - (betweenRemaining / 1000.0)), 0, totalSeconds);
         }}
 
-        // Otherwise playhead is simply at start of next index
         return clamp(timelineStarts[idx] || 0, 0, totalSeconds);
       }}
 
       function updateTimeUI() {{
         const ph = getPlayheadSeconds();
-        progressEl.value = String(ph);
+        if (!progressEl.matches(":active")) {{
+          progressEl.value = String(ph);
+        }}
         timeEl.textContent = `${{fmtTime(ph)}} / ${{fmtTime(totalSeconds)}}`;
         chunkEl.textContent = `(${{Math.min(idx, queue.length)}}/${{queue.length}})`;
       }}
@@ -1499,14 +1422,12 @@ def tts_component(
 
       function indexFromSeconds(sec) {{
         const t = clamp(sec, 0, totalSeconds);
-        // find first start > t, then step back one, but we want the segment containing t
         for (let i = 0; i < timelineStarts.length - 1; i++) {{
           if (timelineStarts[i + 1] >= t) return i;
         }}
         return Math.max(0, queue.length - 1);
       }}
 
-      // -------- Voice handling (mobile-friendly) --------
       function voiceLabel(v) {{
         const name = v.name || "Unnamed";
         const lang = v.lang || "";
@@ -1682,7 +1603,6 @@ def tts_component(
         return null;
       }}
 
-      // -------- Playback controls --------
       function resetLiveTracking() {{
         utterStartAt = 0;
         currentItemIndex = -1;
@@ -1716,7 +1636,6 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
-        // pause while waiting between chunks
         if (betweenTimer) {{
           const now = Date.now();
           betweenRemaining = Math.max(0, betweenDueAt - now);
@@ -1728,7 +1647,6 @@ def tts_component(
           return;
         }}
 
-        // pause while speaking
         if (synth.speaking && !synth.paused) {{
           synth.pause();
           setStatus("Paused.");
@@ -1742,7 +1660,6 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
-        // resume between chunks
         if (betweenPaused) {{
           betweenPaused = false;
           const delay = Math.max(0, betweenRemaining);
@@ -1753,7 +1670,6 @@ def tts_component(
           return;
         }}
 
-        // resume while speaking
         if (synth.paused) {{
           synth.resume();
           setStatus("Speaking…");
@@ -1761,7 +1677,6 @@ def tts_component(
           return;
         }}
 
-        // if not speaking but we have remaining queue
         if (queue.length && idx < queue.length && !synth.speaking) {{
           setStatus("Speaking…");
           speakNext();
@@ -1802,7 +1717,6 @@ def tts_component(
           updateButtons();
           startProgressTimer();
 
-          // If user sought while paused, re-pause quickly.
           if (seekHoldPaused) {{
             setTimeout(() => {{
               try {{
@@ -1857,7 +1771,7 @@ def tts_component(
         const item = queue[itemIndex];
         idx = itemIndex + 1;
 
-        synth.cancel(); // avoid overlap edge-cases
+        synth.cancel();
         setCurrentItemLiveInfo(itemIndex, item);
         speakItem(item.text);
 
@@ -1869,15 +1783,9 @@ def tts_component(
             return;
           }}
           const s = window.speechSynthesis;
-
           if (!s.speaking && !s.paused) {{
             clearInterval(watcher);
-
-            // start pause phase to advance scrubber through inter-item delay
-            if (pauseAfterMs > 0) {{
-              beginPausePhase();
-            }}
-
+            if (pauseAfterMs > 0) beginPausePhase();
             scheduleNext(pauseAfterMs);
           }}
         }}, 120);
@@ -1888,13 +1796,11 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
-        // If paused, Play behaves like Resume
         if (betweenPaused || synth.paused) {{
           resumeAll();
           return;
         }}
 
-        // If we have remaining queue, continue
         if (queue.length && idx < queue.length && !synth.speaking) {{
           setStatus("Speaking…");
           speakNext();
@@ -1902,7 +1808,6 @@ def tts_component(
           return;
         }}
 
-        // Fresh start
         window.speechSynthesis.cancel();
         clearBetweenTimer();
         betweenPaused = false;
@@ -1929,6 +1834,8 @@ def tts_component(
           resumeBtn.disabled = true;
           stopBtn.disabled = false;
           progressEl.disabled = true;
+          rewBtn.disabled = true;
+          fwdBtn.disabled = true;
           return;
         }}
 
@@ -1955,10 +1862,8 @@ def tts_component(
         const target = clamp(seconds, 0, totalSeconds);
         const newIndex = indexFromSeconds(target);
 
-        // remember whether user was paused
         const wasPaused = synth.paused || betweenPaused;
 
-        // cancel current speech + timers
         clearBetweenTimer();
         betweenPaused = false;
         betweenRemaining = 0;
@@ -1971,9 +1876,7 @@ def tts_component(
         updateTimeUI();
 
         if (autoStart) {{
-          if (wasPaused) {{
-            seekHoldPaused = true;
-          }}
+          if (wasPaused) seekHoldPaused = true;
           speakNext();
           setStatus(wasPaused ? "Paused." : "Speaking…");
         }} else {{
@@ -1988,26 +1891,16 @@ def tts_component(
         seekTo(cur + deltaSeconds, true);
       }}
 
-      // Progress bar interactions:
-      let isScrubbing = false;
-      progressEl.addEventListener("input", () => {{
-        // live update label while dragging without constantly restarting TTS
-        isScrubbing = true;
-        updateTimeUI();
-      }});
       progressEl.addEventListener("change", () => {{
         const v = parseFloat(progressEl.value || "0");
-        isScrubbing = false;
         seekTo(v, true);
       }});
 
       rewBtn.addEventListener("click", () => jumpBy(-10));
       fwdBtn.addEventListener("click", () => jumpBy(+10));
 
-      // Save selection
       voiceSelect.addEventListener("change", () => {{
         try {{ localStorage.setItem(storageKey, voiceSelect.value || ""); }} catch (e) {{}}
-        // If speaking, stop so user can restart with new voice (mobile safer)
         if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused)) {{
           stopAll();
         }} else {{
@@ -2035,7 +1928,6 @@ def tts_component(
       resumeBtn.addEventListener("click", resumeAll);
       stopBtn.addEventListener("click", stopAll);
 
-      // init on load
       queue = buildQueueFromText(TEXT);
       idx = 0;
       rebuildTimeline();
@@ -2238,7 +2130,6 @@ with st.sidebar:
     st.divider()
     show_tts_preview = st.toggle("Show TTS text preview", value=False)
 
-# Current content
 cur_si, cur_ti, cur_ui = flat[st.session_state.flat_index]
 cur_subject = subjects[cur_si]["subject"]
 cur_topic = subjects[cur_si]["topics"][cur_ti]["topic"]
@@ -2250,7 +2141,6 @@ tts_text = cur_text
 if tts_text and story_mode:
     tts_text = make_story_mode(tts_text)
 
-# Make letter labels explicit BEFORE chemistry parsing so they don't get confused
 if tts_text and speak_letters:
     tts_text = make_letter_labels_speakable(tts_text)
 
