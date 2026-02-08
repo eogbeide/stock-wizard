@@ -6,9 +6,10 @@
 # - Sticky floating Controls (Listen + Next/Back)
 # - Reads mathematical equations (including many Word “Equation” objects) via linearization + speakable math
 # - Reads chemical formulas + simple chemical equations more clearly (H2O, NaCl, (NH4)2SO4, CuSO4·5H2O, Fe3+, etc.)
-# - NEW: Mobile-friendly voice selection (works better on phones/tablets) + prefers Google UK English Male/Female when available
-# - NEW: Story mode (narration-friendly page formatting)
-# - NEW: Separate Resume button after Pause
+# - Mobile-friendly voice selection (works better on phones/tablets) + prefers Google UK English Male/Female when available
+# - Story mode (narration-friendly page formatting)
+# - Separate Resume button after Pause
+# - NEW: Prevent bracketed letters (e.g., (A), (B), (C)) from being misread as chemical formulas unless truly chemistry-contextual
 #
 # Run:
 #   streamlit run easymcat.py
@@ -471,7 +472,7 @@ _GREEK = {
     "ω": "omega",
 }
 
-# Full element symbols + names (prevents false positives like "MCAT" becoming a "formula")
+# Full element symbols + names
 ELEMENT_NAMES = {
     "H": "hydrogen",
     "He": "helium",
@@ -596,6 +597,97 @@ ELEMENT_SYMBOLS = set(ELEMENT_NAMES.keys())
 
 COMMON_ACRONYM_BLACKLIST = {"US", "UK", "EU", "UN", "USA", "UAE", "NATO", "MCAT", "SAT", "ACT", "JAMB", "WAEC"}
 
+# Chemistry-context hints: used ONLY to allow ambiguous short tokens in chemistry-like text
+CHEM_CONTEXT_WORDS = [
+    "chemistry",
+    "chemical",
+    "reaction",
+    "reactions",
+    "reagent",
+    "reagents",
+    "equation",
+    "equations",
+    "acid",
+    "acids",
+    "base",
+    "bases",
+    "salt",
+    "salts",
+    "buffer",
+    "buffers",
+    "ph",
+    "molar",
+    "molarity",
+    "molality",
+    "mole",
+    "moles",
+    "mol",
+    "stoichiometry",
+    "stoichiometric",
+    "ion",
+    "ions",
+    "ionic",
+    "covalent",
+    "oxidation",
+    "reduction",
+    "redox",
+    "electron",
+    "electrons",
+    "proton",
+    "protons",
+    "neutron",
+    "neutrons",
+    "aqueous",
+    "precipitate",
+    "precipitation",
+    "solution",
+    "solvent",
+    "solute",
+    "concentration",
+    "dilution",
+    "titration",
+    "titrate",
+    "catalyst",
+    "catalytic",
+    "equilibrium",
+    "electrolysis",
+    "electrolyte",
+    "alkane",
+    "alkene",
+    "alkyne",
+    "alcohol",
+    "ester",
+    "aldehyde",
+    "ketone",
+    "amine",
+    "benzene",
+    "chloride",
+    "sulfate",
+    "sulphate",
+    "nitrate",
+    "phosphate",
+    "carbonate",
+    "bicarbonate",
+    "hydroxide",
+    "ammonium",
+    "sodium",
+    "potassium",
+    "calcium",
+    "magnesium",
+    "aluminium",
+    "iron",
+    "copper",
+    "zinc",
+    "silver",
+    "gold",
+    "mercury",
+    "lead",
+    "bromide",
+    "iodide",
+    "fluoride",
+]
+CHEM_CONTEXT_RE = re.compile(r"\b(" + "|".join(map(re.escape, CHEM_CONTEXT_WORDS)) + r")\b", re.IGNORECASE)
+
 
 def make_math_speakable(text: str, style: str = "Natural") -> str:
     if not text:
@@ -696,7 +788,7 @@ def _normalize_chem_unicode(s: str) -> str:
 def _extract_element_symbols_strict(tok: str) -> Optional[List[str]]:
     """
     Strictly parse element symbols in order.
-    Returns None if it contains invalid 'element-looking' tokens (prevents false positives like "MCAT").
+    Returns None if it contains invalid 'element-looking' tokens.
     """
     t = _normalize_chem_unicode(tok)
     symbols: List[str] = []
@@ -712,7 +804,6 @@ def _extract_element_symbols_strict(tok: str) -> Optional[List[str]]:
             continue
 
         if ch.isalpha():
-            # element symbols must start uppercase in formula tokens we consider
             if not ch.isupper():
                 return None
             sym = ch
@@ -727,21 +818,43 @@ def _extract_element_symbols_strict(tok: str) -> Optional[List[str]]:
             symbols.append(sym)
             continue
 
-        # unknown char
         i += 1
 
     return symbols if symbols else None
 
 
-def _is_likely_formula(tok: str, include_single_element: bool) -> bool:
+def _is_likely_formula(tok: str, include_single_element: bool, chem_context: bool) -> bool:
+    """
+    Conservative formula detection that:
+      - avoids bracketed letters like (A), (B), (C) being treated as formulas
+      - allows ambiguous all-caps short formulas (OH, CO, NO) ONLY in chemistry-context text
+    """
     if not tok:
         return False
 
     t = _normalize_chem_unicode(tok).strip()
 
-    # avoid common all-caps words
     if t in COMMON_ACRONYM_BLACKLIST:
         return False
+
+    # ---- HARD guards for "letters in brackets" (common in MCQs / outlining)
+    # (A), (B), [C], etc => never treat as a chemical formula.
+    if re.fullmatch(r"[\(\[]\s*[A-Z]\s*[\)\]]", t):
+        return False
+
+    # (I), (II), (IV) etc are common enumerations; ignore unless there are explicit chem hints
+    if re.fullmatch(r"\(\s*[IVXLCM]+\s*\)", t) and not re.search(r"[\d]|[+\-^]|[·\.]", t):
+        return False
+
+    # Any bracketed pure-letter token with no digits/charge/dot is usually outlining,
+    # except in a chemistry context (where (OH) etc can occur).
+    m_br = re.fullmatch(r"([\(\[])\s*([A-Za-z]+)\s*([\)\]])", t)
+    if m_br and not re.search(r"[\d]|[+\-^]|[·\.]", t):
+        inner = m_br.group(2)
+        if len(inner) == 1:
+            return False
+        if not chem_context:
+            return False
 
     symbols = _extract_element_symbols_strict(t)
     if not symbols:
@@ -752,22 +865,29 @@ def _is_likely_formula(tok: str, include_single_element: bool) -> bool:
     has_dot = "·" in t or "." in t
     has_charge = bool(re.search(r"(\^?\d*[+\-])$", t))
     has_lower = bool(re.search(r"[a-z]", t))  # indicates 2-letter symbols like Na, Cl
-
-    # prevent treating plain ALL-CAPS words as formulas unless there are strong chemistry hints
     all_caps_letters_only = bool(re.fullmatch(r"[A-Z]+", t))
-    if all_caps_letters_only and not (has_digit or has_group or has_dot or has_charge):
-        # "MCAT", "DNA", etc should not be considered formulas
+
+    # Prevent treating plain ALL-CAPS words as formulas unless there are strong chemistry hints or context
+    if all_caps_letters_only and not (has_digit or has_group or has_dot or has_charge or has_lower or chem_context):
         return False
 
+    # Multi-element formulas:
     if len(symbols) >= 2:
-        # multi-element formulas: require at least one strong hint OR 2-letter symbol (lowercase present)
-        return bool(has_digit or has_group or has_dot or has_charge or has_lower)
+        # If it has obvious chemistry structure => accept
+        if has_digit or has_group or has_dot or has_charge or has_lower:
+            return True
+        # Otherwise only accept if the surrounding text is chemistry-contextual (e.g., OH, CO, NO)
+        return bool(chem_context)
 
-    # single element:
-    if has_digit or has_group or has_dot or has_charge:
+    # Single element:
+    # Do NOT accept parentheses alone as evidence (avoids (B) or (C) etc even outside the hard guard).
+    if has_digit or has_charge or has_dot:
         return True
-    if include_single_element:
-        return symbols[0] in ELEMENT_SYMBOLS
+
+    # Allow single-element symbols ONLY when user explicitly enables it AND in chemistry context
+    if include_single_element and chem_context:
+        return True
+
     return False
 
 
@@ -894,7 +1014,7 @@ def make_chem_speakable(
 ) -> str:
     """
     Detect likely chemical formulas and replace them with speakable versions.
-    Also makes common reaction arrows more TTS-friendly.
+    Uses chemistry-context heuristics to avoid misreading bracketed letters or outline markers.
     """
     if not text:
         return ""
@@ -908,10 +1028,22 @@ def make_chem_speakable(
     s = s.replace("<-", " reacts to form ")
     s = s.replace("->", " yields ")
 
+    # A global chemistry hint for the whole passage (helps sections where formulas appear without nearby keywords)
+    global_chem_context = bool(CHEM_CONTEXT_RE.search(s))
+
     def repl(m: re.Match) -> str:
         tok = m.group(1)
-        if not _is_likely_formula(tok, include_single_element=include_single_element):
+
+        # local window check for chemistry context near this token
+        start = m.start(1)
+        end = m.end(1)
+        window = s[max(0, start - 80) : min(len(s), end + 80)]
+        local_context = bool(CHEM_CONTEXT_RE.search(window))
+        chem_context = global_chem_context or local_context
+
+        if not _is_likely_formula(tok, include_single_element=include_single_element, chem_context=chem_context):
             return tok
+
         spoken = _speak_formula(tok, element_mode=element_mode)
         return f" {spoken} "
 
@@ -924,7 +1056,7 @@ def make_chem_speakable(
 
 # -----------------------------
 # Browser TTS (Web Speech API)
-# - Mobile improvements: more robust default voice selection & storage by URI OR name/lang
+# - Mobile improvements: robust default voice selection & storage by URI OR name/lang
 # - Prefer Google UK English Male (en-GB) then Google UK English Female (en-GB) when available
 # - Separate Play / Pause / Resume / Stop
 # -----------------------------
@@ -994,8 +1126,6 @@ def tts_component(
       const paragraphPauseMs = Math.max(0, {paragraph_pause_ms});
       const clausePauseMs = Math.max(0, {clause_pause_ms});
 
-      // Bumped key so older saved values don’t override the new default preference.
-      // Also helps across mobile browsers where voiceURI can change.
       const storageKey = "easymcat_tts_voice_sel_v3_google_uk_default";
 
       let queue = [];
@@ -1173,7 +1303,6 @@ def tts_component(
 
           synth.addEventListener("voiceschanged", onVoicesChanged);
 
-          // Mobile sometimes needs a bit longer.
           setTimeout(() => {{
             voices = synth.getVoices();
             synth.removeEventListener("voiceschanged", onVoicesChanged);
@@ -1201,7 +1330,7 @@ def tts_component(
         const googleUkFemale = gbVoices.find(v => /google uk english female/i.test(v.name || ""));
         if (googleUkFemale) return googleUkFemale;
 
-        // Next: your existing deep-male heuristic for GB
+        // Next: deep-male heuristic for GB
         const maleNamePatterns = [
           /google.*uk.*english.*male/i,
           /microsoft.*(ryan|george|alfie).*online/i,
@@ -1267,8 +1396,7 @@ def tts_component(
 
         const def = pickDefaultVoice(voices);
         if (def) {{
-          const defKey = voiceKey(def);
-          voiceSelect.value = defKey;
+          voiceSelect.value = voiceKey(def);
           setStatus("Voice loaded (default: Google UK Male if available).");
         }} else {{
           setStatus("Voice loaded.");
@@ -1301,7 +1429,6 @@ def tts_component(
         if (parsed.type === "name") {{
           const n = (parsed.name || "").toLowerCase();
           const l = (parsed.lang || "").toLowerCase();
-          // match name+lang loosely (helps on mobile where voiceURI is unstable)
           return voices.find(v =>
             ((v.name || "").toLowerCase() === n) &&
             ((v.lang || "").toLowerCase() === l)
@@ -1331,7 +1458,6 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
-        // pause while waiting between chunks
         if (betweenTimer) {{
           const now = Date.now();
           betweenRemaining = Math.max(0, betweenDueAt - now);
@@ -1342,7 +1468,6 @@ def tts_component(
           return;
         }}
 
-        // pause while speaking
         if (synth.speaking && !synth.paused) {{
           synth.pause();
           setStatus("Paused.");
@@ -1355,7 +1480,6 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
-        // resume between chunks
         if (betweenPaused) {{
           betweenPaused = false;
           const delay = Math.max(0, betweenRemaining);
@@ -1366,7 +1490,6 @@ def tts_component(
           return;
         }}
 
-        // resume while speaking
         if (synth.paused) {{
           synth.resume();
           setStatus("Speaking…");
@@ -1374,7 +1497,6 @@ def tts_component(
           return;
         }}
 
-        // if not speaking but we have remaining queue
         if (queue.length && idx < queue.length && !synth.speaking) {{
           setStatus("Speaking…");
           speakNext();
@@ -1398,7 +1520,7 @@ def tts_component(
       }}
 
       async function speakItem(itemText) {{
-        const voices = await initVoices(); // ensure voices are ready (helps mobile)
+        const voices = await initVoices();
         const utter = new SpeechSynthesisUtterance(itemText);
         utter.rate = preferredRate;
         utter.pitch = preferredPitch;
@@ -1439,7 +1561,7 @@ def tts_component(
         const item = queue[idx];
         idx += 1;
 
-        synth.cancel(); // avoid overlap edge-cases
+        synth.cancel();
         speakItem(item.text);
 
         const pauseAfter = Math.max(0, item.pauseAfter || 0);
@@ -1478,13 +1600,11 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
-        // If paused, Play behaves like Resume
         if (betweenPaused || synth.paused) {{
           resumeAll();
           return;
         }}
 
-        // If we have remaining queue, continue
         if (queue.length && idx < queue.length && !synth.speaking) {{
           setStatus("Speaking…");
           speakNext();
@@ -1509,16 +1629,14 @@ def tts_component(
         const pausedNow = synth.paused || betweenPaused;
         const hasWork = (queue.length && idx < queue.length) || speakingNow || pausedNow || !!betweenTimer;
 
-        playBtn.disabled = speakingNow;                 // don’t spam Play while speaking
-        pauseBtn.disabled = !speakingNow && !betweenTimer;  // allow pause while betweenTimer too
+        playBtn.disabled = speakingNow;
+        pauseBtn.disabled = !speakingNow && !betweenTimer;
         resumeBtn.disabled = !pausedNow;
         stopBtn.disabled = !hasWork;
       }}
 
-      // Save selection
       voiceSelect.addEventListener("change", () => {{
         try {{ localStorage.setItem(storageKey, voiceSelect.value || ""); }} catch (e) {{}}
-        // If speaking, stop so user can restart with new voice (mobile safer)
         if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused)) {{
           stopAll();
         }} else {{
@@ -1546,7 +1664,6 @@ def tts_component(
       resumeBtn.addEventListener("click", resumeAll);
       stopBtn.addEventListener("click", stopAll);
 
-      // init on load
       initVoices();
       updateButtons();
       setInterval(updateButtons, 400);
@@ -1705,7 +1822,7 @@ with st.sidebar:
     read_chem = st.toggle(
         "Speak chemical formulas clearly",
         value=True,
-        help="Turns formulas like H2O / NaCl / (NH4)2SO4 / CuSO4·5H2O into clearer spoken text. Uses strict element-symbol validation to avoid false positives.",
+        help="Turns formulas like H2O / NaCl / (NH4)2SO4 / CuSO4·5H2O into clearer spoken text. Avoids bracketed letters like (A) being misread.",
     )
     chem_element_mode = st.selectbox(
         "Chemical element style",
@@ -1718,7 +1835,7 @@ with st.sidebar:
         "Include single-element symbols (e.g., Fe)",
         value=False,
         disabled=not read_chem,
-        help="Off by default to reduce false positives (e.g., common words).",
+        help="Off by default to reduce false positives; when enabled, only triggers in chemistry-context passages.",
     )
 
     st.divider()
@@ -1775,7 +1892,7 @@ with col_right:
     st.markdown("**Listen**")
     if tts_text:
         tts_component(
-            tts_text,
+            knowledged_text=tts_text if False else tts_text,  # harmless no-op to avoid accidental shadowing in some editors
             preferred_lang=preferred_lang,
             rate=rate,
             pitch=pitch,
