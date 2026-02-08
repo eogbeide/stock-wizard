@@ -1,8 +1,9 @@
 # easymcat.py
 # Streamlit DOCX Study Reader
 # - Subject/Topic/Subtopic navigation (markers or Heading 1/2/3)
-# - Browser Text-to-Speech (installed voices dropdown)
-# - Flow reading: sentence/paragraph pauses (optionally clause pauses)
+# - Nigerian Pidgin translation (DEFAULT) + Original view
+# - Browser Text-to-Speech (installed voices dropdown; Voice A/B for chatty/debate)
+# - Conversation narration (Standard/Chatty/Debate) + Flow reading pauses
 # - Sticky floating Controls (Listen + Next/Back)
 #
 # Run:
@@ -210,27 +211,108 @@ def build_navigation(subjects: List[Dict]) -> Tuple[List[Dict], List[Tuple[int, 
 
 
 # -----------------------------
+# Nigerian Pidgin (rule-based) translation
+# -----------------------------
+_PIDGIN_LEVEL_1: List[Tuple[re.Pattern, str]] = [
+    (re.compile(r"\blet\s+us\b", re.IGNORECASE), "make we"),
+    (re.compile(r"\blet's\b", re.IGNORECASE), "make we"),
+    (re.compile(r"\bdo\s+not\b", re.IGNORECASE), "no"),
+    (re.compile(r"\bdon't\b", re.IGNORECASE), "no"),
+    (re.compile(r"\bdoes\s+not\b", re.IGNORECASE), "no"),
+    (re.compile(r"\bdid\s+not\b", re.IGNORECASE), "no"),
+    (re.compile(r"\bcan't\b", re.IGNORECASE), "no fit"),
+    (re.compile(r"\bcannot\b", re.IGNORECASE), "no fit"),
+    (re.compile(r"\bwon't\b", re.IGNORECASE), "no go"),
+    (re.compile(r"\bshould\s+not\b", re.IGNORECASE), "no suppose"),
+    (re.compile(r"\bwhat\s+is\b", re.IGNORECASE), "wetin be"),
+    (re.compile(r"\bwhat's\b", re.IGNORECASE), "wetin be"),
+    (re.compile(r"\bwhat\s+are\b", re.IGNORECASE), "wetin be"),
+    (re.compile(r"\btherefore\b", re.IGNORECASE), "so"),
+    (re.compile(r"\bhowever\b", re.IGNORECASE), "but"),
+    (re.compile(r"\bremember\b", re.IGNORECASE), "no forget"),
+    (re.compile(r"\bthis\s+means\b", re.IGNORECASE), "e mean say"),
+]
+
+_PIDGIN_LEVEL_2: List[Tuple[re.Pattern, str]] = [
+    (re.compile(r"\bvery\b", re.IGNORECASE), "well well"),
+    (re.compile(r"\bbecause\b", re.IGNORECASE), "because say"),
+    (re.compile(r"\breally\b", re.IGNORECASE), "for real"),
+    (re.compile(r"\btruly\b", re.IGNORECASE), "for real"),
+    (re.compile(r"\bin\s+other\s+words\b", re.IGNORECASE), "as e be"),
+    (re.compile(r"\bfor\s+that\s+reason\b", re.IGNORECASE), "na why"),
+]
+
+
+def pidgin_translate_text(text: str, intensity: int = 1) -> str:
+    """
+    Conservative, local, rule-based “pidgin-style” translation.
+    - intensity 0: off
+    - intensity 1: light (default)
+    - intensity 2: stronger
+    """
+    if not text:
+        return ""
+    intensity = max(0, min(2, int(intensity)))
+
+    if intensity == 0:
+        return text.strip()
+
+    # Preserve paragraph breaks.
+    parts = re.split(r"(\n\s*\n+)", text.strip())
+    out: List[str] = []
+    for part in parts:
+        if re.match(r"^\n\s*\n+$", part or ""):
+            out.append(part)
+            continue
+
+        s = part
+
+        for pat, repl in _PIDGIN_LEVEL_1:
+            s = pat.sub(repl, s)
+
+        if intensity >= 2:
+            for pat, repl in _PIDGIN_LEVEL_2:
+                s = pat.sub(repl, s)
+
+        # Light fillers: keep it subtle.
+        if intensity >= 1:
+            s = re.sub(r"(?m)^\s*Note:\s*", "Abeg note say: ", s)
+
+        out.append(s)
+
+    return "".join(out).strip()
+
+
+# -----------------------------
 # Browser TTS (Web Speech API)
 # -----------------------------
 def tts_component(
     text: str,
-    preferred_lang: str = "en-GB",
+    preferred_lang: str = "en-NG",
     rate: float = 0.95,
     pitch: float = 0.78,
-    prefer_deep_male_gb: bool = True,
+    prefer_deep_male_gb: bool = False,
+    narration_style: str = "Chatty",  # Standard | Chatty | Debate
     flow_mode: bool = True,
     sentence_pause_ms: int = 320,
     paragraph_pause_ms: int = 650,
     clause_pause_ms: int = 0,
+    turn_pause_ms: int = 260,
+    pidgin_mode: bool = True,
+    pidgin_transform_enabled: bool = False,  # we already translate in Python; keep JS transform off
 ):
     """
     Browser TTS:
-    - Real installed voices dropdown
+    - Installed voices dropdown (Voice A/B)
     - Play/Pause toggle + Stop
     - Flow mode: speaks sentence-by-sentence with pauses (optional clause pauses)
+    - Narration style: Standard/Chatty/Debate (A/B alternation)
+    - Pidgin mode: prefers en-NG voices when present (no extra JS translation by default)
     """
     safe = text.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
     component_id = f"tts_{uuid.uuid4().hex}"
+
+    style_js = narration_style.replace("\\", "").replace("`", "").replace("${", "")
 
     html = f"""
     <div id="{component_id}" style="display:flex; flex-direction:column; gap:10px;">
@@ -244,15 +326,29 @@ def tts_component(
         <span id="{component_id}_status" style="color:#666; font-size: 0.9rem;">Ready</span>
       </div>
 
-      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <label style="color:#444; font-size:0.9rem;">Voice</label>
-        <select id="{component_id}_voice" style="min-width: 260px; padding:8px 10px; border-radius:8px; border:1px solid #ddd;">
-          <option value="">Loading voices…</option>
-        </select>
-        <button id="{component_id}_resetvoice" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
-          Reset default
-        </button>
-        <span style="color:#888; font-size: 0.85rem;">(Installed voices vary by OS/browser)</span>
+      <div style="display:flex; flex-direction:column; gap:8px;">
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <label style="color:#444; font-size:0.9rem; min-width:72px;">Voice A</label>
+          <select id="{component_id}_voice_a" style="min-width: 320px; padding:8px 10px; border-radius:8px; border:1px solid #ddd;">
+            <option value="">Loading voices…</option>
+          </select>
+        </div>
+
+        <div id="{component_id}_voiceb_row" style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <label style="color:#444; font-size:0.9rem; min-width:72px;">Voice B</label>
+          <select id="{component_id}_voice_b" style="min-width: 320px; padding:8px 10px; border-radius:8px; border:1px solid #ddd;">
+            <option value="">Loading voices…</option>
+          </select>
+        </div>
+
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <button id="{component_id}_resetvoice" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+            Reset defaults
+          </button>
+          <span style="color:#888; font-size: 0.85rem;">
+            (A/B alternate in Chatty/Debate. If B not available, it reuses A with a different tone.)
+          </span>
+        </div>
       </div>
     </div>
 
@@ -262,21 +358,32 @@ def tts_component(
 
       const playPauseBtn = document.getElementById(ROOT_ID + "_playpause");
       const stopBtn = document.getElementById(ROOT_ID + "_stop");
-      const voiceSelect = document.getElementById(ROOT_ID + "_voice");
-      const resetVoiceBtn = document.getElementById(ROOT_ID + "_resetvoice");
       const statusEl = document.getElementById(ROOT_ID + "_status");
+
+      const voiceSelectA = document.getElementById(ROOT_ID + "_voice_a");
+      const voiceSelectB = document.getElementById(ROOT_ID + "_voice_b");
+      const voiceBRow = document.getElementById(ROOT_ID + "_voiceb_row");
+      const resetVoiceBtn = document.getElementById(ROOT_ID + "_resetvoice");
 
       const preferredLang = "{preferred_lang}";
       const preferredRate = {rate};
       const preferredPitch = {pitch};
       const preferDeepMaleGb = {str(prefer_deep_male_gb).lower()};
 
+      const narrationStyle = "{style_js}";
+      const conversationMode = (narrationStyle === "Chatty" || narrationStyle === "Debate");
+
       const flowMode = {str(flow_mode).lower()};
       const sentencePauseMs = Math.max(0, {sentence_pause_ms});
       const paragraphPauseMs = Math.max(0, {paragraph_pause_ms});
       const clausePauseMs = Math.max(0, {clause_pause_ms});
+      const turnPauseMs = Math.max(0, {turn_pause_ms});
 
-      const storageKey = "easymcat_tts_voice_uri";
+      const pidginMode = {str(pidgin_mode).lower()};
+      const pidginTransformEnabled = {str(pidgin_transform_enabled).lower()};
+
+      const storageKeyA = "easymcat_tts_voice_uri_a";
+      const storageKeyB = "easymcat_tts_voice_uri_b";
 
       let queue = [];
       let idx = 0;
@@ -317,6 +424,10 @@ def tts_component(
         }}
       }}
 
+      function showHideVoiceB() {{
+        voiceBRow.style.display = conversationMode ? "flex" : "none";
+      }}
+
       function getVoicesAsync() {{
         return new Promise((resolve) => {{
           const synth = window.speechSynthesis;
@@ -348,17 +459,29 @@ def tts_component(
         return lang ? `${{name}} (${{lang}})` : name;
       }}
 
+      function normalizeLang(s) {{
+        return (s || "").toLowerCase().trim();
+      }}
+
+      function byLangPrefix(voices, prefix) {{
+        const p = (prefix || "").toLowerCase();
+        return (voices || []).filter(v => normalizeLang(v.lang).startsWith(p));
+      }}
+
       function pickDefaultVoice(voices) {{
         if (!voices || !voices.length) return null;
 
-        const normLang = (s) => (s || "").toLowerCase();
-        const byLangPrefix = (prefix) =>
-          voices.filter(v => normLang(v.lang).startsWith(prefix.toLowerCase()));
+        // Pidgin: prefer en-NG voices first when available
+        const ngVoices = byLangPrefix(voices, "en-ng");
+        if (pidginMode && ngVoices.length) return ngVoices[0];
 
-        const gbVoices = byLangPrefix("en-gb");
-        const enVoices = byLangPrefix("en");
-        const preferredPrefix = preferredLang ? preferredLang.toLowerCase() : "";
-        const preferredMatches = preferredPrefix ? byLangPrefix(preferredPrefix) : [];
+        const preferredPrefix = (preferredLang || "").toLowerCase();
+        const preferredMatches = preferredPrefix ? byLangPrefix(voices, preferredPrefix) : [];
+        if (preferredMatches.length) return preferredMatches[0];
+
+        const gbVoices = byLangPrefix(voices, "en-gb");
+        const usVoices = byLangPrefix(voices, "en-us");
+        const enVoices = byLangPrefix(voices, "en");
 
         const maleNamePatterns = [
           /google.*uk.*english.*male/i,
@@ -368,74 +491,113 @@ def tts_component(
           /male/i
         ];
 
-        if (preferDeepMaleGb) {{
+        if (preferDeepMaleGb && gbVoices.length) {{
           for (const re of maleNamePatterns) {{
             const found = gbVoices.find(v => re.test(v.name || ""));
             if (found) return found;
           }}
-          if (gbVoices.length) return gbVoices[0];
+          return gbVoices[0];
         }}
 
-        if (preferredMatches.length) return preferredMatches[0];
+        if (pidginMode && enVoices.length) return enVoices[0];
         if (gbVoices.length) return gbVoices[0];
+        if (usVoices.length) return usVoices[0];
         if (enVoices.length) return enVoices[0];
         return voices[0];
       }}
 
-      function populateVoices(voices) {{
-        voiceSelect.innerHTML = "";
+      function pickSecondaryVoice(voices, primary) {{
+        if (!voices || !voices.length) return null;
+        if (!primary) return pickDefaultVoice(voices);
 
-        const savedUri = (() => {{
-          try {{ return localStorage.getItem(storageKey); }} catch (e) {{ return null; }}
-        }})();
+        const primaryUri = primary.voiceURI || "";
+        const primaryLang = normalizeLang(primary.lang);
 
-        const options = voices.map((v) => ({{
-          uri: v.voiceURI || "",
-          label: voiceLabel(v),
-          voice: v
-        }}));
+        const sameLang = voices.filter(v => normalizeLang(v.lang) === primaryLang && (v.voiceURI || "") !== primaryUri);
+        if (sameLang.length) return sameLang[0];
 
-        options.sort((a, b) => a.label.localeCompare(b.label));
-
-        for (const opt of options) {{
-          const el = document.createElement("option");
-          el.value = opt.uri;
-          el.textContent = opt.label;
-          voiceSelect.appendChild(el);
+        if (pidginMode) {{
+          const ng = voices.filter(v => normalizeLang(v.lang).startsWith("en-ng") && (v.voiceURI || "") !== primaryUri);
+          if (ng.length) return ng[0];
         }}
 
-        const hasSaved = savedUri && options.some(o => o.uri === savedUri);
-        if (hasSaved) {{
-          voiceSelect.value = savedUri;
-          setStatus("Voice loaded (saved).");
-          return;
-        }}
+        const english = voices.filter(v => normalizeLang(v.lang).startsWith("en") && (v.voiceURI || "") !== primaryUri);
+        if (english.length) return english[0];
 
-        const def = pickDefaultVoice(voices);
-        if (def && def.voiceURI) {{
-          voiceSelect.value = def.voiceURI;
-          setStatus("Voice loaded (default).");
-        }} else {{
-          setStatus("Voice loaded.");
+        const anyOther = voices.find(v => (v.voiceURI || "") !== primaryUri);
+        return anyOther || primary;
+      }}
+
+      function populateSelect(selectEl, voices) {{
+        selectEl.innerHTML = "";
+        for (const v of voices) {{
+          const opt = document.createElement("option");
+          opt.value = v.voiceURI || "";
+          opt.textContent = voiceLabel(v);
+          selectEl.appendChild(opt);
         }}
       }}
 
+      function getSaved(key) {{
+        try {{ return localStorage.getItem(key); }} catch (e) {{ return null; }}
+      }}
+
+      function setSaved(key, value) {{
+        try {{ localStorage.setItem(key, value || ""); }} catch (e) {{}}
+      }}
+
+      function removeSaved(key) {{
+        try {{ localStorage.removeItem(key); }} catch (e) {{}}
+      }}
+
+      function setDefaultsForAandB(voices) {{
+        const defA = pickDefaultVoice(voices);
+        const defB = pickSecondaryVoice(voices, defA);
+
+        if (defA && defA.voiceURI) voiceSelectA.value = defA.voiceURI;
+        if (defB && defB.voiceURI) voiceSelectB.value = defB.voiceURI;
+
+        setSaved(storageKeyA, voiceSelectA.value || "");
+        setSaved(storageKeyB, voiceSelectB.value || "");
+      }}
+
       async function initVoices() {{
+        showHideVoiceB();
+
         if (!ensureSpeechSupport()) {{
           setStatus("Speech not supported.");
           return;
         }}
+
         const voices = await getVoicesAsync();
         if (!voices || !voices.length) {{
-          voiceSelect.innerHTML = '<option value="">No voices found</option>';
+          voiceSelectA.innerHTML = '<option value="">No voices found</option>';
+          voiceSelectB.innerHTML = '<option value="">No voices found</option>';
           setStatus("No voices found.");
           return;
         }}
-        populateVoices(voices);
+
+        populateSelect(voiceSelectA, voices);
+        populateSelect(voiceSelectB, voices);
+
+        const savedA = getSaved(storageKeyA);
+        const savedB = getSaved(storageKeyB);
+
+        const hasA = savedA && voices.some(v => (v.voiceURI || "") === savedA);
+        const hasB = savedB && voices.some(v => (v.voiceURI || "") === savedB);
+
+        if (hasA) voiceSelectA.value = savedA;
+        if (hasB) voiceSelectB.value = savedB;
+
+        if (!hasA || !hasB) {{
+          setDefaultsForAandB(voices);
+          setStatus("Voices loaded (defaults).");
+        }} else {{
+          setStatus("Voices loaded (saved).");
+        }}
       }}
 
-      function getSelectedVoice(voices) {{
-        const uri = voiceSelect.value || "";
+      function getVoiceByUri(voices, uri) {{
         if (!uri) return null;
         return voices.find(v => (v.voiceURI || "") === uri) || null;
       }}
@@ -462,7 +624,6 @@ def tts_component(
         const p = (paragraph || "").trim();
         if (!p) return [];
 
-        // Prefer Intl.Segmenter when available (best sentence boundaries)
         if (typeof Intl !== "undefined" && Intl.Segmenter) {{
           try {{
             const seg = new Intl.Segmenter("en", {{ granularity: "sentence" }});
@@ -475,7 +636,6 @@ def tts_component(
           }} catch (e) {{}}
         }}
 
-        // Fallback: split after . ! ? followed by whitespace
         return p
           .split(/(?<=[.!?])\\s+/g)
           .map(s => s.trim())
@@ -486,7 +646,6 @@ def tts_component(
         const s = (sentence || "").trim();
         if (!s) return [];
 
-        // Keep punctuation with the clause.
         const tokens = s.split(/(,|;|:)/g);
         const out = [];
         let buf = "";
@@ -505,48 +664,137 @@ def tts_component(
         return out.filter(Boolean);
       }}
 
+      function safePidginize(s) {{
+        // Off by default: we already translate in Python.
+        if (!pidginMode || !pidginTransformEnabled) return s;
+        return s;
+      }}
+
+      function pickPrefix(speaker, i) {{
+        const chatA = pidginMode
+          ? ["Oya,", "Make we yarn,", "See eh,", "As e be,", "Now,", "No be lie—"]
+          : ["Alright,", "Okay,", "So,", "Now,", "Here’s the thing—", "Let’s be real—"];
+
+        const chatB = pidginMode
+          ? ["Ehen,", "True,", "Na so,", "But wait o—", "And see,", "Honestly—"]
+          : ["Yeah,", "Right,", "Sure,", "Totally,", "And look—", "Honestly—"];
+
+        const debateA = pidginMode
+          ? ["Oya,", "My own take be say—", "Make we reason am—", "As I see am—", "Now—", "Listen—"]
+          : ["Alright,", "So,", "Let’s say this plainly—", "Here’s my take—", "Now,", "Okay—"];
+
+        const debateB = pidginMode
+          ? ["But hold on o—", "Wait small—", "I no too agree—", "Fair, but—", "Counterpoint—", "True, but—"]
+          : ["But hold on—", "Wait a second—", "I’m not sure about that—", "Fair, but—", "Counterpoint—", "Right, but—"];
+
+        const listA = (narrationStyle === "Debate") ? debateA : chatA;
+        const listB = (narrationStyle === "Debate") ? debateB : chatB;
+
+        const arr = (speaker === "A") ? listA : listB;
+        return arr[i % arr.length];
+      }}
+
+      function decorateForConversation(sentence, speaker, globalIndex) {{
+        const s0 = (sentence || "").trim();
+        if (!s0) return s0;
+
+        const s = safePidginize(s0);
+        const prefix = pickPrefix(speaker, globalIndex);
+
+        if (/^(okay|alright|so|now|yeah|right|but|wait|honestly|sure|oya|ehen|na\\s+so|but\\s+wait)\\b/i.test(s)) return s;
+        return `${{prefix}} ${{s}}`;
+      }}
+
       function buildQueueFromText(t) {{
         const paragraphs = splitParagraphs(t);
         const items = [];
+
+        if (!paragraphs.length) {{
+          const one = normalizeText(t);
+          return one ? [{{ text: safePidginize(one), pauseAfter: 0, speaker: "A" }}] : [];
+        }}
+
+        let globalSentenceIndex = 0;
+
+        if (conversationMode) {{
+          const opener = pidginMode
+            ? (narrationStyle === "Debate" ? "Oya—make we test this matter together." : "Oya—make we yarn am small.")
+            : (narrationStyle === "Debate" ? "Alright—let’s test this idea together." : "Alright—let’s talk this through.");
+          items.push({{
+            text: opener,
+            pauseAfter: Math.max(120, turnPauseMs),
+            speaker: "A"
+          }});
+        }}
 
         for (let pi = 0; pi < paragraphs.length; pi++) {{
           const sentences = splitSentences(paragraphs[pi]);
 
           for (let si = 0; si < sentences.length; si++) {{
-            const sent = sentences[si];
+            const sentRaw = sentences[si];
+
+            const speaker = conversationMode ? ((globalSentenceIndex % 2 === 0) ? "A" : "B") : "A";
+            const isLastSentence = si === sentences.length - 1;
+            const isLastParagraph = pi === paragraphs.length - 1;
+
+            let pauseAfter = 0;
+            if (!isLastSentence) pauseAfter = sentencePauseMs;
+            else if (!isLastParagraph) pauseAfter = paragraphPauseMs;
+
+            if (conversationMode) pauseAfter += turnPauseMs;
 
             if (flowMode && clausePauseMs > 0) {{
-              const clauses = splitClauses(sent);
-              for (let ci = 0; ci < clauses.length; ci++) {{
-                const isLastClause = ci === clauses.length - 1;
-                const isLastSentence = si === sentences.length - 1;
-                const isLastParagraph = pi === paragraphs.length - 1;
+              const clauses = splitClauses(sentRaw);
+              if (clauses.length >= 2) {{
+                for (let ci = 0; ci < clauses.length; ci++) {{
+                  const isLastClause = ci === clauses.length - 1;
+                  const firstClause = ci === 0;
 
-                let pauseAfter = 0;
-                if (!isLastClause) pauseAfter = clausePauseMs;
-                else if (!isLastSentence) pauseAfter = sentencePauseMs;
-                else if (!isLastParagraph) pauseAfter = paragraphPauseMs;
+                  let clauseText = clauses[ci];
+                  if (conversationMode && firstClause) {{
+                    clauseText = decorateForConversation(clauses[ci], speaker, globalSentenceIndex);
+                  }} else {{
+                    clauseText = safePidginize(clauseText);
+                  }}
 
-                items.push({{ text: clauses[ci], pauseAfter }});
+                  let clausePause = 0;
+                  if (!isLastClause) clausePause = clausePauseMs;
+                  else clausePause = pauseAfter;
+
+                  items.push({{
+                    text: clauseText,
+                    pauseAfter: clausePause,
+                    speaker
+                  }});
+                }}
+
+                globalSentenceIndex += 1;
+                continue;
               }}
-            }} else if (flowMode) {{
-              const isLastSentence = si === sentences.length - 1;
-              const isLastParagraph = pi === paragraphs.length - 1;
-
-              let pauseAfter = 0;
-              if (!isLastSentence) pauseAfter = sentencePauseMs;
-              else if (!isLastParagraph) pauseAfter = paragraphPauseMs;
-
-              items.push({{ text: sent, pauseAfter }});
-            }} else {{
-              // No flow mode: single utterance (no queue splitting)
-              return [{{ text: normalizeText(t), pauseAfter: 0 }}];
             }}
+
+            const finalText = conversationMode
+              ? decorateForConversation(sentRaw, speaker, globalSentenceIndex)
+              : safePidginize(sentRaw);
+
+            items.push({{
+              text: finalText,
+              pauseAfter: flowMode ? pauseAfter : 0,
+              speaker
+            }});
+
+            globalSentenceIndex += 1;
           }}
         }}
 
-        // If nothing parsed, fallback to whole text
-        return items.length ? items : [{{ text: normalizeText(t), pauseAfter: 0 }}];
+        if (!flowMode) {{
+          const whole = normalizeText(t);
+          if (!whole) return [];
+          const spoken = conversationMode ? ("Alright—here it is. " + whole) : whole;
+          return [{{ text: safePidginize(spoken), pauseAfter: 0, speaker: "A" }}];
+        }}
+
+        return items;
       }}
 
       function clearBetweenTimer() {{
@@ -576,7 +824,6 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
-        // Pausing while in-between utterances (timer)
         if (betweenTimer) {{
           const now = Date.now();
           betweenRemaining = Math.max(0, betweenDueAt - now);
@@ -587,7 +834,6 @@ def tts_component(
           return;
         }}
 
-        // Pausing while speaking
         if (synth.speaking && !synth.paused) {{
           synth.pause();
           setStatus("Paused.");
@@ -600,7 +846,6 @@ def tts_component(
 
         const synth = window.speechSynthesis;
 
-        // Resuming while in-between utterances
         if (betweenPaused) {{
           betweenPaused = false;
           const delay = Math.max(0, betweenRemaining);
@@ -611,7 +856,6 @@ def tts_component(
           return;
         }}
 
-        // Resuming while speaking
         if (synth.paused) {{
           synth.resume();
           setStatus("Speaking…");
@@ -634,22 +878,56 @@ def tts_component(
         }}, delayMs);
       }}
 
-      async function speakItem(itemText) {{
+      function speakerTone(speaker) {{
+        const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+        if (!conversationMode) {{
+          return {{ rate: preferredRate, pitch: preferredPitch }};
+        }}
+        if (speaker === "A") {{
+          return {{
+            rate: clamp(preferredRate - 0.03, 0.5, 2.0),
+            pitch: clamp(preferredPitch - 0.05, 0.5, 2.0)
+          }};
+        }}
+        return {{
+          rate: clamp(preferredRate + 0.05, 0.5, 2.0),
+          pitch: clamp(preferredPitch + 0.18, 0.5, 2.0)
+        }};
+      }}
+
+      async function speakItem(item) {{
         const voices = await getVoicesAsync();
 
-        const utter = new SpeechSynthesisUtterance(itemText);
-        utter.rate = preferredRate;
-        utter.pitch = preferredPitch;
-        utter.lang = preferredLang;
+        const utter = new SpeechSynthesisUtterance(item.text);
 
-        const chosen = getSelectedVoice(voices) || pickDefaultVoice(voices);
+        const tone = speakerTone(item.speaker);
+        utter.rate = tone.rate;
+        utter.pitch = tone.pitch;
+
+        utter.lang = pidginMode ? "en-NG" : preferredLang;
+
+        const uriA = voiceSelectA.value || "";
+        const uriB = voiceSelectB.value || "";
+        const preferredUri = (conversationMode && item.speaker === "B") ? uriB : uriA;
+
+        let chosen = getVoiceByUri(voices, preferredUri);
+        if (!chosen) {{
+          const defA = pickDefaultVoice(voices);
+          const defB = pickSecondaryVoice(voices, defA);
+          chosen = (conversationMode && item.speaker === "B") ? (defB || defA) : defA;
+        }}
+
         if (chosen) {{
           utter.voice = chosen;
           if (chosen.lang) utter.lang = chosen.lang;
         }}
 
         utter.onstart = () => {{
-          setStatus("Speaking…");
+          if (conversationMode) {{
+            setStatus(item.speaker === "A" ? "Speaking… (A)" : "Speaking… (B)");
+          }} else {{
+            setStatus("Speaking…");
+          }}
           setPlayPauseLabel();
         }};
         utter.onend = () => {{
@@ -677,12 +955,9 @@ def tts_component(
         const item = queue[idx];
         idx += 1;
 
-        synth.cancel(); // avoid overlap edge-cases
-        speakItem(item.text);
+        synth.cancel();
+        speakItem(item);
 
-        // Schedule next chunk after the current utterance ends + pauseAfter.
-        // We can't reliably chain with utter.onend for every browser timing case when cancel() happens,
-        // so we poll speaking state and then schedule the next.
         const pauseAfter = Math.max(0, item.pauseAfter || 0);
 
         const watcher = setInterval(() => {{
@@ -691,7 +966,6 @@ def tts_component(
             return;
           }}
           const s = window.speechSynthesis;
-
           if (!s.speaking && !s.paused) {{
             clearInterval(watcher);
             scheduleNext(pauseAfter);
@@ -710,6 +984,12 @@ def tts_component(
 
         queue = buildQueueFromText(TEXT);
         idx = 0;
+
+        if (!queue.length) {{
+          setStatus("Nothing to read.");
+          setPlayPauseLabel();
+          return;
+        }}
 
         speakNext();
         setPlayPauseLabel();
@@ -730,7 +1010,6 @@ def tts_component(
           return;
         }}
 
-        // Not speaking: resume queued progress if any, otherwise start fresh
         if (queue.length && idx < queue.length) {{
           setStatus("Speaking…");
           speakNext();
@@ -741,27 +1020,29 @@ def tts_component(
         startFresh();
       }}
 
-      voiceSelect.addEventListener("change", () => {{
-        try {{ localStorage.setItem(storageKey, voiceSelect.value || ""); }} catch (e) {{}}
-        if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused)) {{
+      function onVoiceChanged() {{
+        setSaved(storageKeyA, voiceSelectA.value || "");
+        setSaved(storageKeyB, voiceSelectB.value || "");
+        if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused || betweenTimer || betweenPaused)) {{
           stopAll();
         }} else {{
           setStatus("Voice selected.");
           setPlayPauseLabel();
         }}
-      }});
+      }}
+
+      voiceSelectA.addEventListener("change", onVoiceChanged);
+      voiceSelectB.addEventListener("change", onVoiceChanged);
 
       resetVoiceBtn.addEventListener("click", async () => {{
-        try {{ localStorage.removeItem(storageKey); }} catch (e) {{}}
+        removeSaved(storageKeyA);
+        removeSaved(storageKeyB);
+
         const voices = await getVoicesAsync();
-        const def = pickDefaultVoice(voices);
-        if (def && def.voiceURI) {{
-          voiceSelect.value = def.voiceURI;
-          setStatus("Reset to default voice.");
-        }} else {{
-          setStatus("Reset (no default found).");
-        }}
-        if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused)) stopAll();
+        setDefaultsForAandB(voices);
+
+        if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused || betweenTimer || betweenPaused)) stopAll();
+        setStatus("Reset to defaults.");
         setPlayPauseLabel();
       }});
 
@@ -777,7 +1058,7 @@ def tts_component(
       setPlayPauseLabel();
     </script>
     """
-    st.components.v1.html(html, height=140)
+    st.components.v1.html(html, height=185)
 
 
 # -----------------------------
@@ -880,22 +1161,51 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    st.subheader("Text-to-Speech")
+    st.subheader("Narration (DEFAULT: Nigerian Pidgin)")
+
+    narration_language = st.selectbox(
+        "Language",
+        ["Nigerian Pidgin (default)", "English (original)"],
+        index=0,
+        help="Pidgin uses local, rule-based translation (no API keys). For best accent, install an en-NG voice if available.",
+    )
+    pidgin_mode = narration_language.startswith("Nigerian Pidgin")
+
+    pidgin_intensity = st.select_slider(
+        "Pidgin intensity",
+        options=[0, 1, 2],
+        value=1,
+        help="0 = off, 1 = light, 2 = stronger (still conservative).",
+        disabled=not pidgin_mode,
+    )
 
     preferred_lang = st.selectbox(
-        "Preferred language",
-        ["en-GB", "en-US", "en", "es-ES", "fr-FR"],
+        "Preferred voice language (hint)",
+        ["en-NG", "en-GB", "en-US", "en", "es-ES", "fr-FR"],
+        index=0 if pidgin_mode else 1,
+        help="This only nudges default voice selection; your browser voices still rule.",
+    )
+
+    narration_style = st.selectbox(
+        "Style",
+        ["Chatty", "Debate", "Standard"],
         index=0,
-        help="Voice dropdown uses your installed voices. This sets the default preference/fallback.",
+        help="Chatty/Debate alternate Voice A/B with short ‘turn’ pauses.",
     )
 
     rate = st.slider("Rate", 0.5, 2.0, 0.95, 0.05)
     pitch = st.slider("Pitch", 0.5, 2.0, 0.78, 0.05, help="Lower pitch generally sounds deeper.")
+
     prefer_deep_male_gb = st.toggle(
-        "Prefer deep male UK voice (default)",
-        value=True,
-        help="Heuristic selection: prefers en-GB male voices when present.",
+        "Prefer deep male UK voice (Voice A bias)",
+        value=False if pidgin_mode else True,
+        help="If you want the old deep-UK default, switch language to en-GB and enable this.",
     )
+
+    if narration_style in ("Chatty", "Debate"):
+        turn_pause_ms = st.slider("Pause between speakers (ms)", 0, 1200, 260, 20)
+    else:
+        turn_pause_ms = 0
 
     st.divider()
     st.subheader("Flow (pauses)")
@@ -903,7 +1213,7 @@ with st.sidebar:
     flow_mode = st.toggle(
         "Flow mode (sentence pacing)",
         value=True,
-        help="Speaks sentence-by-sentence with short pauses, for a more 'coach-like' delivery.",
+        help="Speaks sentence-by-sentence with short pauses for rhythm and clarity.",
     )
     sentence_pause_ms = st.slider("Pause after sentence (ms)", 0, 1500, 320, 20)
     paragraph_pause_ms = st.slider("Pause after paragraph (ms)", 0, 4000, 650, 50)
@@ -913,14 +1223,18 @@ with st.sidebar:
         800,
         0,
         10,
-        help="If > 0, splits sentences by commas/;/: and adds a light pause for clearer rhythm.",
+        help="If > 0, splits sentences by commas/;/: and adds a light pause.",
     )
 
+# Current content
 cur_si, cur_ti, cur_ui = flat[st.session_state.flat_index]
 cur_subject = subjects[cur_si]["subject"]
 cur_topic = subjects[cur_si]["topics"][cur_ti]["topic"]
 cur_subtopic = subjects[cur_si]["topics"][cur_ti]["subtopics"][cur_ui]["subtopic"]
 cur_text = (subjects[cur_si]["topics"][cur_ti]["subtopics"][cur_ui].get("full_text") or "").strip()
+
+pidgin_text = pidgin_translate_text(cur_text, intensity=int(pidgin_intensity)) if cur_text else ""
+text_to_read = pidgin_text if pidgin_mode else cur_text
 
 col_left, col_right = st.columns([2, 1], vertical_alignment="top")
 
@@ -928,7 +1242,14 @@ with col_left:
     st.subheader(f"{cur_subject}  →  {cur_topic}  →  {cur_subtopic}")
 
     if cur_text:
-        st.write(cur_text)
+        tab_pidgin, tab_original = st.tabs(["Pidgin (default)", "Original"])
+        with tab_pidgin:
+            if pidgin_text:
+                st.write(pidgin_text)
+            else:
+                st.info("No text to translate here.")
+        with tab_original:
+            st.write(cur_text)
     else:
         st.info("No paragraph text under this subtopic.")
 
@@ -936,17 +1257,21 @@ with col_right:
     st.subheader("Controls")
 
     st.markdown("**Listen**")
-    if cur_text:
+    if text_to_read:
         tts_component(
-            cur_text,
+            text_to_read,
             preferred_lang=preferred_lang,
             rate=rate,
             pitch=pitch,
             prefer_deep_male_gb=prefer_deep_male_gb,
+            narration_style=narration_style,
             flow_mode=flow_mode,
             sentence_pause_ms=sentence_pause_ms,
             paragraph_pause_ms=paragraph_pause_ms,
             clause_pause_ms=clause_pause_ms,
+            turn_pause_ms=turn_pause_ms,
+            pidgin_mode=pidgin_mode,
+            pidgin_transform_enabled=False,
         )
     else:
         st.caption("Nothing to read for this subtopic.")
