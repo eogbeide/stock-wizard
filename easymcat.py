@@ -10,8 +10,7 @@
 # - Story mode (narration-friendly page formatting)
 # - Separate Resume button after Pause
 # - Prevent bracketed letters like (A), (B), (C) from being misread as chemical formulas unless truly chemistry-contextual
-# - Speak option letters clearly as "letter A/B/..." (so they are not interpreted as chemical symbols)
-# - TTS progress timeline with draggable scrubber + ±10s jump (seeks by sentence/segment boundaries; timeline is an estimate)
+# - Timeline/progress slider (estimated) with seek + skip forward/back
 #
 # Run:
 #   streamlit run easymcat.py
@@ -26,6 +25,9 @@ from typing import Optional, List, Dict, Tuple
 import requests
 import streamlit as st
 from docx import Document
+
+# IMPORTANT: must be first Streamlit command
+st.set_page_config(page_title="DOCX Study Reader", layout="wide")
 
 # -----------------------------
 # DOCX parsing helpers
@@ -78,9 +80,11 @@ def omml_to_linear(el) -> str:
 
     loc = _local(getattr(el, "tag", ""))
 
+    # leaf text in OMML
     if loc == "t":
         return el.text or ""
 
+    # fraction
     if loc == "f":
         num = el.find("m:num", NS)
         den = el.find("m:den", NS)
@@ -92,6 +96,7 @@ def omml_to_linear(el) -> str:
             return f"({num_txt})/({den_txt})"
         return " ".join(t.text for t in el.findall(".//m:t", NS) if t.text)
 
+    # superscript
     if loc == "sSup":
         base = el.find("m:e", NS)
         sup = el.find("m:sup", NS)
@@ -101,6 +106,7 @@ def omml_to_linear(el) -> str:
             return f"{b}^{s}"
         return " ".join(t.text for t in el.findall(".//m:t", NS) if t.text)
 
+    # subscript
     if loc == "sSub":
         base = el.find("m:e", NS)
         sub = el.find("m:sub", NS)
@@ -110,6 +116,7 @@ def omml_to_linear(el) -> str:
             return f"{b}_{s}"
         return " ".join(t.text for t in el.findall(".//m:t", NS) if t.text)
 
+    # root
     if loc == "rad":
         deg = el.find("m:deg", NS)
         expr = el.find("m:e", NS)
@@ -119,6 +126,7 @@ def omml_to_linear(el) -> str:
             return f"root({deg_txt}, {expr_txt})"
         return f"sqrt({expr_txt})"
 
+    # n-ary (sum/integral) - best effort
     if loc == "nary":
         chr_el = el.find("m:chr", NS)
         op = ""
@@ -139,7 +147,8 @@ def omml_to_linear(el) -> str:
             core += f"({expr_txt})"
         return core
 
-    parts = []
+    # container nodes: recurse children
+    parts: List[str] = []
     for c in getattr(el, "iterchildren", lambda: [])():
         chunk = omml_to_linear(c)
         if chunk:
@@ -326,6 +335,12 @@ def build_navigation(subjects: List[Dict]) -> Tuple[List[Dict], List[Tuple[int, 
 # Page formatting: Story mode
 # -----------------------------
 def make_story_mode(text: str) -> str:
+    """
+    Make text more narration-friendly for TTS:
+    - Turns bullet/numbered list items into sentences
+    - Softens heading lines like 'Key points:' into a spoken lead-in
+    - Reduces choppy line breaks (keeps paragraph breaks)
+    """
     if not text:
         return ""
 
@@ -367,25 +382,24 @@ def make_story_mode(text: str) -> str:
 
 
 # -----------------------------
-# Speakable helpers: letters/labels, numbers, math, chemistry
+# Speakable helpers: letters, numbers, math, chemistry
 # -----------------------------
-def make_letter_labels_speakable(text: str) -> str:
+_BRACKET_SINGLE_LETTER_RE = re.compile(r"(?<![A-Za-z0-9])[\(\[]\s*([A-Z])\s*[\)\]](?![A-Za-z0-9])")
+
+
+def make_bracket_letters_speakable(text: str) -> str:
     """
-    Ensure option/label letters are spoken as letters, not mistaken as chemistry tokens.
+    Convert outline markers like (A), (B), [C] into 'letter A', 'letter B' so they
+    are not mistaken for chemical formulas and are spoken clearly.
     """
     if not text:
         return ""
 
-    s = text
+    def repl(m: re.Match) -> str:
+        letter = m.group(1)
+        return f" letter {letter} "
 
-    s = re.sub(r"(?<![A-Za-z0-9])\(\s*([A-Z])\s*\)(?![A-Za-z0-9])", r" letter \1 ", s)
-    s = re.sub(r"(?<![A-Za-z0-9])\[\s*([A-Z])\s*\](?![A-Za-z0-9])", r" letter \1 ", s)
-    s = re.sub(r"(?m)^\s*([A-Z])\s*[\)\.\:]\s*", lambda m: f"letter {m.group(1)}. ", s)
-    s = re.sub(r"\b(option|choice|choices)\s+([A-Z])\b", r"\1 letter \2", s, flags=re.IGNORECASE)
-    s = re.sub(r"\b(answer|ans)\s*[:\-]\s*([A-Z])\b", r"\1: letter \2", s, flags=re.IGNORECASE)
-
-    s = re.sub(r"[ \t]+", " ", s)
-    return s.strip()
+    return re.sub(_BRACKET_SINGLE_LETTER_RE, repl, text)
 
 
 _NUM_WORDS_0_19 = {
@@ -414,6 +428,7 @@ _TENS = {20: "twenty", 30: "thirty", 40: "forty", 50: "fifty", 60: "sixty", 70: 
 
 
 def number_to_words(n: str) -> str:
+    """Best-effort small number-to-words for TTS."""
     try:
         val = int(n)
     except Exception:
@@ -444,6 +459,7 @@ _SUPERSCRIPT_UNICODE = {
     "⁸": "^8",
     "⁹": "^9",
 }
+
 _SUBSCRIPT_UNICODE = {
     "₀": "0",
     "₁": "1",
@@ -456,6 +472,7 @@ _SUBSCRIPT_UNICODE = {
     "₈": "8",
     "₉": "9",
 }
+
 _SUPER_SIGNS = {"⁺": "+", "⁻": "-", "⁽": "(", "⁾": ")"}
 
 _GREEK = {
@@ -602,36 +619,6 @@ ELEMENT_SYMBOLS = set(ELEMENT_NAMES.keys())
 
 COMMON_ACRONYM_BLACKLIST = {"US", "UK", "EU", "UN", "USA", "UAE", "NATO", "MCAT", "SAT", "ACT", "JAMB", "WAEC"}
 
-SAFE_SINGLE_ELEMENT_WHITELIST = {
-    "Fe",
-    "Na",
-    "Cl",
-    "Ca",
-    "Mg",
-    "Zn",
-    "Cu",
-    "Ag",
-    "Au",
-    "Pb",
-    "Sn",
-    "Hg",
-    "Al",
-    "Si",
-    "K",
-    "Li",
-    "Ba",
-    "Sr",
-    "Mn",
-    "Co",
-    "Ni",
-    "Cr",
-    "Pt",
-    "Ti",
-    "V",
-    "W",
-    "U",
-}
-
 CHEM_CONTEXT_WORDS = [
     "chemistry",
     "chemical",
@@ -669,8 +656,6 @@ CHEM_CONTEXT_WORDS = [
     "electrons",
     "proton",
     "protons",
-    "neutron",
-    "neutrons",
     "aqueous",
     "precipitate",
     "precipitation",
@@ -680,7 +665,6 @@ CHEM_CONTEXT_WORDS = [
     "concentration",
     "dilution",
     "titration",
-    "titrate",
     "catalyst",
     "catalytic",
     "equilibrium",
@@ -799,25 +783,9 @@ _FORMULA_RE = re.compile(
       )+
       (?:[·\.](?:\d+)?(?:[A-Z][a-z]?\d*)+)*         # ·5H2O  (also accepts .)
       (?:\^?\d*[+\-])?                              # optional charge (Fe3+ or ^2-)
-      (?:\((?:aq|s|l|g)\))?                         # optional state if glued: (aq)/(s)/(l)/(g)
     )(?![A-Za-z0-9])
     """,
-    re.VERBOSE | re.IGNORECASE,
-)
-
-_STATE_AFTER_FORMULA_RE = re.compile(
-    r"""
-    (?P<form>
-      (?:\d+)?(?:
-        (?:\([A-Za-z0-9+\-]+\)\d*)|(?:[A-Z][a-z]?\d*)
-      )+(?:[·\.](?:\d+)?(?:[A-Z][a-z]?\d*)+)*
-      (?:\^?\d*[+\-])?
-    )
-    \s*\(
-      (?P<state>aq|s|l|g)
-    \)
-    """,
-    re.VERBOSE | re.IGNORECASE,
+    re.VERBOSE,
 )
 
 
@@ -828,6 +796,7 @@ def _normalize_chem_unicode(s: str) -> str:
         s = s.replace(k, v)
     for k, v in _SUPER_SIGNS.items():
         s = s.replace(k, v)
+    # keep math superscripts too (sometimes used for charges)
     for k, v in _SUPERSCRIPT_UNICODE.items():
         s = s.replace(k, v.replace("^", ""))  # ² -> 2 in chemistry context
     s = s.replace("∙", "·")
@@ -835,17 +804,14 @@ def _normalize_chem_unicode(s: str) -> str:
 
 
 def _extract_element_symbols_strict(tok: str) -> Optional[List[str]]:
+    """
+    Strictly parse element symbols in order.
+    Returns None if it contains invalid 'element-looking' tokens.
+    """
     t = _normalize_chem_unicode(tok)
     symbols: List[str] = []
     i = 0
     while i < len(t):
-        if t[i : i + 4].lower() == "(aq)":
-            i += 4
-            continue
-        if t[i : i + 3].lower() in ("(s)", "(l)", "(g)"):
-            i += 3
-            continue
-
         ch = t[i]
 
         if ch.isspace():
@@ -864,6 +830,7 @@ def _extract_element_symbols_strict(tok: str) -> Optional[List[str]]:
                 i += 2
             else:
                 i += 1
+
             if sym not in ELEMENT_SYMBOLS:
                 return None
             symbols.append(sym)
@@ -875,6 +842,11 @@ def _extract_element_symbols_strict(tok: str) -> Optional[List[str]]:
 
 
 def _is_likely_formula(tok: str, include_single_element: bool, chem_context: bool) -> bool:
+    """
+    Conservative formula detection that:
+      - avoids bracketed letters like (A), (B), (C) being treated as formulas
+      - allows ambiguous all-caps short formulas (OH, CO, NO) ONLY in chemistry-context text
+    """
     if not tok:
         return False
 
@@ -883,12 +855,16 @@ def _is_likely_formula(tok: str, include_single_element: bool, chem_context: boo
     if t in COMMON_ACRONYM_BLACKLIST:
         return False
 
+    # Hard guards for "letters in brackets"
     if re.fullmatch(r"[\(\[]\s*[A-Z]\s*[\)\]]", t):
         return False
 
+    # Roman numerals in parentheses are usually enumeration
     if re.fullmatch(r"\(\s*[IVXLCM]+\s*\)", t) and not re.search(r"[\d]|[+\-^]|[·\.]", t):
         return False
 
+    # Any bracketed pure-letter token with no digits/charge/dot is usually outlining,
+    # except in a chemistry context (where (OH) etc can occur).
     m_br = re.fullmatch(r"([\(\[])\s*([A-Za-z]+)\s*([\)\]])", t)
     if m_br and not re.search(r"[\d]|[+\-^]|[·\.]", t):
         inner = m_br.group(2)
@@ -905,23 +881,30 @@ def _is_likely_formula(tok: str, include_single_element: bool, chem_context: boo
     has_group = "(" in t or ")" in t
     has_dot = "·" in t or "." in t
     has_charge = bool(re.search(r"(\^?\d*[+\-])$", t))
-    has_lower = bool(re.search(r"[a-z]", t))
+    has_lower = bool(re.search(r"[a-z]", t))  # indicates 2-letter symbols like Na, Cl
     all_caps_letters_only = bool(re.fullmatch(r"[A-Z]+", t))
-    has_state = bool(re.search(r"\((aq|s|l|g)\)\s*$", t, flags=re.IGNORECASE))
 
-    if all_caps_letters_only and not (has_digit or has_group or has_dot or has_charge or has_lower or has_state or chem_context):
+    # Prevent plain ALL-CAPS words unless context or stronger hints exist
+    if all_caps_letters_only and not (has_digit or has_group or has_dot or has_charge or has_lower or chem_context):
         return False
 
+    # Multi-element formulas:
     if len(symbols) >= 2:
-        if has_digit or has_group or has_dot or has_charge or has_lower or has_state:
+        if has_digit or has_group or has_dot or has_charge or has_lower:
             return True
         return bool(chem_context)
 
-    if has_digit or has_charge or has_dot or has_state:
+    # Single element:
+    if has_digit or has_charge or has_dot:
         return True
 
-    if include_single_element and chem_context and symbols[0] in SAFE_SINGLE_ELEMENT_WHITELIST:
-        return True
+    # Allow single-element symbols ONLY when explicitly enabled AND in chemistry context.
+    # To avoid false positives in prose (e.g., choice letters A/B/C), only allow 2-letter element symbols
+    # like Fe, Na, Cl, Mg when this toggle is on. Single-letter elements still require a digit/charge/dot.
+    if include_single_element and chem_context:
+        sym = symbols[0]
+        if len(sym) >= 2:
+            return True
 
     return False
 
@@ -933,12 +916,18 @@ def _speak_element(sym: str, element_mode: str) -> str:
 
 
 def _speak_formula(tok: str, element_mode: str) -> str:
+    """
+    Turn H2SO4 into: hydrogen two sulfur oxygen four
+    Turn (NH4)2SO4 into: open bracket nitrogen hydrogen four close bracket two sulfur oxygen four
+    Turn Fe3+ into: iron three plus charge
+    """
     t = _normalize_chem_unicode(tok)
 
-    t = re.sub(r"\(\s*aq\s*\)", "(aq)", t, flags=re.IGNORECASE)
-    t = re.sub(r"\(\s*s\s*\)", "(s)", t, flags=re.IGNORECASE)
-    t = re.sub(r"\(\s*l\s*\)", "(l)", t, flags=re.IGNORECASE)
-    t = re.sub(r"\(\s*g\s*\)", "(g)", t, flags=re.IGNORECASE)
+    # state symbols
+    t = re.sub(r"\(aq\)", " (aq) ", t, flags=re.IGNORECASE)
+    t = re.sub(r"\(s\)", " (s) ", t, flags=re.IGNORECASE)
+    t = re.sub(r"\(l\)", " (l) ", t, flags=re.IGNORECASE)
+    t = re.sub(r"\(g\)", " (g) ", t, flags=re.IGNORECASE)
 
     out: List[str] = []
     i = 0
@@ -979,6 +968,7 @@ def _speak_formula(tok: str, element_mode: str) -> str:
             i += 1
             continue
 
+        # caret charge format: ^2- or ^-
         if ch == "^":
             j = i + 1
             num = ""
@@ -1040,18 +1030,21 @@ def make_chem_speakable(
     element_mode: str = "Element names",
     include_single_element: bool = False,
 ) -> str:
+    """
+    Detect likely chemical formulas and replace them with speakable versions.
+    Uses chemistry-context heuristics to avoid misreading bracketed letters or outline markers.
+    """
     if not text:
         return ""
 
     s = _normalize_chem_unicode(text)
 
+    # reaction arrows
     s = s.replace("⇌", " reversible reaction ")
     s = s.replace("→", " yields ")
     s = s.replace("⇒", " yields ")
     s = s.replace("<-", " reacts to form ")
     s = s.replace("->", " yields ")
-
-    s = re.sub(_STATE_AFTER_FORMULA_RE, lambda m: f"{m.group('form')}({m.group('state')})", s)
 
     global_chem_context = bool(CHEM_CONTEXT_RE.search(s))
 
@@ -1082,7 +1075,7 @@ def make_chem_speakable(
 # - Mobile improvements: robust default voice selection & storage by URI OR name/lang
 # - Prefer Google UK English Male (en-GB) then Google UK English Female (en-GB) when available
 # - Separate Play / Pause / Resume / Stop
-# - Draggable progress scrubber + ±10s jump (timeline is an estimate; seeking restarts at segment boundaries)
+# - Estimated timeline slider with seek + skip
 # -----------------------------
 def tts_component(
     text: str,
@@ -1095,57 +1088,51 @@ def tts_component(
     paragraph_pause_ms: int = 650,
     clause_pause_ms: int = 0,
 ):
-    safe = text.replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
+    safe = (text or "").replace("\\", "\\\\").replace("`", "\\`").replace("${", "\\${")
     component_id = f"tts_{uuid.uuid4().hex}"
 
-    html = f"""
-    <div id="{component_id}" style="display:flex; flex-direction:column; gap:10px;">
+    # Avoid f-strings in the JS body (prevents accidental {var} interpolation errors).
+    template = r"""
+    <div id="__ID__" style="display:flex; flex-direction:column; gap:10px;">
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <button id="{component_id}_play" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+        <button id="__ID___play" style="padding:8px 12px; border-radius:10px; border:1px solid #ddd; cursor:pointer;">
           ▶️ Play
         </button>
-        <button id="{component_id}_pause" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+        <button id="__ID___pause" style="padding:8px 12px; border-radius:10px; border:1px solid #ddd; cursor:pointer;">
           ⏸ Pause
         </button>
-        <button id="{component_id}_resume" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+        <button id="__ID___resume" style="padding:8px 12px; border-radius:10px; border:1px solid #ddd; cursor:pointer;">
           🔊 Resume
         </button>
-        <button id="{component_id}_stop" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+        <button id="__ID___stop" style="padding:8px 12px; border-radius:10px; border:1px solid #ddd; cursor:pointer;">
           ⏹ Stop
         </button>
-        <span id="{component_id}_status" style="color:#666; font-size: 0.9rem;">Ready</span>
+        <span id="__ID___status" style="color:#666; font-size: 0.9rem;">Ready</span>
       </div>
 
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
-        <button id="{component_id}_rew" style="padding:7px 10px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+        <button id="__ID___back10" style="padding:8px 12px; border-radius:10px; border:1px solid #ddd; cursor:pointer;">
           ⏪ 10s
         </button>
-
-        <input
-          id="{component_id}_progress"
-          type="range"
-          min="0"
-          max="0"
-          step="0.25"
-          value="0"
-          style="flex:1; min-width:200px;"
-          aria-label="Speech progress"
-        />
-
-        <button id="{component_id}_fwd" style="padding:7px 10px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+        <button id="__ID___fwd10" style="padding:8px 12px; border-radius:10px; border:1px solid #ddd; cursor:pointer;">
           10s ⏩
         </button>
 
-        <span id="{component_id}_time" style="color:#444; font-size:0.9rem; white-space:nowrap;">0:00 / 0:00</span>
-        <span id="{component_id}_chunk" style="color:#888; font-size:0.85rem; white-space:nowrap;">(0/0)</span>
+        <div style="flex:1; min-width:220px;">
+          <input id="__ID___progress" type="range" min="0" max="100" step="0.1" value="0" style="width:100%;"/>
+          <div style="display:flex; justify-content:space-between; color:#777; font-size:0.85rem;">
+            <span id="__ID___curtime">0:00</span>
+            <span id="__ID___totaltime">0:00</span>
+          </div>
+        </div>
       </div>
 
       <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
         <label style="color:#444; font-size:0.9rem;">Voice</label>
-        <select id="{component_id}_voice" style="min-width: 260px; padding:8px 10px; border-radius:8px; border:1px solid #ddd;">
+        <select id="__ID___voice" style="min-width: 260px; padding:8px 10px; border-radius:10px; border:1px solid #ddd;">
           <option value="">Loading voices…</option>
         </select>
-        <button id="{component_id}_resetvoice" style="padding:8px 12px; border-radius:8px; border:1px solid #ddd; cursor:pointer;">
+        <button id="__ID___resetvoice" style="padding:8px 12px; border-radius:10px; border:1px solid #ddd; cursor:pointer;">
           Reset default
         </button>
         <span style="color:#888; font-size: 0.85rem;">(Installed voices vary by OS/browser)</span>
@@ -1153,122 +1140,125 @@ def tts_component(
     </div>
 
     <script>
-      const ROOT_ID = "{component_id}";
-      const TEXT = `{safe}`;
+      const ROOT_ID = "__ID__";
+      const TEXT = `__TEXT__`;
 
       const playBtn = document.getElementById(ROOT_ID + "_play");
       const pauseBtn = document.getElementById(ROOT_ID + "_pause");
       const resumeBtn = document.getElementById(ROOT_ID + "_resume");
       const stopBtn = document.getElementById(ROOT_ID + "_stop");
-      const rewBtn = document.getElementById(ROOT_ID + "_rew");
-      const fwdBtn = document.getElementById(ROOT_ID + "_fwd");
+      const back10Btn = document.getElementById(ROOT_ID + "_back10");
+      const fwd10Btn = document.getElementById(ROOT_ID + "_fwd10");
 
       const voiceSelect = document.getElementById(ROOT_ID + "_voice");
       const resetVoiceBtn = document.getElementById(ROOT_ID + "_resetvoice");
       const statusEl = document.getElementById(ROOT_ID + "_status");
 
       const progressEl = document.getElementById(ROOT_ID + "_progress");
-      const timeEl = document.getElementById(ROOT_ID + "_time");
-      const chunkEl = document.getElementById(ROOT_ID + "_chunk");
+      const curTimeEl = document.getElementById(ROOT_ID + "_curtime");
+      const totalTimeEl = document.getElementById(ROOT_ID + "_totaltime");
 
-      const preferredLang = "{preferred_lang}";
-      const preferredRate = {rate};
-      const preferredPitch = {pitch};
-      const preferDeepMaleGb = {str(prefer_deep_male_gb).lower()};
+      const preferredLang = "__PREFERRED_LANG__";
+      const preferredRate = __RATE__;
+      const preferredPitch = __PITCH__;
+      const preferDeepMaleGb = __PREFER_DEEP_MALE_GB__;
 
-      const flowMode = {str(flow_mode).lower()};
-      const sentencePauseMs = Math.max(0, {sentence_pause_ms});
-      const paragraphPauseMs = Math.max(0, {paragraph_pause_ms});
-      const clausePauseMs = Math.max(0, {clause_pause_ms});
+      const flowMode = __FLOW_MODE__;
+      const sentencePauseMs = Math.max(0, __SENTENCE_PAUSE_MS__);
+      const paragraphPauseMs = Math.max(0, __PARA_PAUSE_MS__);
+      const clausePauseMs = Math.max(0, __CLAUSE_PAUSE_MS__);
 
-      const storageKey = "easymcat_tts_voice_sel_v3_google_uk_default";
+      // Bumped key so older saved values don’t override the new default preference.
+      // Also helps across mobile browsers where voiceURI can change.
+      const storageKey = "easymcat_tts_voice_sel_v4_google_uk_default";
 
-      // queue segments: objects with fields "text" and "pauseAfter"  (NO curly braces here -> avoids Python f-string errors)
+      // Playback state
+      // queue items: {text, pauseAfterMs, estSec, cumStartSec, cumEndSec}
       let queue = [];
       let idx = 0;
-
-      // timing (estimated)
-      let timelineStarts = [0];   // length = queue.length + 1
-      let timelineDur = [];       // length = queue.length
-      let totalSeconds = 0;
-
-      // live playback tracking
-      let progressTimer = null;
-
-      let utterStartAt = 0;
-      let currentItemIndex = -1;
-      let currentItemSpeakEst = 0;      // seconds (speak only)
-      let currentItemPauseEst = 0;      // seconds (pause after)
-      let pauseStartAt = 0;             // ms
-      let inPausePhase = false;
 
       let betweenTimer = null;
       let betweenDueAt = 0;
       let betweenRemaining = 0;
       let betweenPaused = false;
 
-      let seekHoldPaused = false;
+      let playing = false;
 
-      function setStatus(msg) {{
+      // timeline / estimation
+      let totalSec = 0;
+      let segStartWall = 0;          // ms
+      let segStartCumSec = 0;        // seconds
+      let segEstSec = 0;             // seconds for current segment
+      let uiTicker = null;
+      let userDragging = false;
+
+      function setStatus(msg) {
         statusEl.textContent = msg;
-      }}
+      }
 
-      function ensureSpeechSupport() {{
-        if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {{
+      function ensureSpeechSupport() {
+        if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) {
           alert("Your browser doesn't support speech synthesis.");
           return false;
-        }}
+        }
         return true;
-      }}
+      }
 
-      function clearBetweenTimer() {{
-        if (betweenTimer) {{
+      function clearBetweenTimer() {
+        if (betweenTimer) {
           clearTimeout(betweenTimer);
           betweenTimer = null;
-        }}
-      }}
+        }
+      }
 
-      function normalizeText(t) {{
+      function fmtTime(sec) {
+        sec = Math.max(0, Math.round(sec));
+        const m = Math.floor(sec / 60);
+        const s = sec % 60;
+        return `${m}:${String(s).padStart(2, "0")}`;
+      }
+
+      function normalizeText(t) {
         return (t || "")
-          .replace(/\\r\\n/g, "\\n")
-          .replace(/\\r/g, "\\n")
-          .replace(/[ \\t]+/g, " ")
-          .replace(/\\n[ \\t]+/g, "\\n")
+          .replace(/\r\n/g, "\n")
+          .replace(/\r/g, "\n")
+          .replace(/[ \t]+/g, " ")
+          .replace(/\n[ \t]+/g, "\n")
           .trim();
-      }}
+      }
 
-      function splitParagraphs(t) {{
+      function splitParagraphs(t) {
         const cleaned = normalizeText(t);
         if (!cleaned) return [];
         return cleaned
-          .split(/\\n\\s*\\n+/g)
+          .split(/\n\s*\n+/g)
           .map(p => p.trim())
           .filter(Boolean);
-      }}
+      }
 
-      function splitSentences(paragraph) {{
+      function splitSentences(paragraph) {
         const p = (paragraph || "").trim();
         if (!p) return [];
 
-        if (typeof Intl !== "undefined" && Intl.Segmenter) {{
-          try {{
-            const seg = new Intl.Segmenter("en", {{ granularity: "sentence" }});
+        if (typeof Intl !== "undefined" && Intl.Segmenter) {
+          try {
+            const seg = new Intl.Segmenter("en", { granularity: "sentence" });
             const parts = [];
-            for (const s of seg.segment(p)) {{
+            for (const s of seg.segment(p)) {
               const chunk = (s.segment || "").trim();
               if (chunk) parts.push(chunk);
-            }}
+            }
             if (parts.length) return parts;
-          }} catch (e) {{}}
-        }}
+          } catch (e) {}
+        }
 
         return p
-          .split(/(?<=[.!?])\\s+/g)
+          .split(/(?<=[.!?])\s+/g)
           .map(s => s.trim())
           .filter(Boolean);
-      }}
+      }
 
-      function splitClauses(sentence) {{
+      function splitClauses(sentence) {
         const s = (sentence || "").trim();
         if (!s) return [];
 
@@ -1276,210 +1266,185 @@ def tts_component(
         const out = [];
         let buf = "";
 
-        for (let i = 0; i < tokens.length; i++) {{
+        for (let i = 0; i < tokens.length; i++) {
           const tok = tokens[i];
-          if (tok === "," || tok === ";" || tok === ":") {{
+          if (tok === "," || tok === ";" || tok === ":") {
             buf = (buf + tok).trim();
             if (buf) out.push(buf);
             buf = "";
-          }} else {{
+          } else {
             buf = (buf + " " + tok).trim();
-          }}
-        }}
+          }
+        }
         if (buf.trim()) out.push(buf.trim());
         return out.filter(Boolean);
-      }}
+      }
 
-      function buildQueueFromText(t) {{
+      // WPM baseline; adjust by rate (roughly linear)
+      function estimateSecondsForText(t) {
+        const words = (t || "").trim().split(/\s+/).filter(Boolean).length;
+        const wpmBase = 155; // comfortable narration
+        const wpm = Math.max(60, wpmBase * Math.max(0.5, Math.min(2.0, preferredRate)));
+        const sec = (words / wpm) * 60.0;
+        return Math.max(0.8, sec); // minimum to keep slider moving
+      }
+
+      function buildQueueFromText(t) {
         const paragraphs = splitParagraphs(t);
         const items = [];
 
-        for (let pi = 0; pi < paragraphs.length; pi++) {{
+        for (let pi = 0; pi < paragraphs.length; pi++) {
           const sentences = splitSentences(paragraphs[pi]);
 
-          for (let si = 0; si < sentences.length; si++) {{
+          for (let si = 0; si < sentences.length; si++) {
             const sent = sentences[si];
 
-            if (flowMode && clausePauseMs > 0) {{
+            if (flowMode && clausePauseMs > 0) {
               const clauses = splitClauses(sent);
-              for (let ci = 0; ci < clauses.length; ci++) {{
+              for (let ci = 0; ci < clauses.length; ci++) {
                 const isLastClause = ci === clauses.length - 1;
                 const isLastSentence = si === sentences.length - 1;
                 const isLastParagraph = pi === paragraphs.length - 1;
 
-                let pauseAfter = 0;
-                if (!isLastClause) pauseAfter = clausePauseMs;
-                else if (!isLastSentence) pauseAfter = sentencePauseMs;
-                else if (!isLastParagraph) pauseAfter = paragraphPauseMs;
+                let pauseAfterMs = 0;
+                if (!isLastClause) pauseAfterMs = clausePauseMs;
+                else if (!isLastSentence) pauseAfterMs = sentencePauseMs;
+                else if (!isLastParagraph) pauseAfterMs = paragraphPauseMs;
 
-                items.push({{ text: clauses[ci], pauseAfter }});
-              }}
-            }} else if (flowMode) {{
+                const textPart = clauses[ci];
+                items.push({ text: textPart, pauseAfterMs, estSec: estimateSecondsForText(textPart) });
+              }
+            } else if (flowMode) {
               const isLastSentence = si === sentences.length - 1;
               const isLastParagraph = pi === paragraphs.length - 1;
 
-              let pauseAfter = 0;
-              if (!isLastSentence) pauseAfter = sentencePauseMs;
-              else if (!isLastParagraph) pauseAfter = paragraphPauseMs;
+              let pauseAfterMs = 0;
+              if (!isLastSentence) pauseAfterMs = sentencePauseMs;
+              else if (!isLastParagraph) pauseAfterMs = paragraphPauseMs;
 
-              items.push({{ text: sent, pauseAfter }});
-            }} else {{
-              return [{{ text: normalizeText(t), pauseAfter: 0 }}];
-            }}
-          }}
-        }}
+              items.push({ text: sent, pauseAfterMs, estSec: estimateSecondsForText(sent) });
+            } else {
+              const full = normalizeText(t);
+              return [{ text: full, pauseAfterMs: 0, estSec: estimateSecondsForText(full) }];
+            }
+          }
+        }
 
-        return items.length ? items : [{{ text: normalizeText(t), pauseAfter: 0 }}];
-      }}
+        if (!items.length) {
+          const full = normalizeText(t);
+          return [{ text: full, pauseAfterMs: 0, estSec: estimateSecondsForText(full) }];
+        }
 
-      function wordCount(s) {{
-        const t = (s || "").trim();
-        if (!t) return 0;
-        return t.split(/\\s+/g).filter(Boolean).length;
-      }}
+        return items;
+      }
 
-      function estimateSpeakSeconds(text) {{
-        const wpm = 170;
-        const words = wordCount(text);
-        const r = Math.max(0.25, preferredRate || 1.0);
-        const sec = (words * 60.0) / (wpm * r);
-        return Math.max(0.45, sec);
-      }}
+      function computeTimeline(items) {
+        let cum = 0;
+        for (let i = 0; i < items.length; i++) {
+          items[i].cumStartSec = cum;
+          cum += (items[i].estSec || 0);
+          cum += (Math.max(0, items[i].pauseAfterMs || 0) / 1000.0);
+          items[i].cumEndSec = cum;
+        }
+        totalSec = cum;
+        totalTimeEl.textContent = fmtTime(totalSec);
+      }
 
-      function rebuildTimeline() {{
-        timelineStarts = [0];
-        timelineDur = [];
-        totalSeconds = 0;
+      function updateProgressUI(forceSec) {
+        if (userDragging) return;
 
-        for (let i = 0; i < queue.length; i++) {{
-          const speakS = estimateSpeakSeconds(queue[i].text);
-          const pauseS = Math.max(0, (queue[i].pauseAfter || 0) / 1000.0);
-          const dur = speakS + pauseS;
-          timelineDur.push(dur);
-          totalSeconds += dur;
-          timelineStarts.push(totalSeconds);
-        }}
+        let sec = forceSec;
+        if (typeof sec !== "number") {
+          sec = currentEstimatedSec();
+        }
+        sec = Math.max(0, Math.min(totalSec || 0, sec));
 
-        progressEl.max = String(Math.max(0, totalSeconds));
-        chunkEl.textContent = `(0/${{queue.length}})`;
-        updateTimeUI();
-      }}
+        if (totalSec > 0) {
+          progressEl.value = ((sec / totalSec) * 100.0).toFixed(1);
+        } else {
+          progressEl.value = "0";
+        }
+        curTimeEl.textContent = fmtTime(sec);
+      }
 
-      function clamp(n, lo, hi) {{
-        return Math.max(lo, Math.min(hi, n));
-      }}
+      function currentEstimatedSec() {
+        if (!queue.length) return 0;
+        if (!playing) return Math.min(totalSec || 0, (queue[idx]?.cumStartSec || 0));
+        const now = Date.now();
+        const delta = Math.max(0, (now - segStartWall) / 1000.0);
+        const withinSeg = Math.min(segEstSec || 0, delta);
+        return Math.min(totalSec || 0, (segStartCumSec || 0) + withinSeg);
+      }
 
-      function fmtTime(sec) {{
-        const s = Math.max(0, Math.floor(sec));
-        const m = Math.floor(s / 60);
-        const r = s % 60;
-        return `${{m}}:${{String(r).padStart(2, "0")}}`;
-      }}
+      function stopTicker() {
+        if (uiTicker) {
+          clearInterval(uiTicker);
+          uiTicker = null;
+        }
+      }
 
-      function getPlayheadSeconds() {{
-        if (currentItemIndex >= 0) {{
-          const startS = timelineStarts[currentItemIndex] || 0;
+      function startTicker() {
+        stopTicker();
+        uiTicker = setInterval(() => {
+          updateProgressUI();
+          updateButtons();
+        }, 250);
+      }
 
-          if (inPausePhase) {{
-            const elapsedPause = (Date.now() - pauseStartAt) / 1000.0;
-            return clamp(startS + currentItemSpeakEst + elapsedPause, 0, totalSeconds);
-          }}
-
-          if (utterStartAt > 0) {{
-            const elapsedSpeak = (Date.now() - utterStartAt) / 1000.0;
-            return clamp(startS + elapsedSpeak, 0, startS + currentItemSpeakEst);
-          }}
-        }}
-
-        if (betweenPaused && currentItemIndex >= 0) {{
-          const startS = timelineStarts[currentItemIndex] || 0;
-          return clamp(startS + currentItemSpeakEst + (currentItemPauseEst - (betweenRemaining / 1000.0)), 0, totalSeconds);
-        }}
-
-        return clamp(timelineStarts[idx] || 0, 0, totalSeconds);
-      }}
-
-      function updateTimeUI() {{
-        const ph = getPlayheadSeconds();
-        if (!progressEl.matches(":active")) {{
-          progressEl.value = String(ph);
-        }}
-        timeEl.textContent = `${{fmtTime(ph)}} / ${{fmtTime(totalSeconds)}}`;
-        chunkEl.textContent = `(${{Math.min(idx, queue.length)}}/${{queue.length}})`;
-      }}
-
-      function startProgressTimer() {{
-        if (progressTimer) return;
-        progressTimer = setInterval(updateTimeUI, 150);
-      }}
-
-      function stopProgressTimer() {{
-        if (progressTimer) {{
-          clearInterval(progressTimer);
-          progressTimer = null;
-        }}
-      }}
-
-      function indexFromSeconds(sec) {{
-        const t = clamp(sec, 0, totalSeconds);
-        for (let i = 0; i < timelineStarts.length - 1; i++) {{
-          if (timelineStarts[i + 1] >= t) return i;
-        }}
-        return Math.max(0, queue.length - 1);
-      }}
-
-      function voiceLabel(v) {{
+      // -------- Voice handling (mobile-friendly) --------
+      function voiceLabel(v) {
         const name = v.name || "Unnamed";
         const lang = v.lang || "";
-        return lang ? `${{name}} (${{lang}})` : name;
-      }}
+        return lang ? `${name} (${lang})` : name;
+      }
 
-      function voiceKey(v) {{
+      function voiceKey(v) {
         const uri = v.voiceURI || "";
         const name = v.name || "";
         const lang = v.lang || "";
         if (uri) return "uri:" + uri;
         return "name:" + name + "||" + lang;
-      }}
+      }
 
-      function parseVoiceKey(k) {{
+      function parseVoiceKey(k) {
         const s = k || "";
-        if (s.startsWith("uri:")) return {{ type: "uri", val: s.slice(4) }};
-        if (s.startsWith("name:")) {{
+        if (s.startsWith("uri:")) return { type: "uri", val: s.slice(4) };
+        if (s.startsWith("name:")) {
           const rest = s.slice(5);
           const parts = rest.split("||");
-          return {{ type: "name", name: parts[0] || "", lang: parts[1] || "" }};
-        }}
-        return {{ type: "unknown", raw: s }};
-      }}
+          return { type: "name", name: parts[0] || "", lang: parts[1] || "" };
+        }
+        return { type: "unknown", raw: s };
+      }
 
-      function getVoicesAsync() {{
-        return new Promise((resolve) => {{
+      function getVoicesAsync() {
+        return new Promise((resolve) => {
           const synth = window.speechSynthesis;
           let voices = synth.getVoices();
 
-          if (voices && voices.length) {{
+          if (voices && voices.length) {
             resolve(voices);
             return;
-          }}
+          }
 
-          const onVoicesChanged = () => {{
+          const onVoicesChanged = () => {
             voices = synth.getVoices();
             synth.removeEventListener("voiceschanged", onVoicesChanged);
             resolve(voices || []);
-          }};
+          };
 
           synth.addEventListener("voiceschanged", onVoicesChanged);
 
-          setTimeout(() => {{
+          // Mobile sometimes needs a bit longer.
+          setTimeout(() => {
             voices = synth.getVoices();
             synth.removeEventListener("voiceschanged", onVoicesChanged);
             resolve(voices || []);
-          }}, 2000);
-        }});
-      }}
+          }, 2000);
+        });
+      }
 
-      function pickDefaultVoice(voices) {{
+      function pickDefaultVoice(voices) {
         if (!voices || !voices.length) return null;
 
         const norm = (s) => (s || "").toLowerCase();
@@ -1491,12 +1456,14 @@ def tts_component(
         const preferredPrefix = preferredLang ? preferredLang.toLowerCase() : "";
         const preferredMatches = preferredPrefix ? byLangPrefix(preferredPrefix) : [];
 
+        // HARD preference: Google UK English Male, then Female (en-GB)
         const googleUkMale = gbVoices.find(v => /google uk english male/i.test(v.name || ""));
         if (googleUkMale) return googleUkMale;
 
         const googleUkFemale = gbVoices.find(v => /google uk english female/i.test(v.name || ""));
         if (googleUkFemale) return googleUkFemale;
 
+        // Next: deep-male heuristic for GB
         const maleNamePatterns = [
           /google.*uk.*english.*male/i,
           /microsoft.*(ryan|george|alfie).*online/i,
@@ -1505,447 +1472,474 @@ def tts_component(
           /male/i
         ];
 
-        if (preferDeepMaleGb) {{
-          for (const re of maleNamePatterns) {{
+        if (preferDeepMaleGb) {
+          for (const re of maleNamePatterns) {
             const found = gbVoices.find(v => re.test(v.name || ""));
             if (found) return found;
-          }}
+          }
           if (gbVoices.length) return gbVoices[0];
-        }}
+        }
 
         if (preferredMatches.length) return preferredMatches[0];
         if (gbVoices.length) return gbVoices[0];
         if (enVoices.length) return enVoices[0];
         return voices[0];
-      }}
+      }
 
-      function rankVoice(v) {{
+      function rankVoice(v) {
         const name = (v.name || "").toLowerCase();
         const lang = (v.lang || "").toLowerCase();
         if (lang.startsWith("en-gb") && name.includes("google uk english male")) return 0;
         if (lang.startsWith("en-gb") && name.includes("google uk english female")) return 1;
         return 2;
-      }}
+      }
 
-      function populateVoices(voices) {{
+      function populateVoices(voices) {
         voiceSelect.innerHTML = "";
 
-        const savedKey = (() => {{
-          try {{ return localStorage.getItem(storageKey); }} catch (e) {{ return null; }}
-        }})();
+        const savedKey = (() => {
+          try { return localStorage.getItem(storageKey); } catch (e) { return null; }
+        })();
 
-        const options = voices.map((v) => ({{
+        const options = voices.map((v) => ({
           key: voiceKey(v),
           label: voiceLabel(v),
           voice: v
-        }}));
+        }));
 
-        options.sort((a, b) => {{
+        options.sort((a, b) => {
           const ra = rankVoice(a.voice), rb = rankVoice(b.voice);
           if (ra !== rb) return ra - rb;
           return a.label.localeCompare(b.label);
-        }});
+        });
 
-        for (const opt of options) {{
+        for (const opt of options) {
           const el = document.createElement("option");
           el.value = opt.key;
           el.textContent = opt.label;
           voiceSelect.appendChild(el);
-        }}
+        }
 
         const hasSaved = savedKey && options.some(o => o.key === savedKey);
-        if (hasSaved) {{
+        if (hasSaved) {
           voiceSelect.value = savedKey;
           setStatus("Voice loaded (saved).");
           return;
-        }}
+        }
 
         const def = pickDefaultVoice(voices);
-        if (def) {{
+        if (def) {
           voiceSelect.value = voiceKey(def);
           setStatus("Voice loaded (default: Google UK Male if available).");
-        }} else {{
+        } else {
           setStatus("Voice loaded.");
-        }}
-      }}
+        }
+      }
 
-      async function initVoices() {{
-        if (!ensureSpeechSupport()) {{
+      async function initVoices() {
+        if (!ensureSpeechSupport()) {
           setStatus("Speech not supported.");
           return [];
-        }}
+        }
         const voices = await getVoicesAsync();
-        if (!voices || !voices.length) {{
+        if (!voices || !voices.length) {
           voiceSelect.innerHTML = '<option value="">No voices found</option>';
           setStatus("No voices found (device/browser may limit voices).");
           return [];
-        }}
+        }
         populateVoices(voices);
         return voices;
-      }}
+      }
 
-      function getSelectedVoice(voices) {{
+      function getSelectedVoice(voices) {
         const key = voiceSelect.value || "";
         if (!key) return null;
         const parsed = parseVoiceKey(key);
 
-        if (parsed.type === "uri") {{
+        if (parsed.type === "uri") {
           return voices.find(v => (v.voiceURI || "") === parsed.val) || null;
-        }}
-        if (parsed.type === "name") {{
+        }
+        if (parsed.type === "name") {
           const n = (parsed.name || "").toLowerCase();
           const l = (parsed.lang || "").toLowerCase();
           return voices.find(v =>
             ((v.name || "").toLowerCase() === n) &&
             ((v.lang || "").toLowerCase() === l)
           ) || voices.find(v => ((v.name || "").toLowerCase() === n)) || null;
-        }}
+        }
         return null;
-      }}
+      }
 
-      function resetLiveTracking() {{
-        utterStartAt = 0;
-        currentItemIndex = -1;
-        currentItemSpeakEst = 0;
-        currentItemPauseEst = 0;
-        pauseStartAt = 0;
-        inPausePhase = false;
-      }}
-
-      function stopAll() {{
+      // -------- Playback controls --------
+      function stopAll() {
         if (!ensureSpeechSupport()) return;
 
         clearBetweenTimer();
         betweenPaused = false;
         betweenRemaining = 0;
-        seekHoldPaused = false;
-
-        stopProgressTimer();
-        resetLiveTracking();
 
         window.speechSynthesis.cancel();
+        playing = false;
         idx = 0;
 
         setStatus("Stopped.");
         updateButtons();
-        updateTimeUI();
-      }}
+        updateProgressUI(0);
+      }
 
-      function pauseAll() {{
+      function pauseAll() {
         if (!ensureSpeechSupport()) return;
 
         const synth = window.speechSynthesis;
 
-        if (betweenTimer) {{
+        // pause while waiting between chunks
+        if (betweenTimer) {
           const now = Date.now();
           betweenRemaining = Math.max(0, betweenDueAt - now);
           clearBetweenTimer();
           betweenPaused = true;
+          playing = false;
           setStatus("Paused.");
           updateButtons();
-          updateTimeUI();
           return;
-        }}
+        }
 
-        if (synth.speaking && !synth.paused) {{
+        // pause while speaking
+        if (synth.speaking && !synth.paused) {
           synth.pause();
+          playing = false;
           setStatus("Paused.");
           updateButtons();
-          updateTimeUI();
-        }}
-      }}
+        }
+      }
 
-      function resumeAll() {{
+      function resumeAll() {
         if (!ensureSpeechSupport()) return;
 
         const synth = window.speechSynthesis;
 
-        if (betweenPaused) {{
+        // resume between chunks
+        if (betweenPaused) {
           betweenPaused = false;
           const delay = Math.max(0, betweenRemaining);
           betweenRemaining = 0;
+          playing = true;
           scheduleNext(delay);
           setStatus("Speaking…");
           updateButtons();
           return;
-        }}
+        }
 
-        if (synth.paused) {{
+        // resume while speaking
+        if (synth.paused) {
           synth.resume();
+          playing = true;
           setStatus("Speaking…");
           updateButtons();
           return;
-        }}
+        }
 
-        if (queue.length && idx < queue.length && !synth.speaking) {{
+        // if not speaking but we have remaining queue
+        if (queue.length && idx < queue.length && !synth.speaking) {
+          playing = true;
           setStatus("Speaking…");
           speakNext();
           updateButtons();
-        }}
-      }}
+        }
+      }
 
-      function scheduleNext(delayMs) {{
+      function scheduleNext(delayMs) {
         clearBetweenTimer();
 
-        if (delayMs <= 0) {{
+        if (delayMs <= 0) {
           speakNext();
           return;
-        }}
+        }
 
         betweenDueAt = Date.now() + delayMs;
-        betweenTimer = setTimeout(() => {{
+        betweenTimer = setTimeout(() => {
           betweenTimer = null;
           speakNext();
-        }}, delayMs);
-      }}
+        }, delayMs);
+      }
 
-      async function speakItem(itemText) {{
-        const voices = await initVoices();
+      async function speakItem(itemText, itemEstSec, itemCumStartSec) {
+        const voices = await initVoices(); // ensure voices are ready (helps mobile)
+
         const utter = new SpeechSynthesisUtterance(itemText);
         utter.rate = preferredRate;
         utter.pitch = preferredPitch;
         utter.lang = preferredLang;
 
         const chosen = getSelectedVoice(voices) || pickDefaultVoice(voices);
-        if (chosen) {{
+        if (chosen) {
           utter.voice = chosen;
           if (chosen.lang) utter.lang = chosen.lang;
-        }}
+        }
 
-        utter.onstart = () => {{
+        utter.onstart = () => {
+          segStartWall = Date.now();
+          segStartCumSec = itemCumStartSec || 0;
+          segEstSec = itemEstSec || estimateSecondsForText(itemText);
+
+          playing = true;
           setStatus("Speaking…");
           updateButtons();
-          startProgressTimer();
+        };
 
-          if (seekHoldPaused) {{
-            setTimeout(() => {{
-              try {{
-                if (window.speechSynthesis && window.speechSynthesis.speaking && !window.speechSynthesis.paused) {{
-                  window.speechSynthesis.pause();
-                  setStatus("Paused.");
-                  updateButtons();
-                }}
-              }} catch (e) {{}}
-              seekHoldPaused = false;
-            }}, 30);
-          }}
-        }};
-        utter.onend = () => {{
+        utter.onend = () => {
           updateButtons();
-        }};
-        utter.onerror = () => {{
+        };
+
+        utter.onerror = () => {
+          playing = false;
           setStatus("TTS error.");
           updateButtons();
-        }};
+        };
 
         window.speechSynthesis.speak(utter);
-      }}
+      }
 
-      function setCurrentItemLiveInfo(itemIndex, item) {{
-        currentItemIndex = itemIndex;
-        inPausePhase = false;
-        utterStartAt = Date.now();
-        currentItemSpeakEst = estimateSpeakSeconds(item.text);
-        currentItemPauseEst = Math.max(0, (item.pauseAfter || 0) / 1000.0);
-        pauseStartAt = 0;
-      }}
-
-      function beginPausePhase() {{
-        inPausePhase = true;
-        pauseStartAt = Date.now();
-      }}
-
-      function speakNext() {{
+      function speakNext() {
         if (!ensureSpeechSupport()) return;
 
         const synth = window.speechSynthesis;
 
-        if (idx >= queue.length) {{
+        if (idx >= queue.length) {
+          playing = false;
           setStatus("Done.");
           updateButtons();
-          updateTimeUI();
+          updateProgressUI(totalSec);
           return;
-        }}
+        }
 
-        const itemIndex = idx;
-        const item = queue[itemIndex];
-        idx = itemIndex + 1;
+        const item = queue[idx];
+        idx += 1;
 
-        synth.cancel();
-        setCurrentItemLiveInfo(itemIndex, item);
-        speakItem(item.text);
+        synth.cancel(); // avoid overlap edge-cases
+        speakItem(item.text, item.estSec, item.cumStartSec);
 
-        const pauseAfterMs = Math.max(0, item.pauseAfter || 0);
+        const pauseAfterMs = Math.max(0, item.pauseAfterMs || 0);
 
-        const watcher = setInterval(() => {{
-          if (!ensureSpeechSupport()) {{
+        const watcher = setInterval(() => {
+          if (!ensureSpeechSupport()) {
             clearInterval(watcher);
             return;
-          }}
+          }
           const s = window.speechSynthesis;
-          if (!s.speaking && !s.paused) {{
-            clearInterval(watcher);
-            if (pauseAfterMs > 0) beginPausePhase();
-            scheduleNext(pauseAfterMs);
-          }}
-        }}, 120);
-      }}
 
-      function play() {{
+          if (!s.speaking && !s.paused) {
+            clearInterval(watcher);
+            // segment done; reflect its end time
+            updateProgressUI(item.cumEndSec || 0);
+            scheduleNext(pauseAfterMs);
+          }
+        }, 120);
+      }
+
+      function startFresh(startSec) {
         if (!ensureSpeechSupport()) return;
 
-        const synth = window.speechSynthesis;
-
-        if (betweenPaused || synth.paused) {{
-          resumeAll();
-          return;
-        }}
-
-        if (queue.length && idx < queue.length && !synth.speaking) {{
-          setStatus("Speaking…");
-          speakNext();
-          updateButtons();
-          return;
-        }}
-
-        window.speechSynthesis.cancel();
         clearBetweenTimer();
         betweenPaused = false;
         betweenRemaining = 0;
-        seekHoldPaused = false;
-        resetLiveTracking();
 
-        if (!queue.length) {{
-          queue = buildQueueFromText(TEXT);
-          idx = 0;
-          rebuildTimeline();
-        }} else {{
-          idx = 0;
-        }}
+        window.speechSynthesis.cancel();
+        playing = true;
+
+        queue = buildQueueFromText(TEXT);
+        computeTimeline(queue);
+
+        // seek to startSec if provided
+        idx = 0;
+        if (typeof startSec === "number" && queue.length) {
+          const t = Math.max(0, Math.min(totalSec, startSec));
+          for (let i = 0; i < queue.length; i++) {
+            if (t < (queue[i].cumEndSec || 0)) {
+              idx = i;
+              break;
+            }
+          }
+        }
 
         speakNext();
         updateButtons();
-      }}
+        startTicker();
+      }
 
-      function updateButtons() {{
-        if (!("speechSynthesis" in window)) {{
+      function play() {
+        if (!ensureSpeechSupport()) return;
+
+        const synth = window.speechSynthesis;
+
+        // If paused, Play behaves like Resume
+        if (betweenPaused || synth.paused) {
+          resumeAll();
+          return;
+        }
+
+        // If we have remaining queue, continue
+        if (queue.length && idx < queue.length && !synth.speaking) {
+          playing = true;
+          setStatus("Speaking…");
+          speakNext();
+          updateButtons();
+          startTicker();
+          return;
+        }
+
+        startFresh(0);
+      }
+
+      function updateButtons() {
+        if (!("speechSynthesis" in window)) {
           playBtn.disabled = false;
           pauseBtn.disabled = true;
           resumeBtn.disabled = true;
           stopBtn.disabled = false;
-          progressEl.disabled = true;
-          rewBtn.disabled = true;
-          fwdBtn.disabled = true;
           return;
-        }}
+        }
 
         const synth = window.speechSynthesis;
         const speakingNow = synth.speaking && !synth.paused;
         const pausedNow = synth.paused || betweenPaused;
         const hasWork = (queue.length && idx < queue.length) || speakingNow || pausedNow || !!betweenTimer;
 
-        playBtn.disabled = speakingNow;
+        playBtn.disabled = speakingNow;                 // don’t spam Play while speaking
         pauseBtn.disabled = !speakingNow && !betweenTimer;
         resumeBtn.disabled = !pausedNow;
         stopBtn.disabled = !hasWork;
+      }
 
-        progressEl.disabled = !queue.length;
-        rewBtn.disabled = !queue.length;
-        fwdBtn.disabled = !queue.length;
-      }}
+      function seekToSec(t) {
+        t = Math.max(0, Math.min(totalSec || 0, t || 0));
 
-      function seekTo(seconds, autoStart=true) {{
-        if (!ensureSpeechSupport()) return;
-        if (!queue.length) return;
+        if (!queue.length) {
+          // build queue but don't autoplay unless already playing
+          queue = buildQueueFromText(TEXT);
+          computeTimeline(queue);
+        }
 
+        // compute idx
+        let newIdx = 0;
+        for (let i = 0; i < queue.length; i++) {
+          if (t < (queue[i].cumEndSec || 0)) { newIdx = i; break; }
+          newIdx = i;
+        }
+        idx = newIdx;
+
+        // stop current speech and restart from new index
         const synth = window.speechSynthesis;
-        const target = clamp(seconds, 0, totalSeconds);
-        const newIndex = indexFromSeconds(target);
-
-        const wasPaused = synth.paused || betweenPaused;
-
         clearBetweenTimer();
         betweenPaused = false;
         betweenRemaining = 0;
-
         synth.cancel();
-        resetLiveTracking();
 
-        idx = clamp(newIndex, 0, queue.length);
-        progressEl.value = String(timelineStarts[idx] || 0);
-        updateTimeUI();
+        // update UI immediately
+        updateProgressUI(t);
 
-        if (autoStart) {{
-          if (wasPaused) seekHoldPaused = true;
-          speakNext();
-          setStatus(wasPaused ? "Paused." : "Speaking…");
-        }} else {{
-          setStatus("Ready.");
-        }}
+        // If currently paused, stay paused; otherwise continue speaking
+        if (synth.paused) {
+          playing = false;
+          setStatus("Paused (seeked).");
+          updateButtons();
+          return;
+        }
 
+        playing = true;
+        setStatus("Speaking…");
+        speakNext();
         updateButtons();
-      }}
+        startTicker();
+      }
 
-      function jumpBy(deltaSeconds) {{
-        const cur = parseFloat(progressEl.value || "0");
-        seekTo(cur + deltaSeconds, true);
-      }}
+      // ---- Progress slider wiring ----
+      progressEl.addEventListener("input", () => {
+        userDragging = true;
+        const pct = parseFloat(progressEl.value || "0");
+        const t = (pct / 100.0) * (totalSec || 0);
+        curTimeEl.textContent = fmtTime(t);
+      });
 
-      progressEl.addEventListener("change", () => {{
-        const v = parseFloat(progressEl.value || "0");
-        seekTo(v, true);
-      }});
+      progressEl.addEventListener("change", () => {
+        userDragging = false;
+        const pct = parseFloat(progressEl.value || "0");
+        const t = (pct / 100.0) * (totalSec || 0);
+        seekToSec(t);
+      });
 
-      rewBtn.addEventListener("click", () => jumpBy(-10));
-      fwdBtn.addEventListener("click", () => jumpBy(+10));
+      // Skip buttons
+      back10Btn.addEventListener("click", () => {
+        const t = currentEstimatedSec() - 10;
+        seekToSec(t);
+      });
+      fwd10Btn.addEventListener("click", () => {
+        const t = currentEstimatedSec() + 10;
+        seekToSec(t);
+      });
 
-      voiceSelect.addEventListener("change", () => {{
-        try {{ localStorage.setItem(storageKey, voiceSelect.value || ""); }} catch (e) {{}}
-        if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused)) {{
+      // Save selection
+      voiceSelect.addEventListener("change", () => {
+        try { localStorage.setItem(storageKey, voiceSelect.value || ""); } catch (e) {}
+        // If speaking, stop so user can restart with new voice (mobile safer)
+        if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused)) {
           stopAll();
-        }} else {{
+        } else {
           setStatus("Voice selected.");
           updateButtons();
-        }}
-      }});
+        }
+      });
 
-      resetVoiceBtn.addEventListener("click", async () => {{
-        try {{ localStorage.removeItem(storageKey); }} catch (e) {{}}
+      resetVoiceBtn.addEventListener("click", async () => {
+        try { localStorage.removeItem(storageKey); } catch (e) {}
         const voices = await initVoices();
         const def = pickDefaultVoice(voices);
-        if (def) {{
+        if (def) {
           voiceSelect.value = voiceKey(def);
           setStatus("Reset to default voice (Google UK Male if available).");
-        }} else {{
+        } else {
           setStatus("Reset (no default found).");
-        }}
+        }
         if (ensureSpeechSupport() && (window.speechSynthesis.speaking || window.speechSynthesis.paused)) stopAll();
         updateButtons();
-      }});
+      });
 
       playBtn.addEventListener("click", play);
       pauseBtn.addEventListener("click", pauseAll);
       resumeBtn.addEventListener("click", resumeAll);
       stopBtn.addEventListener("click", stopAll);
 
-      queue = buildQueueFromText(TEXT);
-      idx = 0;
-      rebuildTimeline();
-
-      initVoices();
-      updateButtons();
-      updateTimeUI();
-      startProgressTimer();
-      setInterval(updateButtons, 400);
+      // init on load
+      (async function initAll() {
+        await initVoices();
+        queue = buildQueueFromText(TEXT);
+        computeTimeline(queue);
+        updateButtons();
+        updateProgressUI(0);
+        startTicker();
+      })();
     </script>
     """
-    st.components.v1.html(html, height=230)
+
+    html = (
+        template.replace("__ID__", component_id)
+        .replace("__TEXT__", safe)
+        .replace("__PREFERRED_LANG__", preferred_lang)
+        .replace("__RATE__", str(float(rate)))
+        .replace("__PITCH__", str(float(pitch)))
+        .replace("__PREFER_DEEP_MALE_GB__", "true" if prefer_deep_male_gb else "false")
+        .replace("__FLOW_MODE__", "true" if flow_mode else "false")
+        .replace("__SENTENCE_PAUSE_MS__", str(int(sentence_pause_ms)))
+        .replace("__PARA_PAUSE_MS__", str(int(paragraph_pause_ms)))
+        .replace("__CLAUSE_PAUSE_MS__", str(int(clause_pause_ms)))
+    )
+
+    st.components.v1.html(html, height=235)
 
 
 # -----------------------------
 # Streamlit App
 # -----------------------------
-st.set_page_config(page_title="DOCX Study Reader", layout="wide")
 st.title("DOCX Study Reader")
 st.caption("Sidebar: Subject (1) → Topic (2) → Subtopic (3) • Page: content + floating Controls (Listen + Next/Back)")
 
@@ -2087,21 +2081,12 @@ with st.sidebar:
     )
 
     st.divider()
-    st.subheader("Letter labels")
-
-    speak_letters = st.toggle(
-        "Speak option letters clearly (A, B, C...)",
-        value=True,
-        help="Converts (A)/(B)/A)/Option A/Answer: C into 'letter A/B/C' for clearer narration and to avoid chemistry mix-ups.",
-    )
-
-    st.divider()
     st.subheader("Chemistry reading")
 
     read_chem = st.toggle(
         "Speak chemical formulas clearly",
         value=True,
-        help="Turns formulas like H2O / NaCl / (NH4)2SO4 / CuSO4·5H2O into clearer spoken text. Reads (aq)/(s)/(l)/(g) as states only after a compound.",
+        help="Turns formulas like H2O / NaCl / (NH4)2SO4 / CuSO4·5H2O into clearer spoken text. Avoids bracketed letters like (A) being misread.",
     )
     chem_element_mode = st.selectbox(
         "Chemical element style",
@@ -2114,7 +2099,7 @@ with st.sidebar:
         "Include single-element symbols (e.g., Fe)",
         value=False,
         disabled=not read_chem,
-        help="Still conservative: only converts safe single elements in chemistry-context to reduce false positives.",
+        help="Off by default to reduce false positives; when enabled, only triggers in chemistry-context passages.",
     )
 
     st.divider()
@@ -2130,6 +2115,7 @@ with st.sidebar:
     st.divider()
     show_tts_preview = st.toggle("Show TTS text preview", value=False)
 
+# Current content
 cur_si, cur_ti, cur_ui = flat[st.session_state.flat_index]
 cur_subject = subjects[cur_si]["subject"]
 cur_topic = subjects[cur_si]["topics"][cur_ti]["topic"]
@@ -2138,11 +2124,12 @@ cur_text = (subjects[cur_si]["topics"][cur_ti]["subtopics"][cur_ui].get("full_te
 
 tts_text = cur_text
 
+if tts_text:
+    # Always convert outline letters like (A) into "letter A" for speech clarity.
+    tts_text = make_bracket_letters_speakable(tts_text)
+
 if tts_text and story_mode:
     tts_text = make_story_mode(tts_text)
-
-if tts_text and speak_letters:
-    tts_text = make_letter_labels_speakable(tts_text)
 
 if tts_text and read_chem:
     tts_text = make_chem_speakable(
