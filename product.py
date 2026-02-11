@@ -24,20 +24,27 @@ if product_data.empty:
     st.warning("No data available.")
     st.stop()
 
+# Basic column safety (optional but helps avoid silent issues)
+required_cols = {"Category", "Subcategory", "QuestionType", "Interview"}
+missing = required_cols - set(product_data.columns)
+if missing:
+    st.error(f"Missing required columns in Product.xlsx: {', '.join(sorted(missing))}")
+    st.stop()
+
 st.sidebar.title("Interview Navigation")
 
 # 1) Category selector
-categories = product_data["Category"].unique()
+categories = product_data["Category"].dropna().unique()
 selected_category = st.sidebar.selectbox("Select Category", categories)
 
 # 2) Subcategory selector
 sub_df = product_data[product_data["Category"] == selected_category]
-subcategories = sub_df["Subcategory"].unique()
+subcategories = sub_df["Subcategory"].dropna().unique()
 selected_subcategory = st.sidebar.selectbox("Select Subcategory", subcategories)
 
 # 3) QuestionType selector
 qt_df = sub_df[sub_df["Subcategory"] == selected_subcategory]
-question_types = qt_df["QuestionType"].unique()
+question_types = qt_df["QuestionType"].dropna().unique()
 selected_qtype = st.sidebar.selectbox("Select QuestionType", question_types)
 
 # Apply all three filters
@@ -47,6 +54,7 @@ filtered_data = product_data[
     & (product_data["QuestionType"] == selected_qtype)
 ]
 
+# Clamp index
 max_idx = len(filtered_data) - 1
 if max_idx < 0:
     st.warning("No entries for that combination.")
@@ -70,7 +78,6 @@ def build_conversational_text(question_type: str, interview: str) -> str:
     qt = _clean_text(question_type)
     iv = _clean_text(interview)
 
-    # Conversational but faithful to content (no paraphrasing of answers).
     parts = []
     parts.append("Alright — let’s go through this together.")
     if qt:
@@ -87,7 +94,7 @@ def build_conversational_text(question_type: str, interview: str) -> str:
 # - Play / Pause / Resume / Stop
 # - ±10s and seek slider (estimated duration)
 # ---------------------------
-def tts_controls(text: str, key: str):
+def tts_controls(text: str):
     safe_text = json.dumps(text)  # safely embed into JS string
 
     html = f"""
@@ -216,9 +223,6 @@ def tts_controls(text: str, key: str):
         font-size: 18px;
         margin-bottom: 10px;
       }}
-      .voiceRow {{
-        margin-top: 8px;
-      }}
       .label {{
         color: var(--muted);
         font-size: 18px;
@@ -258,19 +262,16 @@ def tts_controls(text: str, key: str):
       let voices = [];
       let selectedVoice = null;
 
-      // Speaking state
       let utter = null;
       let speaking = false;
       let paused = false;
 
-      // Seek state (char index within TEXT)
-      let baseIndex = 0;              // where current utterance starts in TEXT
-      let baseSecondsOffset = 0;      // estimated seconds offset at baseIndex
+      let baseIndex = 0;
+      let baseSecondsOffset = 0;
       let totalSeconds = 0;
 
-      // Timer state (fallback progress)
-      let startPerf = 0;              // performance.now() at start/resume
-      let elapsedBefore = 0;          // seconds accumulated since current baseIndex
+      let startPerf = 0;
+      let elapsedBefore = 0;
       let tickTimer = null;
 
       function wordsCount(s) {{
@@ -280,9 +281,8 @@ def tts_controls(text: str, key: str):
       }}
 
       function estimateDurationSeconds(text) {{
-        // conversational voices vary; this is a decent estimate.
         const w = wordsCount(text);
-        const wpm = 170; // average spoken pace
+        const wpm = 170;
         return Math.max(1, (w / wpm) * 60);
       }}
 
@@ -294,7 +294,6 @@ def tts_controls(text: str, key: str):
       }}
 
       function setButtons(state) {{
-        // state: "idle" | "playing" | "paused"
         if (state === "idle") {{
           btnPlay.disabled = false;
           btnPause.disabled = true;
@@ -315,30 +314,25 @@ def tts_controls(text: str, key: str):
 
       function setProgressSeconds(sec) {{
         sec = Math.max(0, Math.min(totalSeconds, sec));
-        const v = Math.round((sec / totalSeconds) * 1000);
+        const v = totalSeconds > 0 ? Math.round((sec / totalSeconds) * 1000) : 0;
         progress.value = String(v);
         tCur.textContent = fmtTime(sec);
       }}
 
       function getProgressSeconds() {{
         const v = Number(progress.value || 0);
-        return (v / 1000) * totalSeconds;
+        return totalSeconds > 0 ? (v / 1000) * totalSeconds : 0;
       }}
 
       function timeToCharIndex(targetSec) {{
-        // map seconds -> approximate char index in TEXT
-        const frac = Math.max(0, Math.min(1, targetSec / totalSeconds));
+        const frac = totalSeconds > 0 ? Math.max(0, Math.min(1, targetSec / totalSeconds)) : 0;
         let idx = Math.floor(TEXT.length * frac);
 
-        // snap to nearest whitespace boundary to avoid mid-word starts
         if (idx > 0 && idx < TEXT.length - 1) {{
-          // move forward until whitespace OR move backward if we are in middle of a word
           let left = idx;
           while (left > 0 && TEXT[left] !== " " && TEXT[left] !== "\\n" && TEXT[left] !== "\\t") left--;
           let right = idx;
           while (right < TEXT.length && TEXT[right] !== " " && TEXT[right] !== "\\n" && TEXT[right] !== "\\t") right++;
-
-          // choose closer boundary
           idx = (idx - left <= right - idx) ? left : right;
         }}
         return Math.max(0, Math.min(TEXT.length, idx));
@@ -366,18 +360,21 @@ def tts_controls(text: str, key: str):
       }}
 
       function choosePreferredVoice(vs) {{
-        // Prefer "Google UK English Male"
         const exact = vs.find(v => (v.name || "").toLowerCase() === "google uk english male");
         if (exact) return exact;
 
-        // Otherwise: any Google English (UK first)
-        const googleUk = vs.find(v => (v.name || "").toLowerCase().includes("google") && (v.lang || "").toLowerCase().startsWith("en-gb"));
+        const googleUk = vs.find(v =>
+          (v.name || "").toLowerCase().includes("google") &&
+          (v.lang || "").toLowerCase().startsWith("en-gb")
+        );
         if (googleUk) return googleUk;
 
-        const googleEn = vs.find(v => (v.name || "").toLowerCase().includes("google") && (v.lang || "").toLowerCase().startsWith("en"));
+        const googleEn = vs.find(v =>
+          (v.name || "").toLowerCase().includes("google") &&
+          (v.lang || "").toLowerCase().startsWith("en")
+        );
         if (googleEn) return googleEn;
 
-        // Otherwise: any English voice
         const anyEn = vs.find(v => (v.lang || "").toLowerCase().startsWith("en"));
         return anyEn || (vs.length ? vs[0] : null);
       }}
@@ -385,18 +382,17 @@ def tts_controls(text: str, key: str):
       function populateVoiceSelect() {{
         voiceSelect.innerHTML = "";
         const enVoices = voices.filter(v => (v.lang || "").toLowerCase().startsWith("en"));
+        const list = (enVoices.length ? enVoices : voices);
 
-        (enVoices.length ? enVoices : voices).forEach((v, i) => {{
+        list.forEach((v, i) => {{
           const opt = document.createElement("option");
           opt.value = String(i);
           opt.textContent = `${{v.name}} — ${{v.lang}}`;
           voiceSelect.appendChild(opt);
         }});
 
-        selectedVoice = choosePreferredVoice(enVoices.length ? enVoices : voices);
+        selectedVoice = choosePreferredVoice(list);
 
-        // set select to selectedVoice
-        const list = (enVoices.length ? enVoices : voices);
         const idx = list.findIndex(v => v === selectedVoice);
         if (idx >= 0) voiceSelect.value = String(idx);
 
@@ -418,7 +414,6 @@ def tts_controls(text: str, key: str):
           return;
         }}
 
-        // voices often appear shortly after load
         if (tries < 25) {{
           setTimeout(() => loadVoicesWithRetry(tries + 1), 150);
         }} else {{
@@ -433,7 +428,7 @@ def tts_controls(text: str, key: str):
         utter = null;
 
         baseIndex = Math.max(0, Math.min(TEXT.length, charIndex));
-        baseSecondsOffset = (baseIndex / TEXT.length) * totalSeconds;
+        baseSecondsOffset = TEXT.length > 0 ? (baseIndex / TEXT.length) * totalSeconds : 0;
 
         elapsedBefore = 0;
         startPerf = 0;
@@ -448,10 +443,8 @@ def tts_controls(text: str, key: str):
         }}
 
         utter = new SpeechSynthesisUtterance(slice);
-
-        // Voice & style
         if (selectedVoice) utter.voice = selectedVoice;
-        utter.rate = 1.0;   // conversational pace
+        utter.rate = 1.0;
         utter.pitch = 1.0;
 
         utter.onstart = () => {{
@@ -481,12 +474,11 @@ def tts_controls(text: str, key: str):
           stopTicker();
         }};
 
-        // Better progress when boundary events fire
         utter.onboundary = (e) => {{
           if (!e) return;
           if (typeof e.charIndex === "number") {{
             const globalIdx = baseIndex + e.charIndex;
-            const frac = Math.max(0, Math.min(1, globalIdx / TEXT.length));
+            const frac = TEXT.length > 0 ? Math.max(0, Math.min(1, globalIdx / TEXT.length)) : 0;
             const cur = frac * totalSeconds;
             setProgressSeconds(cur);
           }}
@@ -517,7 +509,6 @@ def tts_controls(text: str, key: str):
         if (!("speechSynthesis" in window)) return;
         if (!speaking) return;
 
-        // accumulate elapsed
         if (startPerf) {{
           elapsedBefore += (performance.now() - startPerf) / 1000;
           startPerf = 0;
@@ -561,7 +552,6 @@ def tts_controls(text: str, key: str):
         const i = Number(voiceSelect.value || 0);
         selectedVoice = list[i] || selectedVoice;
 
-        // If currently speaking, restart at current position with new voice
         if (speaking || paused) {{
           const sec = getProgressSeconds();
           const idx = timeToCharIndex(sec);
@@ -570,21 +560,10 @@ def tts_controls(text: str, key: str):
       }});
 
       // Buttons
-      btnPlay.addEventListener("click", () => {{
-        playFromCurrentSlider();
-      }});
-
-      btnPause.addEventListener("click", () => {{
-        pauseSpeaking();
-      }});
-
-      btnResume.addEventListener("click", () => {{
-        resumeSpeaking();
-      }});
-
-      btnStop.addEventListener("click", () => {{
-        stopAll(true);
-      }});
+      btnPlay.addEventListener("click", () => playFromCurrentSlider());
+      btnPause.addEventListener("click", () => pauseSpeaking());
+      btnResume.addEventListener("click", () => resumeSpeaking());
+      btnStop.addEventListener("click", () => stopAll(true));
 
       btnBack.addEventListener("click", () => {{
         const cur = getProgressSeconds();
@@ -607,13 +586,12 @@ def tts_controls(text: str, key: str):
         seekToSeconds(sec);
       }});
 
-      // Keep buttons in sync if user pauses via browser/OS controls
+      // Sync state
       setInterval(() => {{
         if (!("speechSynthesis" in window)) return;
 
         const synth = window.speechSynthesis;
         if (!synth.speaking && speaking) {{
-          // ended or canceled
           speaking = false;
           paused = false;
           setButtons("idle");
@@ -626,17 +604,13 @@ def tts_controls(text: str, key: str):
           setButtons("playing");
         }}
 
-        // Stop button availability
-        if (speaking || paused) {{
-          btnStop.disabled = false;
-        }} else {{
-          btnStop.disabled = true;
-        }}
+        btnStop.disabled = !(speaking || paused);
       }}, 300);
     </script>
     """
 
-    components.html(html, height=470, scrolling=False, key=key)
+    # ✅ FIX: Streamlit's components.html() doesn't accept key= in many versions
+    components.html(html, height=470, scrolling=False)
 
 # ---------------------------
 # UI render
@@ -658,9 +632,8 @@ def display_entry(idx: int):
 
     st.markdown("---")
 
-    # Conversational narration + the attached control-style player
     narration = build_conversational_text(row["QuestionType"], row["Interview"])
-    tts_controls(narration, key=f"tts_controls_{idx}")
+    tts_controls(narration)
 
     return True
 
