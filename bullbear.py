@@ -33,6 +33,7 @@ def _coerce_1d_series(x) -> pd.Series:
         return x.iloc[:, 0].copy()
     return pd.Series(x)
 
+
 def _ensure_ohlcv_cols(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
@@ -46,6 +47,7 @@ def _ensure_ohlcv_cols(df: pd.DataFrame) -> pd.DataFrame:
     if "Adj Close" in df.columns and "Close" not in df.columns:
         df["Close"] = df["Adj Close"]
     return df
+
 
 def _to_pacific_index(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
@@ -63,6 +65,7 @@ def _to_pacific_index(df: pd.DataFrame) -> pd.DataFrame:
         pass
     return df
 
+
 def fmt_price_val(x) -> str:
     try:
         if x is None or (isinstance(x, float) and not np.isfinite(x)):
@@ -70,6 +73,7 @@ def fmt_price_val(x) -> str:
         return f"{float(x):,.2f}"
     except Exception:
         return "n/a"
+
 
 def _has_volume_to_plot(vol: pd.Series) -> bool:
     v = _coerce_1d_series(vol).dropna()
@@ -79,6 +83,7 @@ def _has_volume_to_plot(vol: pd.Series) -> bool:
         return float(v.sum()) > 0.0
     except Exception:
         return False
+
 
 def style_axes(ax):
     ax.grid(True, alpha=0.25)
@@ -120,6 +125,7 @@ def fetch_hist_ohlcv(ticker: str, start: str = "2018-01-01") -> pd.DataFrame:
     df = _to_pacific_index(df)
     return df
 
+
 @st.cache_data(ttl=120)
 def fetch_daily_range(ticker: str, start: datetime) -> pd.DataFrame:
     df = yf.download(
@@ -132,6 +138,7 @@ def fetch_daily_range(ticker: str, start: datetime) -> pd.DataFrame:
     df = _ensure_ohlcv_cols(df).dropna()
     df = _to_pacific_index(df)
     return df
+
 
 @st.cache_data(ttl=120)
 def fetch_intraday(ticker: str, period: str = "1d", interval: str = "60m") -> pd.DataFrame:
@@ -242,8 +249,12 @@ def compute_ichimoku(df_ohlc: pd.DataFrame, conv: int = 9, base: int = 26, span_
     Returns dict of Ichimoku lines (Tenkan, Kijun, SpanA, SpanB).
     """
     if df_ohlc is None or df_ohlc.empty or not {"High", "Low", "Close"}.issubset(df_ohlc.columns):
-        return {"tenkan": pd.Series(dtype=float), "kijun": pd.Series(dtype=float),
-                "spana": pd.Series(dtype=float), "spanb": pd.Series(dtype=float)}
+        return {
+            "tenkan": pd.Series(dtype=float),
+            "kijun": pd.Series(dtype=float),
+            "spana": pd.Series(dtype=float),
+            "spanb": pd.Series(dtype=float),
+        }
 
     high = _coerce_1d_series(df_ohlc["High"]).astype(float)
     low = _coerce_1d_series(df_ohlc["Low"]).astype(float)
@@ -270,8 +281,8 @@ def compute_adx(df_ohlc: pd.DataFrame, period: int = 14):
         return empty, empty, empty
 
     high = _coerce_1d_series(df_ohlc["High"]).astype(float)
-    low  = _coerce_1d_series(df_ohlc["Low"]).astype(float)
-    close= _coerce_1d_series(df_ohlc["Close"]).astype(float)
+    low = _coerce_1d_series(df_ohlc["Low"]).astype(float)
+    close = _coerce_1d_series(df_ohlc["Close"]).astype(float)
     idx = close.index
 
     up_move = high.diff()
@@ -282,14 +293,14 @@ def compute_adx(df_ohlc: pd.DataFrame, period: int = 14):
 
     tr1 = (high - low).abs()
     tr2 = (high - close.shift(1)).abs()
-    tr3 = (low  - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
 
     p = max(2, int(period))
-    atr = tr.ewm(alpha=1/p, adjust=False).mean().replace(0, np.nan)
+    atr = tr.ewm(alpha=1 / p, adjust=False).mean().replace(0, np.nan)
 
-    plus_dm_sm  = plus_dm.ewm(alpha=1/p, adjust=False).mean()
-    minus_dm_sm = minus_dm.ewm(alpha=1/p, adjust=False).mean()
+    plus_dm_sm = plus_dm.ewm(alpha=1 / p, adjust=False).mean()
+    minus_dm_sm = minus_dm.ewm(alpha=1 / p, adjust=False).mean()
 
     pdi = (100.0 * (plus_dm_sm / atr)).replace([np.inf, -np.inf], np.nan)
     ndi = (100.0 * (minus_dm_sm / atr)).replace([np.inf, -np.inf], np.nan)
@@ -297,7 +308,7 @@ def compute_adx(df_ohlc: pd.DataFrame, period: int = 14):
     den = (pdi + ndi).replace(0, np.nan)
     dx = (100.0 * (pdi - ndi).abs() / den).replace([np.inf, -np.inf], np.nan)
 
-    adx = dx.ewm(alpha=1/p, adjust=False).mean()
+    adx = dx.ewm(alpha=1 / p, adjust=False).mean()
     return adx.reindex(idx), pdi.reindex(idx), ndi.reindex(idx)
 
 
@@ -310,6 +321,8 @@ def volume_confirmation_mask(volume: pd.Series, window: int = 20, mult: float = 
     vma = v.rolling(window, min_periods=minp).mean()
     conf = v > (vma * float(mult))
     return conf.fillna(False).reindex(v.index), vma.reindex(v.index)
+
+
 def _last_pivot_time(df_ohlc: pd.DataFrame, span: int = 5, kind: str = "low"):
     """
     Finds the most recent pivot low/high using a symmetric window:
@@ -322,26 +335,30 @@ def _last_pivot_time(df_ohlc: pd.DataFrame, span: int = 5, kind: str = "low"):
     span = int(max(1, span))
 
     if kind.lower().startswith("h"):
-        s = _coerce_1d_series(df_ohlc["High"] if "High" in df_ohlc.columns else df_ohlc.get("Close", pd.Series(dtype=float))).dropna()
+        s = _coerce_1d_series(
+            df_ohlc["High"] if "High" in df_ohlc.columns else df_ohlc.get("Close", pd.Series(dtype=float))
+        ).dropna()
         if s.empty or len(s) < (2 * span + 1):
             return None
         arr = s.to_numpy(dtype=float)
         pivots = []
         for i in range(span, len(arr) - span):
-            w = arr[i - span:i + span + 1]
+            w = arr[i - span : i + span + 1]
             if not np.isfinite(arr[i]):
                 continue
             if np.isfinite(np.nanmax(w)) and arr[i] == np.nanmax(w):
                 pivots.append(s.index[i])
         return pivots[-1] if pivots else None
 
-    s = _coerce_1d_series(df_ohlc["Low"] if "Low" in df_ohlc.columns else df_ohlc.get("Close", pd.Series(dtype=float))).dropna()
+    s = _coerce_1d_series(
+        df_ohlc["Low"] if "Low" in df_ohlc.columns else df_ohlc.get("Close", pd.Series(dtype=float))
+    ).dropna()
     if s.empty or len(s) < (2 * span + 1):
         return None
     arr = s.to_numpy(dtype=float)
     pivots = []
     for i in range(span, len(arr) - span):
-        w = arr[i - span:i + span + 1]
+        w = arr[i - span : i + span + 1]
         if not np.isfinite(arr[i]):
             continue
         if np.isfinite(np.nanmin(w)) and arr[i] == np.nanmin(w):
@@ -364,7 +381,11 @@ def anchored_vwap(df_ohlcv: pd.DataFrame, anchor_time, use_typical_price: bool =
         return pd.Series(index=df_ohlcv.index, dtype=float)
 
     if use_typical_price and {"High", "Low", "Close"}.issubset(df_ohlcv.columns):
-        price = (_coerce_1d_series(df_ohlcv["High"]) + _coerce_1d_series(df_ohlcv["Low"]) + _coerce_1d_series(df_ohlcv["Close"])) / 3.0
+        price = (
+            _coerce_1d_series(df_ohlcv["High"])
+            + _coerce_1d_series(df_ohlcv["Low"])
+            + _coerce_1d_series(df_ohlcv["Close"])
+        ) / 3.0
     else:
         price = _coerce_1d_series(df_ohlcv["Close"]).astype(float)
 
@@ -405,7 +426,9 @@ def bb_fade_last_signal(close: pd.Series, upper: pd.Series, lower: pd.Series):
     ok = c.notna() & u.notna() & l.notna()
     if ok.sum() < 2:
         return None
-    c = c[ok]; u = u[ok]; l = l[ok]
+    c = c[ok]
+    u = u[ok]
+    l = l[ok]
     inside = (c <= u) & (c >= l)
     buy = inside & (c.shift(1) < l.shift(1))
     sell = inside & (c.shift(1) > u.shift(1))
@@ -415,8 +438,18 @@ def bb_fade_last_signal(close: pd.Series, upper: pd.Series, lower: pd.Series):
     if tb is None and ts is None:
         return None
     if ts is None or (tb is not None and tb >= ts):
-        return {"side": "BUY", "time": tb, "price": float(c.loc[tb]) if np.isfinite(c.loc[tb]) else np.nan, "note": "BB Fade (mean-rev)"}
-    return {"side": "SELL", "time": ts, "price": float(c.loc[ts]) if np.isfinite(c.loc[ts]) else np.nan, "note": "BB Fade (mean-rev)"}
+        return {
+            "side": "BUY",
+            "time": tb,
+            "price": float(c.loc[tb]) if np.isfinite(c.loc[tb]) else np.nan,
+            "note": "BB Fade (mean-rev)",
+        }
+    return {
+        "side": "SELL",
+        "time": ts,
+        "price": float(c.loc[ts]) if np.isfinite(c.loc[ts]) else np.nan,
+        "note": "BB Fade (mean-rev)",
+    }
 
 
 def _series_heading_up(s: pd.Series, confirm_bars: int = 1) -> bool:
@@ -424,7 +457,7 @@ def _series_heading_up(s: pd.Series, confirm_bars: int = 1) -> bool:
     if s.empty or len(s) < (confirm_bars + 1):
         return False
     confirm_bars = int(max(1, confirm_bars))
-    tail = s.iloc[-(confirm_bars + 1):]
+    tail = s.iloc[-(confirm_bars + 1) :]
     diffs = tail.diff().iloc[1:]
     return bool((diffs > 0).all())
 
@@ -443,8 +476,6 @@ def daily_view_to_start(label: str) -> datetime:
         return datetime(now.year, 1, 1, tzinfo=timezone.utc)
     # Max
     return now - timedelta(days=365 * 15)
-
-
 def compute_npx_from_bands(close: pd.Series, upper: pd.Series, lower: pd.Series) -> pd.Series:
     c = _coerce_1d_series(close).astype(float)
     u = _coerce_1d_series(upper).reindex(c.index).astype(float)
@@ -465,7 +496,9 @@ def daily_global_slope(symbol: str, daily_view_label: str = "1Y") -> Tuple[float
     return float(slope), float(r2), ts
 
 
-def daily_regression_r2(symbol: str, slope_lb: int = 120, daily_view_label: str = "1Y") -> Tuple[float, float, Optional[pd.Timestamp]]:
+def daily_regression_r2(
+    symbol: str, slope_lb: int = 120, daily_view_label: str = "1Y"
+) -> Tuple[float, float, Optional[pd.Timestamp]]:
     start = daily_view_to_start(daily_view_label)
     df = fetch_daily_range(symbol, start=start)
     if df.empty or "Close" not in df.columns:
@@ -551,7 +584,7 @@ def daily_support_reversal_heading_up(
     sr_lb: int,
     prox: float,
     bars_confirm: int,
-    horizon: int
+    horizon: int,
 ) -> Optional[Dict]:
     """
     Approximate support = rolling min(Low, sr_lb).
@@ -579,7 +612,7 @@ def daily_support_reversal_heading_up(
     # Evaluate last horizon bars for touch
     tail = df.iloc[-horizon:].copy()
     tail_support = support.reindex(tail.index)
-    touch = (tail["Low"] <= (tail_support * (1.0 + prox)))
+    touch = tail["Low"] <= (tail_support * (1.0 + prox))
 
     if not touch.any():
         return None
@@ -609,7 +642,7 @@ def last_daily_fib_npx_zero_signal(
     prox: float,
     lookback_bars: int,
     slope_lb: int,
-    npx_confirm_bars: int = 1
+    npx_confirm_bars: int = 1,
 ) -> Optional[Dict]:
     """
     BUY: touched fib 100% (swing low) and NPX crossed UP through 0.0 recently.
@@ -686,7 +719,7 @@ def last_daily_kijun_cross_up(
     conv: int,
     base: int,
     span_b: int,
-    within_last_n_bars: int = 5
+    within_last_n_bars: int = 5,
 ) -> Optional[Dict]:
     start = daily_view_to_start(daily_view_label)
     df = fetch_daily_range(symbol, start=start)
@@ -732,6 +765,67 @@ def last_daily_kijun_cross_up(
         "Kijun@Cross": float(kijun.loc[t_cross]) if np.isfinite(kijun.loc[t_cross]) else np.nan,
         "Slope": float(m) if np.isfinite(m) else np.nan,
         "R2": float(r2) if np.isfinite(r2) else np.nan,
+    }
+
+
+def last_daily_regression_cross_up(
+    symbol: str,
+    daily_view_label: str,
+    within_last_n_bars: int = 5,
+    confirm_bars: int = 1,
+) -> Optional[Dict]:
+    """
+    Detects a recent upward cross of Close above the regression fit line (view regression):
+      CrossUp when Close[t-1] <= Fit[t-1] AND Close[t] > Fit[t]
+    Optionally requires last `confirm_bars` closes to be increasing.
+    """
+    start = daily_view_to_start(daily_view_label)
+    df = fetch_daily_range(symbol, start=start)
+    if df.empty or "Close" not in df.columns:
+        return None
+
+    close = df["Close"].astype(float).dropna()
+    if len(close) < 10:
+        return None
+
+    fit, up, lo, slope, r2, std = regression_with_band_series(close, mult=2.0)
+    fit = _coerce_1d_series(fit).reindex(close.index).astype(float)
+
+    ok = close.notna() & fit.notna()
+    close = close[ok]
+    fit = fit[ok]
+    if len(close) < 10:
+        return None
+
+    crossed = (close.shift(1) <= fit.shift(1)) & (close > fit)
+    if not crossed.any():
+        return None
+
+    t_cross = crossed[crossed].index[-1]
+    bars_since = int((len(close) - 1) - close.index.get_loc(t_cross))
+    if within_last_n_bars and bars_since > int(within_last_n_bars):
+        return None
+
+    confirm_bars = int(max(0, confirm_bars))
+    if confirm_bars > 0 and not _series_heading_up(close, confirm_bars=confirm_bars):
+        return None
+
+    last_close = float(close.iloc[-1])
+    last_fit = float(fit.iloc[-1])
+    dist_pct = ((last_close - last_fit) / max(1e-12, abs(last_fit))) * 100.0 if np.isfinite(last_fit) else np.nan
+
+    return {
+        "Symbol": symbol,
+        "Bars Since Cross": bars_since,
+        "Cross Time": t_cross,
+        "Close@Cross": float(close.loc[t_cross]) if t_cross in close.index else np.nan,
+        "Fit@Cross": float(fit.loc[t_cross]) if t_cross in fit.index else np.nan,
+        "Close Now": last_close,
+        "Fit Now": last_fit,
+        "Dist vs Fit (%)": float(dist_pct) if np.isfinite(dist_pct) else np.nan,
+        "Slope (view)": float(slope) if np.isfinite(slope) else np.nan,
+        "R2 (view)": float(r2) if np.isfinite(r2) else np.nan,
+        "AsOf": close.index[-1],
     }
 
 
@@ -789,6 +883,8 @@ with st.sidebar:
 
     st.subheader("NTD / NPX")
     ntd_window = st.slider("NTD window (NPX calc)", 30, 300, 120, 5, key="ntd_window")
+
+
 # -----------------------------
 # Tabs
 # -----------------------------
@@ -812,11 +908,30 @@ tab_labels = [
     "17) R² < 45% Daily/Hourly",
     "18) R² Sign ±2σ Proximity (Daily)",
     "19) AVWAP + ADX Regime Gate",
+    "20) Regression Cross-Up Scanner",
 ]
 tabs = st.tabs(tab_labels)
 (
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8,
-    tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19
+    tab1,
+    tab2,
+    tab3,
+    tab4,
+    tab5,
+    tab6,
+    tab7,
+    tab8,
+    tab9,
+    tab10,
+    tab11,
+    tab12,
+    tab13,
+    tab14,
+    tab15,
+    tab16,
+    tab17,
+    tab18,
+    tab19,
+    tab20,
 ) = tabs
 
 
@@ -841,7 +956,13 @@ with tab1:
         if not fit.dropna().empty:
             ax.plot(fit.index, fit.values, linewidth=1.5, label="Regression Fit")
         if not up.dropna().empty and not lo.dropna().empty:
-            ax.fill_between(close.index, lo.reindex(close.index), up.reindex(close.index), alpha=0.08, label=f"±{band_mult:.1f}σ band")
+            ax.fill_between(
+                close.index,
+                lo.reindex(close.index),
+                up.reindex(close.index),
+                alpha=0.08,
+                label=f"±{band_mult:.1f}σ band",
+            )
 
         if show_bbands:
             bb_mid, bb_up, bb_lo, bb_pctb, bb_nbb = compute_bbands(close, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
@@ -887,7 +1008,13 @@ with tab2:
         if not fit.dropna().empty:
             ax.plot(fit.index, fit.values, linewidth=1.5, label="Regression Fit")
         if not up.dropna().empty and not lo.dropna().empty:
-            ax.fill_between(close.index, lo.reindex(close.index), up.reindex(close.index), alpha=0.08, label=f"±{band_mult:.1f}σ band")
+            ax.fill_between(
+                close.index,
+                lo.reindex(close.index),
+                up.reindex(close.index),
+                alpha=0.08,
+                label=f"±{band_mult:.1f}σ band",
+            )
 
         if show_bbands:
             bb_mid, bb_up, bb_lo, bb_pctb, bb_nbb = compute_bbands(close, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
@@ -1011,7 +1138,7 @@ with tab7:
     st.markdown(
         "- This file intentionally **removes all news functionality**.\n"
         "- If you previously had a News tab or `fetch_yf_news` calls, they are not present here.\n"
-        "- Use Universe Scan tabs (9–19) for screening."
+        "- Use Universe Scan tabs (9–20) for screening."
     )
 
 
@@ -1027,8 +1154,6 @@ with tab8:
         "- AVWAP + ADX regime gate\n\n"
         "**News has been removed** to prevent `NameError: fetch_yf_news` and to reduce external calls."
     )
-
-
 # ---------------------------
 # TAB 9: Fib NPX 0.0 Signal Scanner
 # ---------------------------
@@ -1042,7 +1167,14 @@ with tab9:
     )
 
     c1, c2 = st.columns(2)
-    lb_sig = c1.slider("Lookback window (bars) for touch + NPX cross", 2, 90, int(max(3, rev_horizon)), 1, key="fibnpx0_lb")
+    lb_sig = c1.slider(
+        "Lookback window (bars) for touch + NPX cross",
+        2,
+        90,
+        int(max(3, rev_horizon)),
+        1,
+        key="fibnpx0_lb",
+    )
     run_fibsig = c2.button("Run Fib NPX 0.0 Scan", key=f"btn_run_fibnpx0_{mode}")
 
     if run_fibsig:
@@ -1056,7 +1188,7 @@ with tab9:
                 prox=sr_prox_pct,
                 lookback_bars=int(lb_sig),
                 slope_lb=int(slope_lb_daily),
-                npx_confirm_bars=1
+                npx_confirm_bars=1,
             )
             if rb is not None:
                 buy_rows.append(rb)
@@ -1069,7 +1201,7 @@ with tab9:
                 prox=sr_prox_pct,
                 lookback_bars=int(lb_sig),
                 slope_lb=int(slope_lb_daily),
-                npx_confirm_bars=1
+                npx_confirm_bars=1,
             )
             if rs is not None:
                 sell_rows.append(rs)
@@ -1185,7 +1317,9 @@ with tab12:
             if not np.isfinite(npx_last):
                 continue
             if 0.0 <= float(npx_last) <= 0.5:
-                rows.append({"Symbol": sym, "Slope": float(m), "NPX (Norm Price)": float(npx_last), "R2": float(r2) if np.isfinite(r2) else np.nan, "AsOf": ts})
+                rows.append(
+                    {"Symbol": sym, "Slope": float(m), "NPX (Norm Price)": float(npx_last), "R2": float(r2) if np.isfinite(r2) else np.nan, "AsOf": ts}
+                )
 
         if not rows:
             st.info("No matches.")
@@ -1237,10 +1371,16 @@ with tab13:
         left, right = st.columns(2)
         with left:
             st.subheader("List 1 — Slope > 0 and NPX 0.0–0.2 heading up")
-            st.dataframe(pd.DataFrame(rows_up_slope).sort_values(["NPX (Norm Price)", "Slope"], ascending=[True, False]).reset_index(drop=True), use_container_width=True) if rows_up_slope else st.info("No matches.")
+            st.dataframe(
+                pd.DataFrame(rows_up_slope).sort_values(["NPX (Norm Price)", "Slope"], ascending=[True, False]).reset_index(drop=True),
+                use_container_width=True,
+            ) if rows_up_slope else st.info("No matches.")
         with right:
             st.subheader("List 2 — Slope < 0 and NPX 0.0–0.2 heading up")
-            st.dataframe(pd.DataFrame(rows_dn_slope).sort_values(["NPX (Norm Price)", "Slope"], ascending=[True, True]).reset_index(drop=True), use_container_width=True) if rows_dn_slope else st.info("No matches.")
+            st.dataframe(
+                pd.DataFrame(rows_dn_slope).sort_values(["NPX (Norm Price)", "Slope"], ascending=[True, True]).reset_index(drop=True),
+                use_container_width=True,
+            ) if rows_dn_slope else st.info("No matches.")
 
 
 # ---------------------------
@@ -1272,7 +1412,7 @@ with tab14:
                 sr_lb=int(sr_lb_daily),
                 prox=float(sr_prox_pct),
                 bars_confirm=int(rev_bars_confirm),
-                horizon=int(hz_sr)
+                horizon=int(hz_sr),
             )
             if rev is None:
                 continue
@@ -1636,11 +1776,15 @@ with tab19:
                     annotate_crossover(axp, bb_sig["time"], bb_sig["price"], bb_sig["side"], note="BB Fade")
 
             axp.text(
-                0.99, 0.02,
+                0.99,
+                0.02,
                 f"Regime: {regime}  |  ADX(14): {adx_last:.2f}  |  Thr: {adx_thr:.1f}",
-                transform=axp.transAxes, ha="right", va="bottom",
-                fontsize=10, fontweight="bold",
-                bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.75)
+                transform=axp.transAxes,
+                ha="right",
+                va="bottom",
+                fontsize=10,
+                fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.75),
             )
 
             axd.set_title("ADX(14) +DI/-DI")
@@ -1666,12 +1810,15 @@ with tab19:
 
             handles, labels = [], []
             h, l = axp.get_legend_handles_labels()
-            handles += h; labels += l
+            handles += h
+            labels += l
             h, l = axd.get_legend_handles_labels()
-            handles += h; labels += l
+            handles += h
+            labels += l
             if show_vol_panel:
                 h, l = axv.get_legend_handles_labels()
-                handles += h; labels += l
+                handles += h
+                labels += l
 
             seen = set()
             h_u, l_u = [], []
@@ -1693,7 +1840,7 @@ with tab19:
                 framealpha=0.65,
                 fancybox=True,
                 borderpad=0.6,
-                handlelength=2.0
+                handlelength=2.0,
             )
 
             style_axes(axp)
@@ -1702,3 +1849,40 @@ with tab19:
                 style_axes(axv)
 
             st.pyplot(fig)
+
+
+# ---------------------------
+# TAB 20: Regression Cross-Up Scanner
+# ---------------------------
+with tab20:
+    st.header("Regression Cross-Up Scanner (Daily)")
+    st.caption(
+        "Lists symbols that **recently crossed above the daily regression fit line** (view regression).\n"
+        "CrossUp condition: Close[t-1] ≤ Fit[t-1] AND Close[t] > Fit[t]."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    within_n = c1.slider("Cross must be within last N bars", 0, 60, 5, 1, key=f"regcross_within_{mode}")
+    confirm_bars = c2.slider("Confirm heading up (consecutive closes)", 0, 5, 1, 1, key=f"regcross_confirm_{mode}")
+    run_cross = c3.button("Run Regression Cross-Up Scan", key=f"btn_run_regcross_{mode}")
+
+    if run_cross:
+        rows = []
+        for sym in universe:
+            r = last_daily_regression_cross_up(
+                symbol=sym,
+                daily_view_label=daily_view,
+                within_last_n_bars=int(within_n),
+                confirm_bars=int(confirm_bars),
+            )
+            if r is not None:
+                rows.append(r)
+
+        if not rows:
+            st.info("No matches.")
+        else:
+            out = pd.DataFrame(rows)
+            if "Bars Since Cross" in out.columns:
+                out["Bars Since Cross"] = out["Bars Since Cross"].astype(int)
+            out = out.sort_values(["Bars Since Cross", "R2 (view)", "Dist vs Fit (%)"], ascending=[True, False, False])
+            st.dataframe(out.reset_index(drop=True), use_container_width=True)
