@@ -52,7 +52,7 @@ st.write(f"Last updated: {today}")
 
 # Create buttons to navigate to the external apps
 if st.button("Go to Legacy Trading Page"):
-    st.markdown("[Open Legacy Trading Page](https://bullbear.streamlit.app/)", unsafe_allow_html=True)
+    st.markdown("[Open Legacy Trading Page](https://bullsbears.streamlit.app/)", unsafe_allow_html=True)
 
 if st.button("Go to New Trading Page"):
     st.markdown("[Open New Trading Page](https://bullbears.streamlit.app/)", unsafe_allow_html=True)
