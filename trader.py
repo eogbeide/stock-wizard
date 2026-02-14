@@ -37,7 +37,7 @@ def main():
     """)
 
     st.write("""
-    **Designed to enhance your learning experience**, these resources aim to support your understanding 
+    **Designed to enhance your trading experience**, these resources aim to support your understanding 
     **without replacing your current trading  and professional sources**.
     """)
 
