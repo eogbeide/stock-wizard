@@ -182,23 +182,6 @@ def _safe_last_float(obj) -> float:
     s = _coerce_1d_series(obj).dropna()
     return float(s.iloc[-1]) if len(s) else float("nan")
 
-def as_float_scalar(x) -> float:
-    """
-    Safely coerce x to a scalar float.
-    - Handles numpy scalars, 0-d arrays, 1-d arrays, lists, etc.
-    - If array has >1 element, takes the first (prevents float(array) TypeError).
-    """
-    try:
-        a = np.asarray(x)
-        if a.size == 0:
-            return float("nan")
-        return float(a.ravel()[0])
-    except Exception:
-        try:
-            return float(x)
-        except Exception:
-            return float("nan")
-
 def fmt_pct(x, digits: int = 1) -> str:
     try:
         xv = float(x)
@@ -573,17 +556,9 @@ else:
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
     df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"), progress=False)
-    if df is None or df.empty:
+    if df is None or df.empty or "Close" not in df.columns:
         return pd.Series(dtype=float)
-
-    # FIX: yfinance can return MultiIndex columns; flatten so df["Close"] becomes a Series
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-
-    if "Close" not in df.columns:
-        return pd.Series(dtype=float)
-
-    s = _coerce_1d_series(df["Close"]).asfreq("D").ffill()
+    s = df["Close"].asfreq("D").ffill()
     if isinstance(s.index, pd.DatetimeIndex) and s.index.tz is None:
         s.index = s.index.tz_localize(PACIFIC)
     elif isinstance(s.index, pd.DatetimeIndex):
@@ -593,17 +568,9 @@ def fetch_hist(ticker: str) -> pd.Series:
 @st.cache_data(ttl=120)
 def fetch_hist_max(ticker: str) -> pd.Series:
     df = yf.download(ticker, period="max", progress=False)
-    if df is None or df.empty:
+    if df is None or df.empty or "Close" not in df.columns:
         return pd.Series(dtype=float)
-
-    # FIX: yfinance can return MultiIndex columns; flatten so df["Close"] becomes a Series
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-
-    if "Close" not in df.columns:
-        return pd.Series(dtype=float)
-
-    s = _coerce_1d_series(df["Close"]).dropna().asfreq("D").ffill()
+    s = df["Close"].dropna().asfreq("D").ffill()
     if isinstance(s.index, pd.DatetimeIndex) and s.index.tz is None:
         s.index = s.index.tz_localize(PACIFIC)
     elif isinstance(s.index, pd.DatetimeIndex):
@@ -615,15 +582,10 @@ def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
     df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"), progress=False)
     if df is None or df.empty:
         return pd.DataFrame()
-
-    # FIX: flatten MultiIndex OHLC columns if present
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-
     need = ["Open","High","Low","Close"]
-    if not set(need).issubset(set(df.columns)):
+    have = [c for c in need if c in df.columns]
+    if len(have) < 4:
         return pd.DataFrame()
-
     out = df[need].dropna()
     if isinstance(out.index, pd.DatetimeIndex) and out.index.tz is None:
         out.index = out.index.tz_localize(PACIFIC)
@@ -636,11 +598,6 @@ def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
     df = yf.download(ticker, period=period, interval="5m", progress=False)
     if df is None or df.empty:
         return pd.DataFrame()
-
-    # FIX: flatten MultiIndex OHLC columns if present
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-
     try:
         df = df.tz_localize("UTC")
     except TypeError:
@@ -1993,7 +1950,7 @@ if "run_all" not in st.session_state:
 # =========================
 # Tabs
 # =========================
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19, tab20 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -2002,7 +1959,6 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "Long-Term History",
     "Recent BUY Scanner",
     "NPX 0.5-Cross Scanner",
-    "NPX 0.5 Cross",
     "Fib NPX 0.0 Signal Scanner",
     "Slope Direction Scan",
     "Trendline Direction Lists",
@@ -2377,81 +2333,18 @@ with tab8:
             st.dataframe(df.reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 9 — NPX 0.5 Cross (NEW)
+# TAB 9 — Fib NPX 0.0 Signal Scanner
 # =========================
 with tab9:
-    st.header("NPX 0.5 Cross")
-    st.caption(
-        "Shows symbols where **NPX (Norm Price)** is between **0.5 and 0.7** and the **Daily chart global trendline** "
-        "is **upward (slope > 0)**, using the selected **Daily view range**."
-    )
-
-    c1, c2 = st.columns(2)
-    max_rows = c1.slider("Max rows", 10, 200, 50, 10, key=f"npx05x_rows_{mode}")
-    run9 = c2.button("Run NPX 0.5 Cross Scan", key=f"btn_run_npx05x_{mode}", use_container_width=True)
-
-    if run9:
-        rows = []
-        for sym in universe:
-            s = fetch_hist(sym).dropna()
-            s_show = subset_by_daily_view(s, daily_view).dropna()
-            if len(s_show) < 20:
-                continue
-
-            # NPX on full series, shown on selected daily view (same as daily chart behavior)
-            npx_show = compute_normalized_price(s, window=ntd_window).reindex(s_show.index).dropna()
-            if npx_show.empty:
-                continue
-
-            npx_last = float(npx_show.iloc[-1]) if np.isfinite(npx_show.iloc[-1]) else np.nan
-            if not (np.isfinite(npx_last) and (0.5 <= npx_last <= 0.7)):
-                continue
-
-            # Global trendline slope (safe scalar conversion prevents float(array) TypeError)
-            x = np.arange(len(s_show), dtype=float)
-            y = _coerce_1d_series(s_show).to_numpy(dtype=float)
-            try:
-                m, b = np.polyfit(x, y, 1)
-            except Exception:
-                continue
-
-            m_val = as_float_scalar(m)
-            if not (np.isfinite(m_val) and m_val > 0.0):
-                continue
-
-            yhat = m_val * x + as_float_scalar(b)
-            ss_res = float(np.sum((y - yhat) ** 2))
-            ss_tot = float(np.sum((y - y.mean()) ** 2))
-            r2 = float("nan") if ss_tot <= 0 else float(1.0 - ss_res / ss_tot)
-
-            rows.append({
-                "Symbol": sym,
-                "NPX(last)": npx_last,
-                "Global Slope": float(m_val),
-                "R2": float(r2) if np.isfinite(r2) else np.nan,
-                "Last Price": float(_coerce_1d_series(s_show).iloc[-1]),
-                "AsOf": s_show.index[-1],
-            })
-
-        if not rows:
-            st.info("No matches.")
-        else:
-            out = pd.DataFrame(rows).sort_values(["Global Slope", "NPX(last)"], ascending=[False, False]).head(int(max_rows))
-            st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-# =========================
-# TAB 10 — Fib NPX 0.0 Signal Scanner
-# =========================
-with tab10:
     st.header("Fib NPX 0.0 Signal Scanner")
     st.caption("BUY: price touched Fib 100% and NPX crossed up through 0.0 recently. SELL: touched Fib 0% and NPX crossed down through 0.0.")
 
     c1, c2, c3 = st.columns(3)
     max_bars = c1.slider("Max bars since signal", 0, 90, 10, 1, key=f"fibsig_max_{mode}")
     hz = c2.slider("Touch horizon (bars)", 3, 60, 15, 1, key=f"fibsig_hz_{mode}")
-    run10 = c3.button("Run Fib+NPX Scan", key=f"btn_run_fibsig_{mode}", use_container_width=True)
+    run9 = c3.button("Run Fib+NPX Scan", key=f"btn_run_fibsig_{mode}", use_container_width=True)
 
-    if run10:
+    if run9:
         rows = []
         for sym in universe:
             s = fetch_hist(sym).dropna()
@@ -2490,17 +2383,17 @@ with tab10:
             st.dataframe(df.reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 11 — Slope Direction Scan
+# TAB 10 — Slope Direction Scan
 # =========================
-with tab11:
+with tab10:
     st.header("Slope Direction Scan")
     st.caption("Lists symbols by local regression slope sign (daily view).")
 
     c1, c2 = st.columns(2)
     want = c1.selectbox("Slope sign", ["Up (m>0)", "Down (m<0)"], index=0, key=f"slope_sign_{mode}")
-    run11 = c2.button("Run Slope Scan", key=f"btn_run_slope_{mode}", use_container_width=True)
+    run10 = c2.button("Run Slope Scan", key=f"btn_run_slope_{mode}", use_container_width=True)
 
-    if run11:
+    if run10:
         want_up = want.startswith("Up")
         rows = []
         for sym in universe:
@@ -2523,14 +2416,14 @@ with tab11:
             st.dataframe(df.reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 12 — Trendline Direction Lists
+# TAB 11 — Trendline Direction Lists
 # =========================
-with tab12:
+with tab11:
     st.header("Trendline Direction Lists")
     st.caption("Uses the global trendline slope (in daily view) to split into Up vs Down.")
 
-    run12 = st.button("Compute Trendline Lists", key=f"btn_run_trendlists_{mode}", use_container_width=True)
-    if run12:
+    run11 = st.button("Compute Trendline Lists", key=f"btn_run_trendlists_{mode}", use_container_width=True)
+    if run11:
         ups, dns = [], []
         for sym in universe:
             s = fetch_hist(sym).dropna()
@@ -2538,9 +2431,8 @@ with tab12:
             if len(s_show) < 10:
                 continue
             x = np.arange(len(s_show), dtype=float)
-            m, _ = np.polyfit(x, _coerce_1d_series(s_show).to_numpy(dtype=float), 1)
-            m_val = as_float_scalar(m)
-            (ups if m_val > 0 else dns).append((sym, float(m_val)))
+            m, _ = np.polyfit(x, s_show.to_numpy(dtype=float), 1)
+            (ups if m > 0 else dns).append((sym, float(m)))
         c1, c2 = st.columns(2)
         with c1:
             st.subheader("Uptrend (global slope > 0)")
@@ -2552,14 +2444,14 @@ with tab12:
             st.dataframe(df.reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 13 — NTD Hot List
+# TAB 12 — NTD Hot List
 # =========================
-with tab13:
+with tab12:
     st.header("NTD Hot List")
     st.caption("Sorts symbols by |NTD(last)| descending (daily view).")
 
-    run13 = st.button("Run Hot List", key=f"btn_run_ntdhot_{mode}", use_container_width=True)
-    if run13:
+    run12 = st.button("Run Hot List", key=f"btn_run_ntdhot_{mode}", use_container_width=True)
+    if run12:
         rows = []
         for sym in universe:
             s = fetch_hist(sym).dropna()
@@ -2582,17 +2474,17 @@ with tab13:
             st.dataframe(df.reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 14 — NTD NPX 0.0-0.2 Scanner
+# TAB 13 — NTD NPX 0.0-0.2 Scanner
 # =========================
-with tab14:
+with tab13:
     st.header("NTD NPX 0.0-0.2 Scanner")
     st.caption("Finds symbols where NTD(last) is between 0.0 and 0.2 and NPX(last) is positive (daily view).")
 
     c1, c2 = st.columns(2)
     max_rows = c1.slider("Max rows", 10, 200, 50, 10, key=f"ntd002_rows_{mode}")
-    run14 = c2.button("Run NTD/NPX Range Scan", key=f"btn_run_ntd002_{mode}", use_container_width=True)
+    run13 = c2.button("Run NTD/NPX Range Scan", key=f"btn_run_ntd002_{mode}", use_container_width=True)
 
-    if run14:
+    if run13:
         rows = []
         for sym in universe:
             s = fetch_hist(sym).dropna()
@@ -2613,14 +2505,14 @@ with tab14:
             st.dataframe(df.reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 15 — Uptrend vs Downtrend
+# TAB 14 — Uptrend vs Downtrend
 # =========================
-with tab15:
+with tab14:
     st.header("Uptrend vs Downtrend")
     st.caption("Counts symbols by global slope sign (daily view).")
 
-    run15 = st.button("Run Up/Down Summary", key=f"btn_run_updown_{mode}", use_container_width=True)
-    if run15:
+    run14 = st.button("Run Up/Down Summary", key=f"btn_run_updown_{mode}", use_container_width=True)
+    if run14:
         up, dn, flat = [], [], []
         for sym in universe:
             s = fetch_hist(sym).dropna()
@@ -2628,11 +2520,10 @@ with tab15:
             if len(s_show) < 10:
                 continue
             x = np.arange(len(s_show), dtype=float)
-            m, _ = np.polyfit(x, _coerce_1d_series(s_show).to_numpy(dtype=float), 1)
-            m_val = as_float_scalar(m)
-            if abs(m_val) < 1e-12:
+            m, _ = np.polyfit(x, s_show.to_numpy(dtype=float), 1)
+            if abs(m) < 1e-12:
                 flat.append(sym)
-            elif m_val > 0:
+            elif m > 0:
                 up.append(sym)
             else:
                 dn.append(sym)
@@ -2647,17 +2538,17 @@ with tab15:
         st.write("Flat:", ", ".join(flat) if flat else "—")
 
 # =========================
-# TAB 16 — Ichimoku Kijun Scanner
+# TAB 15 — Ichimoku Kijun Scanner
 # =========================
-with tab16:
+with tab15:
     st.header("Ichimoku Kijun Scanner")
     st.caption("Lists symbols where price is above/below Kijun (daily view).")
 
     c1, c2 = st.columns(2)
     side = c1.selectbox("Condition", ["Price > Kijun", "Price < Kijun"], index=0, key=f"kij_cond_{mode}")
-    run16 = c2.button("Run Kijun Scan", key=f"btn_run_kij_{mode}", use_container_width=True)
+    run15 = c2.button("Run Kijun Scan", key=f"btn_run_kij_{mode}", use_container_width=True)
 
-    if run16:
+    if run15:
         want_above = side.startswith("Price >")
         rows = []
         for sym in universe:
@@ -2684,18 +2575,18 @@ with tab16:
             st.dataframe(df.reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 17 — R² > 45% Daily/Hourly
+# TAB 16 — R² > 45% Daily/Hourly
 # =========================
-with tab17:
+with tab16:
     st.header("R² > 45% Daily/Hourly")
     st.caption("Filters symbols where regression R² exceeds 0.45 (daily view + optional intraday).")
 
     c1, c2, c3 = st.columns(3)
     check_hourly = c1.checkbox("Also check hourly", value=False, key=f"r2hi_hr_{mode}")
     hours = c2.selectbox("Hourly window", ["24h", "48h", "96h"], index=0, key=f"r2hi_win_{mode}")
-    run17 = c3.button("Run R² High Scan", key=f"btn_run_r2hi_{mode}", use_container_width=True)
+    run16 = c3.button("Run R² High Scan", key=f"btn_run_r2hi_{mode}", use_container_width=True)
 
-    if run17:
+    if run16:
         rows = []
         for sym in universe:
             s = fetch_hist(sym).dropna()
@@ -2727,18 +2618,18 @@ with tab17:
             st.dataframe(df_h.reset_index(drop=True), use_container_width=True) if not df_h.empty else st.write("No matches.")
 
 # =========================
-# TAB 18 — R² < 45% Daily/Hourly
+# TAB 17 — R² < 45% Daily/Hourly
 # =========================
-with tab18:
+with tab17:
     st.header("R² < 45% Daily/Hourly")
     st.caption("Filters symbols where regression R² is below 0.45 (daily view + optional intraday).")
 
     c1, c2, c3 = st.columns(3)
     check_hourly = c1.checkbox("Also check hourly", value=False, key=f"r2lo_hr_{mode}")
     hours = c2.selectbox("Hourly window", ["24h", "48h", "96h"], index=0, key=f"r2lo_win_{mode}")
-    run18 = c3.button("Run R² Low Scan", key=f"btn_run_r2lo_{mode}", use_container_width=True)
+    run17 = c3.button("Run R² Low Scan", key=f"btn_run_r2lo_{mode}", use_container_width=True)
 
-    if run18:
+    if run17:
         rows = []
         for sym in universe:
             s = fetch_hist(sym).dropna()
@@ -2770,18 +2661,18 @@ with tab18:
             st.dataframe(df_h.reset_index(drop=True), use_container_width=True) if not df_h.empty else st.write("No matches.")
 
 # =========================
-# TAB 19 — R² Sign ±2σ Proximity (Daily)
+# TAB 18 — R² Sign ±2σ Proximity (Daily)
 # =========================
-with tab19:
+with tab18:
     st.header("R² Sign ±2σ Proximity (Daily)")
     st.caption("Shows symbols where price is near +2σ (potential SELL in downtrend) or -2σ (potential BUY in uptrend), with R² info.")
 
     c1, c2, c3 = st.columns(3)
     near_pct = c1.slider("Near band threshold (% of price)", 0.05, 2.0, 0.25, 0.05, key=f"band_near_{mode}") / 100.0
     min_r2 = c2.slider("Min R²", 0.00, 0.90, 0.45, 0.05, key=f"band_minr2_{mode}")
-    run19 = c3.button("Run ±2σ Proximity Scan", key=f"btn_run_bandprox_{mode}", use_container_width=True)
+    run18 = c3.button("Run ±2σ Proximity Scan", key=f"btn_run_bandprox_{mode}", use_container_width=True)
 
-    if run19:
+    if run18:
         rows = []
         for sym in universe:
             s = fetch_hist(sym).dropna()
@@ -2821,9 +2712,9 @@ with tab19:
             st.dataframe(df.reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 20 — Zero cross (NEW)
+# TAB 19 — Zero cross (NEW)
 # =========================
-with tab20:
+with tab19:
     st.header("Zero cross")
     st.caption(
         "Lists symbols where **NTD (win=60)** has **recently crossed UP through 0.0**, "
