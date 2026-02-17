@@ -1515,6 +1515,49 @@ def last_daily_ntd_zero_cross_up_in_uptrend(symbol: str,
         return None
 
 # =========================
+# NEW: Slope Candidates helper (Daily view)
+# =========================
+@st.cache_data(ttl=120)
+def slope_candidate_row(symbol: str, daily_view_label: str, slope_lb: int):
+    """
+    Computes:
+      - local regression slope (m) over min(len(view), slope_lb)
+      - current price vs current regression line price
+      - distance to regression line (absolute, in price units)
+    Used by the 'Slope Candidates' tab.
+    """
+    try:
+        s = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        s_show = _coerce_1d_series(subset_by_daily_view(s, daily_view_label)).dropna()
+        if len(s_show) < 20:
+            return None
+
+        yhat, _, _, m, _ = regression_with_band(s_show, lookback=min(len(s_show), int(slope_lb)))
+        yhat = _coerce_1d_series(yhat).reindex(s_show.index)
+
+        if yhat.dropna().empty or not np.isfinite(m):
+            return None
+
+        curr_px = float(s_show.iloc[-1]) if np.isfinite(s_show.iloc[-1]) else np.nan
+        reg_px = float(yhat.iloc[-1]) if np.isfinite(yhat.iloc[-1]) else np.nan
+        if not (np.isfinite(curr_px) and np.isfinite(reg_px)):
+            return None
+
+        signed = curr_px - reg_px
+        dist = abs(signed)
+
+        return {
+            "Symbol": symbol,
+            "Current Slope Price": curr_px,
+            "Current Regression line price": reg_px,
+            "Distance to regression line": dist,
+            "_signed": signed,
+            "_slope": float(m),
+        }
+    except Exception:
+        return None
+
+# =========================
 # Chart renderers
 # =========================
 def render_daily_chart(symbol: str, daily_view_label: str):
@@ -1950,7 +1993,7 @@ if "run_all" not in st.session_state:
 # =========================
 # Tabs
 # =========================
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19, tab20 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -1969,7 +2012,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "R² > 45% Daily/Hourly",
     "R² < 45% Daily/Hourly",
     "R² Sign ±2σ Proximity (Daily)",
-    "Zero cross"
+    "Zero cross",
+    "Slope Candidates"
 ])
 
 period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
@@ -2747,3 +2791,57 @@ with tab19:
             out = pd.DataFrame(rows)
             out = out.sort_values(["Bars Since Cross", "NTD (last)", "Global Slope"], ascending=[True, False, False])
             st.dataframe(out.reset_index(drop=True), use_container_width=True)
+
+# =========================
+# TAB 20 — Slope Candidates (NEW)
+# =========================
+with tab20:
+    st.header("Slope Candidates")
+    st.caption(
+        "Buy Candidates: regression slope > 0 and current price is **below** the regression line.\n"
+        "Sell Candidates: regression slope < 0 and current price is **above** the regression line.\n\n"
+        "Tables show: Symbol, Current Slope Price, Current Regression line price, Distance to regression line (ascending)."
+    )
+
+    c1, c2 = st.columns(2)
+    max_rows = c1.slider("Max rows per list", 10, 200, 50, 10, key=f"slopecand_rows_{mode}")
+    run20 = c2.button("Run Slope Candidates Scan", key=f"btn_run_slopecand_{mode}", use_container_width=True)
+
+    if run20:
+        buy_rows, sell_rows = [], []
+        for sym in universe:
+            r = slope_candidate_row(sym, daily_view_label=daily_view, slope_lb=slope_lb_daily)
+            if r is None:
+                continue
+
+            m = float(r.get("_slope", np.nan))
+            signed = float(r.get("_signed", np.nan))
+
+            # BUY: slope up and price below regression line
+            if np.isfinite(m) and np.isfinite(signed) and (m > 0.0) and (signed < 0.0):
+                buy_rows.append(r)
+
+            # SELL: slope down and price above regression line
+            if np.isfinite(m) and np.isfinite(signed) and (m < 0.0) and (signed > 0.0):
+                sell_rows.append(r)
+
+        show_cols = ["Symbol", "Current Slope Price", "Current Regression line price", "Distance to regression line"]
+
+        cL, cR = st.columns(2)
+        with cL:
+            st.subheader("Buy Candidates")
+            if not buy_rows:
+                st.write("No matches.")
+            else:
+                dfb = pd.DataFrame(buy_rows)
+                dfb = dfb.sort_values("Distance to regression line", ascending=True)
+                st.dataframe(dfb[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
+
+        with cR:
+            st.subheader("Sell Candidates")
+            if not sell_rows:
+                st.write("No matches.")
+            else:
+                dfs = pd.DataFrame(sell_rows)
+                dfs = dfs.sort_values("Distance to regression line", ascending=True)
+                st.dataframe(dfs[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
