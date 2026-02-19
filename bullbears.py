@@ -1,4 +1,474 @@
 # =========================
+# Batch 1/3 — bullbear.py
+# =========================
+# Stock Wizard (Streamlit) — NEWS REMOVED (no yfinance news / no fetch_yf_news calls)
+
+from __future__ import annotations
+
+import math
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import streamlit as st
+import yfinance as yf
+
+try:
+    import pytz
+    PACIFIC = pytz.timezone("US/Pacific")
+except Exception:
+    PACIFIC = None
+
+
+# -----------------------------
+# Default Universes
+# -----------------------------
+STOCK_UNIVERSE = sorted([
+    "AAPL","SPY","AMZN","DIA","TSLA","SPGI","JPM","VTWG","PLTR","NVDA",
+    "META","SITM","MARA","GOOG","HOOD","BABA","IBM","AVGO","GUSH","VOO",
+    "MSFT","TSM","NFLX","MP","AAL","URI","DAL","BBAI","QUBT","AMD","SMCI",
+    "ORCL","TLT"
+])
+
+FOREX_UNIVERSE = [
+    "EURUSD=X","EURJPY=X","GBPUSD=X","USDJPY=X","AUDUSD=X","NZDUSD=X","CADJPY=X","USDCHF=X",
+    "HKDJPY=X","USDCAD=X","USDCNY=X","EURGBP=X","EURCAD=X","NZDJPY=X","USDKRW=X",
+    "USDHKD=X","EURHKD=X","GBPHKD=X","GBPJPY=X","CNHJPY=X","AUDJPY=X","GBPCAD=X"
+]
+
+
+# -----------------------------
+# Utilities
+# -----------------------------
+def _coerce_1d_series(x) -> pd.Series:
+    if x is None:
+        return pd.Series(dtype=float)
+    if isinstance(x, pd.Series):
+        return x.copy()
+    if isinstance(x, pd.DataFrame) and x.shape[1] == 1:
+        return x.iloc[:, 0].copy()
+    return pd.Series(x)
+
+
+def _ensure_ohlcv_cols(df: pd.DataFrame, ticker: Optional[str] = None) -> pd.DataFrame:
+    """
+    Normalize yfinance output to a single-ticker OHLCV dataframe with columns:
+      Open, High, Low, Close, Adj Close, Volume (where available)
+
+    Fixes the MultiIndex case that caused:
+      TypeError: cannot convert the series to <class 'float'>
+    when df["High"].max() returned a Series (because df["High"] was a DataFrame).
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    # Handle yfinance returning multi-index columns for one or many tickers
+    if isinstance(df.columns, pd.MultiIndex) and df.columns.nlevels >= 2:
+        fields = {"Open", "High", "Low", "Close", "Adj Close", "Volume"}
+
+        lvl0 = df.columns.get_level_values(0)
+        lvl1 = df.columns.get_level_values(1)
+
+        # Determine which level is fields vs ticker
+        if len(set(lvl0).intersection(fields)) > 0:
+            field_level = 0
+            ticker_level = 1
+        elif len(set(lvl1).intersection(fields)) > 0:
+            field_level = 1
+            ticker_level = 0
+        else:
+            # Unknown MultiIndex layout; best effort: if only one ticker on a level, drop it
+            u0 = list(dict.fromkeys(lvl0))
+            u1 = list(dict.fromkeys(lvl1))
+            if len(u0) == 1:
+                df.columns = lvl1
+            elif len(u1) == 1:
+                df.columns = lvl0
+            # proceed to selection below (may already be single level)
+            field_level = None
+            ticker_level = None
+
+        if isinstance(df.columns, pd.MultiIndex) and field_level is not None and ticker_level is not None:
+            tickers = list(dict.fromkeys(df.columns.get_level_values(ticker_level)))
+            chosen = None
+            if ticker is not None and ticker in tickers:
+                chosen = ticker
+            elif len(tickers) == 1:
+                chosen = tickers[0]
+            else:
+                chosen = tickers[0]  # best-effort fallback
+
+            # Slice to chosen ticker, leaving only field columns
+            df = df.xs(chosen, axis=1, level=ticker_level, drop_level=True)
+
+    # Now df.columns should be single-level (or at least select-able)
+    cols = [c for c in ["Open", "High", "Low", "Close", "Adj Close", "Volume"] if c in df.columns]
+    df = df[cols].copy()
+
+    if "Adj Close" in df.columns and "Close" not in df.columns:
+        df["Close"] = df["Adj Close"]
+
+    return df
+
+
+def _to_pacific_index(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return df
+    if PACIFIC is None:
+        return df
+    idx = df.index
+    try:
+        if idx.tz is None:
+            df.index = idx.tz_localize(PACIFIC)
+        else:
+            df.index = idx.tz_convert(PACIFIC)
+    except Exception:
+        pass
+    return df
+
+
+def fmt_price_val(x) -> str:
+    try:
+        if x is None or (isinstance(x, float) and not np.isfinite(x)):
+            return "n/a"
+        return f"{float(x):,.2f}"
+    except Exception:
+        return "n/a"
+
+
+def _has_volume_to_plot(vol: pd.Series) -> bool:
+    v = _coerce_1d_series(vol).dropna()
+    if v.empty:
+        return False
+    try:
+        return float(v.sum()) > 0.0
+    except Exception:
+        return False
+
+
+def style_axes(ax):
+    ax.grid(True, alpha=0.25)
+    ax.tick_params(axis="x", labelrotation=0)
+    for spine in ax.spines.values():
+        spine.set_alpha(0.35)
+
+
+def annotate_crossover(ax, t, y, side: str, note: str = ""):
+    txt = f"{side}"
+    if note:
+        txt += f"\n{note}"
+    ax.annotate(
+        txt,
+        xy=(t, y),
+        xytext=(0, 14),
+        textcoords="offset points",
+        ha="center",
+        va="bottom",
+        fontsize=9,
+        bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.8),
+        arrowprops=dict(arrowstyle="->", alpha=0.55),
+    )
+
+
+def _series_linear_slope(s: pd.Series) -> float:
+    """Simple least-squares slope of y over x=0..n-1."""
+    y = _coerce_1d_series(s).dropna().astype(float)
+    if y.empty or len(y) < 5:
+        return np.nan
+    x = np.arange(len(y), dtype=float)
+    try:
+        m, _b = np.polyfit(x, y.to_numpy(dtype=float), 1)
+        return float(m)
+    except Exception:
+        return np.nan
+
+
+# -----------------------------
+# Data fetchers (cached)
+# -----------------------------
+@st.cache_data(ttl=300)
+def fetch_hist_ohlcv(ticker: str, start: str = "2018-01-01") -> pd.DataFrame:
+    df = yf.download(
+        ticker,
+        start=start,
+        end=pd.to_datetime("today"),
+        progress=False,
+        auto_adjust=False,
+    )
+    df = _ensure_ohlcv_cols(df, ticker=ticker).dropna()
+    df = _to_pacific_index(df)
+    return df
+
+
+@st.cache_data(ttl=120)
+def fetch_daily_range(ticker: str, start: datetime) -> pd.DataFrame:
+    df = yf.download(
+        ticker,
+        start=start.strftime("%Y-%m-%d"),
+        end=pd.to_datetime("today"),
+        progress=False,
+        auto_adjust=False,
+    )
+    df = _ensure_ohlcv_cols(df, ticker=ticker).dropna()
+    df = _to_pacific_index(df)
+    return df
+
+
+@st.cache_data(ttl=120)
+def fetch_intraday(ticker: str, period: str = "1d", interval: str = "60m") -> pd.DataFrame:
+    df = yf.download(
+        ticker,
+        period=period,
+        interval=interval,
+        progress=False,
+        auto_adjust=False,
+        prepost=False,
+    )
+    df = _ensure_ohlcv_cols(df, ticker=ticker).dropna()
+    df = _to_pacific_index(df)
+    return df
+
+
+# -----------------------------
+# Indicators
+# -----------------------------
+def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_ema: bool = False):
+    c = _coerce_1d_series(close).astype(float)
+    if c.dropna().empty:
+        empty = pd.Series(dtype=float)
+        return empty, empty, empty, empty, empty
+    window = int(max(2, window))
+    minp = max(2, window // 2)
+
+    if use_ema:
+        mid = c.ewm(span=window, adjust=False).mean()
+        sd = c.rolling(window, min_periods=minp).std()
+    else:
+        mid = c.rolling(window, min_periods=minp).mean()
+        sd = c.rolling(window, min_periods=minp).std()
+
+    up = mid + float(mult) * sd
+    lo = mid - float(mult) * sd
+    pctb = (c - lo) / (up - lo)
+    nbb = (c - mid) / (sd.replace(0, np.nan))
+    return mid, up, lo, pctb, nbb
+
+
+def regression_with_band_lastn(close: pd.Series, lookback: int = 120, mult: float = 2.0):
+    """
+    Regression on the last N points, return:
+      slope, intercept, r2, std, last_fit, last_upper, last_lower
+    """
+    c = _coerce_1d_series(close).dropna().astype(float)
+    if c.empty:
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+    lookback = int(max(5, lookback))
+    c = c.iloc[-lookback:].copy()
+    n = len(c)
+    if n < 5:
+        return np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan
+
+    x = np.arange(n, dtype=float)
+    y = c.to_numpy(dtype=float)
+
+    slope, intercept = np.polyfit(x, y, 1)
+    yhat = slope * x + intercept
+    resid = y - yhat
+    std = float(np.nanstd(resid, ddof=1)) if n > 2 else np.nan
+
+    ss_res = float(np.nansum((y - yhat) ** 2))
+    ss_tot = float(np.nansum((y - np.nanmean(y)) ** 2))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else np.nan
+
+    last_fit = float(yhat[-1])
+    last_up = last_fit + float(mult) * std if np.isfinite(std) else np.nan
+    last_lo = last_fit - float(mult) * std if np.isfinite(std) else np.nan
+
+    return float(slope), float(intercept), float(r2), float(std), last_fit, last_up, last_lo
+
+
+def regression_with_band_series(close: pd.Series, mult: float = 2.0):
+    """
+    Regression on entire series, returns (fit, upper, lower, slope, r2, std).
+    """
+    c = _coerce_1d_series(close).dropna().astype(float)
+    if c.empty or len(c) < 5:
+        empty = pd.Series(index=_coerce_1d_series(close).index, dtype=float)
+        return empty, empty, empty, np.nan, np.nan, np.nan
+
+    idx = c.index
+    n = len(c)
+    x = np.arange(n, dtype=float)
+    y = c.to_numpy(dtype=float)
+
+    slope, intercept = np.polyfit(x, y, 1)
+    yhat = slope * x + intercept
+    resid = y - yhat
+    std = float(np.nanstd(resid, ddof=1)) if n > 2 else np.nan
+
+    ss_res = float(np.nansum((y - yhat) ** 2))
+    ss_tot = float(np.nansum((y - np.nanmean(y)) ** 2))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else np.nan
+
+    fit = pd.Series(yhat, index=idx)
+    up = fit + float(mult) * std if np.isfinite(std) else pd.Series(index=idx, dtype=float)
+    lo = fit - float(mult) * std if np.isfinite(std) else pd.Series(index=idx, dtype=float)
+    return fit, up, lo, float(slope), float(r2), float(std)
+
+
+def regression_with_band_lastn_series(close: pd.Series, lookback: int = 120, mult: float = 2.0):
+    """
+    Regression fit + ±mult*std bands over the last N points only.
+    Returns (fit_seg, up_seg, lo_seg, slope, r2, std) indexed to that segment.
+    """
+    c = _coerce_1d_series(close).dropna().astype(float)
+    if c.empty or len(c) < 5:
+        empty = pd.Series(dtype=float)
+        return empty, empty, empty, np.nan, np.nan, np.nan
+
+    lookback = int(max(5, lookback))
+    seg = c.iloc[-lookback:].copy()
+    n = len(seg)
+    if n < 5:
+        empty = pd.Series(index=seg.index, dtype=float)
+        return empty, empty, empty, np.nan, np.nan, np.nan
+
+    x = np.arange(n, dtype=float)
+    y = seg.to_numpy(dtype=float)
+    slope, intercept = np.polyfit(x, y, 1)
+    yhat = slope * x + intercept
+
+    resid = y - yhat
+    std = float(np.nanstd(resid, ddof=1)) if n > 2 else np.nan
+
+    ss_res = float(np.nansum((y - yhat) ** 2))
+    ss_tot = float(np.nansum((y - np.nanmean(y)) ** 2))
+    r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else np.nan
+
+    fit = pd.Series(yhat, index=seg.index)
+    if np.isfinite(std):
+        up = fit + float(mult) * std
+        lo = fit - float(mult) * std
+    else:
+        up = pd.Series(index=seg.index, dtype=float)
+        lo = pd.Series(index=seg.index, dtype=float)
+
+    return fit, up, lo, float(slope), float(r2), float(std)
+
+
+def regression_band_bounce_last_signal(close: pd.Series, upper: pd.Series, lower: pd.Series):
+    """
+    Regression-band bounce (similar to BB fade) on a fixed band series:
+      BUY: close[t-1] < lower[t-1] and close[t] >= lower[t]
+      SELL: close[t-1] > upper[t-1] and close[t] <= upper[t]
+    Returns most recent dict or None.
+    """
+    c = _coerce_1d_series(close).astype(float)
+    u = _coerce_1d_series(upper).reindex(c.index).astype(float)
+    l = _coerce_1d_series(lower).reindex(c.index).astype(float)
+
+    ok = c.notna() & u.notna() & l.notna()
+    if ok.sum() < 2:
+        return None
+    c = c[ok]
+    u = u[ok]
+    l = l[ok]
+
+    buy = (c.shift(1) < l.shift(1)) & (c >= l)
+    sell = (c.shift(1) > u.shift(1)) & (c <= u)
+
+    tb = buy[buy].index[-1] if buy.any() else None
+    ts = sell[sell].index[-1] if sell.any() else None
+    if tb is None and ts is None:
+        return None
+
+    if ts is None or (tb is not None and tb >= ts):
+        return {"side": "BUY", "time": tb, "price": float(c.loc[tb]) if np.isfinite(c.loc[tb]) else np.nan, "note": "Reg -2σ bounce"}
+    return {"side": "SELL", "time": ts, "price": float(c.loc[ts]) if np.isfinite(c.loc[ts]) else np.nan, "note": "Reg +2σ bounce"}
+
+
+def compute_ichimoku(df_ohlc: pd.DataFrame, conv: int = 9, base: int = 26, span_b: int = 52):
+    """
+    Returns dict of Ichimoku lines (Tenkan, Kijun, SpanA, SpanB).
+    """
+    if df_ohlc is None or df_ohlc.empty or not {"High", "Low", "Close"}.issubset(df_ohlc.columns):
+        return {
+            "tenkan": pd.Series(dtype=float),
+            "kijun": pd.Series(dtype=float),
+            "spana": pd.Series(dtype=float),
+            "spanb": pd.Series(dtype=float),
+        }
+
+    high = _coerce_1d_series(df_ohlc["High"]).astype(float)
+    low = _coerce_1d_series(df_ohlc["Low"]).astype(float)
+
+    conv = int(max(2, conv))
+    base = int(max(2, base))
+    span_b = int(max(2, span_b))
+
+    tenkan = (high.rolling(conv).max() + low.rolling(conv).min()) / 2.0
+    kijun = (high.rolling(base).max() + low.rolling(base).min()) / 2.0
+    spana = ((tenkan + kijun) / 2.0).shift(base)
+    spanb = ((high.rolling(span_b).max() + low.rolling(span_b).min()) / 2.0).shift(base)
+
+    return {"tenkan": tenkan, "kijun": kijun, "spana": spana, "spanb": spanb}
+
+
+def compute_adx(df_ohlc: pd.DataFrame, period: int = 14):
+    """
+    ADX(14) +DI/-DI using Wilder smoothing (EWMA alpha=1/period).
+    Returns (adx, pdi, ndi).
+    """
+    if df_ohlc is None or df_ohlc.empty or not {"High", "Low", "Close"}.issubset(df_ohlc.columns):
+        empty = pd.Series(dtype=float)
+        return empty, empty, empty
+
+    high = _coerce_1d_series(df_ohlc["High"]).astype(float)
+    low = _coerce_1d_series(df_ohlc["Low"]).astype(float)
+    close = _coerce_1d_series(df_ohlc["Close"]).astype(float)
+    idx = close.index
+
+    up_move = high.diff()
+    down_move = -low.diff()
+
+    plus_dm = pd.Series(np.where((up_move > down_move) & (up_move > 0), up_move, 0.0), index=idx)
+    minus_dm = pd.Series(np.where((down_move > up_move) & (down_move > 0), down_move, 0.0), index=idx)
+
+    tr1 = (high - low).abs()
+    tr2 = (high - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    p = max(2, int(period))
+    atr = tr.ewm(alpha=1 / p, adjust=False).mean().replace(0, np.nan)
+
+    plus_dm_sm = plus_dm.ewm(alpha=1 / p, adjust=False).mean()
+    minus_dm_sm = minus_dm.ewm(alpha=1 / p, adjust=False).mean()
+
+    pdi = (100.0 * (plus_dm_sm / atr)).replace([np.inf, -np.inf], np.nan)
+    ndi = (100.0 * (minus_dm_sm / atr)).replace([np.inf, -np.inf], np.nan)
+
+    den = (pdi + ndi).replace(0, np.nan)
+    dx = (100.0 * (pdi - ndi).abs() / den).replace([np.inf, -np.inf], np.nan)
+
+    adx = dx.ewm(alpha=1 / p, adjust=False).mean()
+    return adx.reindex(idx), pdi.reindex(idx), ndi.reindex(idx)
+
+
+def volume_confirmation_mask(volume: pd.Series, window: int = 20, mult: float = 1.0):
+    v = _coerce_1d_series(volume).astype(float)
+    if v.dropna().empty:
+        return pd.Series(False, index=v.index), pd.Series(index=v.index, dtype=float)
+    window = int(max(2, window))
+    minp = max(2, window // 2)
+    vma = v.rolling(window, min_periods=minp).mean()
+    conf = v > (vma * float(mult))
+    return conf.fillna(False).reindex(v.index), vma.reindex(v.index)
+# =========================
 # Batch 2/3 — bullbear.py
 # =========================
 def _last_pivot_time(df_ohlc: pd.DataFrame, span: int = 5, kind: str = "low"):
@@ -643,1075 +1113,6 @@ def reversal_candidate_row_hourly(
         "_signal_time": t,  # kept internally (not displayed)
         "Period": str(period),
     }
-# =========================
-# Batch 3/3 — bullbear.py
-# =========================
-# -----------------------------
-# Streamlit App
-# -----------------------------
-st.set_page_config(page_title="Stock Wizard (News Removed)", layout="wide")
-
-st.title("Stock Wizard — Bull/Bear Dashboard (News Removed)")
-st.caption("This build removes all news fetching/rendering to prevent NameError and reduce API churn.")
-
-with st.sidebar:
-    st.header("Settings")
-
-    asset_mode = st.radio("Asset Mode", ["Stock", "Forex"], index=0, key="asset_mode_sel")
-
-    mode = st.radio("Scan Mode", ["Single Ticker", "Universe Scan"], index=0, key="mode_sel")
-
-    default_list = STOCK_UNIVERSE if asset_mode == "Stock" else FOREX_UNIVERSE
-    default_universe = ",".join(default_list)
-
-    tickers_text = st.text_input(
-        "Universe tickers (comma-separated)",
-        value=default_universe,
-        key=f"universe_text_{asset_mode}",
-    )
-    universe = [t.strip().upper() for t in tickers_text.split(",") if t.strip()]
-    if not universe:
-        universe = list(default_list)
-
-    if mode == "Single Ticker":
-        disp_ticker = st.selectbox("Display ticker", universe, index=0, key=f"disp_ticker_{asset_mode}")
-    else:
-        disp_ticker = st.selectbox("Display ticker (for charts)", universe, index=0, key=f"disp_ticker_scan_{asset_mode}")
-
-    daily_view = st.selectbox("Daily view range", ["6M", "1Y", "2Y", "5Y", "YTD", "Max"], index=1, key="daily_view")
-    hour_period = st.selectbox("Hourly period", ["1d", "2d", "4d"], index=0, key="hour_period")
-
-    st.subheader("Regression / Bands")
-    slope_lb_daily = st.slider("Daily slope lookback (bars)", 30, 300, 120, 5, key="slope_lb_daily")
-    slope_lb_hourly = st.slider("Hourly slope lookback (bars)", 20, 200, 60, 5, key="slope_lb_hourly")
-    band_mult = st.slider("Regression band σ-mult", 1.0, 4.0, 2.0, 0.1, key="band_mult")
-
-    st.subheader("Bollinger Bands")
-    show_bbands = st.checkbox("Show Bollinger Bands", value=True, key="show_bbands")
-    bb_win = st.slider("BB window", 10, 80, 20, 1, key="bb_win")
-    bb_mult = st.slider("BB mult", 1.0, 4.0, 2.0, 0.1, key="bb_mult")
-    bb_use_ema = st.checkbox("BB midline uses EMA", value=False, key="bb_use_ema")
-
-    st.subheader("Ichimoku")
-    show_ichimoku = st.checkbox("Show Ichimoku (Kijun/Tenkan)", value=False, key="show_ichimoku")
-    ichi_conv = st.slider("Ichimoku Tenkan (conv)", 5, 20, 9, 1, key="ichi_conv")
-    ichi_base = st.slider("Ichimoku Kijun (base)", 10, 60, 26, 1, key="ichi_base")
-    ichi_spanb = st.slider("Ichimoku SpanB", 20, 120, 52, 1, key="ichi_spanb")
-
-    st.subheader("S/R + Reversal Scans")
-    sr_prox_pct_ui = st.slider("S/R proximity (%)", 0.1, 5.0, 1.0, 0.1, key="sr_prox_ui")
-    sr_prox_pct = float(sr_prox_pct_ui / 100.0)
-    sr_lb_daily = st.slider("Support rolling window (bars)", 10, 120, 40, 5, key="sr_lb_daily")
-    rev_bars_confirm = st.slider("Reversal confirm bars", 1, 5, 1, 1, key="rev_confirm_bars")
-    rev_horizon = st.slider("Support-touch horizon (bars)", 3, 60, 10, 1, key="rev_horizon")
-
-    st.subheader("NTD / NPX")
-    ntd_window = st.slider("NTD window (NPX calc)", 30, 300, 120, 5, key="ntd_window")
-
-
-# -----------------------------
-# Tabs
-# -----------------------------
-tab_labels = [
-    "1) Daily Chart",
-    "2) Hourly Chart",
-    "3) Daily Stats",
-    "4) Hourly Stats",
-    "5) Fibonacci",
-    "6) S/R (Approx)",
-    "7) Notes",
-    "8) About",
-    "9) Fib NPX 0.0 Signal Scanner",
-    "10) Slope Direction Scan",
-    "11) Trendline Direction Lists",
-    "12) NTD Hot List",
-    "13) NTD NPX 0.0–0.2 Scanner",
-    "14) Uptrend vs Downtrend",
-    "15) Ichimoku Kijun Scanner",
-    "16) R² > 45% Daily/Hourly",
-    "17) R² < 45% Daily/Hourly",
-    "18) R² Sign ±2σ Proximity (Daily)",
-    "19) AVWAP + ADX Regime Gate",
-    "20) Regression Cross-Up Scanner",
-    "21) Reversal Candidates (Reg ±2σ Bounce)",
-]
-tabs = st.tabs(tab_labels)
-(
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8,
-    tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19, tab20, tab21
-) = tabs
-
-
-with tab1:
-    st.header("Daily Chart")
-    start = daily_view_to_start(daily_view)
-    df = fetch_daily_range(disp_ticker, start=start)
-
-    if df.empty:
-        st.warning("No daily data.")
-    else:
-        close = df["Close"].astype(float)
-        fit, up, lo, slope, r2, std = regression_with_band_series(close, mult=float(band_mult))
-        npx = compute_npx_from_bands(close, up, lo)
-
-        fig, ax = plt.subplots(figsize=(14, 6))
-        ax.set_title(f"{disp_ticker} — Daily — View {daily_view}")
-        ax.plot(close.index, close.values, label="Close")
-        if not fit.dropna().empty:
-            ax.plot(fit.index, fit.values, linewidth=1.5, label="Regression Fit")
-        if not up.dropna().empty and not lo.dropna().empty:
-            ax.fill_between(close.index, lo.reindex(close.index), up.reindex(close.index), alpha=0.08, label=f"±{band_mult:.1f}σ band")
-
-        if show_bbands:
-            bb_mid, bb_up, bb_lo, bb_pctb, bb_nbb = compute_bbands(close, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
-            if not bb_up.dropna().empty and not bb_lo.dropna().empty:
-                ax.plot(bb_mid.index, bb_mid.values, linewidth=1.0, label="BB mid")
-                ax.plot(bb_up.index, bb_up.values, linestyle=":", linewidth=1.0, label="BB upper")
-                ax.plot(bb_lo.index, bb_lo.values, linestyle=":", linewidth=1.0, label="BB lower")
-
-        if show_ichimoku:
-            ichi = compute_ichimoku(df, conv=ichi_conv, base=ichi_base, span_b=ichi_spanb)
-            tenkan = ichi["tenkan"].reindex(close.index)
-            kijun = ichi["kijun"].reindex(close.index)
-            ax.plot(tenkan.index, tenkan.values, linewidth=1.0, label="Tenkan")
-            ax.plot(kijun.index, kijun.values, linewidth=1.0, label="Kijun")
-
-        style_axes(ax)
-        ax.legend(loc="best", framealpha=0.6)
-        st.pyplot(fig)
-
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Slope (view)", f"{slope:.4f}" if np.isfinite(slope) else "n/a")
-        c2.metric("R² (view)", f"{r2:.3f}" if np.isfinite(r2) else "n/a")
-        c3.metric("NPX (last)", f"{float(npx.dropna().iloc[-1]):.3f}" if not npx.dropna().empty else "n/a")
-        c4.metric("Close (last)", fmt_price_val(close.iloc[-1]))
-
-
-with tab2:
-    st.header("Hourly Chart (60m)")
-    df = fetch_intraday(disp_ticker, period=hour_period, interval="60m")
-    if df.empty:
-        st.warning("No hourly data.")
-    else:
-        close = df["Close"].astype(float)
-        fit, up, lo, slope, r2, std = regression_with_band_series(close, mult=float(band_mult))
-        npx = compute_npx_from_bands(close, up, lo)
-
-        fig, ax = plt.subplots(figsize=(14, 6))
-        ax.set_title(f"{disp_ticker} — Hourly (60m) — Period {hour_period}")
-        ax.plot(close.index, close.values, label="Close")
-        if not fit.dropna().empty:
-            ax.plot(fit.index, fit.values, linewidth=1.5, label="Regression Fit")
-        if not up.dropna().empty and not lo.dropna().empty:
-            ax.fill_between(close.index, lo.reindex(close.index), up.reindex(close.index), alpha=0.08, label=f"±{band_mult:.1f}σ band")
-
-        if show_bbands:
-            bb_mid, bb_up, bb_lo, bb_pctb, bb_nbb = compute_bbands(close, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
-            if not bb_up.dropna().empty and not bb_lo.dropna().empty:
-                ax.plot(bb_mid.index, bb_mid.values, linewidth=1.0, label="BB mid")
-                ax.plot(bb_up.index, bb_up.values, linestyle=":", linewidth=1.0, label="BB upper")
-                ax.plot(bb_lo.index, bb_lo.values, linestyle=":", linewidth=1.0, label="BB lower")
-
-        style_axes(ax)
-        ax.legend(loc="best", framealpha=0.6)
-        st.pyplot(fig)
-
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Slope (period)", f"{slope:.4f}" if np.isfinite(slope) else "n/a")
-        c2.metric("R² (period)", f"{r2:.3f}" if np.isfinite(r2) else "n/a")
-        c3.metric("NPX (last)", f"{float(npx.dropna().iloc[-1]):.3f}" if not npx.dropna().empty else "n/a")
-        c4.metric("Close (last)", fmt_price_val(close.iloc[-1]))
-
-
-with tab3:
-    st.header("Daily Stats")
-    r2_d, m_d, ts_d = daily_regression_r2(disp_ticker, slope_lb=int(slope_lb_daily), daily_view_label=daily_view)
-    npx_last, npx_ts = daily_last_npx_in_view(disp_ticker, daily_view_label=daily_view, ntd_win=ntd_window)
-    st.write(
-        {
-            "Ticker": disp_ticker,
-            "Daily View": daily_view,
-            "R2 (last N bars)": r2_d,
-            "Slope (last N bars)": m_d,
-            "AsOf": ts_d,
-            "NPX (view regression, last)": npx_last,
-            "NPX AsOf": npx_ts,
-        }
-    )
-
-
-with tab4:
-    st.header("Hourly Stats")
-    r2_h, m_h, ts_h = hourly_regression_r2(disp_ticker, period=hour_period, slope_lb=int(slope_lb_hourly))
-    st.write(
-        {
-            "Ticker": disp_ticker,
-            "Period": hour_period,
-            "R2 (last N bars)": r2_h,
-            "Slope (last N bars)": m_h,
-            "AsOf": ts_h,
-        }
-    )
-
-
-with tab5:
-    st.header("Fibonacci (Swing High/Low on Daily View)")
-    start = daily_view_to_start(daily_view)
-    df = fetch_daily_range(disp_ticker, start=start)
-    if df.empty:
-        st.warning("No data.")
-    else:
-        swing_high = float(_coerce_1d_series(df["High"]).max())
-        swing_low = float(_coerce_1d_series(df["Low"]).min())
-        st.write({"Swing High (0%)": swing_high, "Swing Low (100%)": swing_low})
-
-        levels = {
-            "0%": swing_high,
-            "23.6%": swing_high - 0.236 * (swing_high - swing_low),
-            "38.2%": swing_high - 0.382 * (swing_high - swing_low),
-            "50.0%": swing_high - 0.5 * (swing_high - swing_low),
-            "61.8%": swing_high - 0.618 * (swing_high - swing_low),
-            "78.6%": swing_high - 0.786 * (swing_high - swing_low),
-            "100%": swing_low,
-        }
-        st.dataframe(pd.DataFrame({"Level": list(levels.keys()), "Price": list(levels.values())}))
-
-
-with tab6:
-    st.header("Support/Resistance (Approx) — Rolling Low/High")
-    start = daily_view_to_start(daily_view)
-    df = fetch_daily_range(disp_ticker, start=start)
-    if df.empty:
-        st.warning("No data.")
-    else:
-        sr_win = int(sr_lb_daily)
-        support = df["Low"].rolling(sr_win, min_periods=max(3, sr_win // 2)).min()
-        resist = df["High"].rolling(sr_win, min_periods=max(3, sr_win // 2)).max()
-
-        fig, ax = plt.subplots(figsize=(14, 6))
-        ax.set_title(f"{disp_ticker} — Daily — Approx S/R (window={sr_win})")
-        ax.plot(df.index, df["Close"].values, label="Close")
-        ax.plot(support.index, support.values, linewidth=1.2, label="Support (roll min)")
-        ax.plot(resist.index, resist.values, linewidth=1.2, label="Resistance (roll max)")
-        style_axes(ax)
-        ax.legend(loc="best", framealpha=0.6)
-        st.pyplot(fig)
-
-        st.write(
-            {
-                "Close (last)": float(df["Close"].iloc[-1]),
-                "Support (last)": float(support.dropna().iloc[-1]) if not support.dropna().empty else np.nan,
-                "Resistance (last)": float(resist.dropna().iloc[-1]) if not resist.dropna().empty else np.nan,
-                "Proximity setting (%)": sr_prox_pct_ui,
-            }
-        )
-
-
-with tab7:
-    st.header("Notes")
-    st.markdown(
-        "- This file intentionally **removes all news functionality**.\n"
-        "- If you previously had a News tab or `fetch_yf_news` calls, they are not present here.\n"
-        "- Use Universe Scan tabs (9–21) for screening."
-    )
-
-
-with tab8:
-    st.header("About")
-    st.markdown(
-        "This Streamlit app provides:\n"
-        "- Daily/Hourly regression bands + BB + optional Ichimoku\n"
-        "- Multiple universe scanners\n"
-        "- AVWAP + ADX regime gate\n\n"
-        "**News has been removed** to prevent `NameError: fetch_yf_news` and to reduce external calls."
-    )
-
-
-with tab9:
-    st.header("Fib NPX 0.0 Signal Scanner")
-    st.caption(
-        "Scans the current universe for **Fibonacci BUY/SELL** signals on the **Daily** chart:\n"
-        "• **Fib BUY:** price touched **100%** (low) and NPX crossed **UP** through **0.0** recently\n"
-        "• **Fib SELL:** price touched **0%** (high) and NPX crossed **DOWN** through **0.0** recently\n\n"
-        "Uses the selected Daily view range and the sidebar S/R proximity (%) for touch tolerance."
-    )
-
-    c1, c2 = st.columns(2)
-    lb_sig = c1.slider("Lookback window (bars) for touch + NPX cross", 2, 90, int(max(3, rev_horizon)), 1, key="fibnpx0_lb")
-    run_fibsig = c2.button("Run Fib NPX 0.0 Scan", key=f"btn_run_fibnpx0_{mode}")
-
-    if run_fibsig:
-        buy_rows, sell_rows = [], []
-        for sym in universe:
-            rb = last_daily_fib_npx_zero_signal(
-                symbol=sym, daily_view_label=daily_view, ntd_win=ntd_window, direction="BUY",
-                prox=sr_prox_pct, lookback_bars=int(lb_sig), slope_lb=int(slope_lb_daily), npx_confirm_bars=1
-            )
-            if rb is not None:
-                buy_rows.append(rb)
-
-            rs = last_daily_fib_npx_zero_signal(
-                symbol=sym, daily_view_label=daily_view, ntd_win=ntd_window, direction="SELL",
-                prox=sr_prox_pct, lookback_bars=int(lb_sig), slope_lb=int(slope_lb_daily), npx_confirm_bars=1
-            )
-            if rs is not None:
-                sell_rows.append(rs)
-
-        left, right = st.columns(2)
-        with left:
-            st.subheader("Fib BUY — 100% touch + NPX 0.0↑")
-            if not buy_rows:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(buy_rows)
-                out["Bars Since Cross"] = out["Bars Since Cross"].astype(int)
-                out = out.sort_values(["Bars Since Cross"], ascending=[True])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-        with right:
-            st.subheader("Fib SELL — 0% touch + NPX 0.0↓")
-            if not sell_rows:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(sell_rows)
-                out["Bars Since Cross"] = out["Bars Since Cross"].astype(int)
-                out = out.sort_values(["Bars Since Cross"], ascending=[True])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-
-with tab10:
-    st.header("Slope Direction Scan")
-    st.caption("Lists symbols whose **current DAILY global trendline slope** is **up** vs **down** (selected Daily view range).")
-
-    run_slope = st.button("Run Slope Direction Scan", key=f"btn_run_slope_dir_{mode}")
-
-    if run_slope:
-        rows = []
-        for sym in universe:
-            m, r2, ts = daily_global_slope(sym, daily_view_label=daily_view)
-            if not np.isfinite(m):
-                continue
-            rows.append({"Symbol": sym, "Slope": float(m), "R2": float(r2) if np.isfinite(r2) else np.nan, "AsOf": ts})
-
-        if not rows:
-            st.info("No matches.")
-        else:
-            out = pd.DataFrame(rows)
-            up = out[out["Slope"] > 0].sort_values(["Slope"], ascending=False)
-            dn = out[out["Slope"] < 0].sort_values(["Slope"], ascending=True)
-
-            left, right = st.columns(2)
-            with left:
-                st.subheader("Upward Slope")
-                st.dataframe(up.reset_index(drop=True), use_container_width=True) if not up.empty else st.info("No matches.")
-            with right:
-                st.subheader("Downward Slope")
-                st.dataframe(dn.reset_index(drop=True), use_container_width=True) if not dn.empty else st.info("No matches.")
-
-
-with tab11:
-    st.header("Trendline Direction Lists")
-    st.caption(
-        "Displays symbols whose **current DAILY global trendline** is:\n"
-        "• **Upward** (slope ≥ 0) AND NPX(last) < 0.0\n"
-        "• **Downward** (slope < 0) AND NPX(last) > 0.5\n"
-    )
-
-    run_trend_lists = st.button("Run Trendline Direction Lists", key=f"btn_run_trendline_lists_{mode}")
-
-    if run_trend_lists:
-        up_rows, dn_rows = [], []
-        for sym in universe:
-            m, r2, ts = daily_global_slope(sym, daily_view_label=daily_view)
-            if not np.isfinite(m):
-                continue
-            npx_last, _ = daily_last_npx_in_view(sym, daily_view_label=daily_view, ntd_win=ntd_window)
-            if not np.isfinite(npx_last):
-                continue
-
-            if float(m) >= 0.0 and float(npx_last) < 0.0:
-                up_rows.append({"Symbol": sym, "NPX (Norm Price)": float(npx_last)})
-            elif float(m) < 0.0 and float(npx_last) > 0.5:
-                dn_rows.append({"Symbol": sym, "NPX (Norm Price)": float(npx_last)})
-
-        left, right = st.columns(2)
-        with left:
-            st.subheader("Upward Trend (Slope ≥ 0) + NPX < 0")
-            st.dataframe(pd.DataFrame(up_rows).sort_values("Symbol").reset_index(drop=True), use_container_width=True) if up_rows else st.info("No matches.")
-        with right:
-            st.subheader("Downward Trend (Slope < 0) + NPX > 0.5")
-            st.dataframe(pd.DataFrame(dn_rows).sort_values("Symbol").reset_index(drop=True), use_container_width=True) if dn_rows else st.info("No matches.")
-
-
-with tab12:
-    st.header("NTD Hot List")
-    st.caption("Slope > 0 and NPX between 0.0 and 0.5 (inclusive) using selected Daily view range.")
-
-    run_hot = st.button("Run NTD Hot List", key=f"btn_run_ntd_hot_{mode}")
-
-    if run_hot:
-        rows = []
-        for sym in universe:
-            m, r2, ts = daily_global_slope(sym, daily_view_label=daily_view)
-            if not np.isfinite(m) or float(m) <= 0.0:
-                continue
-            npx_last, _ = daily_last_npx_in_view(sym, daily_view_label=daily_view, ntd_win=ntd_window)
-            if not np.isfinite(npx_last):
-                continue
-            if 0.0 <= float(npx_last) <= 0.5:
-                rows.append({"Symbol": sym, "Slope": float(m), "NPX (Norm Price)": float(npx_last), "R2": float(r2) if np.isfinite(r2) else np.nan, "AsOf": ts})
-
-        if not rows:
-            st.info("No matches.")
-        else:
-            out = pd.DataFrame(rows).sort_values(["Slope", "NPX (Norm Price)"], ascending=[False, True])
-            st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-
-with tab13:
-    st.header("NTD NPX 0.0–0.2 Scanner")
-    st.caption("Scans for NPX in [0.0, 0.2] and **heading up**, split by slope sign.")
-
-    c1, c2 = st.columns(2)
-    npx_up_bars = c1.slider("NPX heading-up confirmation (consecutive bars)", 1, 5, 1, 1, key="npx_02_up_bars")
-    run_npx02 = c2.button("Run NTD NPX 0.0-0.2 Scan", key=f"btn_run_npx02_{mode}")
-
-    if run_npx02:
-        rows_up_slope, rows_dn_slope = [], []
-
-        for sym in universe:
-            m, r2, ts = daily_global_slope(sym, daily_view_label=daily_view)
-            if not np.isfinite(m):
-                continue
-
-            npx_s = daily_npx_series_in_view(sym, daily_view_label=daily_view, ntd_win=ntd_window)
-            npx_s = _coerce_1d_series(npx_s).dropna()
-            if npx_s.empty or len(npx_s) < 2:
-                continue
-
-            npx_last = float(npx_s.iloc[-1]) if np.isfinite(npx_s.iloc[-1]) else np.nan
-            if not np.isfinite(npx_last):
-                continue
-
-            if not (0.0 <= float(npx_last) <= 0.2):
-                continue
-
-            if not _series_heading_up(npx_s, confirm_bars=int(npx_up_bars)):
-                continue
-
-            row = {"Symbol": sym, "Slope": float(m), "R2": float(r2) if np.isfinite(r2) else np.nan, "NPX (Norm Price)": float(npx_last), "AsOf": ts}
-            if float(m) > 0.0:
-                rows_up_slope.append(row)
-            elif float(m) < 0.0:
-                rows_dn_slope.append(row)
-
-        left, right = st.columns(2)
-        with left:
-            st.subheader("List 1 — Slope > 0 and NPX 0.0–0.2 heading up")
-            st.dataframe(pd.DataFrame(rows_up_slope).sort_values(["NPX (Norm Price)", "Slope"], ascending=[True, False]).reset_index(drop=True), use_container_width=True) if rows_up_slope else st.info("No matches.")
-        with right:
-            st.subheader("List 2 — Slope < 0 and NPX 0.0–0.2 heading up")
-            st.dataframe(pd.DataFrame(rows_dn_slope).sort_values(["NPX (Norm Price)", "Slope"], ascending=[True, True]).reset_index(drop=True), use_container_width=True) if rows_dn_slope else st.info("No matches.")
-
-
-with tab14:
-    st.header("Uptrend vs Downtrend")
-    st.caption(
-        "Lists symbols where price reversed from support heading up, split into:\n"
-        "• (a) Uptrend: Slope > 0\n"
-        "• (b) Downtrend: Slope < 0"
-    )
-
-    c1, c2 = st.columns(2)
-    hz_sr = c1.slider("Support-touch lookback window (bars)", 1, 60, int(max(3, rev_horizon)), 1, key="ud_sr_hz")
-    run_ud = c2.button("Run Uptrend vs Downtrend Scan", key=f"btn_run_ud_{mode}")
-
-    if run_ud:
-        rows_uptrend, rows_downtrend = [], []
-
-        for sym in universe:
-            m, r2, ts = daily_global_slope(sym, daily_view_label=daily_view)
-            if not np.isfinite(m):
-                continue
-
-            rev = daily_support_reversal_heading_up(
-                symbol=sym,
-                daily_view_label=daily_view,
-                sr_lb=int(sr_lb_daily),
-                prox=float(sr_prox_pct),
-                bars_confirm=int(rev_bars_confirm),
-                horizon=int(hz_sr),
-            )
-            if rev is None:
-                continue
-
-            row = dict(rev)
-            row["Slope"] = float(m)
-            row["R2"] = float(r2) if np.isfinite(r2) else np.nan
-            row["AsOf"] = ts
-
-            if float(m) > 0.0:
-                rows_uptrend.append(row)
-            elif float(m) < 0.0:
-                rows_downtrend.append(row)
-
-        left, right = st.columns(2)
-        with left:
-            st.subheader("(a) Uptrend — Slope > 0 and Support Reversal heading up")
-            if not rows_uptrend:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(rows_uptrend)
-                out["Bars Since Touch"] = out["Bars Since Touch"].astype(int)
-                out = out.sort_values(["Bars Since Touch", "Slope"], ascending=[True, False])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-        with right:
-            st.subheader("(b) Downtrend — Slope < 0 and Support Reversal heading up")
-            if not rows_downtrend:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(rows_downtrend)
-                out["Bars Since Touch"] = out["Bars Since Touch"].astype(int)
-                out = out.sort_values(["Bars Since Touch", "Slope"], ascending=[True, True])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-
-with tab15:
-    st.header("Ichimoku Kijun Scanner")
-    st.caption(
-        "Daily-only:\n"
-        "• List 1: slope > 0 AND crossed above Kijun (heading up)\n"
-        "• List 2: slope < 0 AND crossed above Kijun (heading up)"
-    )
-
-    c1, c2 = st.columns(2)
-    kijun_within = c1.slider("Cross must be within last N bars", 0, 60, 5, 1, key="kijun_within_n")
-    run_kijun = c2.button("Run Ichimoku Kijun Scan", key=f"btn_run_kijun_scan_{mode}")
-
-    if run_kijun:
-        rows_list1, rows_list2 = [], []
-        for sym in universe:
-            r = last_daily_kijun_cross_up(
-                symbol=sym,
-                daily_view_label=daily_view,
-                slope_lb=int(slope_lb_daily),
-                conv=int(ichi_conv),
-                base=int(ichi_base),
-                span_b=int(ichi_spanb),
-                within_last_n_bars=int(kijun_within),
-            )
-            if r is None:
-                continue
-
-            m = float(r.get("Slope", np.nan))
-            if not np.isfinite(m):
-                continue
-
-            if m > 0.0:
-                rows_list1.append(r)
-            elif m < 0.0:
-                rows_list2.append(r)
-
-        left, right = st.columns(2)
-        with left:
-            st.subheader("List 1 — Slope > 0 and Kijun Cross-Up")
-            if not rows_list1:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(rows_list1)
-                out["Bars Since Cross"] = out["Bars Since Cross"].astype(int)
-                out = out.sort_values(["Bars Since Cross", "Slope"], ascending=[True, False])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-        with right:
-            st.subheader("List 2 — Slope < 0 and Kijun Cross-Up")
-            if not rows_list2:
-                st.info("No matches.")
-            else:
-                out = pd.DataFrame(rows_list2)
-                out["Bars Since Cross"] = out["Bars Since Cross"].astype(int)
-                out = out.sort_values(["Bars Since Cross", "Slope"], ascending=[True, True])
-                st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-
-with tab16:
-    st.header("R² > 45% Daily/Hourly")
-    c1, c2, c3 = st.columns(3)
-    r2_thr = c1.slider("R² threshold", 0.00, 1.00, 0.45, 0.01, key="r2_thr_scan")
-    hour_period_scan = c2.selectbox("Hourly intraday period", ["1d", "2d", "4d"], index=0, key="r2_hour_period")
-    run_r2 = c3.button("Run R² Scan", key=f"btn_run_r2_scan_{mode}")
-
-    if run_r2:
-        daily_rows, hourly_rows = [], []
-        for sym in universe:
-            r2_d, m_d, ts_d = daily_regression_r2(sym, slope_lb=int(slope_lb_daily), daily_view_label=daily_view)
-            if np.isfinite(r2_d) and float(r2_d) > float(r2_thr):
-                daily_rows.append({"Symbol": sym, "R2": float(r2_d), "Slope": float(m_d) if np.isfinite(m_d) else np.nan, "AsOf": ts_d})
-
-            r2_h, m_h, ts_h = hourly_regression_r2(sym, period=str(hour_period_scan), slope_lb=int(slope_lb_hourly))
-            if np.isfinite(r2_h) and float(r2_h) > float(r2_thr):
-                hourly_rows.append({"Symbol": sym, "R2": float(r2_h), "Slope": float(m_h) if np.isfinite(m_h) else np.nan, "AsOf": ts_h, "Period": str(hour_period_scan)})
-
-        left, right = st.columns(2)
-        with left:
-            st.subheader("Daily — R² > threshold")
-            st.dataframe(pd.DataFrame(daily_rows).sort_values(["R2", "Slope"], ascending=[False, False]).reset_index(drop=True), use_container_width=True) if daily_rows else st.info("No matches.")
-        with right:
-            st.subheader(f"Hourly ({hour_period_scan}) — R² > threshold")
-            st.dataframe(pd.DataFrame(hourly_rows).sort_values(["R2", "Slope"], ascending=[False, False]).reset_index(drop=True), use_container_width=True) if hourly_rows else st.info("No matches.")
-
-
-with tab17:
-    st.header("R² < 45% Daily/Hourly")
-    c1, c2, c3 = st.columns(3)
-    r2_thr_lo = c1.slider("R² threshold", 0.00, 1.00, 0.45, 0.01, key="r2_thr_scan_lo")
-    hour_period_lo = c2.selectbox("Hourly intraday period", ["1d", "2d", "4d"], index=0, key="r2_hour_period_lo")
-    run_r2_lo = c3.button("Run R² Low Scan", key=f"btn_run_r2_scan_lo_{mode}")
-
-    if run_r2_lo:
-        daily_rows, hourly_rows = [], []
-        for sym in universe:
-            r2_d, m_d, ts_d = daily_regression_r2(sym, slope_lb=int(slope_lb_daily), daily_view_label=daily_view)
-            if np.isfinite(r2_d) and float(r2_d) < float(r2_thr_lo):
-                daily_rows.append({"Symbol": sym, "R2": float(r2_d), "Slope": float(m_d) if np.isfinite(m_d) else np.nan, "AsOf": ts_d})
-
-            r2_h, m_h, ts_h = hourly_regression_r2(sym, period=str(hour_period_lo), slope_lb=int(slope_lb_hourly))
-            if np.isfinite(r2_h) and float(r2_h) < float(r2_thr_lo):
-                hourly_rows.append({"Symbol": sym, "R2": float(r2_h), "Slope": float(m_h) if np.isfinite(m_h) else np.nan, "AsOf": ts_h, "Period": str(hour_period_lo)})
-
-        left, right = st.columns(2)
-        with left:
-            st.subheader("Daily — R² < threshold")
-            st.dataframe(pd.DataFrame(daily_rows).sort_values(["R2", "Slope"], ascending=[True, True]).reset_index(drop=True), use_container_width=True) if daily_rows else st.info("No matches.")
-        with right:
-            st.subheader(f"Hourly ({hour_period_lo}) — R² < threshold")
-            st.dataframe(pd.DataFrame(hourly_rows).sort_values(["R2", "Slope"], ascending=[True, True]).reset_index(drop=True), use_container_width=True) if hourly_rows else st.info("No matches.")
-
-
-with tab18:
-    st.header("R² Sign ±2σ Proximity (Daily)")
-    st.caption("Four lists based on sign of R² and proximity to ±2σ bands (daily). Uses S/R proximity (%) as 'near' threshold.")
-
-    run_band_scan = st.button("Run R² Sign ±2σ Proximity Scan (Daily)", key=f"btn_run_r2_sign_band_scan_{mode}")
-
-    if run_band_scan:
-        rows_pos_lower, rows_pos_upper = [], []
-        rows_neg_lower, rows_neg_upper = [], []
-
-        for sym in universe:
-            r = daily_r2_band_proximity(symbol=sym, daily_view_label=daily_view, slope_lb=int(slope_lb_daily), prox=float(sr_prox_pct))
-            if r is None:
-                continue
-
-            r2v = r.get("R2", np.nan)
-            if not np.isfinite(r2v):
-                continue
-
-            near_lo = bool(r.get("Near Lower", False))
-            near_up = bool(r.get("Near Upper", False))
-            row = {k: v for k, v in r.items() if k not in ("Near Lower", "Near Upper")}
-
-            if float(r2v) > 0.0:
-                if near_lo:
-                    rows_pos_lower.append(row)
-                if near_up:
-                    rows_pos_upper.append(row)
-            elif float(r2v) < 0.0:
-                if near_lo:
-                    rows_neg_lower.append(row)
-                if near_up:
-                    rows_neg_upper.append(row)
-
-        st.info(f"Near threshold = ±{sr_prox_pct*100:.3f}%")
-
-        r1c1, r1c2 = st.columns(2)
-        with r1c1:
-            st.subheader("R² > 0  •  Near Lower -2σ")
-            st.dataframe(pd.DataFrame(rows_pos_lower).sort_values(["AbsDist Lower (%)", "R2"], ascending=[True, False]).reset_index(drop=True), use_container_width=True) if rows_pos_lower else st.info("No matches.")
-        with r1c2:
-            st.subheader("R² > 0  •  Near Upper +2σ")
-            st.dataframe(pd.DataFrame(rows_pos_upper).sort_values(["AbsDist Upper (%)", "R2"], ascending=[True, False]).reset_index(drop=True), use_container_width=True) if rows_pos_upper else st.info("No matches.")
-
-        r2c1, r2c2 = st.columns(2)
-        with r2c1:
-            st.subheader("R² < 0  •  Near Lower -2σ")
-            st.dataframe(pd.DataFrame(rows_neg_lower).sort_values(["AbsDist Lower (%)", "R2"], ascending=[True, True]).reset_index(drop=True), use_container_width=True) if rows_neg_lower else st.info("No matches.")
-        with r2c2:
-            st.subheader("R² < 0  •  Near Upper +2σ")
-            st.dataframe(pd.DataFrame(rows_neg_upper).sort_values(["AbsDist Upper (%)", "R2"], ascending=[True, True]).reset_index(drop=True), use_container_width=True) if rows_neg_upper else st.info("No matches.")
-
-
-with tab19:
-    st.header("Anchored VWAP (AVWAP) + ADX Regime Gate")
-    st.caption(
-        "• AVWAP anchors: last pivot low (long bias) & last pivot high (short bias)\n"
-        "• Regime gate: TREND when ADX(14) > threshold; else RANGE\n"
-        "• Range mode: BB fade (mean-reversion)\n"
-        "• Trend mode: AVWAP cross + DI confirmation (optional volume confirm)"
-    )
-
-    cA, cB, cC, cD = st.columns(4)
-    sel_av = cA.selectbox("Ticker:", universe, key=f"avwap_ticker_{mode}")
-    tf = cB.radio("Timeframe:", ["Daily", "Hourly"], index=0, key=f"avwap_tf_{mode}")
-    pivot_span = cC.slider("Pivot span (bars)", 2, 15, 5, 1, key=f"avwap_pivot_span_{mode}")
-    adx_thr = cD.slider("ADX(14) threshold", 10.0, 50.0, 22.5, 0.5, key=f"avwap_adx_thr_{mode}")
-
-    cE, cF, cG = st.columns(3)
-    use_vol_confirm = cE.checkbox("Use volume confirmation", value=False, key=f"avwap_use_vol_{mode}")
-    vol_win = cF.slider("Volume MA window", 5, 60, 20, 1, key=f"avwap_vol_win_{mode}")
-    show_vol_panel = cG.checkbox("Show volume panel", value=False, key=f"avwap_show_vol_{mode}")
-
-    hour_range_av = "24h"
-    period_map_av = {"24h": "1d", "48h": "2d", "96h": "4d"}
-    if tf == "Hourly":
-        hour_range_av = st.selectbox("Hourly lookback:", ["24h", "48h", "96h"], index=0, key=f"avwap_hour_range_{mode}")
-
-    run_av = st.button("Run AVWAP + ADX", key=f"btn_run_avwap_{mode}")
-
-    if run_av:
-        if tf == "Daily":
-            ohlcv = fetch_hist_ohlcv(sel_av)
-        else:
-            ohlcv = fetch_intraday(sel_av, period=period_map_av.get(hour_range_av, "1d"), interval="60m")
-
-        if ohlcv is None or ohlcv.empty or not {"High", "Low", "Close"}.issubset(ohlcv.columns):
-            st.warning("No OHLC data available.")
-        else:
-            ohlcv = ohlcv.sort_index()
-
-            t_piv_low = _last_pivot_time(ohlcv, span=int(pivot_span), kind="low")
-            t_piv_high = _last_pivot_time(ohlcv, span=int(pivot_span), kind="high")
-
-            avwap_long = anchored_vwap(ohlcv, t_piv_low, use_typical_price=True)
-            avwap_short = anchored_vwap(ohlcv, t_piv_high, use_typical_price=True)
-
-            adx, pdi, ndi = compute_adx(ohlcv, period=14)
-            adx_last = float(adx.dropna().iloc[-1]) if len(adx.dropna()) else np.nan
-            regime = "TREND" if (np.isfinite(adx_last) and float(adx_last) > float(adx_thr)) else "RANGE"
-
-            close = _coerce_1d_series(ohlcv["Close"]).astype(float)
-
-            vol_ok = pd.Series(False, index=ohlcv.index)
-            vol_ma = pd.Series(index=ohlcv.index, dtype=float)
-            has_vol = ("Volume" in ohlcv.columns) and _has_volume_to_plot(ohlcv["Volume"])
-            if has_vol:
-                vol_ok, vol_ma = volume_confirmation_mask(ohlcv["Volume"], window=int(vol_win), mult=1.0)
-            if not use_vol_confirm:
-                vol_ok = pd.Series(True, index=ohlcv.index)
-
-            trend_buy = pd.Series(False, index=close.index)
-            trend_sell = pd.Series(False, index=close.index)
-
-            if not avwap_long.dropna().empty:
-                above_long = close > avwap_long
-                trend_buy = above_long & (~above_long.shift(1).fillna(False)) & (pdi > ndi) & vol_ok
-
-            if not avwap_short.dropna().empty:
-                below_short = close < avwap_short
-                trend_sell = below_short & (~below_short.shift(1).fillna(False)) & (ndi > pdi) & vol_ok
-
-            t_buy = trend_buy[trend_buy].index[-1] if trend_buy.any() else None
-            t_sell = trend_sell[trend_sell].index[-1] if trend_sell.any() else None
-
-            bb_mid, bb_up, bb_lo, bb_pctb, bb_nbb = compute_bbands(close, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
-            bb_sig = bb_fade_last_signal(close, bb_up, bb_lo)
-
-            st.subheader("Regime Gate")
-            if regime == "TREND":
-                st.success(f"Regime: TREND MODE • ADX(14)={adx_last:.2f} > {adx_thr:.1f}")
-            else:
-                st.info(f"Regime: RANGE MODE • ADX(14)={adx_last:.2f} ≤ {adx_thr:.1f}" if np.isfinite(adx_last) else "Regime: RANGE MODE • ADX(14)=n/a")
-
-            st.subheader("Latest Candidate Signal (Regime-Gated)")
-            if regime == "TREND":
-                last_sig = None
-                if t_buy is None and t_sell is None:
-                    last_sig = None
-                elif t_sell is None or (t_buy is not None and t_buy >= t_sell):
-                    last_sig = {"side": "BUY", "time": t_buy, "price": float(close.loc[t_buy]) if t_buy in close.index else np.nan, "note": "Trend: AVWAP↑ +DI>-DI"}
-                else:
-                    last_sig = {"side": "SELL", "time": t_sell, "price": float(close.loc[t_sell]) if t_sell in close.index else np.nan, "note": "Trend: AVWAP↓ -DI>+DI"}
-
-                if last_sig is None:
-                    st.write("No trend-following candidate found (AVWAP cross + DI + volume gate).")
-                else:
-                    st.write(f"**{last_sig['side']}** @ {fmt_price_val(last_sig['price'])} • {last_sig['time']} • {last_sig['note']}")
-            else:
-                if bb_sig is None:
-                    st.write("No mean-reversion candidate found (BB fade).")
-                else:
-                    st.write(f"**{bb_sig['side']}** @ {fmt_price_val(bb_sig['price'])} • {bb_sig['time']} • {bb_sig['note']}")
-
-            rows = 3 if show_vol_panel else 2
-            heights = [3.0, 1.2, 1.2] if show_vol_panel else [3.2, 1.3]
-            fig, axes = plt.subplots(rows, 1, sharex=True, figsize=(14, 7.5), gridspec_kw={"height_ratios": heights})
-            plt.subplots_adjust(hspace=0.06, top=0.92, right=0.93, bottom=0.28)
-
-            axp = axes[0]
-            axd = axes[1] if rows >= 2 else axes
-
-            axp.set_title(f"{sel_av} — {tf} — AVWAP (Pivot Low/High) + ADX Regime Gate")
-            axp.plot(close.index, close.values, label="Close")
-
-            if not avwap_long.dropna().empty:
-                axp.plot(avwap_long.index, avwap_long.values, linewidth=1.8, label="AVWAP (anchor: pivot LOW)")
-            if not avwap_short.dropna().empty:
-                axp.plot(avwap_short.index, avwap_short.values, linewidth=1.8, label="AVWAP (anchor: pivot HIGH)")
-
-            if show_bbands and not bb_up.dropna().empty and not bb_lo.dropna().empty:
-                axp.fill_between(close.index, bb_lo.reindex(close.index), bb_up.reindex(close.index), alpha=0.06, label=f"BB (×{bb_mult:.1f})")
-                axp.plot(bb_mid.index, bb_mid.values, "-", linewidth=1.1, label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
-                axp.plot(bb_up.index, bb_up.values, ":", linewidth=1.0)
-                axp.plot(bb_lo.index, bb_lo.values, ":", linewidth=1.0)
-
-            try:
-                if t_piv_low is not None and t_piv_low in ohlcv.index:
-                    axp.scatter([t_piv_low], [float(ohlcv.loc[t_piv_low, "Low"])], marker="^", s=90, zorder=8, label="Pivot LOW (anchor)")
-            except Exception:
-                pass
-            try:
-                if t_piv_high is not None and t_piv_high in ohlcv.index:
-                    axp.scatter([t_piv_high], [float(ohlcv.loc[t_piv_high, "High"])], marker="v", s=90, zorder=8, label="Pivot HIGH (anchor)")
-            except Exception:
-                pass
-
-            if regime == "TREND":
-                if t_buy is not None:
-                    annotate_crossover(axp, t_buy, float(close.loc[t_buy]), "BUY", note="AVWAP")
-                if t_sell is not None:
-                    annotate_crossover(axp, t_sell, float(close.loc[t_sell]), "SELL", note="AVWAP")
-            else:
-                if isinstance(bb_sig, dict) and bb_sig.get("time", None) is not None and np.isfinite(bb_sig.get("price", np.nan)):
-                    annotate_crossover(axp, bb_sig["time"], bb_sig["price"], bb_sig["side"], note="BB Fade")
-
-            axp.text(
-                0.99, 0.02,
-                f"Regime: {regime}  |  ADX(14): {adx_last:.2f}  |  Thr: {adx_thr:.1f}",
-                transform=axp.transAxes, ha="right", va="bottom",
-                fontsize=10, fontweight="bold",
-                bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.75)
-            )
-
-            axd.set_title("ADX(14) +DI/-DI")
-            if not adx.dropna().empty:
-                axd.plot(adx.index, adx.values, linewidth=1.6, label="ADX(14)")
-                axd.axhline(float(adx_thr), linestyle="--", linewidth=1.2, label=f"Threshold ({adx_thr:.1f})")
-            if not pdi.dropna().empty:
-                axd.plot(pdi.index, pdi.values, linewidth=1.1, label="+DI")
-            if not ndi.dropna().empty:
-                axd.plot(ndi.index, ndi.values, linewidth=1.1, label="-DI")
-            axd.set_ylim(0, 60)
-
-            if show_vol_panel:
-                axv = axes[2]
-                axv.set_title("Volume (optional)")
-                if has_vol:
-                    v = _coerce_1d_series(ohlcv["Volume"]).astype(float)
-                    axv.plot(v.index, v.values, linewidth=1.0, label="Volume")
-                    if not vol_ma.dropna().empty:
-                        axv.plot(vol_ma.index, vol_ma.values, linewidth=1.2, label=f"Vol MA({int(vol_win)})")
-                else:
-                    axv.text(0.5, 0.5, "No usable volume available.", transform=axv.transAxes, ha="center", va="center", fontsize=10)
-
-            handles, labels = [], []
-            h, l = axp.get_legend_handles_labels(); handles += h; labels += l
-            h, l = axd.get_legend_handles_labels(); handles += h; labels += l
-            if show_vol_panel:
-                h, l = axv.get_legend_handles_labels(); handles += h; labels += l
-
-            seen = set()
-            h_u, l_u = [], []
-            for hh, ll in zip(handles, labels):
-                if not ll or ll in seen:
-                    continue
-                seen.add(ll)
-                h_u.append(hh); l_u.append(ll)
-
-            fig.legend(
-                handles=h_u,
-                labels=l_u,
-                loc="lower center",
-                bbox_to_anchor=(0.5, 0.015),
-                ncol=4,
-                frameon=True,
-                fontsize=9,
-                framealpha=0.65,
-                fancybox=True,
-                borderpad=0.6,
-                handlelength=2.0
-            )
-
-            style_axes(axp)
-            style_axes(axd)
-            if show_vol_panel:
-                style_axes(axv)
-
-            st.pyplot(fig)
-
-
-with tab20:
-    st.header("Regression Cross-Up Scanner (Daily)")
-    st.caption(
-        "Lists symbols that **recently crossed above the daily regression fit line** (view regression).\n"
-        "CrossUp condition: Close[t-1] ≤ Fit[t-1] AND Close[t] > Fit[t]."
-    )
-
-    c1, c2, c3 = st.columns(3)
-    within_n = c1.slider("Cross must be within last N bars", 0, 60, 5, 1, key=f"regcross_within_{mode}")
-    confirm_bars = c2.slider("Confirm heading up (consecutive closes)", 0, 5, 1, 1, key=f"regcross_confirm_{mode}")
-    run_cross = c3.button("Run Regression Cross-Up Scan", key=f"btn_run_regcross_{mode}")
-
-    if run_cross:
-        rows = []
-        for sym in universe:
-            r = last_daily_regression_cross_up(
-                symbol=sym,
-                daily_view_label=daily_view,
-                within_last_n_bars=int(within_n),
-                confirm_bars=int(confirm_bars),
-            )
-            if r is not None:
-                rows.append(r)
-
-        if not rows:
-            st.info("No matches.")
-        else:
-            out = pd.DataFrame(rows)
-            if "Bars Since Cross" in out.columns:
-                out["Bars Since Cross"] = out["Bars Since Cross"].astype(int)
-            out = out.sort_values(["Bars Since Cross", "R2 (view)", "Dist vs Fit (%)"], ascending=[True, False, False])
-            st.dataframe(out.reset_index(drop=True), use_container_width=True)
-
-
-with tab21:
-    st.header("Reversal Candidates (Regression ±2σ Bounce)")
-    st.caption(
-        "Scans for **bounce-back signals** off the regression ±2σ band.\n"
-        "Rules:\n"
-        "• **BUY**: bounced up from **-2σ** AND **local slope > 0** AND **global slope > 0**\n"
-        "• **SELL**: bounced down from **+2σ** AND **local slope < 0** AND **global slope < 0**\n\n"
-        "Daily output includes **Signal Time** (hourly does not)."
-    )
-
-    c1, c2, c3, c4 = st.columns(4)
-    within_daily = c1.selectbox("Daily: within last N bars", [3, 5, 10], index=1, key="rev_within_daily_3510")
-    within_hourly = c2.selectbox("Hourly: within last N bars", [3, 5, 10], index=1, key="rev_within_hourly_3510")
-    hourly_window = c3.selectbox("Hourly scan window", ["24h", "48h", "96h"], index=0, key="rev_hourly_window_244896")
-    sort_mode = c4.selectbox("Sort", ["Distance (desc)", "Distance (asc)", "Bars Since (asc)"], index=0, key="rev_sort_mode")
-
-    period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
-    period_sel = period_map.get(hourly_window, "1d")
-
-    run_rev = st.button("Run Reversal Candidates Scan", key=f"btn_run_reversal_candidates_{mode}")
-
-    if run_rev:
-        # ---- Daily scan ----
-        daily_rows = []
-        for sym in universe:
-            r = reversal_candidate_row_daily(
-                symbol=sym,
-                daily_view_label=daily_view,
-                slope_lb=int(slope_lb_daily),
-                within_last_n_bars=int(within_daily),
-                band_mult_sigma=2.0,
-            )
-            if r is not None:
-                daily_rows.append(r)
-
-        # ---- Hourly scan ----
-        hourly_rows = []
-        for sym in universe:
-            r = reversal_candidate_row_hourly(
-                symbol=sym,
-                period=str(period_sel),
-                slope_lb=int(slope_lb_hourly),
-                within_last_n_bars=int(within_hourly),
-                band_mult_sigma=2.0,
-            )
-            if r is not None:
-                hourly_rows.append(r)
-
-        def _sort_df(df: pd.DataFrame) -> pd.DataFrame:
-            if df is None or df.empty:
-                return df
-            out = df.copy()
-            if "Bars Since" in out.columns:
-                out["Bars Since"] = pd.to_numeric(out["Bars Since"], errors="coerce")
-            if "Distance to regression line" in out.columns:
-                out["Distance to regression line"] = pd.to_numeric(out["Distance to regression line"], errors="coerce")
-            if sort_mode == "Distance (asc)":
-                return out.sort_values(["Distance to regression line", "Bars Since"], ascending=[True, True])
-            if sort_mode == "Bars Since (asc)":
-                return out.sort_values(["Bars Since", "Distance to regression line"], ascending=[True, False])
-            # default: Distance (desc)
-            return out.sort_values(["Distance to regression line", "Bars Since"], ascending=[False, True])
-
-        st.subheader("Daily Candidates")
-        if not daily_rows:
-            st.info("No daily matches.")
-        else:
-            dfD = _sort_df(pd.DataFrame(daily_rows))
-            dfD_buy = dfD[dfD["Side"] == "BUY"].copy()
-            dfD_sell = dfD[dfD["Side"] == "SELL"].copy()
-
-            show_cols_daily = [
-                "Symbol",
-                "Side",
-                "Bars Since",
-                "Signal Time",
-                "Current Slope Price",
-                "Current Regression line price",
-                "Distance to regression line",
-            ]
-
-            left, right = st.columns(2)
-            with left:
-                st.markdown("**Daily BUY**")
-                if dfD_buy.empty:
-                    st.info("No BUY matches.")
-                else:
-                    st.dataframe(dfD_buy[show_cols_daily].reset_index(drop=True), use_container_width=True)
-            with right:
-                st.markdown("**Daily SELL**")
-                if dfD_sell.empty:
-                    st.info("No SELL matches.")
-                else:
-                    st.dataframe(dfD_sell[show_cols_daily].reset_index(drop=True), use_container_width=True)
-
-        st.divider()
-
-        st.subheader(f"Hourly Candidates (60m) — window {hourly_window} ({period_sel})")
-        if not hourly_rows:
-            st.info("No hourly matches.")
-        else:
-            dfH = _sort_df(pd.DataFrame(hourly_rows))
-            dfH_buy = dfH[dfH["Side"] == "BUY"].copy()
-            dfH_sell = dfH[dfH["Side"] == "SELL"].copy()
-
-            show_cols_hourly = [
-                "Symbol",
-                "Side",
-                "Bars Since",
-                "Current Slope Price",
-                "Current Regression line price",
-                "Distance to regression line",
-                "Period",
-            ]
-
-            left, right = st.columns(2)
-            with left:
-                st.markdown("**Hourly BUY**")
-                if dfH_buy.empty:
-                    st.info("No BUY matches.")
-                else:
-                    st.dataframe(dfH_buy[show_cols_hourly].reset_index(drop=True), use_container_width=True)
-            with right:
-                st.markdown("**Hourly SELL**")
-                if dfH_sell.empty:
-                    st.info("No SELL matches.")
-                else:
-                    st.dataframe(dfH_sell[show_cols_hourly].reset_index(drop=True), use_container_width=True)
 # =========================
 # Batch 3/3 — bullbear.py
 # =========================
