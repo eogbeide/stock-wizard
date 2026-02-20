@@ -634,8 +634,7 @@ def compute_sarimax_forecast(series_like):
     ci.index = idx
     pm = fc.predicted_mean
     pm.index = idx
-    return idx, pm, ci
-# bullbear.py — Complete updated Streamlit app (Batch 2/3)
+    return idx, pm, ci# bullbear.py — Complete updated Streamlit app (Batch 2/3)
 # -------------------------------------------------------
 
 # =========================
@@ -1515,6 +1514,47 @@ def last_daily_ntd_zero_cross_up_in_uptrend(symbol: str,
         return None
 
 # =========================
+# NEW: Trend & Slope Align helper (Daily view)  ✅ (requested)
+# =========================
+@st.cache_data(ttl=120)
+def trend_slope_align_row(symbol: str, daily_view_label: str, slope_lb: int):
+    """
+    For the 'Trend and Slope Align' tab:
+
+      Trendline Slope = global trend slope over the chosen daily view (polyfit on close_show).
+      Regression Slope = local regression slope from regression_with_band over the chosen lookback.
+
+    Returns a row with slopes + last price (for sorting/display).
+    """
+    try:
+        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
+        if len(close_show) < 20:
+            return None
+
+        # Trendline (global) over view
+        xg = np.arange(len(close_show), dtype=float)
+        mg, _ = np.polyfit(xg, close_show.to_numpy(dtype=float), 1)
+
+        # Regression slope (local) over lookback (within the view)
+        _, _, _, ml, r2 = regression_with_band(close_show, lookback=min(len(close_show), int(slope_lb)))
+
+        if not (np.isfinite(mg) and np.isfinite(ml)):
+            return None
+
+        last_px = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
+
+        return {
+            "Symbol": symbol,
+            "Trendline Slope": float(mg),
+            "Regression Slope": float(ml),
+            "R2": float(r2) if np.isfinite(r2) else np.nan,
+            "Last Price": last_px,
+        }
+    except Exception:
+        return None
+
+# =========================
 # NEW: Slope Candidates helper (Daily view)
 # =========================
 @st.cache_data(ttl=120)
@@ -1844,7 +1884,7 @@ def ntd_minus05_cross_row_hourly(symbol: str,
         return None
 
 # =========================
-# Chart renderers
+# Chart renderers (start; continues in Batch 3/3)
 # =========================
 def render_daily_chart(symbol: str, daily_view_label: str):
     close_full = fetch_hist(symbol)
@@ -2031,7 +2071,8 @@ def render_daily_chart(symbol: str, daily_view_label: str):
         "fib_buy_mask": buy_mask,
         "fib_sell_mask": sell_mask,
         "last_price": last_px,
-    }
+    }# bullbear.py — Complete updated Streamlit app (Batch 3/3)
+# -------------------------------------------------------
 
 def render_hourly_chart(symbol: str, period: str, hour_range_label: str):
     intraday = fetch_intraday(symbol, period=period)
@@ -2263,8 +2304,6 @@ def render_hourly_chart(symbol: str, period: str, hour_range_label: str):
         "trade_instruction": trade_txt,
         "last_price": px_val,
     }
-# bullbear.py — Complete updated Streamlit app (Batch 3/3)
-# -------------------------------------------------------
 
 # =========================
 # Session state init
@@ -2277,11 +2316,11 @@ if "run_all" not in st.session_state:
     st.session_state.mode_at_run = mode
 
 # =========================
-# Tabs
+# Tabs  ✅ UPDATED: adds new tab "Trend and Slope Align"
 # =========================
 (
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11,
-    tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19, tab20, tab21, tab22
+    tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19, tab20, tab21, tab22, tab23
 ) = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
@@ -2305,6 +2344,7 @@ if "run_all" not in st.session_state:
     "Slope Candidates",
     "Reversal Candidates",
     "NTD -0.5 Cross",
+    "Trend and Slope Align",   # ✅ NEW TAB
 ])
 
 period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
@@ -3124,7 +3164,7 @@ with tab20:
                 st.dataframe(dfs[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 21 — Reversal Candidates (NEW)
+# TAB 21 — Reversal Candidates
 # =========================
 with tab21:
     st.header("Reversal Candidates")
@@ -3212,7 +3252,7 @@ with tab21:
                 st.dataframe(dfs[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 22 — NTD -0.5 Cross (NEW)
+# TAB 22 — NTD -0.5 Cross
 # =========================
 with tab22:
     st.header("NTD -0.5 Cross")
@@ -3267,3 +3307,64 @@ with tab22:
         else:
             df = pd.DataFrame(h_rows).sort_values(["Bars Since", "NTD(last)"], ascending=[True, False])
             st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
+
+# =========================
+# TAB 23 — Trend and Slope Align ✅ NEW (requested)
+# =========================
+with tab23:
+    st.header("Trend and Slope Align")
+    st.caption(
+        "Buy Opportunities: **Trendline > 0 AND Regression Slope > 0**.\n"
+        "Sell Opportunities: **Trendline < 0 AND Regression Slope < 0**.\n\n"
+        "Trendline slope = global slope of the daily view trendline.\n"
+        "Regression slope = local regression slope over the configured daily slope lookback."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    max_rows = c1.slider("Max rows per list", 10, 300, 60, 10, key=f"tsa_rows_{mode}")
+    min_abs_slope = c2.slider("Min |slope| filter (optional)", 0.0, 1.0, 0.0, 0.01, key=f"tsa_minabs_{mode}")
+    run23 = c3.button("Run Trend/Slope Align Scan", key=f"btn_run_tsa_{mode}", use_container_width=True)
+
+    if run23:
+        buys, sells = [], []
+        for sym in universe:
+            r = trend_slope_align_row(sym, daily_view_label=daily_view, slope_lb=slope_lb_daily)
+            if not r:
+                continue
+            tm = float(r.get("Trendline Slope", np.nan))
+            rm = float(r.get("Regression Slope", np.nan))
+            if not (np.isfinite(tm) and np.isfinite(rm)):
+                continue
+            if float(min_abs_slope) > 0.0:
+                if (abs(tm) < float(min_abs_slope)) and (abs(rm) < float(min_abs_slope)):
+                    continue
+
+            if (tm > 0.0) and (rm > 0.0):
+                buys.append(r)
+            elif (tm < 0.0) and (rm < 0.0):
+                sells.append(r)
+
+        show_cols = ["Symbol", "Trendline Slope", "Regression Slope", "R2", "Last Price"]
+
+        cL, cR = st.columns(2)
+        with cL:
+            st.subheader("Buy Opportunities (Trendline > 0 & Regression Slope > 0)")
+            if not buys:
+                st.write("No matches.")
+            else:
+                dfb = pd.DataFrame(buys)
+                # prioritize strongest agreement: larger positive slopes
+                dfb["_score"] = dfb["Trendline Slope"].astype(float) + dfb["Regression Slope"].astype(float)
+                dfb = dfb.sort_values(["_score", "R2"], ascending=[False, False])
+                st.dataframe(dfb[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
+
+        with cR:
+            st.subheader("Sell Opportunities (Trendline < 0 & Regression Slope < 0)")
+            if not sells:
+                st.write("No matches.")
+            else:
+                dfs = pd.DataFrame(sells)
+                # prioritize strongest agreement: more negative slopes
+                dfs["_score"] = dfs["Trendline Slope"].astype(float) + dfs["Regression Slope"].astype(float)
+                dfs = dfs.sort_values(["_score", "R2"], ascending=[True, False])
+                st.dataframe(dfs[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
