@@ -2037,7 +2037,9 @@ def render_daily_chart(symbol: str, daily_view_label: str):
         "fib_buy_mask": buy_mask,
         "fib_sell_mask": sell_mask,
         "last_price": last_px,
-    }# bullbear.py — Complete updated Streamlit app (Batch 3/3)
+    }
+
+# bullbear.py — Complete updated Streamlit app (Batch 3/3)
 # -------------------------------------------------------
 
 def render_hourly_chart(symbol: str, period: str, hour_range_label: str):
@@ -2523,21 +2525,24 @@ with tab4:
             st.pyplot(fig)
 
 # =========================
-# TAB 5 — NTD -0.75 Scanner  ✅ UPDATED (adds regression slope > 0 filter)
+# TAB 5 — NTD -0.75 Scanner  ✅ UPDATED (adds hourly list where global slope > 0)
 # =========================
 with tab5:
     st.header("NTD -0.75 Scanner")
     st.caption(
-        "Shows symbols where Daily NTD (win=60) is below -0.75 AND:\n"
-        "• global trendline slope (daily view) > 0\n"
-        "• regression slope (daily view, lookback = Daily slope lookback) > 0"
+        "Daily list: NTD(last) <= -0.75 AND global trendline slope (daily view) > 0 AND regression slope > 0.\n"
+        "Hourly list: NTD(last) <= -0.75 AND global trendline slope (intraday window) > 0."
     )
 
-    max_rows = st.slider("Max rows", 10, 200, 50, 10, key=f"ntdneg_rows_{mode}")
+    c1, c2 = st.columns(2)
+    max_rows = c1.slider("Max rows", 10, 200, 50, 10, key=f"ntdneg_rows_{mode}")
+    hr_win = c2.selectbox("Hourly scan window", ["24h", "48h", "96h"], index=0, key=f"ntdneg_hrwin_{mode}")
+
     run5 = st.button("Run NTD -0.75 Scan", key=f"btn_run_ntdneg_{mode}", use_container_width=True)
 
     if run5:
-        rows = []
+        # ---------- DAILY ----------
+        daily_rows = []
         for sym in universe:
             s = fetch_hist(sym).dropna()
             if s.empty:
@@ -2547,12 +2552,12 @@ with tab5:
             if len(s_show) < 10:
                 continue
 
-            # ✅ Robust scalar global slope (prevents TypeError from float(tuple/series/etc.))
+            # Robust scalar global slope
             g_slope = _global_slope_1d(s_show)
             if not (np.isfinite(g_slope) and (g_slope > 0.0)):
                 continue
 
-            # ✅ Regression slope over daily view (local)
+            # Regression slope over daily view (local)
             _, _, _, r_slope, r2 = regression_with_band(
                 s_show,
                 lookback=min(len(s_show), int(slope_lb_daily))
@@ -2566,8 +2571,9 @@ with tab5:
 
             last_ntd = float(ntd.iloc[-1])
             if last_ntd <= -0.75:
-                rows.append({
+                daily_rows.append({
                     "Symbol": sym,
+                    "Frame": "Daily",
                     "NTD(last)": last_ntd,
                     "Global Slope": float(g_slope),
                     "Regression Slope": float(r_slope),
@@ -2576,14 +2582,58 @@ with tab5:
                     "AsOf": s_show.index[-1],
                 })
 
-        if not rows:
-            st.info("No matches.")
+        st.subheader("Daily matches")
+        if not daily_rows:
+            st.write("No daily matches.")
         else:
-            df = pd.DataFrame(rows).sort_values(
+            df_d = pd.DataFrame(daily_rows).sort_values(
                 ["NTD(last)", "Regression Slope", "Global Slope"],
                 ascending=[True, False, False]
             )
-            st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
+            st.dataframe(df_d.head(max_rows).reset_index(drop=True), use_container_width=True)
+
+        # ---------- HOURLY (intraday 5m bars over selected window) ----------
+        hourly_rows = []
+        hr_period = period_map.get(hr_win, "1d")
+
+        for sym in universe:
+            df = fetch_intraday(sym, period=hr_period)
+            if df is None or df.empty or "Close" not in df.columns:
+                continue
+
+            hc = _coerce_1d_series(df["Close"]).ffill().dropna()
+            if len(hc) < 10:
+                continue
+
+            g_slope_h = _global_slope_1d(hc)
+            if not (np.isfinite(g_slope_h) and (g_slope_h > 0.0)):
+                continue
+
+            ntd_h = compute_normalized_trend(hc, window=60).dropna()
+            if ntd_h.empty:
+                continue
+
+            last_ntd_h = float(ntd_h.iloc[-1])
+            if last_ntd_h <= -0.75:
+                asof = df.index[-1] if isinstance(df.index, pd.DatetimeIndex) and len(df.index) else None
+                hourly_rows.append({
+                    "Symbol": sym,
+                    "Frame": f"Hourly({hr_win})",
+                    "NTD(last)": last_ntd_h,
+                    "Global Slope": float(g_slope_h),
+                    "Last Price": float(hc.iloc[-1]) if np.isfinite(hc.iloc[-1]) else np.nan,
+                    "AsOf": asof,
+                })
+
+        st.subheader(f"Hourly matches ({hr_win})")
+        if not hourly_rows:
+            st.write("No hourly matches.")
+        else:
+            df_h = pd.DataFrame(hourly_rows).sort_values(
+                ["NTD(last)", "Global Slope"],
+                ascending=[True, False]
+            )
+            st.dataframe(df_h.head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
 # TAB 6 — Long-Term History
@@ -2653,6 +2703,7 @@ with tab7:
         st.subheader(f"Hourly BUY signals ({hours})")
         st.dataframe(df_h.reset_index(drop=True), use_container_width=True) if not df_h.empty else st.write("No matches.")
 
+# (Tabs 8–23 remain unchanged from your provided code.)
 # =========================
 # TAB 8 — NPX 0.5-Cross Scanner
 # =========================
