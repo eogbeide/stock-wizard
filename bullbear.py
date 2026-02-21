@@ -2523,11 +2523,15 @@ with tab4:
             st.pyplot(fig)
 
 # =========================
-# TAB 5 — NTD -0.75 Scanner  ✅ FIXED (global slope computation is always scalar)
+# TAB 5 — NTD -0.75 Scanner  ✅ UPDATED (adds regression slope > 0 filter)
 # =========================
 with tab5:
     st.header("NTD -0.75 Scanner")
-    st.caption("Shows symbols where Daily NTD (win=60) is below -0.75 AND the global trendline slope (daily view) is UP (>0).")
+    st.caption(
+        "Shows symbols where Daily NTD (win=60) is below -0.75 AND:\n"
+        "• global trendline slope (daily view) > 0\n"
+        "• regression slope (daily view, lookback = Daily slope lookback) > 0"
+    )
 
     max_rows = st.slider("Max rows", 10, 200, 50, 10, key=f"ntdneg_rows_{mode}")
     run5 = st.button("Run NTD -0.75 Scan", key=f"btn_run_ntdneg_{mode}", use_container_width=True)
@@ -2543,9 +2547,17 @@ with tab5:
             if len(s_show) < 10:
                 continue
 
-            # ✅ Robust scalar slope (prevents TypeError from float(tuple/series/etc.))
+            # ✅ Robust scalar global slope (prevents TypeError from float(tuple/series/etc.))
             g_slope = _global_slope_1d(s_show)
             if not (np.isfinite(g_slope) and (g_slope > 0.0)):
+                continue
+
+            # ✅ Regression slope over daily view (local)
+            _, _, _, r_slope, r2 = regression_with_band(
+                s_show,
+                lookback=min(len(s_show), int(slope_lb_daily))
+            )
+            if not (np.isfinite(r_slope) and (float(r_slope) > 0.0)):
                 continue
 
             ntd = compute_normalized_trend(s, window=60).reindex(s_show.index).dropna()
@@ -2558,6 +2570,8 @@ with tab5:
                     "Symbol": sym,
                     "NTD(last)": last_ntd,
                     "Global Slope": float(g_slope),
+                    "Regression Slope": float(r_slope),
+                    "R2": float(r2) if np.isfinite(r2) else np.nan,
                     "Last Price": float(s_show.iloc[-1]),
                     "AsOf": s_show.index[-1],
                 })
@@ -2565,7 +2579,10 @@ with tab5:
         if not rows:
             st.info("No matches.")
         else:
-            df = pd.DataFrame(rows).sort_values(["NTD(last)", "Global Slope"], ascending=[True, False])
+            df = pd.DataFrame(rows).sort_values(
+                ["NTD(last)", "Regression Slope", "Global Slope"],
+                ascending=[True, False, False]
+            )
             st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
