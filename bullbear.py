@@ -1446,10 +1446,9 @@ def last_daily_ntd_zero_cross_up_in_uptrend(symbol: str,
                                             ntd_win: int = 60,
                                             confirm_bars: int = 1):
     """
-    NEW tab support:
-      - Daily global trendline slope (in chosen daily view) must be UP
-      - NTD(win=60) crossed UP through 0.0 recently
-      - NTD is heading UP and higher than at cross
+    - Daily global trendline slope (in chosen daily view) must be UP
+    - NTD(win=60) crossed UP through 0.0 recently
+    - NTD is heading UP and higher than at cross
     """
     try:
         close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
@@ -1514,17 +1513,13 @@ def last_daily_ntd_zero_cross_up_in_uptrend(symbol: str,
         return None
 
 # =========================
-# NEW: Trend & Slope Align helper (Daily view)
+# Trend & Slope Align helper (Daily view)
 # =========================
 @st.cache_data(ttl=120)
 def trend_slope_align_row(symbol: str, daily_view_label: str, slope_lb: int):
     """
-    For the 'Trend and Slope Align' tab:
-
-      Trendline Slope = global trend slope over the chosen daily view (polyfit on close_show).
-      Regression Slope = local regression slope from regression_with_band over the chosen lookback.
-
-    Returns a row with slopes + last price (for sorting/display).
+    Trendline Slope = global trend slope over chosen daily view (polyfit on close_show).
+    Regression Slope = local regression slope over lookback within the view.
     """
     try:
         close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
@@ -1532,11 +1527,9 @@ def trend_slope_align_row(symbol: str, daily_view_label: str, slope_lb: int):
         if len(close_show) < 20:
             return None
 
-        # Trendline (global) over view
         xg = np.arange(len(close_show), dtype=float)
         mg, _ = np.polyfit(xg, close_show.to_numpy(dtype=float), 1)
 
-        # Regression slope (local) over lookback (within the view)
         _, _, _, ml, r2 = regression_with_band(close_show, lookback=min(len(close_show), int(slope_lb)))
 
         if not (np.isfinite(mg) and np.isfinite(ml)):
@@ -1555,17 +1548,10 @@ def trend_slope_align_row(symbol: str, daily_view_label: str, slope_lb: int):
         return None
 
 # =========================
-# NEW: Slope Candidates helper (Daily view)
+# Slope Candidates helper (Daily view)
 # =========================
 @st.cache_data(ttl=120)
 def slope_candidate_row(symbol: str, daily_view_label: str, slope_lb: int):
-    """
-    Computes:
-      - local regression slope (m) over min(len(view), slope_lb)
-      - current price vs current regression line price
-      - distance to regression line (absolute, in price units)
-    Used by the 'Slope Candidates' tab.
-    """
     try:
         s = _coerce_1d_series(fetch_hist(symbol)).dropna()
         s_show = _coerce_1d_series(subset_by_daily_view(s, daily_view_label)).dropna()
@@ -1598,7 +1584,7 @@ def slope_candidate_row(symbol: str, daily_view_label: str, slope_lb: int):
         return None
 
 # =========================
-# NEW: Reversal Candidates + NTD -0.5 Cross scanners
+# Reversal Candidates + NTD -0.5 Cross scanners
 # =========================
 def _global_slope_1d(series_like) -> float:
     s = _coerce_1d_series(series_like).dropna()
@@ -1627,12 +1613,6 @@ def reversal_candidate_row_daily(symbol: str,
                                  daily_view_label: str,
                                  slope_lb: int,
                                  max_bars_since: int = 5):
-    """
-    Buy: bounced up from -2σ (inside after being below), local slope > 0, global slope > 0.
-    Sell: bounced down from +2σ (inside after being above), local slope < 0, global slope < 0.
-
-    Output row includes requested columns + meta for filtering/sorting.
-    """
     try:
         close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
         close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
@@ -1661,7 +1641,6 @@ def reversal_candidate_row_daily(symbol: str,
             return None
 
         side = str(sig.get("side", "")).upper()
-
         is_buy = (side == "BUY") and (float(local_m) > 0.0) and (float(global_m) > 0.0)
         is_sell = (side == "SELL") and (float(local_m) < 0.0) and (float(global_m) < 0.0)
         if not (is_buy or is_sell):
@@ -1694,10 +1673,6 @@ def reversal_candidate_row_hourly(symbol: str,
                                   period: str,
                                   slope_lb: int,
                                   max_bars_since: int = 10):
-    """
-    Same logic as daily but on intraday 5m bars.
-    Uses RangeIndex series for regression; returns real timestamp when available.
-    """
     try:
         df = fetch_intraday(symbol, period=period)
         if df is None or df.empty or "Close" not in df.columns:
@@ -1713,7 +1688,7 @@ def reversal_candidate_row_hourly(symbol: str,
         global_m = _global_slope_1d(hc)
         yhat, up, lo, local_m, r2 = regression_with_band(hc, lookback=min(len(hc), int(slope_lb)), z=2.0)
 
-        if yhat.dropna().empty or not (np.isfinite(local_m) and np.isfinite(global_m)):
+        if _coerce_1d_series(yhat).dropna().empty or not (np.isfinite(local_m) and np.isfinite(global_m)):
             return None
 
         sig = find_band_bounce_signal(hc, up, lo, local_m)
@@ -1732,7 +1707,6 @@ def reversal_candidate_row_hourly(symbol: str,
             return None
 
         side = str(sig.get("side", "")).upper()
-
         is_buy = (side == "BUY") and (float(local_m) > 0.0) and (float(global_m) > 0.0)
         is_sell = (side == "SELL") and (float(local_m) < 0.0) and (float(global_m) < 0.0)
         if not (is_buy or is_sell):
@@ -1765,9 +1739,7 @@ def reversal_candidate_row_hourly(symbol: str,
         return None
 
 def _ntd_minus05_cross_up_mask(ntd: pd.Series) -> pd.Series:
-    """
-    Cross up through -0.5 into [-0.5, -0.4], upward.
-    """
+    """Cross up through -0.5 into [-0.5, -0.4], upward."""
     s = _coerce_1d_series(ntd)
     prev = s.shift(1)
     return ((s >= -0.5) & (s <= -0.4) & (prev < -0.5) & (s > prev)).fillna(False)
@@ -1778,16 +1750,13 @@ def ntd_minus05_cross_row_daily(symbol: str,
                                slope_lb: int,
                                ntd_win: int = 60,
                                max_bars_since: int = 5):
-    """
-    Daily: regression slope (local) > 0 and NTD recently crossed up into [-0.5,-0.4].
-    """
     try:
         close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
         close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
         if len(close_show) < 30:
             return None
 
-        yhat, _, _, m, r2 = regression_with_band(close_show, lookback=min(len(close_show), int(slope_lb)), z=2.0)
+        _, _, _, m, r2 = regression_with_band(close_show, lookback=min(len(close_show), int(slope_lb)), z=2.0)
         if not (np.isfinite(m) and float(m) > 0.0):
             return None
 
@@ -1829,9 +1798,6 @@ def ntd_minus05_cross_row_hourly(symbol: str,
                                 slope_lb: int,
                                 ntd_win: int = 60,
                                 max_bars_since: int = 10):
-    """
-    Hourly(5m bars): regression slope (local) > 0 and NTD recently crossed up into [-0.5,-0.4].
-    """
     try:
         df = fetch_intraday(symbol, period=period)
         if df is None or df.empty or "Close" not in df.columns:
@@ -1844,7 +1810,7 @@ def ntd_minus05_cross_row_hourly(symbol: str,
         if len(hc) < 60:
             return None
 
-        yhat, _, _, m, r2 = regression_with_band(hc, lookback=min(len(hc), int(slope_lb)), z=2.0)
+        _, _, _, m, r2 = regression_with_band(hc, lookback=min(len(hc), int(slope_lb)), z=2.0)
         if not (np.isfinite(m) and float(m) > 0.0):
             return None
 
@@ -1884,7 +1850,7 @@ def ntd_minus05_cross_row_hourly(symbol: str,
         return None
 
 # =========================
-# Chart renderers (start; continues in Batch 3/3)
+# Chart renderers
 # =========================
 def render_daily_chart(symbol: str, daily_view_label: str):
     close_full = fetch_hist(symbol)
@@ -2316,7 +2282,7 @@ if "run_all" not in st.session_state:
     st.session_state.mode_at_run = mode
 
 # =========================
-# Tabs  ✅ UPDATED: adds new tab "Trend and Slope Align"
+# Tabs
 # =========================
 (
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11,
@@ -2344,7 +2310,7 @@ if "run_all" not in st.session_state:
     "Slope Candidates",
     "Reversal Candidates",
     "NTD -0.5 Cross",
-    "Trend and Slope Align",   # ✅ NEW TAB
+    "Trend and Slope Align",
 ])
 
 period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
@@ -2557,14 +2523,11 @@ with tab4:
             st.pyplot(fig)
 
 # =========================
-# TAB 5 — NTD -0.75 Scanner  ✅ UPDATED (filter requires global trendline > 0)
+# TAB 5 — NTD -0.75 Scanner  ✅ FIXED (global slope computation is always scalar)
 # =========================
 with tab5:
     st.header("NTD -0.75 Scanner")
-    st.caption(
-        "Shows symbols where Daily NTD (win=60) is below -0.75 (oversold / strong down normalized trend) "
-        "**AND** the daily-view global trendline slope is **upward (> 0)**."
-    )
+    st.caption("Shows symbols where Daily NTD (win=60) is below -0.75 AND the global trendline slope (daily view) is UP (>0).")
 
     max_rows = st.slider("Max rows", 10, 200, 50, 10, key=f"ntdneg_rows_{mode}")
     run5 = st.button("Run NTD -0.75 Scan", key=f"btn_run_ntdneg_{mode}", use_container_width=True)
@@ -2575,17 +2538,14 @@ with tab5:
             s = fetch_hist(sym).dropna()
             if s.empty:
                 continue
+
             s_show = subset_by_daily_view(s, daily_view).dropna()
-            if len(s_show) < 3:
+            if len(s_show) < 10:
                 continue
 
-            # ✅ Global trendline slope over the selected daily view (must be > 0)
-            x = np.arange(len(s_show), dtype=float)
-            try:
-                g_slope, _ = np.polyfit(x, s_show.to_numpy(dtype=float), 1)
-            except Exception:
-                continue
-            if not (np.isfinite(g_slope) and float(g_slope) > 0.0):
+            # ✅ Robust scalar slope (prevents TypeError from float(tuple/series/etc.))
+            g_slope = _global_slope_1d(s_show)
+            if not (np.isfinite(g_slope) and (g_slope > 0.0)):
                 continue
 
             ntd = compute_normalized_trend(s, window=60).reindex(s_show.index).dropna()
@@ -2597,13 +2557,15 @@ with tab5:
                 rows.append({
                     "Symbol": sym,
                     "NTD(last)": last_ntd,
+                    "Global Slope": float(g_slope),
                     "Last Price": float(s_show.iloc[-1]),
                     "AsOf": s_show.index[-1],
                 })
+
         if not rows:
             st.info("No matches.")
         else:
-            df = pd.DataFrame(rows).sort_values("NTD(last)")
+            df = pd.DataFrame(rows).sort_values(["NTD(last)", "Global Slope"], ascending=[True, False])
             st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
@@ -3325,7 +3287,7 @@ with tab22:
             st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 23 — Trend and Slope Align ✅ NEW
+# TAB 23 — Trend and Slope Align
 # =========================
 with tab23:
     st.header("Trend and Slope Align")
