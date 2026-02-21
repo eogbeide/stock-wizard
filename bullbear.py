@@ -1514,7 +1514,7 @@ def last_daily_ntd_zero_cross_up_in_uptrend(symbol: str,
         return None
 
 # =========================
-# NEW: Trend & Slope Align helper (Daily view)  ✅ (requested)
+# NEW: Trend & Slope Align helper (Daily view)
 # =========================
 @st.cache_data(ttl=120)
 def trend_slope_align_row(symbol: str, daily_view_label: str, slope_lb: int):
@@ -2557,11 +2557,14 @@ with tab4:
             st.pyplot(fig)
 
 # =========================
-# TAB 5 — NTD -0.75 Scanner
+# TAB 5 — NTD -0.75 Scanner  ✅ UPDATED (filter requires global trendline > 0)
 # =========================
 with tab5:
     st.header("NTD -0.75 Scanner")
-    st.caption("Shows symbols where Daily NTD (win=60) is below -0.75 (oversold / strong down normalized trend).")
+    st.caption(
+        "Shows symbols where Daily NTD (win=60) is below -0.75 (oversold / strong down normalized trend) "
+        "**AND** the daily-view global trendline slope is **upward (> 0)**."
+    )
 
     max_rows = st.slider("Max rows", 10, 200, 50, 10, key=f"ntdneg_rows_{mode}")
     run5 = st.button("Run NTD -0.75 Scan", key=f"btn_run_ntdneg_{mode}", use_container_width=True)
@@ -2573,9 +2576,22 @@ with tab5:
             if s.empty:
                 continue
             s_show = subset_by_daily_view(s, daily_view).dropna()
+            if len(s_show) < 3:
+                continue
+
+            # ✅ Global trendline slope over the selected daily view (must be > 0)
+            x = np.arange(len(s_show), dtype=float)
+            try:
+                g_slope, _ = np.polyfit(x, s_show.to_numpy(dtype=float), 1)
+            except Exception:
+                continue
+            if not (np.isfinite(g_slope) and float(g_slope) > 0.0):
+                continue
+
             ntd = compute_normalized_trend(s, window=60).reindex(s_show.index).dropna()
             if ntd.empty:
                 continue
+
             last_ntd = float(ntd.iloc[-1])
             if last_ntd <= -0.75:
                 rows.append({
@@ -3309,7 +3325,7 @@ with tab22:
             st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 23 — Trend and Slope Align ✅ NEW (requested)
+# TAB 23 — Trend and Slope Align ✅ NEW
 # =========================
 with tab23:
     st.header("Trend and Slope Align")
@@ -3353,7 +3369,6 @@ with tab23:
                 st.write("No matches.")
             else:
                 dfb = pd.DataFrame(buys)
-                # prioritize strongest agreement: larger positive slopes
                 dfb["_score"] = dfb["Trendline Slope"].astype(float) + dfb["Regression Slope"].astype(float)
                 dfb = dfb.sort_values(["_score", "R2"], ascending=[False, False])
                 st.dataframe(dfb[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
@@ -3364,7 +3379,6 @@ with tab23:
                 st.write("No matches.")
             else:
                 dfs = pd.DataFrame(sells)
-                # prioritize strongest agreement: more negative slopes
                 dfs["_score"] = dfs["Trendline Slope"].astype(float) + dfs["Regression Slope"].astype(float)
                 dfs = dfs.sort_values(["_score", "R2"], ascending=[True, False])
                 st.dataframe(dfs[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
