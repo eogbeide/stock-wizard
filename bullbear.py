@@ -3356,28 +3356,27 @@ with tab22:
             st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 23 — Trend and Slope Align  ✅ UPDATED (split buys by proximity to -2σ)
+# TAB 23 — Trend and Slope Align  ✅ UPDATED (adds NPX↔NTD recent cross filter/list)
 # =========================
 with tab23:
     st.header("Trend and Slope Align")
     st.caption(
         "Buy Opportunities: **Trendline > 0 AND Regression Slope > 0**.\n"
         "Sell Opportunities: **Trendline < 0 AND Regression Slope < 0**.\n\n"
-        "Buy list is further split into:\n"
-        "• **Near -2σ** (price close to the lower 2σ band)\n"
-        "• **Not near -2σ**\n\n"
+        "Also shows a focused Buy list where **NPX (Norm Price) recently crossed the NTD line**.\n\n"
         "Trendline slope = global slope of the daily view trendline.\n"
-        "Regression slope = local regression slope over the configured daily slope lookback."
+        "Regression slope = local regression slope over the configured daily slope lookback.\n"
+        "NPX↔NTD cross = NPX crosses above/below NTD on the NTD panel scale."
     )
 
     c1, c2, c3, c4 = st.columns(4)
     max_rows = c1.slider("Max rows per list", 10, 300, 60, 10, key=f"tsa_rows_{mode}")
     min_abs_slope = c2.slider("Min |slope| filter (optional)", 0.0, 1.0, 0.0, 0.01, key=f"tsa_minabs_{mode}")
-    near_lo_pct = c3.slider("Near -2σ threshold (% of price)", 0.05, 2.0, 0.25, 0.05, key=f"tsa_nearlo_{mode}") / 100.0
+    max_cross_bars = c3.slider("Max bars since NPX↔NTD cross", 0, 60, 5, 1, key=f"tsa_cross_bars_{mode}")
     run23 = c4.button("Run Trend/Slope Align Scan", key=f"btn_run_tsa_{mode}", use_container_width=True)
 
     if run23:
-        buys, sells = [], []
+        buys, sells, buys_cross = [], [], []
 
         for sym in universe:
             r = trend_slope_align_row(sym, daily_view_label=daily_view, slope_lb=slope_lb_daily)
@@ -3393,68 +3392,80 @@ with tab23:
                 if (abs(tm) < float(min_abs_slope)) and (abs(rm) < float(min_abs_slope)):
                     continue
 
-            # BUY side: also compute proximity to lower -2σ band (daily view)
+            # BUY / SELL classification (existing behavior)
             if (tm > 0.0) and (rm > 0.0):
-                try:
-                    s = fetch_hist(sym).dropna()
-                    s_show = subset_by_daily_view(s, daily_view).dropna()
-                    if len(s_show) >= 20:
-                        _, _, lo, _, _ = regression_with_band(s_show, lookback=min(len(s_show), int(slope_lb_daily)), z=2.0)
-                        last_px = float(s_show.iloc[-1]) if np.isfinite(s_show.iloc[-1]) else np.nan
-                        lo2 = float(lo.iloc[-1]) if (lo is not None and len(_coerce_1d_series(lo).dropna())) else np.nan
-                        d_lo = abs(last_px - lo2) / last_px if (np.isfinite(last_px) and last_px != 0 and np.isfinite(lo2)) else np.nan
-                        r["Last Price"] = last_px
-                        r["Lower -2σ"] = lo2
-                        r["DistTo-2σ%"] = d_lo
-                        r["Near -2σ"] = bool(np.isfinite(d_lo) and (d_lo <= float(near_lo_pct)))
-                    else:
-                        r["Lower -2σ"] = np.nan
-                        r["DistTo-2σ%"] = np.nan
-                        r["Near -2σ"] = False
-                except Exception:
-                    r["Lower -2σ"] = np.nan
-                    r["DistTo-2σ%"] = np.nan
-                    r["Near -2σ"] = False
-
                 buys.append(r)
-
-            # SELL side unchanged
             elif (tm < 0.0) and (rm < 0.0):
                 sells.append(r)
 
-        # ---------- BUY tables (split) ----------
-        show_cols_buy = ["Symbol", "Trendline Slope", "Regression Slope", "R2", "Last Price", "Lower -2σ", "DistTo-2σ%"]
+            # NEW: Buy + NPX recently crossed NTD
+            if (tm > 0.0) and (rm > 0.0):
+                try:
+                    close_full = _coerce_1d_series(fetch_hist(sym)).dropna()
+                    close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view)).dropna()
+                    if len(close_show) < 20:
+                        continue
 
-        st.subheader("Buy Opportunities (Trendline > 0 & Regression Slope > 0)")
-        if not buys:
-            st.write("No matches.")
-        else:
-            dfb = pd.DataFrame(buys)
-            dfb["_score"] = dfb["Trendline Slope"].astype(float) + dfb["Regression Slope"].astype(float)
+                    ntd = compute_normalized_trend(close_full, window=int(ntd_window)).reindex(close_show.index)
+                    npx = compute_normalized_price(close_full, window=int(ntd_window)).reindex(close_show.index)
+                    ntd = _coerce_1d_series(ntd)
+                    npx = _coerce_1d_series(npx)
 
-            df_near = dfb[dfb.get("Near -2σ", False) == True].copy()
-            df_other = dfb[dfb.get("Near -2σ", False) != True].copy()
+                    ok = ntd.notna() & npx.notna()
+                    if ok.sum() < 2:
+                        continue
+                    ntd = ntd[ok]
+                    npx = npx[ok]
 
-            cL, cR = st.columns(2)
-            with cL:
-                st.subheader("A) Near -2σ (lower band)")
-                if df_near.empty:
-                    st.write("No matches.")
-                else:
-                    df_near = df_near.sort_values(["_score", "R2", "DistTo-2σ%"], ascending=[False, False, True])
-                    st.dataframe(df_near[show_cols_buy].head(max_rows).reset_index(drop=True), use_container_width=True)
+                    up_mask, dn_mask = _cross_series(npx, ntd)
+                    cross_mask = (up_mask | dn_mask).reindex(ntd.index, fill_value=False)
+                    if not cross_mask.any():
+                        continue
 
-            with cR:
-                st.subheader("B) Not near -2σ")
-                if df_other.empty:
-                    st.write("No matches.")
-                else:
-                    df_other = df_other.sort_values(["_score", "R2"], ascending=[False, False])
-                    st.dataframe(df_other[show_cols_buy].head(max_rows).reset_index(drop=True), use_container_width=True)
+                    t_cross = cross_mask[cross_mask].index[-1]
+                    bars_since = int((len(ntd) - 1) - int(ntd.index.get_loc(t_cross)))
+                    if bars_since > int(max_cross_bars):
+                        continue
+
+                    r2 = r.copy()
+                    r2["NPX↔NTD Cross Time"] = t_cross
+                    r2["Bars Since Cross"] = int(bars_since)
+                    r2["NPX(last)"] = float(npx.iloc[-1]) if np.isfinite(npx.iloc[-1]) else np.nan
+                    r2["NTD(last)"] = float(ntd.iloc[-1]) if np.isfinite(ntd.iloc[-1]) else np.nan
+                    r2["Cross Dir"] = "Up" if bool(up_mask.reindex(ntd.index, fill_value=False).loc[t_cross]) else "Down"
+                    buys_cross.append(r2)
+                except Exception:
+                    pass
+
+        # ---------- BUY tables ----------
+        show_cols_buy = ["Symbol", "Trendline Slope", "Regression Slope", "R2", "Last Price"]
+
+        cL, cR = st.columns(2)
+        with cL:
+            st.subheader("Buy Opportunities (Trendline > 0 & Regression Slope > 0)")
+            if not buys:
+                st.write("No matches.")
+            else:
+                dfb = pd.DataFrame(buys)
+                dfb["_score"] = dfb["Trendline Slope"].astype(float) + dfb["Regression Slope"].astype(float)
+                dfb = dfb.sort_values(["_score", "R2"], ascending=[False, False])
+                st.dataframe(dfb[show_cols_buy].head(max_rows).reset_index(drop=True), use_container_width=True)
+
+        with cR:
+            st.subheader("Buy + NPX recently crossed NTD")
+            if not buys_cross:
+                st.write("No matches.")
+            else:
+                dfc = pd.DataFrame(buys_cross)
+                dfc["_score"] = dfc["Trendline Slope"].astype(float) + dfc["Regression Slope"].astype(float)
+                show_cols_cross = [
+                    "Symbol", "Trendline Slope", "Regression Slope", "R2", "Last Price",
+                    "Bars Since Cross", "Cross Dir", "NPX(last)", "NTD(last)", "NPX↔NTD Cross Time"
+                ]
+                dfc = dfc.sort_values(["Bars Since Cross", "_score", "R2"], ascending=[True, False, False])
+                st.dataframe(dfc[show_cols_cross].head(max_rows).reset_index(drop=True), use_container_width=True)
 
         # ---------- SELL table ----------
-        show_cols_sell = ["Symbol", "Trendline Slope", "Regression Slope", "R2", "Last Price"]
-
         st.subheader("Sell Opportunities (Trendline < 0 & Regression Slope < 0)")
         if not sells:
             st.write("No matches.")
@@ -3462,4 +3473,4 @@ with tab23:
             dfs = pd.DataFrame(sells)
             dfs["_score"] = dfs["Trendline Slope"].astype(float) + dfs["Regression Slope"].astype(float)
             dfs = dfs.sort_values(["_score", "R2"], ascending=[True, False])
-            st.dataframe(dfs[show_cols_sell].head(max_rows).reset_index(drop=True), use_container_width=True)
+            st.dataframe(dfs[show_cols_buy].head(max_rows).reset_index(drop=True), use_container_width=True)
