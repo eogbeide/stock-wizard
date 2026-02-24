@@ -3356,26 +3356,24 @@ with tab22:
             st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 23 — Trend and Slope Align  ✅ UPDATED (Up-cross only + hold-confirm bars)
+# TAB 23 — Trend and Slope Align  ✅ UPDATED (adds NPX↔NTD recent cross filter/list)
 # =========================
 with tab23:
     st.header("Trend and Slope Align")
     st.caption(
         "Buy Opportunities: **Trendline > 0 AND Regression Slope > 0**.\n"
         "Sell Opportunities: **Trendline < 0 AND Regression Slope < 0**.\n\n"
-        "Focused Buy list: **Trendline > 0 AND Regression Slope > 0 AND NPX recently crossed UP above NTD**\n"
-        "with **hold confirmation**: NPX stays **above** NTD for the last **K** bars.\n\n"
+        "Also shows a focused Buy list where **NPX (Norm Price) recently crossed the NTD line**.\n\n"
         "Trendline slope = global slope of the daily view trendline.\n"
         "Regression slope = local regression slope over the configured daily slope lookback.\n"
         "NPX↔NTD cross = NPX crosses above/below NTD on the NTD panel scale."
     )
 
-    c1, c2, c3, c4, c5 = st.columns(5)
+    c1, c2, c3, c4 = st.columns(4)
     max_rows = c1.slider("Max rows per list", 10, 300, 60, 10, key=f"tsa_rows_{mode}")
     min_abs_slope = c2.slider("Min |slope| filter (optional)", 0.0, 1.0, 0.0, 0.01, key=f"tsa_minabs_{mode}")
-    max_cross_bars = c3.slider("Max bars since NPX↑NTD cross", 0, 60, 5, 1, key=f"tsa_cross_bars_{mode}")
-    hold_k = c4.slider("Hold confirm bars (NPX > NTD)", 1, 10, 2, 1, key=f"tsa_cross_holdk_{mode}")
-    run23 = c5.button("Run Trend/Slope Align Scan", key=f"btn_run_tsa_{mode}", use_container_width=True)
+    max_cross_bars = c3.slider("Max bars since NPX↔NTD cross", 0, 60, 5, 1, key=f"tsa_cross_bars_{mode}")
+    run23 = c4.button("Run Trend/Slope Align Scan", key=f"btn_run_tsa_{mode}", use_container_width=True)
 
     if run23:
         buys, sells, buys_cross = [], [], []
@@ -3394,13 +3392,13 @@ with tab23:
                 if (abs(tm) < float(min_abs_slope)) and (abs(rm) < float(min_abs_slope)):
                     continue
 
-            # BUY / SELL classification (unchanged)
+            # BUY / SELL classification (existing behavior)
             if (tm > 0.0) and (rm > 0.0):
                 buys.append(r)
             elif (tm < 0.0) and (rm < 0.0):
                 sells.append(r)
 
-            # NEW: Buy + NPX recently crossed UP above NTD + hold confirm
+            # NEW: Buy + NPX recently crossed NTD
             if (tm > 0.0) and (rm > 0.0):
                 try:
                     close_full = _coerce_1d_series(fetch_hist(sym)).dropna()
@@ -3420,41 +3418,21 @@ with tab23:
                     npx = npx[ok]
 
                     up_mask, dn_mask = _cross_series(npx, ntd)
-                    up_mask = up_mask.reindex(ntd.index, fill_value=False)
-                    dn_mask = dn_mask.reindex(ntd.index, fill_value=False)
-
-                    # Only accept if the *latest* cross event is an UP cross (NPX crosses above NTD)
-                    last_up = up_mask[up_mask].index[-1] if up_mask.any() else None
-                    if last_up is None:
-                        continue
-                    last_dn = dn_mask[dn_mask].index[-1] if dn_mask.any() else None
-                    if (last_dn is not None) and (last_dn >= last_up):
+                    cross_mask = (up_mask | dn_mask).reindex(ntd.index, fill_value=False)
+                    if not cross_mask.any():
                         continue
 
-                    t_cross = last_up
+                    t_cross = cross_mask[cross_mask].index[-1]
                     bars_since = int((len(ntd) - 1) - int(ntd.index.get_loc(t_cross)))
                     if bars_since > int(max_cross_bars):
                         continue
 
-                    # Hold confirmation: NPX must be above NTD for last K bars,
-                    # and enough bars must exist since the cross to validate K-bar hold.
-                    above = (npx > ntd).reindex(ntd.index, fill_value=False)
-                    if not bool(above.iloc[-1]):
-                        continue
-                    k = int(max(1, hold_k))
-                    if len(above) < k:
-                        continue
-                    if not bool(np.all(above.iloc[-k:].to_numpy(dtype=bool))):
-                        continue
-                    if bars_since < (k - 1):
-                        continue
-
                     r2 = r.copy()
-                    r2["NPX↑NTD Cross Time"] = t_cross
+                    r2["NPX↔NTD Cross Time"] = t_cross
                     r2["Bars Since Cross"] = int(bars_since)
-                    r2["Hold K"] = int(k)
                     r2["NPX(last)"] = float(npx.iloc[-1]) if np.isfinite(npx.iloc[-1]) else np.nan
                     r2["NTD(last)"] = float(ntd.iloc[-1]) if np.isfinite(ntd.iloc[-1]) else np.nan
+                    r2["Cross Dir"] = "Up" if bool(up_mask.reindex(ntd.index, fill_value=False).loc[t_cross]) else "Down"
                     buys_cross.append(r2)
                 except Exception:
                     pass
@@ -3474,7 +3452,7 @@ with tab23:
                 st.dataframe(dfb[show_cols_buy].head(max_rows).reset_index(drop=True), use_container_width=True)
 
         with cR:
-            st.subheader("Buy + NPX↑NTD recent cross (hold-confirmed)")
+            st.subheader("Buy + NPX recently crossed NTD")
             if not buys_cross:
                 st.write("No matches.")
             else:
@@ -3482,7 +3460,7 @@ with tab23:
                 dfc["_score"] = dfc["Trendline Slope"].astype(float) + dfc["Regression Slope"].astype(float)
                 show_cols_cross = [
                     "Symbol", "Trendline Slope", "Regression Slope", "R2", "Last Price",
-                    "Bars Since Cross", "Hold K", "NPX(last)", "NTD(last)", "NPX↑NTD Cross Time"
+                    "Bars Since Cross", "Cross Dir", "NPX(last)", "NTD(last)", "NPX↔NTD Cross Time"
                 ]
                 dfc = dfc.sort_values(["Bars Since Cross", "_score", "R2"], ascending=[True, False, False])
                 st.dataframe(dfc[show_cols_cross].head(max_rows).reset_index(drop=True), use_container_width=True)
