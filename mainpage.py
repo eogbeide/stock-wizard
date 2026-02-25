@@ -52,6 +52,9 @@ today = datetime.datetime.now().date()
 st.write(f"Last updated: {today}")
 
 # Create buttons to navigate to the external apps
+if st.button("Go to MCAT High Yield Concept"):
+    st.markdown("[Open MCAT High Yield Concept](https://mcathighyield.streamlit.app//)", unsafe_allow_html=True)
+    
 if st.button("Go to MCAT Content Reviews Made Easy"):
     st.markdown("[Open MCAT Content Reviews Made Easy](https://easymcat.streamlit.app/)", unsafe_allow_html=True)
 
