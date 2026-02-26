@@ -5,19 +5,20 @@
 # Only the latest signal is shown at any time.
 # CHANGELOG:
 #   • All downward trend lines are red (upward = green) throughout.
-#   • Instruction text is TREND-AWARE:
-#       Uptrend   → "▲ BUY → ▼ SELL • Value of Pips: …"
-#       Downtrend → "▼ SELL → ▲ BUY • Value of Pips: …"
+#   • TREND-AWARE instruction banner at the very top (outside the plot).
 #   • Removed Momentum & NTD/NPX charts (scanner tab remains).
-#   • HMA(55) signal logic kept (no outside TP label).
+#   • HMA line can be plotted; HMA BUY/SELL signal callouts removed.
+#   • ★ Star marker for recent peak/trough reversals (trend-aware).
+#     - Peak REV: star + small label near the point + TOP BADGE.
+#     - Trough REV: star only in chart (no label) + TOP BADGE.
+#   • NEW: Buy Band REV shows an ▲ triangle marker INSIDE the chart
+#           and also a compact top badge; SELL Band REV remains an outside callout.
 #   • Fibonacci default = ON (hourly only).
 #   • Fixed SARIMAX crash when history is empty/too short.
-#   • Fixed NameError: included Supertrend/PSAR/Ichimoku/BB helpers.
+#   • Included Supertrend/PSAR/Ichimoku/BB helpers.
 #   • Fixed hourly ValueError by robust linear fit fallback.
-#   • Signal annotations are arrow callouts (non-overlapping offsets for readability).
-#   • HMA BUY shown only in uptrend; HMA SELL only in downtrend (gated by slope sign).
-#   • Removed “Get Ready to Take Profit” outside annotation per request.
-#   • Outside BUY/SELL ribbon is now a single combined sentence with correct order.
+#   • Outside BUY/SELL ribbon is a single combined sentence with correct order.
+#   • Charts use full width (no right margin) to make room for top banners.
 
 import streamlit as st
 import pandas as pd
@@ -191,7 +192,8 @@ def subset_by_daily_view(obj, view_label: str):
     else:
         start = end - pd.Timedelta(days=days_map.get(view_label, 365))
     return obj.loc[(idx >= start) & (idx <= end)]
-# --- Sidebar config ---
+
+# --- Sidebar config (single, deduplicated) ---
 st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2, key="sb_bb_period")
@@ -401,6 +403,7 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
     color = "tab:green" if m >= 0 else "tab:red"   # downward = red
     ax.plot(s.index, yhat, "-", linewidth=2.4, color=color, label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return m
+
 # --- Supertrend / ATR ---
 def _true_range(df: pd.DataFrame):
     hl = (df["High"] - df["Low"]).abs()
@@ -475,7 +478,7 @@ def compute_parabolic_sar(high: pd.Series, low: pd.Series, step: float = 0.02, m
                 af = step
         else:
             psar[i] = prev_psar + af * (ep - prev_psar)
-            hi1 = df["H"].iloc[i-1]
+            hi1 = df["H"].iloc[i-1]          # FIXED: correct indexing
             hi2 = df["H"].iloc[i-2] if i >= 2 else hi1
             psar[i] = max(psar[i], hi1, hi2)
             if df["L"].iloc[i] < ep:
@@ -531,7 +534,7 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     nbb = pctb * 2.0 - 1.0
     return mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index)
 
-# --- HMA & signal helpers ---
+# --- HMA (only plotting retained; signals removed) ---
 def _wma(s: pd.Series, window: int) -> pd.Series:
     s = _coerce_1d_series(s).astype(float)
     if s.empty or window < 1:
@@ -551,72 +554,30 @@ def compute_hma(close: pd.Series, period: int = 55) -> pd.Series:
     hma = _wma(diff, sqrtp)
     return hma.reindex(s.index)
 
-def _cross_series(price: pd.Series, line: pd.Series):
-    p = _coerce_1d_series(price)
-    l = _coerce_1d_series(line)
-    ok = p.notna() & l.notna()
-    if ok.sum() < 2:
-        idx = p.index if len(p) else l.index
-        return pd.Series(False, index=idx), pd.Series(False, index=idx)
-    p = p[ok]; l = l[ok]
-    above = p > l
-    cross_up = above & (~above.shift(1).fillna(False))
-    cross_dn = (~above) & (above.shift(1).fillna(False))
-    return cross_up.reindex(p.index, fill_value=False), cross_dn.reindex(p.index, fill_value=False)
-
-def _inc_ok_at(series: pd.Series, t, n: int) -> bool:
-    s = _coerce_1d_series(series)
-    if t not in s.index or n < 1:
+# --- Reversal detection helpers ---
+def _after_all_increasing(series: pd.Series, start_ts, n: int) -> bool:
+    s = _coerce_1d_series(series).dropna()
+    if start_ts not in s.index or n < 1:
         return False
-    seg = s.loc[:t].dropna().iloc[-(n+1):]
+    seg = s.loc[start_ts:].iloc[:n+1]
     if len(seg) < n+1:
         return False
     d = np.diff(seg)
     return bool(np.all(d > 0))
 
-def _dec_ok_at(series: pd.Series, t, n: int) -> bool:
-    s = _coerce_1d_series(series)
-    if t not in s.index or n < 1:
+def _after_all_decreasing(series: pd.Series, start_ts, n: int) -> bool:
+    s = _coerce_1d_series(series).dropna()
+    if start_ts not in s.index or n < 1:
         return False
-    seg = s.loc[:t].dropna().iloc[-(n+1):]
+    seg = s.loc[start_ts:].iloc[:n+1]
     if len(seg) < n+1:
         return False
     d = np.diff(seg)
     return bool(np.all(d < 0))
 
-def detect_hma_trend_reversal(price: pd.Series, hma: pd.Series, trend_slope: float, confirm_bars: int = 2):
-    """
-    BUY when trend_slope > 0 AND price crosses UP through HMA AND last N bars into the cross were rising.
-    SELL when trend_slope < 0 AND price crosses DOWN through HMA AND last N bars into the cross were falling.
-    Returns the most recent valid event (time, price, side) or None.
-    """
-    p = _coerce_1d_series(price)
-    h = _coerce_1d_series(hma).reindex(p.index)
-    mask = p.notna() & h.notna()
-    if mask.sum() < max(3, confirm_bars + 1):
-        return None
-    p = p[mask]; h = h[mask]
-    cross_up, cross_dn = _cross_series(p, h)
-    if not np.isfinite(trend_slope) or trend_slope == 0:
-        return None
-
-    if trend_slope > 0:
-        idxs = list(cross_up[cross_up].index)
-        for t in reversed(idxs):
-            if _inc_ok_at(p, t, confirm_bars):
-                return {"time": t, "price": float(p.loc[t]), "side": "BUY"}
-    else:  # trend_slope < 0
-        idxs = list(cross_dn[cross_dn].index)
-        for t in reversed(idxs):
-            if _dec_ok_at(p, t, confirm_bars):
-                return {"time": t, "price": float(p.loc[t]), "side": "SELL"}
-    return None
-
+# --- Annotation helpers ---
 def annotate_signal_box(ax, ts, px, side: str, note: str = "", ypad_frac: float = 0.045):
-    """
-    Draw a non-overlapping callout box with an arrow pointing to (ts, px).
-    ypad_frac is fraction of y-range used to offset the box above/below price.
-    """
+    """Generic callout with arrow; used for SELL Band REV (outside box elsewhere)."""
     try:
         ymin, ymax = ax.get_ylim()
         yr = ymax - ymin if np.isfinite(ymax) and np.isfinite(ymin) else 1.0
@@ -641,9 +602,99 @@ def annotate_signal_box(ax, ts, px, side: str, note: str = "", ypad_frac: float 
         ax.text(ts, px, f" {text}", color="tab:green" if side=="BUY" else "tab:red",
                 fontsize=10, fontweight="bold")
 
-# --- Cleaner axes + OUTSIDE instruction ribbon (single sentence with correct order) ---
+def annotate_band_rev_outside(ax, ts, px, side: str, note: str = "Band REV"):
+    """Outside annotation for Band REV (used for SELL to avoid clutter)."""
+    try:
+        fig = ax.figure
+        ax_bbox = ax.get_position()
+        x_disp, _ = ax.transData.transform((ts, px))
+        x_fig, _ = fig.transFigure.inverted().transform((x_disp, 0.0))
+        x_text = float(np.clip(x_fig, 0.08, 0.92))
+        y_text = float(min(0.955, ax_bbox.y1 + 0.02))
+        label = f"{'▲ BUY' if side=='BUY' else '▼ SELL'} {note}"
+
+        ax.annotate(
+            label,
+            xy=(ts, px),
+            xycoords='data',
+            xytext=(x_text, y_text),
+            textcoords=fig.transFigure,
+            ha='center',
+            va='bottom',
+            fontsize=10,
+            fontweight="bold",
+            color=("tab:green" if side == "BUY" else "tab:red"),
+            bbox=dict(boxstyle="round,pad=0.35",
+                      fc="white",
+                      ec=("tab:green" if side=="BUY" else "tab:red"),
+                      alpha=0.98),
+            arrowprops=dict(arrowstyle="->",
+                            color=("tab:green" if side=="BUY" else "tab:red"),
+                            lw=1.6),
+            annotation_clip=False,
+            zorder=1000
+        )
+        ax.scatter([ts], [px], s=60, c=("tab:green" if side=="BUY" else "tab:red"), zorder=1001)
+    except Exception:
+        annotate_signal_box(ax, ts, px, side, note=note)
+
+def annotate_star(ax, ts, px, kind: str, show_text: bool = True):
+    """Star at peak/trough."""
+    color = "tab:red" if kind == "peak" else "tab:green"
+    label = "★ Peak REV" if kind == "peak" else "★ Trough REV"
+    try:
+        ax.scatter([ts], [px], marker="*", s=160, c=color, zorder=12, edgecolors="none")
+        if show_text:
+            ymin, ymax = ax.get_ylim()
+            yoff = (ymax - ymin) * (0.02 if kind == "trough" else -0.02)
+            ax.text(ts, px + yoff, label, color=color, fontsize=9, fontweight="bold",
+                    ha="left", va="bottom" if kind == "trough" else "top",
+                    bbox=dict(boxstyle="round,pad=0.2", fc="white", ec=color, alpha=0.9),
+                    zorder=12)
+    except Exception:
+        if show_text:
+            ax.text(ts, px, label, color=color, fontsize=9, fontweight="bold")
+
+def annotate_buy_triangle(ax, ts, px, size: int = 140):
+    """Up-triangle marker for BUY Band REV inside the chart (no label)."""
+    try:
+        ax.scatter([ts], [px], marker="^", s=size, c="tab:green", edgecolors="none", zorder=12)
+    except Exception:
+        ax.text(ts, px, "▲", color="tab:green", fontsize=12, fontweight="bold", zorder=12)
+
+# --- Star: recent peak/trough + reversal (trend-aware) ---
+def last_reversal_star(price: pd.Series,
+                       trend_slope: float,
+                       lookback: int = 20,
+                       confirm_bars: int = 2):
+    """
+    If downtrend: return most-recent local PEAK followed by `confirm_bars` of lower closes.
+    If uptrend:   return most-recent local TROUGH followed by `confirm_bars` of higher closes.
+    Returns dict: {"time", "price", "kind": "peak"|"trough"} or None.
+    """
+    if not np.isfinite(trend_slope) or trend_slope == 0:
+        return None
+    s = _coerce_1d_series(price).dropna()
+    if s.shape[0] < confirm_bars + 3:
+        return None
+    tail = s.iloc[-(lookback + confirm_bars + 1):]
+    if len(tail) < confirm_bars + 3:
+        return None
+
+    if trend_slope < 0:
+        cand = tail.iloc[:-confirm_bars]
+        t_peak = cand.idxmax()
+        if _after_all_decreasing(tail, t_peak, confirm_bars):
+            return {"time": t_peak, "price": float(s.loc[t_peak]), "kind": "peak"}
+    else:
+        cand = tail.iloc[:-confirm_bars]
+        t_trough = cand.idxmin()
+        if _after_all_increasing(tail, t_trough, confirm_bars):
+            return {"time": t_trough, "price": float(s.loc[t_trough]), "kind": "trough"}
+    return None
+
+# --- Cleaner axes + TOP instruction banner (outside the chart) ---
 def _simplify_axes(ax):
-    """Make charts less cluttered."""
     ax.grid(True, alpha=0.15, linestyle="--", linewidth=0.6)
     for spine in ax.spines.values():
         spine.set_alpha(0.3)
@@ -651,7 +702,6 @@ def _simplify_axes(ax):
     ax.margins(x=0.01)
 
 def _instruction_pieces(trend_slope, buy_val, sell_val, close_val, symbol):
-    # Kept for possible reuse; not used by the new single-ribbon rendering.
     def _finite(x):
         try:
             return np.isfinite(float(x))
@@ -665,23 +715,39 @@ def _instruction_pieces(trend_slope, buy_val, sell_val, close_val, symbol):
     return buy_txt, sell_txt, pips_txt
 
 def draw_instruction_ribbons(ax, trend_slope, buy_val, sell_val, close_val, symbol):
-    """
-    Render ONE combined instruction ribbon on the right:
-      Uptrend (green):  "▲ BUY @… → ▼ SELL @… • Value of Pips: …"
-      Downtrend (red):  "▼ SELL @… → ▲ BUY @… • Value of Pips: …"
-    """
     if not np.isfinite(trend_slope):
         return
     combined = format_trade_instruction(trend_slope, buy_val, sell_val, close_val, symbol)
     ribbon_color = "tab:green" if float(trend_slope) > 0 else "tab:red"
-    ax.annotate(
-        combined,
-        xy=(1.02, 0.88), xycoords='axes fraction',
-        ha='left', va='center',
+    fig = ax.figure
+    fig.text(
+        0.5, 0.985, combined,
+        ha="center", va="top",
         fontsize=11, fontweight="bold", color="white",
-        bbox=dict(boxstyle="round,pad=0.45", fc=ribbon_color, ec=ribbon_color, alpha=0.95),
-        zorder=20, annotation_clip=False
+        bbox=dict(boxstyle="round,pad=0.45", fc=ribbon_color, ec=ribbon_color, alpha=0.98),
+        zorder=100, transform=fig.transFigure
     )
+
+# --- Compact top badges (legends) for Band REV & Star REVs ---
+def draw_top_badges(ax, badges):
+    """
+    badges: list of tuples [(text, color), ...]
+    Places compact rounded badges below the top ribbon, evenly spaced.
+    """
+    if not badges:
+        return
+    fig = ax.figure
+    n = len(badges)
+    xs = np.linspace(0.12, 0.88, n)
+    y = 0.955
+    for (text, color), x in zip(badges, xs):
+        fig.text(
+            x, y, f" {text} ",
+            ha="center", va="bottom",
+            fontsize=10, fontweight="bold", color=color,
+            bbox=dict(boxstyle="round,pad=0.35", fc="white", ec=color, alpha=0.98),
+            transform=fig.transFigure, zorder=200
+        )
 
 # --- Bands + single latest band-reversal trading signal ---
 def last_band_reversal_signal(price: pd.Series,
@@ -830,6 +896,7 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "NTD -0.75 Scanner",
     "Long-Term History"
 ])
+
 # --- Tab 1: Original Forecast ---
 with tab1:
     st.header("Original Forecast")
@@ -891,19 +958,16 @@ with tab1:
             bb_up_d_show  = bb_up_d.reindex(df_show.index)
             bb_lo_d_show  = bb_lo_d.reindex(df_show.index)
 
-            # HMA lines (no outside TP label)
+            # HMA lines (no HMA signal callouts)
             hma_d_full = compute_hma(df, period=hma_period).reindex(df_show.index)
 
             fig, ax = plt.subplots(figsize=(14, 6))
-            # extra right margin for outside ribbon
-            plt.subplots_adjust(top=0.92, right=0.78)
+            plt.subplots_adjust(top=0.86, right=0.995, left=0.06)
 
             ax.set_title(f"{sel} Daily — {daily_view}")
-            # core price
             ax.plot(df_show.index, df_show.values, label="Price", linewidth=1.4)
-
-            # minimalist overlays (no legend clutter)
             ax.plot(ema30_show.index, ema30_show.values, "--", alpha=0.4, linewidth=1.0, label="_nolegend_")
+
             if show_bbands and not bb_up_d_show.dropna().empty and not bb_lo_d_show.dropna().empty:
                 ax.fill_between(df_show.index, bb_lo_d_show, bb_up_d_show, alpha=0.04, label="_nolegend_")
                 ax.plot(bb_mid_d_show.index, bb_mid_d_show.values, "-", linewidth=0.9, alpha=0.35, label="_nolegend_")
@@ -924,7 +988,7 @@ with tab1:
             if len(df_show) > 1:
                 draw_trend_direction_line(ax, df_show, label_prefix="")
 
-            # DAILY — Support/Resistance lines (latest 30-bar extremes)
+            # DAILY — Support/Resistance lines
             try:
                 res_val_d = float(res30_show.iloc[-1])
                 sup_val_d = float(sup30_show.iloc[-1])
@@ -936,24 +1000,41 @@ with tab1:
                     label_on_left(ax, res_val_d, f"R {fmt_price_val(res_val_d)}", color="tab:red")
                     label_on_left(ax, sup_val_d, f"S {fmt_price_val(sup_val_d)}", color="tab:green")
             except Exception:
-                pass
+                res_val_d = sup_val_d = np.nan
 
-            # Single latest band-reversal signal (Daily)
+            # --- Signals to badges: BUY Band REV & Star REVs; plus star/triangle rendering ---
+            badges_top = []
+
+            # Band REV (Daily)
             band_sig_d = last_band_reversal_signal(
                 price=df_show, band_upper=upper_d_show, band_lower=lower_d_show,
                 trend_slope=m_d, prox=sr_prox_pct, confirm_bars=rev_bars_confirm
             )
-            if band_sig_d is not None:
-                annotate_signal_box(ax, band_sig_d["time"], band_sig_d["price"], band_sig_d["side"], note=band_sig_d.get("note",""))
+            if band_sig_d is not None and band_sig_d.get("side") == "BUY":
+                badges_top.append((f"▲ BUY Band REV @{fmt_price_val(band_sig_d['price'])}", "tab:green"))
+                annotate_buy_triangle(ax, band_sig_d["time"], band_sig_d["price"])
+            elif band_sig_d is not None and band_sig_d.get("side") == "SELL":
+                annotate_band_rev_outside(ax, band_sig_d["time"], band_sig_d["price"], band_sig_d["side"], note=band_sig_d.get("note",""))
 
-            # OUTSIDE instruction ribbon (Daily) using S/R as targets
+            # Star (Daily) — draw on chart for BOTH kinds; trough/peak also get top badges
+            star_d = last_reversal_star(df_show, trend_slope=m_d, lookback=20, confirm_bars=rev_bars_confirm)
+            if star_d is not None:
+                annotate_star(ax, star_d["time"], star_d["price"], star_d["kind"], show_text=(star_d["kind"] == "peak"))
+                if star_d.get("kind") == "trough":
+                    badges_top.append((f"★ Trough REV @{fmt_price_val(star_d['price'])}", "tab:green"))
+                elif star_d.get("kind") == "peak":
+                    badges_top.append((f"★ Peak REV @{fmt_price_val(star_d['price'])}", "tab:red"))
+
+            # Draw compact badges
+            draw_top_badges(ax, badges_top)
+
+            # TOP instruction banner (Daily)
             try:
                 px_val_d  = float(df_show.iloc[-1])
                 draw_instruction_ribbons(ax, m_d, sup_val_d, res_val_d, px_val_d, sel)
             except Exception:
                 pass
 
-            # footer stats
             ax.text(0.50, 0.02, f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}",
                     transform=ax.transAxes, ha="center", va="bottom",
                     fontsize=9, color="black",
@@ -1008,7 +1089,7 @@ with tab1:
                 yhat_h, upper_h, lower_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
                 slope_sig_h = m_h if np.isfinite(m_h) else slope_h
 
-                # GLOBAL (DAILY) slope for instruction order (unchanged)
+                # GLOBAL (DAILY) slope for instruction order
                 try:
                     df_global = st.session_state.df_hist
                     _, _, _, m_global, _ = regression_with_band(df_global, slope_lb_daily)
@@ -1016,12 +1097,11 @@ with tab1:
                     m_global = slope_sig_h
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
-                plt.subplots_adjust(top=0.85, right=0.78)
+                plt.subplots_adjust(top=0.86, right=0.995, left=0.06)
 
                 trend_color = "tab:green" if slope_h >= 0 else "tab:red"
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}")
 
-                # core intraday price
                 ax2.plot(hc.index, hc, label="Price", linewidth=1.2)
                 ax2.plot(hc.index, he, "--", alpha=0.45, linewidth=0.9, label="_nolegend_")
                 ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=1.6, color=trend_color, alpha=0.75)
@@ -1048,15 +1128,30 @@ with tab1:
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
-                # Single latest band-reversal signal (Hourly)
+                # --- Signals to badges + stars/triangles (Hourly) ---
+                badges_top_h = []
+
                 band_sig_h = last_band_reversal_signal(
                     price=hc, band_upper=upper_h, band_lower=lower_h,
                     trend_slope=m_h, prox=sr_prox_pct, confirm_bars=rev_bars_confirm
                 )
-                if band_sig_h is not None:
-                    annotate_signal_box(ax2, band_sig_h["time"], band_sig_h["price"], band_sig_h["side"], note=band_sig_h.get("note",""))
+                if band_sig_h is not None and band_sig_h.get("side") == "BUY":
+                    badges_top_h.append((f"▲ BUY Band REV @{fmt_price_val(band_sig_h['price'])}", "tab:green"))
+                    annotate_buy_triangle(ax2, band_sig_h["time"], band_sig_h["price"])
+                elif band_sig_h is not None and band_sig_h.get("side") == "SELL":
+                    annotate_band_rev_outside(ax2, band_sig_h["time"], band_sig_h["price"], band_sig_h["side"], note=band_sig_h.get("note",""))
 
-                # OUTSIDE instruction ribbon (Hourly) — use GLOBAL daily slope for order
+                star_h = last_reversal_star(hc, trend_slope=m_h, lookback=20, confirm_bars=rev_bars_confirm)
+                if star_h is not None:
+                    annotate_star(ax2, star_h["time"], star_h["price"], star_h["kind"], show_text=(star_h["kind"] == "peak"))
+                    if star_h.get("kind") == "trough":
+                        badges_top_h.append((f"★ Trough REV @{fmt_price_val(star_h['price'])}", "tab:green"))
+                    elif star_h.get("kind") == "peak":
+                        badges_top_h.append((f"★ Peak REV @{fmt_price_val(star_h['price'])}", "tab:red"))
+
+                draw_top_badges(ax2, badges_top_h)
+
+                # TOP instruction banner (Hourly) — use GLOBAL daily slope for order
                 draw_instruction_ribbons(ax2, m_global, sup_val, res_val, px_val, sel)
 
                 # footer stats
@@ -1113,6 +1208,7 @@ with tab1:
         st.write(pd.DataFrame({"Forecast": st.session_state.fc_vals,
                                "Lower":    st.session_state.fc_ci.iloc[:,0],
                                "Upper":    st.session_state.fc_ci.iloc[:,1]}, index=st.session_state.fc_idx))
+
 # --- Tab 2: Enhanced Forecast ---
 with tab2:
     st.header("Enhanced Forecast")
@@ -1155,11 +1251,11 @@ with tab2:
             bb_up_d2_show  = bb_up_d2.reindex(df_show.index)
             bb_lo_d2_show  = bb_lo_d2.reindex(df_show.index)
 
-            # HMA plotting (no outside TP label)
+            # HMA plotting (signals removed)
             hma_d2_full = compute_hma(df, period=hma_period).reindex(df_show.index)
 
             fig, ax = plt.subplots(figsize=(14, 6))
-            plt.subplots_adjust(top=0.92, right=0.78)
+            plt.subplots_adjust(top=0.86, right=0.995, left=0.06)
 
             ax.set_title(f"{st.session_state.ticker} Daily — {daily_view}")
             ax.plot(df_show.index, df_show.values, label="Price", linewidth=1.4)
@@ -1181,17 +1277,22 @@ with tab2:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2.0, color=slope_col_d2, label="Trend")
             if not up_d_show.empty and not lo_d_show.empty:
                 ax.plot(up_d_show.index, up_d_show.values, ":", linewidth=1.8, color="black", alpha=0.6, label="_nolegend_")
+            if not lo_d_show.empty:
                 ax.plot(lo_d_show.index, lo_d_show.values, ":", linewidth=1.8, color="black", alpha=0.6, label="_nolegend_")
             if len(df_show) > 1:
                 draw_trend_direction_line(ax, df_show, label_prefix="")
 
-            # Band signal (Daily)
+            # Band signal (Daily) — top badges + stars/triangle
+            badges_top2 = []
             band_sig_d2 = last_band_reversal_signal(price=df_show, band_upper=up_d_show, band_lower=lo_d_show,
                                                     trend_slope=m_d, prox=sr_prox_pct, confirm_bars=rev_bars_confirm)
-            if band_sig_d2 is not None:
-                annotate_signal_box(ax, band_sig_d2["time"], band_sig_d2["price"], band_sig_d2["side"], note=band_sig_d2.get("note",""))
+            if band_sig_d2 is not None and band_sig_d2.get("side") == "BUY":
+                badges_top2.append((f"▲ BUY Band REV @{fmt_price_val(band_sig_d2['price'])}", "tab:green"))
+                annotate_buy_triangle(ax, band_sig_d2["time"], band_sig_d2["price"])
+            elif band_sig_d2 is not None and band_sig_d2.get("side") == "SELL":
+                annotate_band_rev_outside(ax, band_sig_d2["time"], band_sig_d2["price"], band_sig_d2["side"], note=band_sig_d2.get("note",""))
 
-            # DAILY — add Support/Resistance horizontal lines (latest 30-bar extremes)
+            # DAILY — Support/Resistance horizontal lines
             try:
                 res_val_d2 = float(res30_show.iloc[-1])
                 sup_val_d2 = float(sup30_show.iloc[-1])
@@ -1203,9 +1304,20 @@ with tab2:
                     label_on_left(ax, res_val_d2, f"R {fmt_price_val(res_val_d2)}", color="tab:red")
                     label_on_left(ax, sup_val_d2, f"S {fmt_price_val(sup_val_d2)}", color="tab:green")
             except Exception:
-                pass
+                res_val_d2 = sup_val_d2 = np.nan
 
-            # OUTSIDE instruction ribbon (Daily)
+            # Star (Daily)
+            star_d2 = last_reversal_star(df_show, trend_slope=m_d, lookback=20, confirm_bars=rev_bars_confirm)
+            if star_d2 is not None:
+                annotate_star(ax, star_d2["time"], star_d2["price"], star_d2["kind"], show_text=(star_d2["kind"] == "peak"))
+                if star_d2.get("kind") == "trough":
+                    badges_top2.append((f"★ Trough REV @{fmt_price_val(star_d2['price'])}", "tab:green"))
+                elif star_d2.get("kind") == "peak":
+                    badges_top2.append((f"★ Peak REV @{fmt_price_val(star_d2['price'])}", "tab:red"))
+
+            draw_top_badges(ax, badges_top2)
+
+            # TOP instruction banner (Daily)
             try:
                 px_val_d2  = float(df_show.iloc[-1])
                 draw_instruction_ribbons(ax, m_d, sup_val_d2, res_val_d2, px_val_d2, st.session_state.ticker)
@@ -1422,8 +1534,8 @@ with tab5:
         above_rows = []
         for sym in universe:
             try:
-                df_ohlc = fetch_hist_ohlc(sym)
-                above, ts, cnow, know = _price_above_kijun_from_df(df_ohlc, base=ichi_base)
+                df_ohlc_sym = fetch_hist_ohlc(sym)
+                above, ts, cnow, know = _price_above_kijun_from_df(df_ohlc_sym, base=ichi_base)
             except Exception:
                 above, ts, cnow, know = False, None, np.nan, np.nan
             above_rows.append({"Symbol": sym, "AboveNow": above, "Timestamp": ts, "Close": cnow, "Kijun": know})
@@ -1528,7 +1640,7 @@ with tab6:
             yhat_all, upper_all, lower_all, m_all, r2_all = regression_with_band(s, lookback=len(s))
 
             fig, ax = plt.subplots(figsize=(14,5))
-            plt.subplots_adjust(right=0.78)
+            plt.subplots_adjust(right=0.995, left=0.06, top=0.92)
             ax.set_title(f"{sym} — Last {years} Years — Price + 252d S/R + Trend")
             ax.plot(s.index, s.values, label="Close", linewidth=1.4)
             if np.isfinite(res_last) and np.isfinite(sup_last):
