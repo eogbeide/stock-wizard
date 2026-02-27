@@ -1684,7 +1684,10 @@ with tab6:
 # --- Tab 7: HMA 55 Cross Scanner ---
 with tab7:
     st.header("HMA 55 Cross Scanner")
-    st.caption("Lists symbols where **price has recently crossed HMA(55)** on the selected timeframe, separated into **Going Up** and **Going Down**.")
+    st.caption(
+        "Lists symbols where **price has recently crossed HMA(55)** on the selected timeframe, "
+        "with results separated into **Buy / Sell** and each further split by **Upward Trend** and **Downward Trend**."
+    )
 
     # Local scanner controls (tab-only; does not change existing app behavior)
     scan_tf = st.selectbox("Scanner timeframe:", ["Daily", "Hourly (5m)"], index=0, key="hma55_scan_tf")
@@ -1729,7 +1732,7 @@ with tab7:
             bars_ago = (len(dfx) - 1) - i
             if bars_ago <= recent_bars - 1:
                 cross_events.append({
-                    "direction": "UP",
+                    "direction": "UP",   # BUY cross
                     "time": ts,
                     "close": float(dfx.at[ts, "Close"]),
                     "hma": float(dfx.at[ts, "HMA55"]),
@@ -1744,7 +1747,7 @@ with tab7:
             bars_ago = (len(dfx) - 1) - i
             if bars_ago <= recent_bars - 1:
                 cross_events.append({
-                    "direction": "DOWN",
+                    "direction": "DOWN",  # SELL cross
                     "time": ts,
                     "close": float(dfx.at[ts, "Close"]),
                     "hma": float(dfx.at[ts, "HMA55"]),
@@ -1759,12 +1762,49 @@ with tab7:
         cross_events = sorted(cross_events, key=lambda d: (d["bars_ago"], d["time"]), reverse=False)
         return cross_events[0]
 
+    def _trend_label_and_slope(close_like, lookback: int):
+        """
+        Classify trend using regression slope on the selected timeframe series.
+        Upward Trend: slope >= 0
+        Downward Trend: slope < 0
+        """
+        s = _coerce_1d_series(close_like).astype(float).dropna()
+        if s.empty or len(s) < 2:
+            return "Unknown", float("nan")
+        try:
+            _, _, _, m, _ = regression_with_band(s, lookback=lookback)
+        except Exception:
+            m = float("nan")
+        if not np.isfinite(m):
+            try:
+                _, m = slope_line(s, lookback=lookback)
+            except Exception:
+                m = float("nan")
+        if np.isfinite(m):
+            return ("Upward Trend" if float(m) >= 0 else "Downward Trend"), float(m)
+        return "Unknown", float("nan")
+
+    def _prep_display_df(df_in: pd.DataFrame) -> pd.DataFrame:
+        if df_in.empty:
+            return df_in
+        show_df = df_in.copy()
+        show_df["Close"] = show_df["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+        show_df["HMA 55"] = show_df["HMA 55"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+        show_df["Distance to HMA"] = show_df["Distance to HMA"].map(lambda v: f"{v:+.4f}" if np.isfinite(v) else "n/a")
+        show_df["Trend Slope"] = show_df["Trend Slope"].map(lambda v: fmt_slope(v) if np.isfinite(v) else "n/a")
+        return show_df
+
     if run_hma_scan:
         period_map_local = {"24h": "1d", "48h": "2d", "96h": "4d"}
         scan_period_local = period_map_local.get(scan_hour_range_hma, "1d")
 
-        rows_up = []
-        rows_down = []
+        # Four requested buckets + optional unknown fallback buckets
+        rows_buy_uptrend = []
+        rows_buy_downtrend = []
+        rows_sell_uptrend = []
+        rows_sell_downtrend = []
+        rows_buy_unknown = []
+        rows_sell_unknown = []
 
         progress = st.progress(0)
         total_syms = max(1, len(universe))
@@ -1773,28 +1813,45 @@ with tab7:
             try:
                 if scan_tf == "Daily":
                     series_scan = fetch_hist(sym)
+                    trend_lb = int(slope_lb_daily)
                 else:
                     intr = fetch_intraday(sym, period=scan_period_local)
                     if intr is None or intr.empty or "Close" not in intr.columns:
                         series_scan = pd.Series(dtype=float)
                     else:
                         series_scan = _coerce_1d_series(intr["Close"]).dropna()
+                    trend_lb = int(slope_lb_hourly)
 
                 event = _latest_recent_hma_cross(series_scan, period=55, recent_bars=recent_bars_hma)
 
                 if event is not None:
+                    trend_lbl, trend_slope_val = _trend_label_and_slope(series_scan, lookback=trend_lb)
+
                     row = {
                         "Symbol": sym,
                         "Timestamp": event["time"],
                         "Bars Ago": event["bars_ago"],
                         "Close": event["close"],
                         "HMA 55": event["hma"],
-                        "Distance to HMA": event["distance"]
+                        "Distance to HMA": event["distance"],
+                        "Trend": trend_lbl,
+                        "Trend Slope": trend_slope_val
                     }
-                    if event["direction"] == "UP":
-                        rows_up.append(row)
-                    elif event["direction"] == "DOWN":
-                        rows_down.append(row)
+
+                    if event["direction"] == "UP":  # BUY
+                        if trend_lbl == "Upward Trend":
+                            rows_buy_uptrend.append(row)
+                        elif trend_lbl == "Downward Trend":
+                            rows_buy_downtrend.append(row)
+                        else:
+                            rows_buy_unknown.append(row)
+                    elif event["direction"] == "DOWN":  # SELL
+                        if trend_lbl == "Upward Trend":
+                            rows_sell_uptrend.append(row)
+                        elif trend_lbl == "Downward Trend":
+                            rows_sell_downtrend.append(row)
+                        else:
+                            rows_sell_unknown.append(row)
             except Exception:
                 # Skip symbol on any download/calc error to preserve scanner continuity
                 pass
@@ -1803,43 +1860,101 @@ with tab7:
 
         progress.empty()
 
-        df_up = pd.DataFrame(rows_up)
-        df_down = pd.DataFrame(rows_down)
+        df_buy_uptrend = pd.DataFrame(rows_buy_uptrend)
+        df_buy_downtrend = pd.DataFrame(rows_buy_downtrend)
+        df_sell_uptrend = pd.DataFrame(rows_sell_uptrend)
+        df_sell_downtrend = pd.DataFrame(rows_sell_downtrend)
+        df_buy_unknown = pd.DataFrame(rows_buy_unknown)
+        df_sell_unknown = pd.DataFrame(rows_sell_unknown)
 
-        # Sort: most recent cross first (Bars Ago ascending), then symbol
-        if not df_up.empty:
-            df_up = df_up.sort_values(["Bars Ago", "Timestamp", "Symbol"], ascending=[True, False, True]).reset_index(drop=True)
-        if not df_down.empty:
-            df_down = df_down.sort_values(["Bars Ago", "Timestamp", "Symbol"], ascending=[True, False, True]).reset_index(drop=True)
+        # Sort: most recent cross first (Bars Ago ascending), then latest timestamp, then symbol
+        def _sort_hits(df_in: pd.DataFrame) -> pd.DataFrame:
+            if df_in.empty:
+                return df_in
+            return df_in.sort_values(["Bars Ago", "Timestamp", "Symbol"], ascending=[True, False, True]).reset_index(drop=True)
 
-        c1, c2, c3 = st.columns(3)
+        df_buy_uptrend = _sort_hits(df_buy_uptrend)
+        df_buy_downtrend = _sort_hits(df_buy_downtrend)
+        df_sell_uptrend = _sort_hits(df_sell_uptrend)
+        df_sell_downtrend = _sort_hits(df_sell_downtrend)
+        df_buy_unknown = _sort_hits(df_buy_unknown)
+        df_sell_unknown = _sort_hits(df_sell_unknown)
+
+        # Top metrics
+        c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("Universe Size", len(universe))
-        c2.metric("HMA 55 Cross Up", int(df_up.shape[0]))
-        c3.metric("HMA 55 Cross Down", int(df_down.shape[0]))
+        c2.metric("BUY + Upward Trend", int(df_buy_uptrend.shape[0]))
+        c3.metric("BUY + Downward Trend", int(df_buy_downtrend.shape[0]))
+        c4.metric("SELL + Upward Trend", int(df_sell_uptrend.shape[0]))
+        c5.metric("SELL + Downward Trend", int(df_sell_downtrend.shape[0]))
 
+        # BUY split
         st.markdown("---")
-        st.subheader(f"Price recently crossed HMA 55 — Going Up ({scan_tf})")
-        if df_up.empty:
-            st.info(f"No symbols found with a recent **UP** cross of HMA 55 in the last {recent_bars_hma} bar(s).")
+        st.subheader(f"BUY Signals (Price crossed HMA 55 Going Up) — Upward Trend ({scan_tf})")
+        if df_buy_uptrend.empty:
+            st.info(f"No **BUY** HMA 55 cross signals in **Upward Trend** found within the last {recent_bars_hma} bar(s).")
         else:
-            show_up = df_up.copy()
-            show_up["Close"] = show_up["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-            show_up["HMA 55"] = show_up["HMA 55"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-            show_up["Distance to HMA"] = show_up["Distance to HMA"].map(lambda v: f"{v:+.4f}" if np.isfinite(v) else "n/a")
-            st.dataframe(show_up[["Symbol", "Timestamp", "Bars Ago", "Close", "HMA 55", "Distance to HMA"]],
-                         use_container_width=True)
+            show_df = _prep_display_df(df_buy_uptrend)
+            st.dataframe(
+                show_df[["Symbol", "Timestamp", "Bars Ago", "Trend", "Trend Slope", "Close", "HMA 55", "Distance to HMA"]],
+                use_container_width=True
+            )
 
-        st.markdown("---")
-        st.subheader(f"Price recently crossed HMA 55 — Going Down ({scan_tf})")
-        if df_down.empty:
-            st.info(f"No symbols found with a recent **DOWN** cross of HMA 55 in the last {recent_bars_hma} bar(s).")
+        st.subheader(f"BUY Signals (Price crossed HMA 55 Going Up) — Downward Trend ({scan_tf})")
+        if df_buy_downtrend.empty:
+            st.info(f"No **BUY** HMA 55 cross signals in **Downward Trend** found within the last {recent_bars_hma} bar(s).")
         else:
-            show_down = df_down.copy()
-            show_down["Close"] = show_down["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-            show_down["HMA 55"] = show_down["HMA 55"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-            show_down["Distance to HMA"] = show_down["Distance to HMA"].map(lambda v: f"{v:+.4f}" if np.isfinite(v) else "n/a")
-            st.dataframe(show_down[["Symbol", "Timestamp", "Bars Ago", "Close", "HMA 55", "Distance to HMA"]],
-                         use_container_width=True)
+            show_df = _prep_display_df(df_buy_downtrend)
+            st.dataframe(
+                show_df[["Symbol", "Timestamp", "Bars Ago", "Trend", "Trend Slope", "Close", "HMA 55", "Distance to HMA"]],
+                use_container_width=True
+            )
+
+        # SELL split
+        st.markdown("---")
+        st.subheader(f"SELL Signals (Price crossed HMA 55 Going Down) — Upward Trend ({scan_tf})")
+        if df_sell_uptrend.empty:
+            st.info(f"No **SELL** HMA 55 cross signals in **Upward Trend** found within the last {recent_bars_hma} bar(s).")
+        else:
+            show_df = _prep_display_df(df_sell_uptrend)
+            st.dataframe(
+                show_df[["Symbol", "Timestamp", "Bars Ago", "Trend", "Trend Slope", "Close", "HMA 55", "Distance to HMA"]],
+                use_container_width=True
+            )
+
+        st.subheader(f"SELL Signals (Price crossed HMA 55 Going Down) — Downward Trend ({scan_tf})")
+        if df_sell_downtrend.empty:
+            st.info(f"No **SELL** HMA 55 cross signals in **Downward Trend** found within the last {recent_bars_hma} bar(s).")
+        else:
+            show_df = _prep_display_df(df_sell_downtrend)
+            st.dataframe(
+                show_df[["Symbol", "Timestamp", "Bars Ago", "Trend", "Trend Slope", "Close", "HMA 55", "Distance to HMA"]],
+                use_container_width=True
+            )
+
+        # Optional visibility for edge cases (not required, but avoids silently dropping signals)
+        if (not df_buy_unknown.empty) or (not df_sell_unknown.empty):
+            st.markdown("---")
+            st.caption("Optional: Signals with trend classification unavailable (insufficient data / fit issue).")
+
+            if not df_buy_unknown.empty:
+                st.subheader(f"BUY Signals — Unknown Trend ({scan_tf})")
+                show_df = _prep_display_df(df_buy_unknown)
+                st.dataframe(
+                    show_df[["Symbol", "Timestamp", "Bars Ago", "Trend", "Trend Slope", "Close", "HMA 55", "Distance to HMA"]],
+                    use_container_width=True
+                )
+
+            if not df_sell_unknown.empty:
+                st.subheader(f"SELL Signals — Unknown Trend ({scan_tf})")
+                show_df = _prep_display_df(df_sell_unknown)
+                st.dataframe(
+                    show_df[["Symbol", "Timestamp", "Bars Ago", "Trend", "Trend Slope", "Close", "HMA 55", "Distance to HMA"]],
+                    use_container_width=True
+                )
 
     else:
-        st.info("Click **Scan HMA 55 Crosses** to scan the current universe for recent HMA(55) up/down price crosses.")
+        st.info(
+            "Click **Scan HMA 55 Crosses** to scan the current universe for recent HMA(55) crosses, "
+            "then split the results into **BUY/SELL** and **Upward/Downward Trend** buckets."
+        )
