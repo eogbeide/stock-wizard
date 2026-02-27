@@ -451,6 +451,9 @@ daily_view = st.sidebar.selectbox("Daily view range:", ["Historical", "6M", "12M
 
 show_fibs = st.sidebar.checkbox("Show Fibonacci", value=True, key="sb_show_fibs")
 
+# NEW: hide ±2σ regression lines by default (user can enable manually)
+show_2std_lines = st.sidebar.checkbox("Show ±2σ regression lines", value=False, key="sb_show_2std_lines")
+
 slope_lb_daily  = st.sidebar.slider("Daily slope lookback (bars)", 10, 360, 90, 10, key="sb_slope_lb_daily")
 slope_lb_hourly = st.sidebar.slider("Hourly slope lookback (bars)", 12, 480, 120, 6, key="sb_slope_lb_hourly")
 
@@ -635,7 +638,6 @@ def compute_sarimax_forecast(series_like):
     pm = fc.predicted_mean
     pm.index = idx
     return idx, pm, ci
-
 # bullbear.py — Complete updated Streamlit app (Batch 2/3)
 # -------------------------------------------------------
 
@@ -1940,9 +1942,14 @@ def render_daily_chart(symbol: str, daily_view_label: str):
     # Local regression + bands
     if not yhat_d.dropna().empty:
         ax.plot(yhat_d.index, yhat_d.values, "-", linewidth=2, label=f"Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
-    if not upper_d.dropna().empty and not lower_d.dropna().empty:
+
+    # ±2σ lines hidden by default (controlled by sidebar toggle)
+    if show_2std_lines and (not upper_d.dropna().empty) and (not lower_d.dropna().empty):
         ax.plot(upper_d.index, upper_d.values, "--", linewidth=2.2, color="black", alpha=0.85, label="+2σ")
         ax.plot(lower_d.index, lower_d.values, "--", linewidth=2.2, color="black", alpha=0.85, label="-2σ")
+
+    # Keep signal logic unchanged even when ±2σ lines are hidden
+    if not upper_d.dropna().empty and not lower_d.dropna().empty:
         bounce_sig = find_band_bounce_signal(close, upper_d, lower_d, m_d)
         if bounce_sig is not None:
             annotate_crossover(ax, bounce_sig["time"], bounce_sig["price"], bounce_sig["side"])
@@ -2040,7 +2047,6 @@ def render_daily_chart(symbol: str, daily_view_label: str):
         "fib_sell_mask": sell_mask,
         "last_price": last_px,
     }
-
 # bullbear.py — Complete updated Streamlit app (Batch 3/3)
 # -------------------------------------------------------
 
@@ -2147,9 +2153,14 @@ def render_hourly_chart(symbol: str, period: str, hour_range_label: str):
     # Local regression + bands + bounce
     if not yhat_h.dropna().empty:
         ax.plot(yhat_h.index, yhat_h.values, "-", linewidth=2, label=f"Slope {slope_lb_hourly} ({fmt_slope(m_h)}/bar)")
-    if not up_h.dropna().empty and not lo_h.dropna().empty:
+
+    # ±2σ lines hidden by default (controlled by sidebar toggle)
+    if show_2std_lines and (not up_h.dropna().empty) and (not lo_h.dropna().empty):
         ax.plot(up_h.index, up_h.values, "--", linewidth=2.2, color="black", alpha=0.85, label="+2σ")
         ax.plot(lo_h.index, lo_h.values, "--", linewidth=2.2, color="black", alpha=0.85, label="-2σ")
+
+    # Keep signal logic unchanged even when ±2σ lines are hidden
+    if not up_h.dropna().empty and not lo_h.dropna().empty:
         bounce_sig = find_band_bounce_signal(hc, up_h, lo_h, m_h)
         if bounce_sig is not None:
             annotate_crossover(ax, bounce_sig["time"], bounce_sig["price"], bounce_sig["side"])
