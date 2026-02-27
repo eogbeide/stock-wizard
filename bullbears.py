@@ -887,15 +887,16 @@ if 'run_all' not in st.session_state:
 if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
-# Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+# Tabs (UPDATED: added tab8 = "0.5 Cross")
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
     "NTD -0.75 Scanner",
     "Long-Term History",
-    "HMA 55 Cross Scanner"
+    "HMA 55 Cross Scanner",
+    "0.5 Cross"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -1957,4 +1958,254 @@ with tab7:
         st.info(
             "Click **Scan HMA 55 Crosses** to scan the current universe for recent HMA(55) crosses, "
             "then split the results into **BUY/SELL** and **Upward/Downward Trend** buckets."
+        )
+
+# --- Tab 8: 0.5 Cross (Price vs Green Upward Trendline Cross Scanner) ---
+with tab8:
+    st.header("0.5 Cross")
+    st.caption(
+        "Lists symbols where **price recently crossed the green upward trendline** "
+        "(i.e., regression trendline slope > 0) on both **Daily** and **Hourly** charts, "
+        "split into crosses **going up** and **going down**."
+    )
+
+    scan_hour_range_05 = st.selectbox(
+        "Hourly lookback (for Hourly scan):",
+        ["24h", "48h", "96h"],
+        index=["24h", "48h", "96h"].index(st.session_state.get("hour_range", "24h")),
+        key="cross05_scan_hour_range"
+    )
+    recent_bars_05 = st.slider("Recent cross window (bars)", 1, 12, 3, 1, key="cross05_recent_bars")
+    run_cross05 = st.button("Scan 0.5 Cross", key="btn_cross05_scan")
+
+    def _latest_recent_uptrendline_cross(close_like, trend_lookback: int, recent_bars: int = 3):
+        """
+        Detect latest recent cross of PRICE vs regression trendline, but only when trendline slope > 0 (green line).
+        Returns dict:
+          {
+            "direction": "UP"|"DOWN",
+            "time", "close", "trendline", "bars_ago",
+            "distance", "trend_slope", "r2"
+          }
+        or None.
+        """
+        close = _coerce_1d_series(close_like).astype(float).dropna()
+        if close.empty or close.shape[0] < 5:
+            return None
+
+        # Fit on selected lookback, then compare only within fitted window
+        yhat, _, _, m, r2v = regression_with_band(close, lookback=int(trend_lookback))
+        if yhat is None or yhat.empty or not np.isfinite(m) or float(m) <= 0:
+            return None  # only green upward trendline
+
+        dfx = pd.DataFrame({"Close": close.reindex(yhat.index), "Trendline": yhat}).dropna()
+        if dfx.shape[0] < 3:
+            return None
+
+        diff = dfx["Close"] - dfx["Trendline"]
+        prev = diff.shift(1)
+
+        up_cross = (diff > 0) & (prev <= 0)     # price crossed trendline going up
+        dn_cross = (diff < 0) & (prev >= 0)     # price crossed trendline going down
+
+        idx_positions = {ts: i for i, ts in enumerate(dfx.index)}
+        events = []
+
+        for ts in dfx.index[up_cross.fillna(False)]:
+            i = idx_positions.get(ts, None)
+            if i is None:
+                continue
+            bars_ago = (len(dfx) - 1) - i
+            if bars_ago <= recent_bars - 1:
+                events.append({
+                    "direction": "UP",
+                    "time": ts,
+                    "close": float(dfx.at[ts, "Close"]),
+                    "trendline": float(dfx.at[ts, "Trendline"]),
+                    "bars_ago": int(bars_ago),
+                    "distance": float(dfx.at[ts, "Close"] - dfx.at[ts, "Trendline"]),
+                    "trend_slope": float(m),
+                    "r2": float(r2v) if np.isfinite(r2v) else np.nan
+                })
+
+        for ts in dfx.index[dn_cross.fillna(False)]:
+            i = idx_positions.get(ts, None)
+            if i is None:
+                continue
+            bars_ago = (len(dfx) - 1) - i
+            if bars_ago <= recent_bars - 1:
+                events.append({
+                    "direction": "DOWN",
+                    "time": ts,
+                    "close": float(dfx.at[ts, "Close"]),
+                    "trendline": float(dfx.at[ts, "Trendline"]),
+                    "bars_ago": int(bars_ago),
+                    "distance": float(dfx.at[ts, "Close"] - dfx.at[ts, "Trendline"]),
+                    "trend_slope": float(m),
+                    "r2": float(r2v) if np.isfinite(r2v) else np.nan
+                })
+
+        if not events:
+            return None
+
+        # Most recent event first (smallest bars_ago), tie-break by latest timestamp
+        events = sorted(events, key=lambda d: (d["bars_ago"], d["time"]), reverse=False)
+        return events[0]
+
+    def _prep_05_display_df(df_in: pd.DataFrame) -> pd.DataFrame:
+        if df_in.empty:
+            return df_in
+        out = df_in.copy()
+        out["Close"] = out["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+        out["Trendline"] = out["Trendline"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+        out["Distance to Trendline"] = out["Distance to Trendline"].map(
+            lambda v: f"{v:+.4f}" if np.isfinite(v) else "n/a"
+        )
+        out["Trend Slope"] = out["Trend Slope"].map(lambda v: fmt_slope(v) if np.isfinite(v) else "n/a")
+        out["R²"] = out["R²"].map(lambda v: fmt_r2(v) if np.isfinite(v) else "n/a")
+        return out
+
+    def _sort_05_hits(df_in: pd.DataFrame) -> pd.DataFrame:
+        if df_in.empty:
+            return df_in
+        return df_in.sort_values(
+            ["Bars Ago", "Timestamp", "Symbol"], ascending=[True, False, True]
+        ).reset_index(drop=True)
+
+    if run_cross05:
+        period_map_local = {"24h": "1d", "48h": "2d", "96h": "4d"}
+        scan_period_local = period_map_local.get(scan_hour_range_05, "1d")
+
+        rows_daily_up = []
+        rows_daily_down = []
+        rows_hourly_up = []
+        rows_hourly_down = []
+
+        progress = st.progress(0)
+        total_steps = max(1, len(universe) * 2)  # daily + hourly per symbol
+        step_count = 0
+
+        for sym in universe:
+            # ---- Daily scan ----
+            try:
+                s_daily = fetch_hist(sym)
+                evt_d = _latest_recent_uptrendline_cross(
+                    s_daily, trend_lookback=int(slope_lb_daily), recent_bars=int(recent_bars_05)
+                )
+                if evt_d is not None:
+                    row_d = {
+                        "Symbol": sym,
+                        "Timestamp": evt_d["time"],
+                        "Bars Ago": evt_d["bars_ago"],
+                        "Close": evt_d["close"],
+                        "Trendline": evt_d["trendline"],
+                        "Distance to Trendline": evt_d["distance"],
+                        "Trend Slope": evt_d["trend_slope"],
+                        "R²": evt_d["r2"],
+                        "Timeframe": "Daily"
+                    }
+                    if evt_d["direction"] == "UP":
+                        rows_daily_up.append(row_d)
+                    elif evt_d["direction"] == "DOWN":
+                        rows_daily_down.append(row_d)
+            except Exception:
+                pass
+            step_count += 1
+            progress.progress(min(step_count / total_steps, 1.0))
+
+            # ---- Hourly scan ----
+            try:
+                intr = fetch_intraday(sym, period=scan_period_local)
+                if intr is None or intr.empty or "Close" not in intr.columns:
+                    s_hour = pd.Series(dtype=float)
+                else:
+                    s_hour = _coerce_1d_series(intr["Close"]).dropna()
+
+                evt_h = _latest_recent_uptrendline_cross(
+                    s_hour, trend_lookback=int(slope_lb_hourly), recent_bars=int(recent_bars_05)
+                )
+                if evt_h is not None:
+                    row_h = {
+                        "Symbol": sym,
+                        "Timestamp": evt_h["time"],
+                        "Bars Ago": evt_h["bars_ago"],
+                        "Close": evt_h["close"],
+                        "Trendline": evt_h["trendline"],
+                        "Distance to Trendline": evt_h["distance"],
+                        "Trend Slope": evt_h["trend_slope"],
+                        "R²": evt_h["r2"],
+                        "Timeframe": f"Hourly ({scan_hour_range_05})"
+                    }
+                    if evt_h["direction"] == "UP":
+                        rows_hourly_up.append(row_h)
+                    elif evt_h["direction"] == "DOWN":
+                        rows_hourly_down.append(row_h)
+            except Exception:
+                pass
+            step_count += 1
+            progress.progress(min(step_count / total_steps, 1.0))
+
+        progress.empty()
+
+        df_daily_up = _sort_05_hits(pd.DataFrame(rows_daily_up))
+        df_daily_down = _sort_05_hits(pd.DataFrame(rows_daily_down))
+        df_hourly_up = _sort_05_hits(pd.DataFrame(rows_hourly_up))
+        df_hourly_down = _sort_05_hits(pd.DataFrame(rows_hourly_down))
+
+        # Metrics
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Universe Size", len(universe))
+        c2.metric("Daily ↑ Crosses", int(df_daily_up.shape[0]))
+        c3.metric("Daily ↓ Crosses", int(df_daily_down.shape[0]))
+        c4.metric("Hourly ↑ Crosses", int(df_hourly_up.shape[0]))
+        c5.metric("Hourly ↓ Crosses", int(df_hourly_down.shape[0]))
+
+        # ---- Daily results ----
+        st.markdown("---")
+        st.subheader("Daily Chart — Price crossed green upward trendline GOING UP")
+        if df_daily_up.empty:
+            st.info(f"No Daily symbols found where price recently crossed the green upward trendline **going up** within the last {recent_bars_05} bar(s).")
+        else:
+            show_df = _prep_05_display_df(df_daily_up)
+            st.dataframe(
+                show_df[["Symbol", "Timestamp", "Bars Ago", "Timeframe", "Trend Slope", "R²", "Close", "Trendline", "Distance to Trendline"]],
+                use_container_width=True
+            )
+
+        st.subheader("Daily Chart — Price crossed green upward trendline GOING DOWN")
+        if df_daily_down.empty:
+            st.info(f"No Daily symbols found where price recently crossed the green upward trendline **going down** within the last {recent_bars_05} bar(s).")
+        else:
+            show_df = _prep_05_display_df(df_daily_down)
+            st.dataframe(
+                show_df[["Symbol", "Timestamp", "Bars Ago", "Timeframe", "Trend Slope", "R²", "Close", "Trendline", "Distance to Trendline"]],
+                use_container_width=True
+            )
+
+        # ---- Hourly results ----
+        st.markdown("---")
+        st.subheader(f"Hourly Chart ({scan_hour_range_05}) — Price crossed green upward trendline GOING UP")
+        if df_hourly_up.empty:
+            st.info(f"No Hourly symbols found where price recently crossed the green upward trendline **going up** within the last {recent_bars_05} bar(s).")
+        else:
+            show_df = _prep_05_display_df(df_hourly_up)
+            st.dataframe(
+                show_df[["Symbol", "Timestamp", "Bars Ago", "Timeframe", "Trend Slope", "R²", "Close", "Trendline", "Distance to Trendline"]],
+                use_container_width=True
+            )
+
+        st.subheader(f"Hourly Chart ({scan_hour_range_05}) — Price crossed green upward trendline GOING DOWN")
+        if df_hourly_down.empty:
+            st.info(f"No Hourly symbols found where price recently crossed the green upward trendline **going down** within the last {recent_bars_05} bar(s).")
+        else:
+            show_df = _prep_05_display_df(df_hourly_down)
+            st.dataframe(
+                show_df[["Symbol", "Timestamp", "Bars Ago", "Timeframe", "Trend Slope", "R²", "Close", "Trendline", "Distance to Trendline"]],
+                use_container_width=True
+            )
+
+    else:
+        st.info(
+            "Click **Scan 0.5 Cross** to scan the current universe for recent **price vs green upward trendline** "
+            "crosses on both **Daily** and **Hourly** charts (split into **going up** and **going down**)."
         )
