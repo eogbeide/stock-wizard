@@ -887,7 +887,7 @@ if 'run_all' not in st.session_state:
 if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
-# Tabs (UPDATED: added tab8 = "0.5 Cross")
+# Tabs (UPDATED: added tab8 = "Trendline Cross")
 tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
@@ -896,7 +896,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "NTD -0.75 Scanner",
     "Long-Term History",
     "HMA 55 Cross Scanner",
-    "0.5 Cross"
+    "Trendline Cross"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -1960,9 +1960,9 @@ with tab7:
             "then split the results into **BUY/SELL** and **Upward/Downward Trend** buckets."
         )
 
-# --- Tab 8: 0.5 Cross (Price vs Green Upward Trendline Cross Scanner) ---
+# --- Tab 8: Trendline Cross (Price vs Green Upward Trendline Cross Scanner) ---
 with tab8:
-    st.header("0.5 Cross")
+    st.header("Trendline Cross")
     st.caption(
         "Lists symbols where **price recently crossed the green upward trendline** "
         "(i.e., regression trendline slope > 0) on both **Daily** and **Hourly** charts, "
@@ -1976,7 +1976,7 @@ with tab8:
         key="cross05_scan_hour_range"
     )
     recent_bars_05 = st.slider("Recent cross window (bars)", 1, 12, 3, 1, key="cross05_recent_bars")
-    run_cross05 = st.button("Scan 0.5 Cross", key="btn_cross05_scan")
+    run_cross05 = st.button("Scan Trendline Cross", key="btn_cross05_scan")
 
     def _latest_recent_uptrendline_cross(close_like, trend_lookback: int, recent_bars: int = 3):
         """
@@ -2206,6 +2206,6 @@ with tab8:
 
     else:
         st.info(
-            "Click **Scan 0.5 Cross** to scan the current universe for recent **price vs green upward trendline** "
+            "Click **Scan Trendline Cross** to scan the current universe for recent **price vs green upward trendline** "
             "crosses on both **Daily** and **Hourly** charts (split into **going up** and **going down**)."
         )
