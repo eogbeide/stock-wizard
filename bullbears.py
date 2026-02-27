@@ -888,13 +888,14 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
     "NTD -0.75 Scanner",
-    "Long-Term History"
+    "Long-Term History",
+    "HMA 55 Cross Scanner"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -1339,7 +1340,6 @@ with tab2:
                 st.warning("No intraday data available.")
             else:
                 st.info("Intraday view is rendered fully in Tab 1 (same logic).")
-
 # --- Tab 3: Bull vs Bear ---
 with tab3:
     st.header("Bull vs Bear Summary")
@@ -1681,3 +1681,165 @@ with tab6:
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.4)
             st.pyplot(fig)
+# --- Tab 7: HMA 55 Cross Scanner ---
+with tab7:
+    st.header("HMA 55 Cross Scanner")
+    st.caption("Lists symbols where **price has recently crossed HMA(55)** on the selected timeframe, separated into **Going Up** and **Going Down**.")
+
+    # Local scanner controls (tab-only; does not change existing app behavior)
+    scan_tf = st.selectbox("Scanner timeframe:", ["Daily", "Hourly (5m)"], index=0, key="hma55_scan_tf")
+    recent_bars_hma = st.slider("Recent cross window (bars)", 1, 12, 3, 1, key="hma55_recent_bars")
+    scan_hour_range_hma = st.selectbox(
+        "Hourly lookback (for Hourly scanner):",
+        ["24h", "48h", "96h"],
+        index=["24h", "48h", "96h"].index(st.session_state.get("hour_range", "24h")),
+        key="hma55_scan_hour_range"
+    )
+    run_hma_scan = st.button("Scan HMA 55 Crosses", key="btn_hma55_scan")
+
+    def _latest_recent_hma_cross(close_like, period: int = 55, recent_bars: int = 3):
+        """
+        Detect latest recent price/HMA cross within the last `recent_bars` bars.
+        Returns dict with:
+          {"direction": "UP"|"DOWN", "time", "close", "hma", "bars_ago", "distance"}
+        or None.
+        """
+        close = _coerce_1d_series(close_like).astype(float).dropna()
+        if close.empty or close.shape[0] < max(period + 5, 10):
+            return None
+
+        hma = compute_hma(close, period=period)
+        dfx = pd.DataFrame({"Close": close, "HMA55": hma}).dropna()
+        if dfx.shape[0] < 3:
+            return None
+
+        diff = dfx["Close"] - dfx["HMA55"]
+        prev = diff.shift(1)
+
+        up_cross = (diff > 0) & (prev <= 0)
+        dn_cross = (diff < 0) & (prev >= 0)
+
+        cross_events = []
+        idx_positions = {ts: i for i, ts in enumerate(dfx.index)}
+
+        for ts in dfx.index[up_cross.fillna(False)]:
+            i = idx_positions.get(ts, None)
+            if i is None:
+                continue
+            bars_ago = (len(dfx) - 1) - i
+            if bars_ago <= recent_bars - 1:
+                cross_events.append({
+                    "direction": "UP",
+                    "time": ts,
+                    "close": float(dfx.at[ts, "Close"]),
+                    "hma": float(dfx.at[ts, "HMA55"]),
+                    "bars_ago": int(bars_ago),
+                    "distance": float(dfx.at[ts, "Close"] - dfx.at[ts, "HMA55"])
+                })
+
+        for ts in dfx.index[dn_cross.fillna(False)]:
+            i = idx_positions.get(ts, None)
+            if i is None:
+                continue
+            bars_ago = (len(dfx) - 1) - i
+            if bars_ago <= recent_bars - 1:
+                cross_events.append({
+                    "direction": "DOWN",
+                    "time": ts,
+                    "close": float(dfx.at[ts, "Close"]),
+                    "hma": float(dfx.at[ts, "HMA55"]),
+                    "bars_ago": int(bars_ago),
+                    "distance": float(dfx.at[ts, "Close"] - dfx.at[ts, "HMA55"])
+                })
+
+        if not cross_events:
+            return None
+
+        # Return the most recent event (smallest bars_ago); if tie, keep latest timestamp
+        cross_events = sorted(cross_events, key=lambda d: (d["bars_ago"], d["time"]), reverse=False)
+        return cross_events[0]
+
+    if run_hma_scan:
+        period_map_local = {"24h": "1d", "48h": "2d", "96h": "4d"}
+        scan_period_local = period_map_local.get(scan_hour_range_hma, "1d")
+
+        rows_up = []
+        rows_down = []
+
+        progress = st.progress(0)
+        total_syms = max(1, len(universe))
+
+        for i, sym in enumerate(universe, start=1):
+            try:
+                if scan_tf == "Daily":
+                    series_scan = fetch_hist(sym)
+                else:
+                    intr = fetch_intraday(sym, period=scan_period_local)
+                    if intr is None or intr.empty or "Close" not in intr.columns:
+                        series_scan = pd.Series(dtype=float)
+                    else:
+                        series_scan = _coerce_1d_series(intr["Close"]).dropna()
+
+                event = _latest_recent_hma_cross(series_scan, period=55, recent_bars=recent_bars_hma)
+
+                if event is not None:
+                    row = {
+                        "Symbol": sym,
+                        "Timestamp": event["time"],
+                        "Bars Ago": event["bars_ago"],
+                        "Close": event["close"],
+                        "HMA 55": event["hma"],
+                        "Distance to HMA": event["distance"]
+                    }
+                    if event["direction"] == "UP":
+                        rows_up.append(row)
+                    elif event["direction"] == "DOWN":
+                        rows_down.append(row)
+            except Exception:
+                # Skip symbol on any download/calc error to preserve scanner continuity
+                pass
+
+            progress.progress(min(i / total_syms, 1.0))
+
+        progress.empty()
+
+        df_up = pd.DataFrame(rows_up)
+        df_down = pd.DataFrame(rows_down)
+
+        # Sort: most recent cross first (Bars Ago ascending), then symbol
+        if not df_up.empty:
+            df_up = df_up.sort_values(["Bars Ago", "Timestamp", "Symbol"], ascending=[True, False, True]).reset_index(drop=True)
+        if not df_down.empty:
+            df_down = df_down.sort_values(["Bars Ago", "Timestamp", "Symbol"], ascending=[True, False, True]).reset_index(drop=True)
+
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Universe Size", len(universe))
+        c2.metric("HMA 55 Cross Up", int(df_up.shape[0]))
+        c3.metric("HMA 55 Cross Down", int(df_down.shape[0]))
+
+        st.markdown("---")
+        st.subheader(f"Price recently crossed HMA 55 — Going Up ({scan_tf})")
+        if df_up.empty:
+            st.info(f"No symbols found with a recent **UP** cross of HMA 55 in the last {recent_bars_hma} bar(s).")
+        else:
+            show_up = df_up.copy()
+            show_up["Close"] = show_up["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            show_up["HMA 55"] = show_up["HMA 55"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            show_up["Distance to HMA"] = show_up["Distance to HMA"].map(lambda v: f"{v:+.4f}" if np.isfinite(v) else "n/a")
+            st.dataframe(show_up[["Symbol", "Timestamp", "Bars Ago", "Close", "HMA 55", "Distance to HMA"]],
+                         use_container_width=True)
+
+        st.markdown("---")
+        st.subheader(f"Price recently crossed HMA 55 — Going Down ({scan_tf})")
+        if df_down.empty:
+            st.info(f"No symbols found with a recent **DOWN** cross of HMA 55 in the last {recent_bars_hma} bar(s).")
+        else:
+            show_down = df_down.copy()
+            show_down["Close"] = show_down["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            show_down["HMA 55"] = show_down["HMA 55"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+            show_down["Distance to HMA"] = show_down["Distance to HMA"].map(lambda v: f"{v:+.4f}" if np.isfinite(v) else "n/a")
+            st.dataframe(show_down[["Symbol", "Timestamp", "Bars Ago", "Close", "HMA 55", "Distance to HMA"]],
+                         use_container_width=True)
+
+    else:
+        st.info("Click **Scan HMA 55 Crosses** to scan the current universe for recent HMA(55) up/down price crosses.")
