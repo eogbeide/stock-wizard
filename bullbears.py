@@ -887,15 +887,16 @@ if 'run_all' not in st.session_state:
 if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
-# Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+# Tabs (UPDATED: added Kijun Cross tab)
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
     "NTD -0.75 Scanner",
     "Long-Term History",
-    "HMA 55 Cross Scanner"
+    "HMA 55 Cross Scanner",
+    "Kijun Cross"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -1681,6 +1682,7 @@ with tab6:
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.4)
             st.pyplot(fig)
+
 # --- Tab 7: HMA 55 Cross Scanner ---
 with tab7:
     st.header("HMA 55 Cross Scanner")
@@ -1957,4 +1959,287 @@ with tab7:
         st.info(
             "Click **Scan HMA 55 Crosses** to scan the current universe for recent HMA(55) crosses, "
             "then split the results into **BUY/SELL** and **Upward/Downward Trend** buckets."
+        )
+# --- REPLACE the Tabs block in Batch 1 with this updated version (adds Tab 8) ---
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+    "Original Forecast",
+    "Enhanced Forecast",
+    "Bull vs Bear",
+    "Metrics",
+    "NTD -0.75 Scanner",
+    "Long-Term History",
+    "HMA 55 Cross Scanner",
+    "Kijun Cross"
+])
+
+# --- Tab 8: Kijun Cross (Daily) ---
+with tab8:
+    st.header("Kijun Cross (Daily)")
+    st.caption(
+        "Scans the current universe on the **Daily chart** for symbols where price has **recently crossed Ichimoku Kijun**, "
+        "split by **cross direction** (up/down) and **daily regression slope sign** (>0 / <0)."
+    )
+
+    recent_bars_kijun = st.slider(
+        "Recent Kijun cross window (daily bars)", 1, 12, 3, 1, key="kijun_cross_recent_bars"
+    )
+    run_kijun_scan = st.button("Scan Daily Kijun Crosses", key="btn_kijun_cross_scan")
+
+    def _latest_recent_kijun_cross_daily(df_ohlc_like: pd.DataFrame, base: int = 26, recent_bars: int = 3):
+        """
+        Detect latest recent Close/Kijun cross on DAILY data within the last `recent_bars` bars.
+        Returns dict with:
+          {"direction": "UP"|"DOWN", "time", "close", "kijun", "bars_ago", "distance"}
+        or None.
+        """
+        if df_ohlc_like is None or df_ohlc_like.empty or not {"High", "Low", "Close"}.issubset(df_ohlc_like.columns):
+            return None
+
+        ohlc = df_ohlc_like[["High", "Low", "Close"]].copy()
+        ohlc["High"] = _coerce_1d_series(ohlc["High"])
+        ohlc["Low"] = _coerce_1d_series(ohlc["Low"])
+        ohlc["Close"] = _coerce_1d_series(ohlc["Close"])
+        ohlc = ohlc.dropna()
+
+        if ohlc.shape[0] < max(base + 5, 10):
+            return None
+
+        _, kijun, _, _, _ = ichimoku_lines(
+            ohlc["High"], ohlc["Low"], ohlc["Close"],
+            conv=ichi_conv, base=base, span_b=ichi_spanb, shift_cloud=False
+        )
+        kijun = kijun.ffill().bfill().reindex(ohlc.index)
+
+        dfx = pd.DataFrame({
+            "Close": ohlc["Close"].astype(float),
+            "Kijun": kijun.astype(float)
+        }).dropna()
+
+        if dfx.shape[0] < 3:
+            return None
+
+        diff = dfx["Close"] - dfx["Kijun"]
+        prev = diff.shift(1)
+
+        up_cross = (diff > 0) & (prev <= 0)   # price crosses above Kijun
+        dn_cross = (diff < 0) & (prev >= 0)   # price crosses below Kijun
+
+        cross_events = []
+        idx_positions = {ts: i for i, ts in enumerate(dfx.index)}
+
+        for ts in dfx.index[up_cross.fillna(False)]:
+            i = idx_positions.get(ts, None)
+            if i is None:
+                continue
+            bars_ago = (len(dfx) - 1) - i
+            if bars_ago <= recent_bars - 1:
+                cross_events.append({
+                    "direction": "UP",
+                    "time": ts,
+                    "close": float(dfx.at[ts, "Close"]),
+                    "kijun": float(dfx.at[ts, "Kijun"]),
+                    "bars_ago": int(bars_ago),
+                    "distance": float(dfx.at[ts, "Close"] - dfx.at[ts, "Kijun"])
+                })
+
+        for ts in dfx.index[dn_cross.fillna(False)]:
+            i = idx_positions.get(ts, None)
+            if i is None:
+                continue
+            bars_ago = (len(dfx) - 1) - i
+            if bars_ago <= recent_bars - 1:
+                cross_events.append({
+                    "direction": "DOWN",
+                    "time": ts,
+                    "close": float(dfx.at[ts, "Close"]),
+                    "kijun": float(dfx.at[ts, "Kijun"]),
+                    "bars_ago": int(bars_ago),
+                    "distance": float(dfx.at[ts, "Close"] - dfx.at[ts, "Kijun"])
+                })
+
+        if not cross_events:
+            return None
+
+        # Most recent event first: smallest bars_ago, then latest timestamp
+        cross_events = sorted(cross_events, key=lambda d: (d["bars_ago"], d["time"]), reverse=False)
+        return cross_events[0]
+
+    def _daily_slope_value_from_close(close_like, lookback: int):
+        """
+        Returns daily regression slope (float) using existing helper.
+        Falls back to slope_line if needed.
+        """
+        s = _coerce_1d_series(close_like).astype(float).dropna()
+        if s.empty or len(s) < 2:
+            return float("nan")
+        try:
+            _, _, _, m, _ = regression_with_band(s, lookback=int(lookback))
+        except Exception:
+            m = float("nan")
+        if not np.isfinite(m):
+            try:
+                _, m = slope_line(s, lookback=int(lookback))
+            except Exception:
+                m = float("nan")
+        return float(m) if np.isfinite(m) else float("nan")
+
+    def _sort_hits(df_in: pd.DataFrame) -> pd.DataFrame:
+        if df_in.empty:
+            return df_in
+        return df_in.sort_values(
+            ["Bars Ago", "Timestamp", "Symbol"], ascending=[True, False, True]
+        ).reset_index(drop=True)
+
+    def _prep_kijun_display_df(df_in: pd.DataFrame) -> pd.DataFrame:
+        if df_in.empty:
+            return df_in
+        show_df = df_in.copy()
+        show_df["Close"] = show_df["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+        show_df["Kijun"] = show_df["Kijun"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
+        show_df["Distance to Kijun"] = show_df["Distance to Kijun"].map(lambda v: f"{v:+.4f}" if np.isfinite(v) else "n/a")
+        show_df["Slope"] = show_df["Slope"].map(lambda v: fmt_slope(v) if np.isfinite(v) else "n/a")
+        return show_df
+
+    if run_kijun_scan:
+        rows_up_slope_pos = []
+        rows_up_slope_neg = []
+        rows_down_slope_pos = []
+        rows_down_slope_neg = []
+        rows_up_slope_zero_or_nan = []
+        rows_down_slope_zero_or_nan = []
+
+        progress = st.progress(0)
+        total_syms = max(1, len(universe))
+
+        for i, sym in enumerate(universe, start=1):
+            try:
+                df_ohlc_sym = fetch_hist_ohlc(sym)
+                event = _latest_recent_kijun_cross_daily(
+                    df_ohlc_sym, base=ichi_base, recent_bars=recent_bars_kijun
+                )
+
+                if event is not None:
+                    close_series = (
+                        df_ohlc_sym["Close"] if (df_ohlc_sym is not None and "Close" in df_ohlc_sym.columns)
+                        else pd.Series(dtype=float)
+                    )
+                    slope_val = _daily_slope_value_from_close(close_series, lookback=slope_lb_daily)
+
+                    row = {
+                        "Symbol": sym,
+                        "Timestamp": event["time"],
+                        "Bars Ago": event["bars_ago"],
+                        "Close": event["close"],
+                        "Kijun": event["kijun"],
+                        "Distance to Kijun": event["distance"],
+                        "Slope": slope_val
+                    }
+
+                    if event["direction"] == "UP":
+                        if np.isfinite(slope_val) and slope_val > 0:
+                            rows_up_slope_pos.append(row)
+                        elif np.isfinite(slope_val) and slope_val < 0:
+                            rows_up_slope_neg.append(row)
+                        else:
+                            rows_up_slope_zero_or_nan.append(row)
+                    elif event["direction"] == "DOWN":
+                        if np.isfinite(slope_val) and slope_val > 0:
+                            rows_down_slope_pos.append(row)
+                        elif np.isfinite(slope_val) and slope_val < 0:
+                            rows_down_slope_neg.append(row)
+                        else:
+                            rows_down_slope_zero_or_nan.append(row)
+
+            except Exception:
+                # Preserve scanner continuity on download/calc issues
+                pass
+
+            progress.progress(min(i / total_syms, 1.0))
+
+        progress.empty()
+
+        df_up_pos = _sort_hits(pd.DataFrame(rows_up_slope_pos))
+        df_up_neg = _sort_hits(pd.DataFrame(rows_up_slope_neg))
+        df_dn_pos = _sort_hits(pd.DataFrame(rows_down_slope_pos))
+        df_dn_neg = _sort_hits(pd.DataFrame(rows_down_slope_neg))
+        df_up_zero_nan = _sort_hits(pd.DataFrame(rows_up_slope_zero_or_nan))
+        df_dn_zero_nan = _sort_hits(pd.DataFrame(rows_down_slope_zero_or_nan))
+
+        # Top metrics
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Universe Size", len(universe))
+        c2.metric("Kijun Cross Up & Slope > 0", int(df_up_pos.shape[0]))
+        c3.metric("Kijun Cross Up & Slope < 0", int(df_up_neg.shape[0]))
+        c4.metric("Kijun Cross Down & Slope > 0", int(df_dn_pos.shape[0]))
+        c5.metric("Kijun Cross Down & Slope < 0", int(df_dn_neg.shape[0]))
+
+        # Cross Up
+        st.markdown("---")
+        st.subheader("Price recently crossed Kijun Going Up — Slope > 0 (Daily)")
+        if df_up_pos.empty:
+            st.info(f"No Daily symbols found with recent **Kijun cross UP** and **slope > 0** in the last {recent_bars_kijun} bar(s).")
+        else:
+            show_df = _prep_kijun_display_df(df_up_pos)
+            st.dataframe(
+                show_df[["Symbol", "Timestamp", "Bars Ago", "Slope", "Close", "Kijun", "Distance to Kijun"]],
+                use_container_width=True
+            )
+
+        st.subheader("Price recently crossed Kijun Going Up — Slope < 0 (Daily)")
+        if df_up_neg.empty:
+            st.info(f"No Daily symbols found with recent **Kijun cross UP** and **slope < 0** in the last {recent_bars_kijun} bar(s).")
+        else:
+            show_df = _prep_kijun_display_df(df_up_neg)
+            st.dataframe(
+                show_df[["Symbol", "Timestamp", "Bars Ago", "Slope", "Close", "Kijun", "Distance to Kijun"]],
+                use_container_width=True
+            )
+
+        # Cross Down
+        st.markdown("---")
+        st.subheader("Price recently crossed Kijun Going Down — Slope > 0 (Daily)")
+        if df_dn_pos.empty:
+            st.info(f"No Daily symbols found with recent **Kijun cross DOWN** and **slope > 0** in the last {recent_bars_kijun} bar(s).")
+        else:
+            show_df = _prep_kijun_display_df(df_dn_pos)
+            st.dataframe(
+                show_df[["Symbol", "Timestamp", "Bars Ago", "Slope", "Close", "Kijun", "Distance to Kijun"]],
+                use_container_width=True
+            )
+
+        st.subheader("Price recently crossed Kijun Going Down — Slope < 0 (Daily)")
+        if df_dn_neg.empty:
+            st.info(f"No Daily symbols found with recent **Kijun cross DOWN** and **slope < 0** in the last {recent_bars_kijun} bar(s).")
+        else:
+            show_df = _prep_kijun_display_df(df_dn_neg)
+            st.dataframe(
+                show_df[["Symbol", "Timestamp", "Bars Ago", "Slope", "Close", "Kijun", "Distance to Kijun"]],
+                use_container_width=True
+            )
+
+        # Optional edge-case visibility (slope == 0 or unavailable)
+        if (not df_up_zero_nan.empty) or (not df_dn_zero_nan.empty):
+            st.markdown("---")
+            st.caption("Optional: Kijun cross signals where slope was 0 or unavailable (insufficient data / fit issue).")
+
+            if not df_up_zero_nan.empty:
+                st.subheader("Kijun Cross Up — Slope = 0 / n/a (Daily)")
+                show_df = _prep_kijun_display_df(df_up_zero_nan)
+                st.dataframe(
+                    show_df[["Symbol", "Timestamp", "Bars Ago", "Slope", "Close", "Kijun", "Distance to Kijun"]],
+                    use_container_width=True
+                )
+
+            if not df_dn_zero_nan.empty:
+                st.subheader("Kijun Cross Down — Slope = 0 / n/a (Daily)")
+                show_df = _prep_kijun_display_df(df_dn_zero_nan)
+                st.dataframe(
+                    show_df[["Symbol", "Timestamp", "Bars Ago", "Slope", "Close", "Kijun", "Distance to Kijun"]],
+                    use_container_width=True
+                )
+
+    else:
+        st.info(
+            "Click **Scan Daily Kijun Crosses** to list symbols where price recently crossed Kijun "
+            "and split the results by **cross direction** and **slope sign**."
         )
