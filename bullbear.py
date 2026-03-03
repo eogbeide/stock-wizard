@@ -2250,6 +2250,95 @@ def ntd_minus05_cross_row_hourly(symbol: str,
         return None
 
 # =========================
+# NEW: Daily Bet (hourly Fib 0%/100% + NPX 0.0 cross) helper
+# =========================
+@st.cache_data(ttl=120)
+def daily_bet_signal_row_hourly(symbol: str,
+                                period: str,
+                                side: str,
+                                ntd_win: int = 60,
+                                touch_horizon_bars: int = 15,
+                                max_bars_since: int = 10):
+    """
+    Hourly (5m bars) 'Daily Bet' signal scanner:
+      - SELL list: price recently touched Fib 0% (top) and NPX crossed DOWN through 0.0
+      - BUY  list: price recently touched Fib 100% (bottom) and NPX crossed UP through 0.0
+    Uses the same Fib+NPX logic already used elsewhere in the app.
+    """
+    try:
+        side_u = str(side).strip().upper()
+        if side_u not in {"BUY", "SELL"}:
+            return None
+
+        df = fetch_intraday(symbol, period=period)
+        if df is None or df.empty or "Close" not in df.columns:
+            return None
+        real_times = df.index if isinstance(df.index, pd.DatetimeIndex) else None
+
+        df2 = df.copy()
+        df2.index = pd.RangeIndex(len(df2))
+        hc = _coerce_1d_series(df2["Close"]).ffill().dropna()
+        if len(hc) < max(20, int(ntd_win)):
+            return None
+
+        npx = _coerce_1d_series(compute_normalized_price(hc, window=int(ntd_win)))
+        buy_mask, sell_mask, fibs = fib_npx_zero_cross_signal_masks(
+            price=hc,
+            npx=npx,
+            horizon_bars=int(touch_horizon_bars),
+            proximity_pct_of_range=0.02,
+            npx_level=0.0
+        )
+
+        mask = buy_mask if side_u == "BUY" else sell_mask
+        mask = _coerce_1d_series(mask).reindex(hc.index).fillna(0).astype(bool)
+        if not mask.any():
+            return None
+
+        bar = int(mask[mask].index[-1])
+        if bar < 0 or bar >= len(hc):
+            return None
+
+        bars_since = int((len(hc) - 1) - bar)
+        if int(bars_since) > int(max_bars_since):
+            return None
+
+        sig_time = None
+        if isinstance(real_times, pd.DatetimeIndex) and (0 <= bar < len(real_times)):
+            sig_time = real_times[bar]
+
+        curr_px = float(hc.iloc[-1]) if np.isfinite(hc.iloc[-1]) else np.nan
+        sig_px = float(hc.iloc[bar]) if np.isfinite(hc.iloc[bar]) else np.nan
+
+        npx = _coerce_1d_series(npx).reindex(hc.index)
+        npx_cross = float(npx.iloc[bar]) if np.isfinite(npx.iloc[bar]) else np.nan
+        npx_last = float(npx.dropna().iloc[-1]) if len(npx.dropna()) else np.nan
+
+        fib0 = float(fibs.get("0%", np.nan)) if isinstance(fibs, dict) else np.nan
+        fib100 = float(fibs.get("100%", np.nan)) if isinstance(fibs, dict) else np.nan
+
+        touched_label = "100%" if side_u == "BUY" else "0%"
+        cross_dir = "Up" if side_u == "BUY" else "Down"
+
+        return {
+            "Symbol": symbol,
+            "Frame": f"Hourly ({period})",
+            "Side": side_u,
+            "Touched Fib": touched_label,
+            "Cross Dir": cross_dir,
+            "Bars Since": int(bars_since),
+            "Signal Time": sig_time if sig_time is not None else bar,
+            "Signal Price": sig_px,
+            "Last Price": curr_px,
+            "NPX@Cross": npx_cross,
+            "NPX(last)": npx_last,
+            "Fib 0%": fib0,
+            "Fib 100%": fib100,
+        }
+    except Exception:
+        return None
+
+# =========================
 # Chart renderers
 # =========================
 def render_daily_chart(symbol: str, daily_view_label: str):
@@ -2687,7 +2776,7 @@ if "run_all" not in st.session_state:
 # =========================
 (
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11,
-    tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19, tab20, tab21, tab22, tab23, tab24, tab25, tab26
+    tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19, tab20, tab21, tab22, tab23, tab24, tab25, tab26, tab27
 ) = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
@@ -2715,6 +2804,7 @@ if "run_all" not in st.session_state:
     "NPX 0.0 Cross Trend/PTD",
     "Magic Cross",
     "Max History Marker",
+    "Daily Bet",
 ])
 
 period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
@@ -4152,6 +4242,7 @@ with tab25:
                 if not base:
                     continue
 
+                    # (kept original indentation/logic style)
                 tm = float(base.get("Trendline Slope", np.nan))
                 rm = float(base.get("Regression Slope", np.nan))
                 r2v = float(base.get("R2", np.nan)) if np.isfinite(base.get("R2", np.nan)) else np.nan
@@ -4429,3 +4520,77 @@ with tab26:
                 # Prefer freshest crosses first, then more negative current NTD
                 dfd = dfd.sort_values(["Bars Since Cross", "NTD(last)", "Recent Global Slope"], ascending=[True, True, True])
                 st.dataframe(dfd[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
+
+# =========================
+# TAB 27 — Daily Bet ✅ NEW
+# =========================
+with tab27:
+    st.header("Daily Bet")
+    st.caption(
+        "Hourly-only scanner based on **Fibonacci reversal + NPX 0.0 cross** on the NTD panel.\n\n"
+        "1) **Sell-side reversal list**: price recently touched **Fib 0%** and then **NPX crossed DOWN through 0.0**.\n"
+        "2) **Buy-side reversal list**: price recently touched **Fib 100%** and then **NPX crossed UP through 0.0**.\n\n"
+        "This uses the same Fib+NPX signal logic already used in the charts/scanners."
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    hours = c1.selectbox("Hourly scan window", ["24h", "48h", "96h"], index=0, key=f"dailybet_hr_win_{mode}")
+    within_bars = c2.selectbox("Within N bars", [3, 5, 10, 15, 20], index=2, key=f"dailybet_within_{mode}")
+    touch_hz = c3.slider("Fib touch horizon (bars)", 3, 60, 15, 1, key=f"dailybet_touch_hz_{mode}")
+    max_rows = c4.slider("Max rows per list", 10, 300, 60, 10, key=f"dailybet_rows_{mode}")
+
+    run27 = st.button("Run Daily Bet Scan", key=f"btn_run_daily_bet_{mode}", use_container_width=True)
+
+    if run27:
+        sell_rows = []
+        buy_rows = []
+
+        hr_period = period_map[hours]
+
+        for sym in universe:
+            r_sell = daily_bet_signal_row_hourly(
+                symbol=sym,
+                period=hr_period,
+                side="SELL",
+                ntd_win=int(ntd_window),
+                touch_horizon_bars=int(touch_hz),
+                max_bars_since=int(within_bars),
+            )
+            if r_sell:
+                sell_rows.append(r_sell)
+
+            r_buy = daily_bet_signal_row_hourly(
+                symbol=sym,
+                period=hr_period,
+                side="BUY",
+                ntd_win=int(ntd_window),
+                touch_horizon_bars=int(touch_hz),
+                max_bars_since=int(within_bars),
+            )
+            if r_buy:
+                buy_rows.append(r_buy)
+
+        show_cols = [
+            "Symbol", "Frame", "Touched Fib", "Cross Dir", "Bars Since",
+            "Signal Time", "Signal Price", "Last Price", "NPX@Cross", "NPX(last)"
+        ]
+
+        cL, cR = st.columns(2)
+
+        with cL:
+            st.subheader("Hourly reversals from Fib 0% + NPX crossed 0.0 downward")
+            if not sell_rows:
+                st.write("No matches.")
+            else:
+                dfs = pd.DataFrame(sell_rows)
+                dfs = dfs.sort_values(["Bars Since", "NPX(last)"], ascending=[True, True])
+                st.dataframe(dfs[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
+
+        with cR:
+            st.subheader("Hourly reversals from Fib 100% + NPX crossed 0.0 upward")
+            if not buy_rows:
+                st.write("No matches.")
+            else:
+                dfb = pd.DataFrame(buy_rows)
+                dfb = dfb.sort_values(["Bars Since", "NPX(last)"], ascending=[True, False])
+                st.dataframe(dfb[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
