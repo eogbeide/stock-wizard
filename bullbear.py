@@ -1783,6 +1783,70 @@ def _bars_since_last_event(index_like, event_time) -> int:
         return 10**9
 
 # =========================
+# NEW: Max History Marker helper (NTD 0.00 cross on max-history NTD chart)
+# =========================
+@st.cache_data(ttl=120)
+def max_history_ntd_zero_cross_row(symbol: str,
+                                   ntd_win: int = 60,
+                                   direction: str = "up",
+                                   max_bars_since: int = 20):
+    """
+    Scans the Long-Term History / Max-History NTD series and returns the most recent
+    0.00-line cross event for the requested direction:
+      - direction='up'   : NTD crosses UP through 0.00
+      - direction='down' : NTD crosses DOWN through 0.00
+    """
+    try:
+        s = _coerce_1d_series(fetch_hist_max(symbol)).dropna()
+        if len(s) < max(10, int(ntd_win)):
+            return None
+
+        ntd = _coerce_1d_series(compute_normalized_trend(s, window=int(ntd_win))).dropna()
+        if len(ntd) < 2:
+            return None
+
+        prev = ntd.shift(1)
+        d = str(direction).strip().lower()
+        want_up = d.startswith("u")
+
+        if want_up:
+            mask = ((ntd >= 0.0) & (prev < 0.0)).fillna(False)
+            dir_label = "Up"
+        else:
+            mask = ((ntd <= 0.0) & (prev > 0.0)).fillna(False)
+            dir_label = "Down"
+
+        if not mask.any():
+            return None
+
+        t_cross = mask[mask].index[-1]
+        bars_since = int((len(ntd) - 1) - int(ntd.index.get_loc(t_cross)))
+        if int(bars_since) > int(max_bars_since):
+            return None
+
+        ntd_cross = float(ntd.loc[t_cross]) if np.isfinite(ntd.loc[t_cross]) else np.nan
+        ntd_last = float(ntd.iloc[-1]) if np.isfinite(ntd.iloc[-1]) else np.nan
+        last_px = float(s.iloc[-1]) if np.isfinite(s.iloc[-1]) else np.nan
+
+        # Optional recent trend reference (same spirit as Long-Term History tab chart)
+        recent = s.iloc[-min(len(s), 600):]
+        recent_global_slope = _global_slope_1d(recent)
+
+        return {
+            "Symbol": symbol,
+            "Frame": "Max History",
+            "Cross Dir": dir_label,
+            "Bars Since Cross": int(bars_since),
+            "Cross Time": t_cross,
+            "NTD@Cross": ntd_cross,
+            "NTD(last)": ntd_last,
+            "Last Price": last_px,
+            "Recent Global Slope": float(recent_global_slope) if np.isfinite(recent_global_slope) else np.nan,
+        }
+    except Exception:
+        return None
+
+# =========================
 # NEW: Magic Cross helpers (Daily + Hourly)
 # =========================
 @st.cache_data(ttl=120)
@@ -2623,7 +2687,7 @@ if "run_all" not in st.session_state:
 # =========================
 (
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11,
-    tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19, tab20, tab21, tab22, tab23, tab24, tab25
+    tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19, tab20, tab21, tab22, tab23, tab24, tab25, tab26
 ) = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
@@ -2650,6 +2714,7 @@ if "run_all" not in st.session_state:
     "Trend and Slope Align",
     "NPX 0.0 Cross Trend/PTD",
     "Magic Cross",
+    "Max History Marker",
 ])
 
 period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
@@ -4292,3 +4357,75 @@ with tab25:
 
         rows_48 = _magic_rows_hourly("48h")
         _show_magic_hourly_section("48h", rows_48)
+
+# =========================
+# TAB 26 — Max History Marker ✅ NEW
+# =========================
+with tab26:
+    st.header("Max History Marker")
+    st.caption(
+        "Scans the **Long-Term History (max-history)** NTD chart and lists symbols where the **NTD line** "
+        "recently crossed the **0.00** line:\n"
+        "• **Going Up** (crossed up through 0.00)\n"
+        "• **Going Down** (crossed down through 0.00)\n\n"
+        "This uses the same max-history NTD logic shown in the **Long-Term History** tab."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    within_bars = c1.selectbox("Within N bars (max-history NTD)", [3, 5, 10, 20, 30, 60], index=3, key=f"maxhist_marker_within_{mode}")
+    max_rows = c2.slider("Max rows per list", 10, 300, 60, 10, key=f"maxhist_marker_rows_{mode}")
+    run26 = c3.button("Run Max History Marker Scan", key=f"btn_run_max_history_marker_{mode}", use_container_width=True)
+
+    if run26:
+        up_rows, down_rows = [], []
+
+        for sym in universe:
+            r_up = max_history_ntd_zero_cross_row(
+                symbol=sym,
+                ntd_win=int(ntd_window),
+                direction="up",
+                max_bars_since=int(within_bars),
+            )
+            if r_up:
+                up_rows.append(r_up)
+
+            r_dn = max_history_ntd_zero_cross_row(
+                symbol=sym,
+                ntd_win=int(ntd_window),
+                direction="down",
+                max_bars_since=int(within_bars),
+            )
+            if r_dn:
+                down_rows.append(r_dn)
+
+        show_cols = [
+            "Symbol",
+            "Bars Since Cross",
+            "Cross Time",
+            "NTD@Cross",
+            "NTD(last)",
+            "Recent Global Slope",
+            "Last Price",
+        ]
+
+        cL, cR = st.columns(2)
+
+        with cL:
+            st.subheader("NTD crossed 0.00 going UP (Max History)")
+            if not up_rows:
+                st.write("No matches.")
+            else:
+                dfu = pd.DataFrame(up_rows)
+                # Prefer freshest crosses first, then stronger current NTD
+                dfu = dfu.sort_values(["Bars Since Cross", "NTD(last)", "Recent Global Slope"], ascending=[True, False, False])
+                st.dataframe(dfu[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
+
+        with cR:
+            st.subheader("NTD crossed 0.00 going DOWN (Max History)")
+            if not down_rows:
+                st.write("No matches.")
+            else:
+                dfd = pd.DataFrame(down_rows)
+                # Prefer freshest crosses first, then more negative current NTD
+                dfd = dfd.sort_values(["Bars Since Cross", "NTD(last)", "Recent Global Slope"], ascending=[True, True, True])
+                st.dataframe(dfd[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
