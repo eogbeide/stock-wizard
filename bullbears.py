@@ -12,6 +12,7 @@
 # - Keeps auto-refresh, SARIMAX (used for metrics/probabilities), RSI, etc.
 # - Adds Buy/Sell Hot list tab
 # - Adds Fibonacci Reversal tab (hourly fib 0% / 100% reversal scanner)
+# - Adds Fibonacci Picks tab (hourly fib 0% / 100% reversal scanner without trend filter)
 
 import streamlit as st
 import pandas as pd
@@ -608,22 +609,148 @@ def fibonacci_reversal_scan_row(
     out.update(sig)
     return out
 
+# ---- NEW: Fibonacci Picks helpers (hourly fib touch/reversal WITHOUT trend filter) ----
+def _find_fibonacci_pick_signals(
+    price: pd.Series,
+    recent_bars: int = 10,
+    fib_touch_pct_of_range: float = 0.02
+):
+    """
+    Requested logic (hourly, NO trend filter):
+      (1) List A: price recently touched 0% (fib high) and reversed downward
+      (2) List B: price recently touched 100% (fib low) and reversed upward
+
+    Returns dict:
+      {"sell_from_0": {...} or None, "buy_from_100": {...} or None}
+    """
+    p = _coerce_1d_series(price).dropna()
+    out = {"sell_from_0": None, "buy_from_100": None}
+
+    if len(p) < max(3, int(recent_bars) + 1):
+        return out
+
+    fibs = fibonacci_levels(p)
+    if not fibs or ("0%" not in fibs) or ("100%" not in fibs):
+        return out
+
+    fib0 = float(fibs["0%"])      # high
+    fib100 = float(fibs["100%"])  # low
+    fib_range = float(fib0 - fib100)
+
+    if not (np.isfinite(fib0) and np.isfinite(fib100) and np.isfinite(fib_range)) or fib_range <= 0:
+        return out
+
+    tol = max(abs(fib_range) * float(fib_touch_pct_of_range), max(abs(float(p.iloc[-1])) * 0.0005, 1e-8))
+
+    near_fib0 = (p >= (fib0 - tol)).fillna(False)         # touch near 0% (top)
+    near_fib100 = (p <= (fib100 + tol)).fillna(False)     # touch near 100% (bottom)
+
+    rb = int(max(1, recent_bars))
+    recent_idx = p.index[-(rb + 1):]
+    recent_touch_0 = near_fib0.reindex(recent_idx, fill_value=False)
+    recent_touch_100 = near_fib100.reindex(recent_idx, fill_value=False)
+
+    last_px = float(p.iloc[-1])
+    prev_px = float(p.iloc[-2]) if len(p) >= 2 else np.nan
+    if not np.isfinite(prev_px):
+        return out
+
+    # (1) touched 0% and reversed downward
+    if recent_touch_0.any() and (last_px < prev_px):
+        t_touch = recent_touch_0[recent_touch_0].index[-1]
+        px_touch = float(p.loc[t_touch]) if np.isfinite(p.loc[t_touch]) else np.nan
+        if np.isfinite(px_touch) and (last_px <= px_touch):
+            bars_since = int((len(p) - 1) - int(p.index.get_loc(t_touch)))
+            out["sell_from_0"] = {
+                "Side": "SELL (0%)",
+                "Bars Since Touch": int(bars_since),
+                "Touch Time": t_touch,
+                "Touch Price": px_touch,
+                "Last Price": last_px,
+                "Fib 0%": fib0,
+                "Fib 100%": fib100,
+                "Move From Touch": (last_px - px_touch),
+                "Move From Touch %": ((last_px / px_touch) - 1.0) if px_touch != 0 else np.nan,
+                "Dist to Fib 0%": abs(last_px - fib0),
+                "Dist to Fib 100%": abs(last_px - fib100),
+            }
+
+    # (2) touched 100% and reversed upward
+    if recent_touch_100.any() and (last_px > prev_px):
+        t_touch = recent_touch_100[recent_touch_100].index[-1]
+        px_touch = float(p.loc[t_touch]) if np.isfinite(p.loc[t_touch]) else np.nan
+        if np.isfinite(px_touch) and (last_px >= px_touch):
+            bars_since = int((len(p) - 1) - int(p.index.get_loc(t_touch)))
+            out["buy_from_100"] = {
+                "Side": "BUY (100%)",
+                "Bars Since Touch": int(bars_since),
+                "Touch Time": t_touch,
+                "Touch Price": px_touch,
+                "Last Price": last_px,
+                "Fib 0%": fib0,
+                "Fib 100%": fib100,
+                "Move From Touch": (last_px - px_touch),
+                "Move From Touch %": ((last_px / px_touch) - 1.0) if px_touch != 0 else np.nan,
+                "Dist to Fib 0%": abs(last_px - fib0),
+                "Dist to Fib 100%": abs(last_px - fib100),
+            }
+
+    return out
+
+@st.cache_data(ttl=300)
+def fibonacci_picks_scan_rows(
+    symbol: str,
+    period: str = "1d",
+    recent_bars: int = 10,
+    fib_touch_pct_of_range: float = 0.02
+):
+    """
+    Hourly Fibonacci Picks scanner rows (NO trend filter):
+      - returns up to two rows for the symbol:
+        * sell_from_0
+        * buy_from_100
+    """
+    intr = fetch_intraday(symbol, period=period)
+    if intr is None or intr.empty or "Close" not in intr.columns:
+        return {"sell_from_0": None, "buy_from_100": None}
+
+    hc = _coerce_1d_series(intr["Close"]).ffill().dropna()
+    if len(hc) < max(20, int(recent_bars) + 2):
+        return {"sell_from_0": None, "buy_from_100": None}
+
+    sigs = _find_fibonacci_pick_signals(
+        price=hc,
+        recent_bars=int(recent_bars),
+        fib_touch_pct_of_range=float(fib_touch_pct_of_range)
+    )
+
+    out = {"sell_from_0": None, "buy_from_100": None}
+    if sigs.get("sell_from_0") is not None:
+        r = {"Symbol": symbol, "Frame": f"Hourly ({period})"}
+        r.update(sigs["sell_from_0"])
+        out["sell_from_0"] = r
+    if sigs.get("buy_from_100") is not None:
+        r = {"Symbol": symbol, "Frame": f"Hourly ({period})"}
+        r.update(sigs["buy_from_100"])
+        out["buy_from_100"] = r
+    return out
+
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
     st.session_state.ticker = None
     st.session_state.hour_range = "24h"
 
-# Tabs (UPDATED: added Buy/Sell Hot list + Fibonacci Reversal)
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+# Tabs (UPDATED: added Buy/Sell Hot list + Fibonacci Reversal + Fibonacci Picks)
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
     "Buy/Sell Hot list",
-    "Fibonacci Reversal"
+    "Fibonacci Reversal",
+    "Fibonacci Picks"
 ])
-
 # --- Tab 1: Original Forecast ---
 with tab1:
     st.header("Original Forecast")
@@ -958,243 +1085,6 @@ with tab2:
                     ax3m.legend(loc="lower left", framealpha=0.5)
                     ax3m.set_xlim(xlim_price2)
                     st.pyplot(fig3m)
-# ---- Helper(s) for Buy/Sell Hot list (NEW TAB) ----
-def _find_recent_sr_reversal_signal(
-    close_series,
-    support_series,
-    resistance_series,
-    trend_lookback: int,
-    recent_bars: int = 8,
-    touch_tol_pct_of_channel: float = 0.05
-):
-    """
-    Returns dict describing the most recent BUY/SELL reversal setup based on:
-      BUY  = trend up + recent touch of support + latest price moving up from that touch
-      SELL = trend down + recent touch of resistance + latest price moving down from that touch
-    """
-    hc = _coerce_1d_series(close_series).dropna()
-    sup = _coerce_1d_series(support_series).reindex(hc.index).ffill()
-    res = _coerce_1d_series(resistance_series).reindex(hc.index).ffill()
-
-    if len(hc) < max(5, int(recent_bars) + 2):
-        return None
-
-    # Trendline slope over chosen lookback (same slope helper used elsewhere)
-    _, trend_slope = slope_line(hc, int(trend_lookback))
-    if not np.isfinite(trend_slope) or trend_slope == 0:
-        return None
-
-    # Channel width-based tolerance for "touch"
-    ch_w = (res - sup).abs()
-    min_tol = max(float(hc.iloc[-1]) * 0.0005, 1e-8)  # tiny floor, robust for FX and stocks
-    tol = (ch_w * float(touch_tol_pct_of_channel)).fillna(min_tol)
-    tol = tol.clip(lower=min_tol)
-
-    touch_sup = (hc <= (sup + tol)).fillna(False)
-    touch_res = (hc >= (res - tol)).fillna(False)
-
-    rb = int(max(1, recent_bars))
-    recent_idx = hc.index[-(rb + 1):]
-
-    recent_touch_sup = touch_sup.reindex(recent_idx, fill_value=False)
-    recent_touch_res = touch_res.reindex(recent_idx, fill_value=False)
-
-    last_px = float(hc.iloc[-1])
-    prev_px = float(hc.iloc[-2]) if len(hc) >= 2 else np.nan
-
-    # BUY candidate: upward trend + touched support recently + price moving up now from that touch
-    if float(trend_slope) > 0 and recent_touch_sup.any() and np.isfinite(prev_px) and last_px > prev_px:
-        t_touch = recent_touch_sup[recent_touch_sup].index[-1]
-        px_touch = float(hc.loc[t_touch]) if np.isfinite(hc.loc[t_touch]) else np.nan
-        res_now = float(res.iloc[-1]) if np.isfinite(res.iloc[-1]) else np.nan
-        sup_now = float(sup.iloc[-1]) if np.isfinite(sup.iloc[-1]) else np.nan
-
-        if np.isfinite(px_touch) and (last_px >= px_touch):
-            bars_since = int((len(hc) - 1) - int(hc.index.get_loc(t_touch)))
-            return {
-                "Side": "BUY",
-                "Trend Slope": float(trend_slope),
-                "Bars Since Touch": bars_since,
-                "Touch Time": t_touch,
-                "Touch Price": px_touch,
-                "Last Price": last_px,
-                "Support (now)": sup_now,
-                "Resistance (now)": res_now,
-                "Move From Touch": (last_px - px_touch),
-                "Move From Touch %": ((last_px / px_touch) - 1.0) if px_touch != 0 else np.nan,
-                "Dist to Support": abs(last_px - sup_now) if np.isfinite(sup_now) else np.nan,
-            }
-
-    # SELL candidate: downward trend + touched resistance recently + price moving down now from that touch
-    if float(trend_slope) < 0 and recent_touch_res.any() and np.isfinite(prev_px) and last_px < prev_px:
-        t_touch = recent_touch_res[recent_touch_res].index[-1]
-        px_touch = float(hc.loc[t_touch]) if np.isfinite(hc.loc[t_touch]) else np.nan
-        res_now = float(res.iloc[-1]) if np.isfinite(res.iloc[-1]) else np.nan
-        sup_now = float(sup.iloc[-1]) if np.isfinite(sup.iloc[-1]) else np.nan
-
-        if np.isfinite(px_touch) and (last_px <= px_touch):
-            bars_since = int((len(hc) - 1) - int(hc.index.get_loc(t_touch)))
-            return {
-                "Side": "SELL",
-                "Trend Slope": float(trend_slope),
-                "Bars Since Touch": bars_since,
-                "Touch Time": t_touch,
-                "Touch Price": px_touch,
-                "Last Price": last_px,
-                "Support (now)": sup_now,
-                "Resistance (now)": res_now,
-                "Move From Touch": (last_px - px_touch),
-                "Move From Touch %": ((last_px / px_touch) - 1.0) if px_touch != 0 else np.nan,
-                "Dist to Resistance": abs(last_px - res_now) if np.isfinite(res_now) else np.nan,
-            }
-
-    return None
-
-
-@st.cache_data(ttl=300)
-def buy_sell_hotlist_row(symbol: str, period: str, trend_lb: int, sr_window: int, recent_bars: int):
-    df = fetch_intraday(symbol, period=period)
-    if df is None or df.empty or "Close" not in df.columns:
-        return None
-
-    hc = _coerce_1d_series(df["Close"]).ffill().dropna()
-    if len(hc) < max(20, int(sr_window) + 2):
-        return None
-
-    res_h = hc.rolling(int(sr_window), min_periods=1).max()
-    sup_h = hc.rolling(int(sr_window), min_periods=1).min()
-
-    sig = _find_recent_sr_reversal_signal(
-        close_series=hc,
-        support_series=sup_h,
-        resistance_series=res_h,
-        trend_lookback=int(trend_lb),
-        recent_bars=int(recent_bars),
-        touch_tol_pct_of_channel=0.05
-    )
-    if sig is None:
-        return None
-
-    out = {"Symbol": symbol, "Frame": f"Hourly ({period})"}
-    out.update(sig)
-    return out
-
-
-# ---- NEW: Fibonacci Reversal helpers (hourly fib touch + trend-direction reversal) ----
-def _find_recent_fib_reversal_signal(
-    close_series,
-    trend_lookback: int,
-    recent_bars: int = 8,
-    touch_tol_pct_of_range: float = 0.05
-):
-    """
-    Returns the most recent Fibonacci reversal setup on the hourly chart:
-      1) SELL setup: trend line downward + price recently touched 0% (fib high) + reversed downward
-      2) BUY setup:  trend line upward   + price recently touched 100% (fib low) + reversed upward
-    """
-    hc = _coerce_1d_series(close_series).dropna()
-    if len(hc) < max(5, int(recent_bars) + 2):
-        return None
-
-    _, trend_slope = slope_line(hc, int(trend_lookback))
-    if not np.isfinite(trend_slope) or float(trend_slope) == 0.0:
-        return None
-
-    fibs = fibonacci_levels(hc)
-    if not fibs or ("0%" not in fibs) or ("100%" not in fibs):
-        return None
-
-    fib0 = float(fibs["0%"])       # high
-    fib100 = float(fibs["100%"])   # low
-    fib_range = abs(fib0 - fib100)
-    if not np.isfinite(fib_range) or fib_range <= 0:
-        return None
-
-    # Tolerance for "touch"
-    min_tol = max(abs(float(hc.iloc[-1])) * 0.0005, 1e-8)
-    tol = max(fib_range * float(touch_tol_pct_of_range), min_tol)
-
-    # Touch masks (near 0% high / near 100% low)
-    near_0 = (hc >= (fib0 - tol)).fillna(False)
-    near_100 = (hc <= (fib100 + tol)).fillna(False)
-
-    rb = int(max(1, recent_bars))
-    recent_idx = hc.index[-(rb + 1):]
-    recent_touch_0 = near_0.reindex(recent_idx, fill_value=False)
-    recent_touch_100 = near_100.reindex(recent_idx, fill_value=False)
-
-    last_px = float(hc.iloc[-1])
-    prev_px = float(hc.iloc[-2]) if len(hc) >= 2 else np.nan
-
-    # (1) Downtrend + touched 0% + reversed downward
-    if float(trend_slope) < 0 and recent_touch_0.any() and np.isfinite(prev_px) and (last_px < prev_px):
-        t_touch = recent_touch_0[recent_touch_0].index[-1]
-        px_touch = float(hc.loc[t_touch]) if np.isfinite(hc.loc[t_touch]) else np.nan
-        if np.isfinite(px_touch) and (last_px <= px_touch):
-            bars_since = int((len(hc) - 1) - int(hc.index.get_loc(t_touch)))
-            return {
-                "Signal Type": "SELL from 0%",
-                "Trend Slope": float(trend_slope),
-                "Bars Since Touch": int(bars_since),
-                "Touch Time": t_touch,
-                "Touch Price": px_touch,
-                "Last Price": last_px,
-                "Fib 0%": fib0,
-                "Fib 100%": fib100,
-                "Touched Fib Level": "0%",
-                "Move From Touch": (last_px - px_touch),
-                "Move From Touch %": ((last_px / px_touch) - 1.0) if px_touch != 0 else np.nan,
-                "Dist to Touched Fib": abs(last_px - fib0),
-            }
-
-    # (2) Uptrend + touched 100% + reversed upward
-    if float(trend_slope) > 0 and recent_touch_100.any() and np.isfinite(prev_px) and (last_px > prev_px):
-        t_touch = recent_touch_100[recent_touch_100].index[-1]
-        px_touch = float(hc.loc[t_touch]) if np.isfinite(hc.loc[t_touch]) else np.nan
-        if np.isfinite(px_touch) and (last_px >= px_touch):
-            bars_since = int((len(hc) - 1) - int(hc.index.get_loc(t_touch)))
-            return {
-                "Signal Type": "BUY from 100%",
-                "Trend Slope": float(trend_slope),
-                "Bars Since Touch": int(bars_since),
-                "Touch Time": t_touch,
-                "Touch Price": px_touch,
-                "Last Price": last_px,
-                "Fib 0%": fib0,
-                "Fib 100%": fib100,
-                "Touched Fib Level": "100%",
-                "Move From Touch": (last_px - px_touch),
-                "Move From Touch %": ((last_px / px_touch) - 1.0) if px_touch != 0 else np.nan,
-                "Dist to Touched Fib": abs(last_px - fib100),
-            }
-
-    return None
-
-
-@st.cache_data(ttl=300)
-def fibonacci_reversal_scan_row(symbol: str, period: str, trend_lb: int, recent_bars: int):
-    df = fetch_intraday(symbol, period=period)
-    if df is None or df.empty or "Close" not in df.columns:
-        return None
-
-    hc = _coerce_1d_series(df["Close"]).ffill().dropna()
-    if len(hc) < max(20, int(recent_bars) + 2):
-        return None
-
-    sig = _find_recent_fib_reversal_signal(
-        close_series=hc,
-        trend_lookback=int(trend_lb),
-        recent_bars=int(recent_bars),
-        touch_tol_pct_of_range=0.05
-    )
-    if sig is None:
-        return None
-
-    out = {"Symbol": symbol, "Frame": f"Hourly ({period})"}
-    out.update(sig)
-    return out
-
-
 # --- Tab 3: Bull vs Bear ---
 with tab3:
     st.header("Bull vs Bear Summary")
@@ -1345,7 +1235,8 @@ with tab5:
                     ["Bars Since Touch", "Trend Slope", "Move From Touch %"],
                     ascending=[True, False, False]
                 )
-                st.dataframe(dfb[buy_cols].head(hot_max_rows).reset_index(drop=True), use_container_width=True)
+                show_buy_cols = [c for c in buy_cols if c in dfb.columns]
+                st.dataframe(dfb[show_buy_cols].head(hot_max_rows).reset_index(drop=True), use_container_width=True)
 
         with cR:
             st.subheader(f"Sell Hot list ({hot_hours})")
@@ -1357,9 +1248,10 @@ with tab5:
                     ["Bars Since Touch", "Trend Slope", "Move From Touch %"],
                     ascending=[True, True, True]
                 )
-                st.dataframe(dfs[sell_cols].head(hot_max_rows).reset_index(drop=True), use_container_width=True)
+                show_sell_cols = [c for c in sell_cols if c in dfs.columns]
+                st.dataframe(dfs[show_sell_cols].head(hot_max_rows).reset_index(drop=True), use_container_width=True)
 
-# --- Tab 6: Fibonacci Reversal (NEW) ---
+# --- Tab 6: Fibonacci Reversal ---
 with tab6:
     st.header("Fibonacci Reversal")
     st.caption(
@@ -1417,12 +1309,12 @@ with tab6:
                 st.write("No matches.")
             else:
                 dfd = pd.DataFrame(down_from_0_rows)
-                # freshest first, then steeper downward slope
                 dfd = dfd.sort_values(
                     ["Bars Since Touch", "Trend Slope", "Move From Touch %"],
                     ascending=[True, True, True]
                 )
-                st.dataframe(dfd[show_cols].head(fibrev_max_rows).reset_index(drop=True), use_container_width=True)
+                cols_left = [c for c in show_cols if c in dfd.columns]
+                st.dataframe(dfd[cols_left].head(fibrev_max_rows).reset_index(drop=True), use_container_width=True)
 
         with cR:
             st.subheader(f"Trend Up + touched 100% + reversed upward ({fibrev_hours})")
@@ -1430,9 +1322,101 @@ with tab6:
                 st.write("No matches.")
             else:
                 dfu = pd.DataFrame(up_from_100_rows)
-                # freshest first, then steeper upward slope
                 dfu = dfu.sort_values(
                     ["Bars Since Touch", "Trend Slope", "Move From Touch %"],
                     ascending=[True, False, False]
                 )
-                st.dataframe(dfu[show_cols].head(fibrev_max_rows).reset_index(drop=True), use_container_width=True)
+                cols_right = [c for c in show_cols if c in dfu.columns]
+                st.dataframe(dfu[cols_right].head(fibrev_max_rows).reset_index(drop=True), use_container_width=True)
+
+# --- Tab 7: Fibonacci Picks (NEW) ---
+with tab7:
+    st.header("Fibonacci Picks")
+    st.caption(
+        "Hourly Fibonacci picks (no trend filter):\n"
+        "1) **Price recently touched 0% and reversed downward**\n"
+        "2) **Price recently touched 100% and reversed upward**\n\n"
+        "Fib 0% is the recent high of the selected hourly window, and Fib 100% is the recent low."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    fibpick_hours = c1.selectbox("Hourly scan window", ["24h", "48h", "96h"], index=0, key="fibpick_hours")
+    fibpick_recent = c2.slider("Recent touch within N bars", 1, 30, 8, 1, key="fibpick_recent_bars")
+    fibpick_max_rows = c3.slider("Max rows per list", 10, 200, 50, 10, key="fibpick_max_rows")
+
+    run_fibpick = st.button("Run Fibonacci Picks Scan", key="btn_run_fibpick", use_container_width=True)
+
+    if run_fibpick:
+        period_map_fibpick = {"24h": "1d", "48h": "2d", "96h": "4d"}
+        scan_period = period_map_fibpick[fibpick_hours]
+
+        down_from_0_rows = []
+        up_from_100_rows = []
+
+        for sym in universe:
+            try:
+                # Helper added in Batch 1
+                r = fibonacci_picks_scan_row(
+                    symbol=sym,
+                    period=scan_period,
+                    recent_bars=int(fibpick_recent),
+                )
+                if not r:
+                    continue
+
+                sig_type = str(r.get("Signal Type", "")).upper()
+                touched = str(r.get("Touched Fib Level", "")).strip()
+
+                # Robust matching in case helper uses slightly different wording
+                is_down_0 = (touched == "0%") or (("0%" in sig_type) and (("DOWN" in sig_type) or ("SELL" in sig_type)))
+                is_up_100 = (touched == "100%") or (("100%" in sig_type) and (("UP" in sig_type) or ("BUY" in sig_type)))
+
+                if is_down_0 and not is_up_100:
+                    down_from_0_rows.append(r)
+                elif is_up_100 and not is_down_0:
+                    up_from_100_rows.append(r)
+                else:
+                    # fallback by sign of move if helper returns generic labels
+                    mv = float(r.get("Move From Touch", np.nan))
+                    if np.isfinite(mv):
+                        if mv < 0:
+                            down_from_0_rows.append(r)
+                        elif mv > 0:
+                            up_from_100_rows.append(r)
+            except Exception:
+                continue
+
+        preferred_cols = [
+            "Symbol", "Frame", "Bars Since Touch", "Touch Time",
+            "Touched Fib Level", "Signal Type",
+            "Touch Price", "Last Price", "Fib 0%", "Fib 100%",
+            "Move From Touch", "Move From Touch %", "Dist to Touched Fib"
+        ]
+
+        cL, cR = st.columns(2)
+
+        with cL:
+            st.subheader(f"Touched 0% + reversed downward ({fibpick_hours})")
+            if not down_from_0_rows:
+                st.write("No matches.")
+            else:
+                dfd = pd.DataFrame(down_from_0_rows)
+                sort_cols = [c for c in ["Bars Since Touch", "Move From Touch %"] if c in dfd.columns]
+                if sort_cols:
+                    asc = [True, True][:len(sort_cols)]
+                    dfd = dfd.sort_values(sort_cols, ascending=asc)
+                cols_left = [c for c in preferred_cols if c in dfd.columns]
+                st.dataframe(dfd[cols_left].head(fibpick_max_rows).reset_index(drop=True), use_container_width=True)
+
+        with cR:
+            st.subheader(f"Touched 100% + reversed upward ({fibpick_hours})")
+            if not up_from_100_rows:
+                st.write("No matches.")
+            else:
+                dfu = pd.DataFrame(up_from_100_rows)
+                sort_cols = [c for c in ["Bars Since Touch", "Move From Touch %"] if c in dfu.columns]
+                if sort_cols:
+                    asc = [True, False][:len(sort_cols)]
+                    dfu = dfu.sort_values(sort_cols, ascending=asc)
+                cols_right = [c for c in preferred_cols if c in dfu.columns]
+                st.dataframe(dfu[cols_right].head(fibpick_max_rows).reset_index(drop=True), use_container_width=True)
