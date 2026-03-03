@@ -331,18 +331,159 @@ def draw_news_markers(ax, times, ymin, ymax, label="News"):
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
 
+# ---- NEW: Buy/Sell Hot list helpers (hourly S/R reversal + trend filter) ----
+def _find_sr_reversal_signal(
+    price: pd.Series,
+    support: pd.Series,
+    resistance: pd.Series,
+    trend_slope: float,
+    recent_bars: int = 10,
+    proximity_pct: float = 0.0015
+):
+    """
+    Buy condition:
+      - trend slope > 0
+      - price recently touched support (within tolerance)
+      - then price reverses upward (current bar up vs previous)
+    Sell condition:
+      - trend slope < 0
+      - price recently touched resistance (within tolerance)
+      - then price reverses downward (current bar down vs previous)
+
+    Returns the most recent signal dict or None.
+    """
+    p = _coerce_1d_series(price)
+    s = _coerce_1d_series(support).reindex(p.index)
+    r = _coerce_1d_series(resistance).reindex(p.index)
+
+    ok = p.notna() & s.notna() & r.notna()
+    if ok.sum() < 3:
+        return None
+
+    p = p[ok]
+    s = s[ok]
+    r = r[ok]
+
+    prev_p = p.shift(1)
+
+    # Touch definitions with small tolerance around S/R
+    near_support = (p <= s * (1.0 + float(proximity_pct)))
+    near_resist  = (p >= r * (1.0 - float(proximity_pct)))
+
+    # "Recently touched" windows (including current bar)
+    hz = max(1, int(recent_bars))
+    touched_support_recent = near_support.rolling(hz + 1, min_periods=1).max().astype(bool)
+    touched_resist_recent  = near_resist.rolling(hz + 1, min_periods=1).max().astype(bool)
+
+    # Reversal direction on current bar
+    reversing_up = (p > prev_p)
+    reversing_dn = (p < prev_p)
+
+    try:
+        m = float(trend_slope)
+    except Exception:
+        m = np.nan
+    if not np.isfinite(m):
+        return None
+
+    if m > 0:
+        buy_mask = touched_support_recent & reversing_up
+        buy_mask = buy_mask.fillna(False)
+        if not buy_mask.any():
+            return None
+        t = buy_mask[buy_mask].index[-1]
+        bars_since = int((len(p) - 1) - int(p.index.get_loc(t)))
+        return {
+            "time": t,
+            "price": float(p.loc[t]),
+            "side": "BUY",
+            "bars_since": bars_since
+        }
+
+    if m < 0:
+        sell_mask = touched_resist_recent & reversing_dn
+        sell_mask = sell_mask.fillna(False)
+        if not sell_mask.any():
+            return None
+        t = sell_mask[sell_mask].index[-1]
+        bars_since = int((len(p) - 1) - int(p.index.get_loc(t)))
+        return {
+            "time": t,
+            "price": float(p.loc[t]),
+            "side": "SELL",
+            "bars_since": bars_since
+        }
+
+    return None
+
+@st.cache_data(ttl=300)
+def hotlist_reversal_scan_row(
+    symbol: str,
+    period: str = "1d",
+    sr_window: int = 60,
+    recent_bars: int = 10,
+    proximity_pct: float = 0.0015
+):
+    """
+    Hourly hot-list scanner row:
+      - computes hourly trendline slope
+      - rolling support/resistance
+      - detects reversal from support/resistance in trend direction
+    """
+    intr = fetch_intraday(symbol, period=period)
+    if intr is None or intr.empty or "Close" not in intr:
+        return None
+
+    hc = _coerce_1d_series(intr["Close"]).ffill().dropna()
+    if len(hc) < max(20, int(sr_window)):
+        return None
+
+    x = np.arange(len(hc), dtype=float)
+    try:
+        trend_slope, trend_intercept = np.polyfit(x, hc.values.astype(float), 1)
+    except Exception:
+        return None
+
+    res_h = hc.rolling(int(sr_window), min_periods=1).max()
+    sup_h = hc.rolling(int(sr_window), min_periods=1).min()
+
+    sig = _find_sr_reversal_signal(
+        price=hc,
+        support=sup_h,
+        resistance=res_h,
+        trend_slope=float(trend_slope),
+        recent_bars=int(recent_bars),
+        proximity_pct=float(proximity_pct),
+    )
+    if sig is None:
+        return None
+
+    t = sig["time"]
+    return {
+        "Symbol": symbol,
+        "Side": sig["side"],
+        "Bars Since": int(sig["bars_since"]),
+        "Signal Time": t,
+        "Signal Price": float(sig["price"]),
+        "Last Price": float(hc.iloc[-1]),
+        "Trend Slope": float(trend_slope),
+        "Support": float(sup_h.iloc[-1]) if len(sup_h.dropna()) else np.nan,
+        "Resistance": float(res_h.iloc[-1]) if len(res_h.dropna()) else np.nan,
+        "Frame": f"Hourly ({period})"
+    }
+
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
     st.session_state.ticker = None
     st.session_state.hour_range = "24h"
-
-# Tabs
-tab1, tab2, tab3, tab4 = st.tabs([
+# Tabs (UPDATED: added Buy/Sell Hot list)
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
-    "Metrics"
+    "Metrics",
+    "Buy/Sell Hot list"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -679,6 +820,129 @@ with tab2:
                     ax3m.legend(loc="lower left", framealpha=0.5)
                     ax3m.set_xlim(xlim_price2)
                     st.pyplot(fig3m)
+# ---- Helper(s) for Buy/Sell Hot list (NEW TAB) ----
+def _find_recent_sr_reversal_signal(
+    close_series,
+    support_series,
+    resistance_series,
+    trend_lookback: int,
+    recent_bars: int = 8,
+    touch_tol_pct_of_channel: float = 0.05
+):
+    """
+    Returns dict describing the most recent BUY/SELL reversal setup based on:
+      BUY  = trend up + recent touch of support + latest price moving up from that touch
+      SELL = trend down + recent touch of resistance + latest price moving down from that touch
+    """
+    hc = _coerce_1d_series(close_series).dropna()
+    sup = _coerce_1d_series(support_series).reindex(hc.index).ffill()
+    res = _coerce_1d_series(resistance_series).reindex(hc.index).ffill()
+
+    if len(hc) < max(5, int(recent_bars) + 2):
+        return None
+
+    # Trendline slope over chosen lookback (same slope helper used elsewhere)
+    _, trend_slope = slope_line(hc, int(trend_lookback))
+    if not np.isfinite(trend_slope) or trend_slope == 0:
+        return None
+
+    # Channel width-based tolerance for "touch"
+    ch_w = (res - sup).abs()
+    min_tol = max(float(hc.iloc[-1]) * 0.0005, 1e-8)  # tiny floor, robust for FX and stocks
+    tol = (ch_w * float(touch_tol_pct_of_channel)).fillna(min_tol)
+    tol = tol.clip(lower=min_tol)
+
+    touch_sup = (hc <= (sup + tol)).fillna(False)
+    touch_res = (hc >= (res - tol)).fillna(False)
+
+    rb = int(max(1, recent_bars))
+    recent_idx = hc.index[-(rb + 1):]
+
+    recent_touch_sup = touch_sup.reindex(recent_idx, fill_value=False)
+    recent_touch_res = touch_res.reindex(recent_idx, fill_value=False)
+
+    last_px = float(hc.iloc[-1])
+    prev_px = float(hc.iloc[-2]) if len(hc) >= 2 else np.nan
+
+    # BUY candidate: upward trend + touched support recently + price moving up now from that touch
+    if float(trend_slope) > 0 and recent_touch_sup.any() and np.isfinite(prev_px) and last_px > prev_px:
+        t_touch = recent_touch_sup[recent_touch_sup].index[-1]
+        px_touch = float(hc.loc[t_touch]) if np.isfinite(hc.loc[t_touch]) else np.nan
+        sup_touch = float(sup.loc[t_touch]) if np.isfinite(sup.loc[t_touch]) else np.nan
+        res_now = float(res.iloc[-1]) if np.isfinite(res.iloc[-1]) else np.nan
+        sup_now = float(sup.iloc[-1]) if np.isfinite(sup.iloc[-1]) else np.nan
+
+        if np.isfinite(px_touch) and (last_px >= px_touch):
+            bars_since = int((len(hc) - 1) - int(hc.index.get_loc(t_touch)))
+            return {
+                "Side": "BUY",
+                "Trend Slope": float(trend_slope),
+                "Bars Since Touch": bars_since,
+                "Touch Time": t_touch,
+                "Touch Price": px_touch,
+                "Last Price": last_px,
+                "Support (now)": sup_now,
+                "Resistance (now)": res_now,
+                "Move From Touch": (last_px - px_touch),
+                "Move From Touch %": ((last_px / px_touch) - 1.0) if px_touch != 0 else np.nan,
+                "Dist to Support": abs(last_px - sup_now) if np.isfinite(sup_now) else np.nan,
+            }
+
+    # SELL candidate: downward trend + touched resistance recently + price moving down now from that touch
+    if float(trend_slope) < 0 and recent_touch_res.any() and np.isfinite(prev_px) and last_px < prev_px:
+        t_touch = recent_touch_res[recent_touch_res].index[-1]
+        px_touch = float(hc.loc[t_touch]) if np.isfinite(hc.loc[t_touch]) else np.nan
+        res_touch = float(res.loc[t_touch]) if np.isfinite(res.loc[t_touch]) else np.nan
+        res_now = float(res.iloc[-1]) if np.isfinite(res.iloc[-1]) else np.nan
+        sup_now = float(sup.iloc[-1]) if np.isfinite(sup.iloc[-1]) else np.nan
+
+        if np.isfinite(px_touch) and (last_px <= px_touch):
+            bars_since = int((len(hc) - 1) - int(hc.index.get_loc(t_touch)))
+            return {
+                "Side": "SELL",
+                "Trend Slope": float(trend_slope),
+                "Bars Since Touch": bars_since,
+                "Touch Time": t_touch,
+                "Touch Price": px_touch,
+                "Last Price": last_px,
+                "Support (now)": sup_now,
+                "Resistance (now)": res_now,
+                "Move From Touch": (last_px - px_touch),
+                "Move From Touch %": ((last_px / px_touch) - 1.0) if px_touch != 0 else np.nan,
+                "Dist to Resistance": abs(last_px - res_now) if np.isfinite(res_now) else np.nan,
+            }
+
+    return None
+
+
+@st.cache_data(ttl=300)
+def buy_sell_hotlist_row(symbol: str, period: str, trend_lb: int, sr_window: int, recent_bars: int):
+    df = fetch_intraday(symbol, period=period)
+    if df is None or df.empty or "Close" not in df.columns:
+        return None
+
+    hc = _coerce_1d_series(df["Close"]).ffill().dropna()
+    if len(hc) < max(20, int(sr_window) + 2):
+        return None
+
+    res_h = hc.rolling(int(sr_window), min_periods=1).max()
+    sup_h = hc.rolling(int(sr_window), min_periods=1).min()
+
+    sig = _find_recent_sr_reversal_signal(
+        close_series=hc,
+        support_series=sup_h,
+        resistance_series=res_h,
+        trend_lookback=int(trend_lb),
+        recent_bars=int(recent_bars),
+        touch_tol_pct_of_channel=0.05
+    )
+    if sig is None:
+        return None
+
+    out = {"Symbol": symbol, "Frame": f"Hourly ({period})"}
+    out.update(sig)
+    return out
+
 
 # --- Tab 3: Bull vs Bear ---
 with tab3:
@@ -763,3 +1027,85 @@ with tab4:
             "Days": [int(df0['Bull'].sum()), int((~df0['Bull']).sum())]
         }).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
+
+# --- Tab 5: Buy/Sell Hot list (NEW) ---
+with tab5:
+    st.header("Buy/Sell Hot list")
+    st.caption(
+        "Two lists of symbols from the **hourly chart**:\n"
+        "1) **Buy**: trend line is upward and price line recently reversed from the **Support** line going upward.\n"
+        "2) **Sell**: trend line is downward and price line recently reversed from the **Resistance** line going downward."
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    hot_hours = c1.selectbox("Hourly scan window", ["24h", "48h", "96h"], index=0, key="hotlist_hours")
+    hot_recent = c2.slider("Recent reversal within N bars", 1, 30, 8, 1, key="hotlist_recent_bars")
+    hot_sr_win = c3.slider("Support/Resistance rolling window", 20, 180, 60, 5, key="hotlist_sr_window")
+    hot_max_rows = c4.slider("Max rows per list", 10, 200, 50, 10, key="hotlist_max_rows")
+
+    run_hot = st.button("Run Buy/Sell Hot list", key="btn_run_hotlist", use_container_width=True)
+
+    if run_hot:
+        period_map_hot = {"24h": "1d", "48h": "2d", "96h": "4d"}
+        scan_period = period_map_hot[hot_hours]
+
+        buy_rows, sell_rows = [], []
+
+        for sym in universe:
+            try:
+                r = buy_sell_hotlist_row(
+                    symbol=sym,
+                    period=scan_period,
+                    trend_lb=int(slope_lb_hourly),
+                    sr_window=int(hot_sr_win),
+                    recent_bars=int(hot_recent),
+                )
+                if not r:
+                    continue
+
+                side = str(r.get("Side", "")).upper()
+                if side == "BUY":
+                    buy_rows.append(r)
+                elif side == "SELL":
+                    sell_rows.append(r)
+            except Exception:
+                continue
+
+        buy_cols = [
+            "Symbol", "Frame", "Bars Since Touch", "Touch Time",
+            "Touch Price", "Last Price", "Support (now)", "Resistance (now)",
+            "Trend Slope", "Move From Touch", "Move From Touch %", "Dist to Support"
+        ]
+        sell_cols = [
+            "Symbol", "Frame", "Bars Since Touch", "Touch Time",
+            "Touch Price", "Last Price", "Support (now)", "Resistance (now)",
+            "Trend Slope", "Move From Touch", "Move From Touch %", "Dist to Resistance"
+        ]
+
+        cL, cR = st.columns(2)
+
+        with cL:
+            st.subheader(f"Buy Hot list ({hot_hours})")
+            if not buy_rows:
+                st.write("No matches.")
+            else:
+                dfb = pd.DataFrame(buy_rows)
+                # freshest first, then stronger positive trend slope
+                dfb = dfb.sort_values(
+                    ["Bars Since Touch", "Trend Slope", "Move From Touch %"],
+                    ascending=[True, False, False]
+                )
+                st.dataframe(dfb[buy_cols].head(hot_max_rows).reset_index(drop=True), use_container_width=True)
+
+        with cR:
+            st.subheader(f"Sell Hot list ({hot_hours})")
+            if not sell_rows:
+                st.write("No matches.")
+            else:
+                dfs = pd.DataFrame(sell_rows)
+                # freshest first, then stronger negative trend slope
+                dfs = dfs.sort_values(
+                    ["Bars Since Touch", "Trend Slope", "Move From Touch %"],
+                    ascending=[True, True, True]
+                )
+                st.dataframe(dfs[sell_cols].head(hot_max_rows).reset_index(drop=True), use_container_width=True)
