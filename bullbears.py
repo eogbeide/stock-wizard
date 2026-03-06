@@ -24,6 +24,7 @@
 # - Red shading under NPO curve on EW panels
 # - NEW: Daily trend-direction line (green=uptrend, red=downtrend) with slope label
 # - NEW: Hot Cake tab (Daily + Hourly scanners)
+# - NEW: EW Trigger tab (Daily EW 0.0 cross-up scanners)
 
 import streamlit as st
 import pandas as pd
@@ -327,7 +328,7 @@ def compute_roc(series_like, n: int = 10) -> pd.Series:
     roc = base.pct_change(n) * 100.0
     return roc.reindex(s.index)
 
-# ---- NEW: Normalized Price Oscillator (PPO -> z-score -> tanh) ----
+# ---- Normalized Price Oscillator (PPO -> z-score -> tanh) ----
 def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int = 240) -> pd.Series:
     """
     Returns NPO in [-1,1]: tanh( zscore(PPO) / 2 ).
@@ -337,15 +338,13 @@ def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int 
     s = _coerce_1d_series(close)
     if s.empty or not np.isfinite(fast) or not np.isfinite(slow) or fast <= 0 or slow <= 0:
         return pd.Series(index=s.index, dtype=float)
-    # Ensure fast < slow for stable PPO
     if fast >= slow:
         fast, slow = max(1, slow - 1), slow
         if fast >= slow:
-            return pd.Series(index=s.index, dtype=float)  # cannot fix
+            return pd.Series(index=s.index, dtype=float)
     ema_fast = s.ewm(span=int(fast), adjust=False).mean()
     ema_slow = s.ewm(span=int(slow), adjust=False).mean().replace(0, np.nan)
     ppo = (ema_fast - ema_slow) / ema_slow * 100.0
-    # Normalize PPO
     minp = max(10, int(norm_win)//10)
     mean = ppo.rolling(int(norm_win), min_periods=minp).mean()
     std  = ppo.rolling(int(norm_win), min_periods=minp).std().replace(0, np.nan)
@@ -353,23 +352,16 @@ def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int 
     npo = np.tanh(z / 2.0)
     return npo.reindex(s.index)
 
-# ---- NEW: Normalized Trend Direction (rolling LR slope -> volatility-normalized -> tanh) ----
+# ---- Normalized Trend Direction (rolling LR slope -> volatility-normalized -> tanh) ----
 def compute_normalized_trend(close: pd.Series, window: int = 60) -> pd.Series:
     """
     Normalized Trend Direction (NTD) in [-1,1].
-    Steps:
-      - Rolling linear-regression slope over 'window' bars
-      - Scale by window and divide by rolling std (volatility)
-      - Squash with tanh to bound and stabilize
-    Interpretation:
-      >0 uptrend bias; <0 downtrend bias; magnitude ~ strength
     """
     s = _coerce_1d_series(close).astype(float)
     if s.empty or window < 3:
         return pd.Series(index=s.index, dtype=float)
-
-    # rolling slope via polyfit on each window
     minp = max(5, window // 3)
+
     def _slope(y: pd.Series) -> float:
         y = pd.Series(y).dropna()
         if len(y) < 3:
@@ -383,13 +375,11 @@ def compute_normalized_trend(close: pd.Series, window: int = 60) -> pd.Series:
 
     slope_roll = s.rolling(window, min_periods=minp).apply(_slope, raw=False)
     vol = s.rolling(window, min_periods=minp).std().replace(0, np.nan)
-
     ntd_raw = (slope_roll * window) / vol
     ntd = np.tanh(ntd_raw / 2.0)
     return ntd.reindex(s.index)
 
 def shade_ntd_regions(ax, ntd: pd.Series):
-    """Optional green/red shading under/over zero to emphasize direction."""
     if ntd is None or ntd.empty:
         return
     ntd = ntd.copy()
@@ -398,9 +388,7 @@ def shade_ntd_regions(ax, ntd: pd.Series):
     ax.fill_between(ntd.index, 0, pos, alpha=0.12, step=None)
     ax.fill_between(ntd.index, 0, neg, alpha=0.12, step=None)
 
-# NEW: Red shading under NPO curve
 def shade_npo_regions(ax, npo: pd.Series):
-    """Shade area between NPO and 0 in red (lighter when below zero)."""
     if npo is None or npo.empty:
         return
     pos = npo.where(npo > 0)
@@ -408,12 +396,8 @@ def shade_npo_regions(ax, npo: pd.Series):
     ax.fill_between(pos.index, 0, pos, alpha=0.15, color="tab:red")
     ax.fill_between(neg.index, 0, neg, alpha=0.08, color="tab:red")
 
-# --- NEW: Daily trend-direction line helper ---
+# --- Daily trend-direction line helper ---
 def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "Trend"):
-    """
-    Draws a regression line over the visible daily window and colors it by direction.
-    Green = uptrend (positive slope), Red = downtrend (negative slope).
-    """
     s = _coerce_1d_series(series_like).dropna()
     if s.shape[0] < 2:
         return np.nan
@@ -424,6 +408,193 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
     ax.plot(s.index, yhat, "-", linewidth=2.4, color=color, label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return m
 
+# ---- Supertrend helpers (hourly overlay) ----
+def _true_range(df: pd.DataFrame):
+    hl = (df["High"] - df["Low"]).abs()
+    hc = (df["High"] - df["Close"].shift()).abs()
+    lc = (df["Low"]  - df["Close"].shift()).abs()
+    return pd.concat([hl, hc, lc], axis=1).max(axis=1)
+
+def compute_atr(df: pd.DataFrame, period: int = 10) -> pd.Series:
+    tr = _true_range(df[['High','Low','Close']])
+    return tr.ewm(alpha=1/period, adjust=False).mean()
+
+def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float = 3.0):
+    if df is None or df.empty or not {'High','Low','Close'}.issubset(df.columns):
+        idx = df.index if df is not None else pd.Index([])
+        return pd.DataFrame(index=idx, columns=["ST","in_uptrend","upperband","lowerband"])
+    ohlc = df[['High','Low','Close']].copy()
+    hl2 = (ohlc['High'] + ohlc['Low']) / 2.0
+    atr = compute_atr(ohlc, atr_period)
+    upperband = hl2 + atr_mult * atr
+    lowerband = hl2 - atr_mult * atr
+    st_line = pd.Series(index=ohlc.index, dtype=float)
+    in_up   = pd.Series(index=ohlc.index, dtype=bool)
+    st_line.iloc[0] = upperband.iloc[0]
+    in_up.iloc[0]   = True
+    for i in range(1, len(ohlc)):
+        prev_st = st_line.iloc[i-1]
+        prev_up = in_up.iloc[i-1]
+        up_i = min(upperband.iloc[i], prev_st) if prev_up else upperband.iloc[i]
+        dn_i = max(lowerband.iloc[i], prev_st) if not prev_up else lowerband.iloc[i]
+        close_i = ohlc['Close'].iloc[i]
+        if close_i > up_i:
+            curr_up = True
+        elif close_i < dn_i:
+            curr_up = False
+        else:
+            curr_up = prev_up
+        in_up.iloc[i]   = curr_up
+        st_line.iloc[i] = dn_i if curr_up else up_i
+    return pd.DataFrame({
+        "ST": st_line, "in_uptrend": in_up,
+        "upperband": upperband, "lowerband": lowerband
+    })
+
+# ---- Forex News (Yahoo Finance) ----
+@st.cache_data(ttl=120, show_spinner=False)
+def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
+    rows = []
+    try:
+        news_list = yf.Ticker(symbol).news or []
+    except Exception:
+        news_list = []
+    for item in news_list:
+        ts = item.get("providerPublishTime") or item.get("pubDate")
+        if ts is None:
+            continue
+        try:
+            dt_utc = pd.to_datetime(ts, unit="s", utc=True)
+        except (ValueError, OverflowError, TypeError):
+            try:
+                dt_utc = pd.to_datetime(ts, utc=True)
+            except Exception:
+                continue
+        dt_pst = dt_utc.tz_convert(PACIFIC)
+        rows.append({
+            "time": dt_pst,
+            "title": item.get("title", ""),
+            "publisher": item.get("publisher", ""),
+            "link": item.get("link", "")
+        })
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    now_utc = pd.Timestamp.now(tz="UTC")
+    d1 = (now_utc - pd.Timedelta(days=window_days)).tz_convert(PACIFIC)
+    return df[df["time"] >= d1].sort_values("time")
+
+def draw_news_markers(ax, times, ymin, ymax, label="News"):
+    for t in times:
+        try:
+            ax.axvline(t, color="tab:red", alpha=0.18, linewidth=1)
+        except Exception:
+            pass
+    ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
+
+# --- Signal helpers ---
+def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
+                        fc_vals: pd.Series, threshold: float, prox: float):
+    try:
+        last_close = float(hc.iloc[-1])
+        res = float(res_h.iloc[-1])
+        sup = float(sup_h.iloc[-1])
+    except Exception:
+        return None
+    if not np.all(np.isfinite([last_close, res, sup])) or res <= sup:
+        return None
+
+    near_support = last_close <= sup * (1.0 + prox)
+    near_resist  = last_close >= res * (1.0 - prox)
+
+    fc = np.asarray(_coerce_1d_series(fc_vals).dropna(), dtype=float)
+    if fc.size == 0:
+        return None
+    p_up_from_here = float(np.mean(fc > last_close))
+    p_dn_from_here = float(np.mean(fc < last_close))
+
+    if near_support and p_up_from_here >= threshold:
+        return {
+            "side": "BUY",
+            "prob": p_up_from_here,
+            "level": sup,
+            "reason": f"Near support {fmt_price_val(sup)} with {fmt_pct(p_up_from_here)} up-confidence ≥ {fmt_pct(threshold)}"
+        }
+    if near_resist and p_dn_from_here >= threshold:
+        return {
+            "side": "SELL",
+            "prob": p_dn_from_here,
+            "level": res,
+            "reason": f"Near resistance {fmt_price_val(res)} with {fmt_pct(p_dn_from_here)} down-confidence ≥ {fmt_pct(threshold)}"
+        }
+    return None
+
+EW_CONFIDENCE = 0.95
+
+def elliott_conf_signal(price_now: float, fc_vals: pd.Series, conf: float = EW_CONFIDENCE):
+    fc = _coerce_1d_series(fc_vals).dropna().to_numpy(dtype=float)
+    if fc.size == 0 or not np.isfinite(price_now):
+        return None
+    p_up = float(np.mean(fc > price_now))
+    p_dn = float(np.mean(fc < price_now))
+    if p_up >= conf:
+        return {"side": "BUY", "prob": p_up}
+    if p_dn >= conf:
+        return {"side": "SELL", "prob": p_dn}
+    return None
+
+# --- Normalized Elliott Wave (simple, dependency-free) ----
+def compute_normalized_elliott_wave(close: pd.Series,
+                                    pivot_lb: int = 7,
+                                    norm_win: int = 240) -> tuple[pd.Series, pd.DataFrame]:
+    s = _coerce_1d_series(close).dropna()
+    if s.empty:
+        return pd.Series(index=close.index, dtype=float), pd.DataFrame(columns=["time","price","type","wave"])
+
+    minp = max(10, norm_win//10)
+    mean = s.rolling(norm_win, min_periods=minp).mean()
+    std  = s.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
+    z = (s - mean) / std
+    wave_norm = np.tanh(z / 2.0)
+    wave_norm = wave_norm.reindex(close.index)
+
+    if pivot_lb % 2 == 0:
+        pivot_lb += 1
+    half = pivot_lb // 2
+    roll_max = s.rolling(pivot_lb, center=True).max()
+    roll_min = s.rolling(pivot_lb, center=True).min()
+
+    pivots = []
+    for i in range(half, len(s)-half):
+        if not np.isfinite(s.iloc[i]):
+            continue
+        if s.iloc[i] == roll_max.iloc[i]:
+            pivots.append((s.index[i], float(s.iloc[i]), 'H'))
+        elif s.iloc[i] == roll_min.iloc[i]:
+            pivots.append((s.index[i], float(s.iloc[i]), 'L'))
+
+    dedup = []
+    for t, p, typ in pivots:
+        if not dedup:
+            dedup.append((t,p,typ))
+        else:
+            pt, pp, ptyp = dedup[-1]
+            if typ == ptyp:
+                if (typ == 'H' and p > pp) or (typ == 'L' and p < pp):
+                    dedup[-1] = (t,p,typ)
+            else:
+                dedup.append((t,p,typ))
+
+    waves = []
+    wave_num = 1
+    for t, p, typ in dedup:
+        waves.append((t,p,typ,wave_num))
+        wave_num += 1
+        if wave_num > 5:
+            wave_num = 1
+
+    pivots_df = pd.DataFrame(waves, columns=["time","price","type","wave"])
+    return wave_norm, pivots_df
 # =========================
 # NEW: Hot Cake helpers
 # =========================
@@ -640,205 +811,6 @@ def hotcake_support_reversal_row_hourly(symbol: str,
     except Exception:
         return None
 
-# ---- Supertrend helpers (hourly overlay) ----
-def _true_range(df: pd.DataFrame):
-    hl = (df["High"] - df["Low"]).abs()
-    hc = (df["High"] - df["Close"].shift()).abs()
-    lc = (df["Low"]  - df["Close"].shift()).abs()
-    return pd.concat([hl, hc, lc], axis=1).max(axis=1)
-
-def compute_atr(df: pd.DataFrame, period: int = 10) -> pd.Series:
-    tr = _true_range(df[['High','Low','Close']])
-    return tr.ewm(alpha=1/period, adjust=False).mean()
-
-def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float = 3.0):
-    if df is None or df.empty or not {'High','Low','Close'}.issubset(df.columns):
-        idx = df.index if df is not None else pd.Index([])
-        return pd.DataFrame(index=idx, columns=["ST","in_uptrend","upperband","lowerband"])
-    ohlc = df[['High','Low','Close']].copy()
-    hl2 = (ohlc['High'] + ohlc['Low']) / 2.0
-    atr = compute_atr(ohlc, atr_period)
-    upperband = hl2 + atr_mult * atr
-    lowerband = hl2 - atr_mult * atr
-    st_line = pd.Series(index=ohlc.index, dtype=float)
-    in_up   = pd.Series(index=ohlc.index, dtype=bool)
-    st_line.iloc[0] = upperband.iloc[0]
-    in_up.iloc[0]   = True
-    for i in range(1, len(ohlc)):
-        prev_st = st_line.iloc[i-1]
-        prev_up = in_up.iloc[i-1]
-        up_i = min(upperband.iloc[i], prev_st) if prev_up else upperband.iloc[i]
-        dn_i = max(lowerband.iloc[i], prev_st) if not prev_up else lowerband.iloc[i]
-        close_i = ohlc['Close'].iloc[i]
-        if close_i > up_i:
-            curr_up = True
-        elif close_i < dn_i:
-            curr_up = False
-        else:
-            curr_up = prev_up
-        in_up.iloc[i]   = curr_up
-        st_line.iloc[i] = dn_i if curr_up else up_i
-    return pd.DataFrame({
-        "ST": st_line, "in_uptrend": in_up,
-        "upperband": upperband, "lowerband": lowerband
-    })
-
-# ---- Forex News (Yahoo Finance) ----
-@st.cache_data(ttl=120, show_spinner=False)
-def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
-    rows = []
-    try:
-        news_list = yf.Ticker(symbol).news or []
-    except Exception:
-        news_list = []
-    for item in news_list:
-        ts = item.get("providerPublishTime") or item.get("pubDate")
-        if ts is None:
-            continue
-        try:
-            dt_utc = pd.to_datetime(ts, unit="s", utc=True)
-        except (ValueError, OverflowError, TypeError):
-            try:
-                dt_utc = pd.to_datetime(ts, utc=True)
-            except Exception:
-                continue
-        dt_pst = dt_utc.tz_convert(PACIFIC)
-        rows.append({
-            "time": dt_pst,
-            "title": item.get("title", ""),
-            "publisher": item.get("publisher", ""),
-            "link": item.get("link", "")
-        })
-    df = pd.DataFrame(rows)
-    if df.empty:
-        return df
-    now_utc = pd.Timestamp.now(tz="UTC")
-    d1 = (now_utc - pd.Timedelta(days=window_days)).tz_convert(PACIFIC)
-    return df[df["time"] >= d1].sort_values("time")
-
-def draw_news_markers(ax, times, ymin, ymax, label="News"):
-    for t in times:
-        try:
-            ax.axvline(t, color="tab:red", alpha=0.18, linewidth=1)
-        except Exception:
-            pass
-    ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
-
-# --- Signal helpers ---
-def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
-                        fc_vals: pd.Series, threshold: float, prox: float):
-    """Return signal info if last price is near hourly S/R and model confidence passes threshold."""
-    try:
-        last_close = float(hc.iloc[-1])
-        res = float(res_h.iloc[-1])
-        sup = float(sup_h.iloc[-1])
-    except Exception:
-        return None
-
-    if not np.all(np.isfinite([last_close, res, sup])) or res <= sup:
-        return None
-
-    near_support = last_close <= sup * (1.0 + prox)
-    near_resist  = last_close >= res * (1.0 - prox)
-
-    fc = np.asarray(_coerce_1d_series(fc_vals).dropna(), dtype=float)
-    if fc.size == 0:
-        return None
-    p_up_from_here = float(np.mean(fc > last_close))
-    p_dn_from_here = float(np.mean(fc < last_close))
-
-    if near_support and p_up_from_here >= threshold:
-        return {
-            "side": "BUY",
-            "prob": p_up_from_here,
-            "level": sup,
-            "reason": f"Near support {fmt_price_val(sup)} with {fmt_pct(p_up_from_here)} up-confidence ≥ {fmt_pct(threshold)}"
-        }
-    if near_resist and p_dn_from_here >= threshold:
-        return {
-            "side": "SELL",
-            "prob": p_dn_from_here,
-            "level": res,
-            "reason": f"Near resistance {fmt_price_val(res)} with {fmt_pct(p_dn_from_here)} down-confidence ≥ {fmt_pct(threshold)}"
-        }
-    return None
-
-EW_CONFIDENCE = 0.95  # >95% confidence for EW signals
-
-def elliott_conf_signal(price_now: float, fc_vals: pd.Series, conf: float = EW_CONFIDENCE):
-    """Signal for EW panel using SARIMAX distribution vs current price."""
-    fc = _coerce_1d_series(fc_vals).dropna().to_numpy(dtype=float)
-    if fc.size == 0 or not np.isfinite(price_now):
-        return None
-    p_up = float(np.mean(fc > price_now))
-    p_dn = float(np.mean(fc < price_now))
-    if p_up >= conf:
-        return {"side": "BUY", "prob": p_up}
-    if p_dn >= conf:
-        return {"side": "SELL", "prob": p_dn}
-    return None
-
-# --- Normalized Elliott Wave (simple, dependency-free) ----
-def compute_normalized_elliott_wave(close: pd.Series,
-                                    pivot_lb: int = 7,
-                                    norm_win: int = 240) -> tuple[pd.Series, pd.DataFrame]:
-    """
-    Returns:
-      wave_norm: pd.Series in [-1,1] (tanh(zscore) of close vs rolling mean/std)
-      pivots_df: DataFrame with 'time','price','type' ('H'/'L') and 'wave' labels (1..5 repeating)
-    """
-    s = _coerce_1d_series(close).dropna()
-    if s.empty:
-        return pd.Series(index=close.index, dtype=float), pd.DataFrame(columns=["time","price","type","wave"])
-
-    # Normalization: rolling z-score, then squash to [-1,1]
-    minp = max(10, norm_win//10)
-    mean = s.rolling(norm_win, min_periods=minp).mean()
-    std  = s.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
-    z = (s - mean) / std
-    wave_norm = np.tanh(z / 2.0)  # smoother, bounded [-1,1]
-    wave_norm = wave_norm.reindex(close.index)
-
-    # Pivot detection via centered rolling extrema
-    if pivot_lb % 2 == 0:
-        pivot_lb += 1
-    half = pivot_lb // 2
-    roll_max = s.rolling(pivot_lb, center=True).max()
-    roll_min = s.rolling(pivot_lb, center=True).min()
-
-    pivots = []
-    for i in range(half, len(s)-half):
-        if not np.isfinite(s.iloc[i]):
-            continue
-        if s.iloc[i] == roll_max.iloc[i]:
-            pivots.append((s.index[i], float(s.iloc[i]), 'H'))
-        elif s.iloc[i] == roll_min.iloc[i]:
-            pivots.append((s.index[i], float(s.iloc[i]), 'L'))
-
-    # De-duplicate consecutive same-type pivots
-    dedup = []
-    for t, p, typ in pivots:
-        if not dedup:
-            dedup.append((t,p,typ))
-        else:
-            pt, pp, ptyp = dedup[-1]
-            if typ == ptyp:
-                if (typ == 'H' and p > pp) or (typ == 'L' and p < pp):
-                    dedup[-1] = (t,p,typ)
-            else:
-                dedup.append((t,p,typ))
-
-    # Assign simple 1..5 wave counting
-    waves = []
-    wave_num = 1
-    for t, p, typ in dedup:
-        waves.append((t,p,typ,wave_num))
-        wave_num += 1
-        if wave_num > 5:
-            wave_num = 1
-
-    pivots_df = pd.DataFrame(waves, columns=["time","price","type","wave"])
-    return wave_norm, pivots_df
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -846,12 +818,13 @@ if 'run_all' not in st.session_state:
     st.session_state.hour_range = "24h"
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
-    "Hot Cake"
+    "Hot Cake",
+    "EW Trigger"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -1220,7 +1193,7 @@ with tab2:
     if not st.session_state.run_all:
         st.info("Run Tab 1 first.")
     else:
-        df     = st.session_state.df_hist
+        df      = st.session_state.df_hist
         df_ohlc = st.session_state.df_ohlc
         idx, vals, ci = (
             st.session_state.fc_idx,
@@ -1280,7 +1253,7 @@ with tab2:
                 ax.plot(yhat_ema_show.index, yhat_ema_show.values, "-", linewidth=2,
                         label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
 
-            # NEW: Trend-direction line over the visible window
+            # Trend-direction line over the visible window
             if len(df_show) > 1:
                 draw_trend_direction_line(ax, df_show, label_prefix="Trend")
 
@@ -1830,3 +1803,122 @@ with tab5:
             else:
                 dfH3 = pd.DataFrame(hourly_3).sort_values(["Bars Since", "Trend Slope"], ascending=[True, False])
                 st.dataframe(dfH3.head(max_rows).reset_index(drop=True), use_container_width=True)
+
+# =========================
+# NEW: Tab 6 — EW Trigger
+# =========================
+with tab6:
+    st.header("EW Trigger")
+    st.caption(
+        "Daily scanner based on **Daily Normalized Elliott Wave + NPO + NTD** panel.\n\n"
+        "Condition: **Trend line in the Daily Price chart is UP** (global slope > 0 on the selected Daily view).\n"
+        "Trigger: **Norm EW (Daily)** crosses the **0.0** line **going upward**.\n\n"
+        "Lists:\n"
+        "A) Recent 0.0 cross-up events\n"
+        "B) Recent 0.0 cross-up events where EW is still heading up (confirmation bars)\n"
+    )
+
+    c1, c2, c3 = st.columns(3)
+    max_rows = c1.slider("Max rows per list", 10, 300, 60, 10, key="ewtrig_max_rows")
+    within_daily = c2.selectbox("Within N bars (Daily)", [1, 2, 3, 5, 10, 15, 20, 30, 60], index=4, key="ewtrig_within")
+    confirm_bars = c3.selectbox("EW heading-up confirmation (bars)", [1, 2, 3, 4, 5], index=0, key="ewtrig_confirm")
+
+    run_ewt = st.button("Run EW Trigger Scan", key="btn_run_ew_trigger", use_container_width=True)
+
+    if run_ewt:
+        def _trend_slope_daily(series_like) -> float:
+            s = _coerce_1d_series(series_like).dropna()
+            if len(s) < 3:
+                return float("nan")
+            x = np.arange(len(s), dtype=float)
+            try:
+                m, _ = np.polyfit(x, s.to_numpy(dtype=float), 1)
+            except Exception:
+                return float("nan")
+            return float(m)
+
+        def _bars_since_index(idx, t) -> int:
+            try:
+                return int((len(idx) - 1) - int(idx.get_loc(t)))
+            except Exception:
+                return 10**9
+
+        def _last_ew_cross_up_zero(ew: pd.Series):
+            s = _coerce_1d_series(ew).dropna()
+            if len(s) < 2:
+                return None
+            prev = s.shift(1)
+            cross = (s >= 0.0) & (prev < 0.0) & (s > prev)
+            cross = cross.fillna(False)
+            if not cross.any():
+                return None
+            return cross[cross].index[-1]
+
+        rows_a = []
+        rows_b = []
+
+        for sym in universe:
+            try:
+                close_full = fetch_hist(sym).dropna()
+                if close_full.empty:
+                    continue
+
+                close_show = subset_by_daily_view(close_full, daily_view).dropna()
+                if len(close_show) < 20:
+                    continue
+
+                trend_m = _trend_slope_daily(close_show)
+                if not (np.isfinite(trend_m) and float(trend_m) > 0.0):
+                    continue
+
+                # Norm EW (Daily) computed like the chart (full history → reindex to view)
+                wave_full, _ = compute_normalized_elliott_wave(
+                    close_full, pivot_lb=pivot_lookback_d, norm_win=norm_window_d
+                )
+                wave_show = _coerce_1d_series(wave_full).reindex(close_show.index).dropna()
+                if len(wave_show) < 2:
+                    continue
+
+                t_cross = _last_ew_cross_up_zero(wave_show)
+                if t_cross is None:
+                    continue
+
+                bars_since = _bars_since_index(wave_show.index, t_cross)
+                if int(bars_since) > int(within_daily):
+                    continue
+
+                ew_cross = float(wave_show.loc[t_cross]) if np.isfinite(wave_show.loc[t_cross]) else np.nan
+                ew_last = float(wave_show.iloc[-1]) if np.isfinite(wave_show.iloc[-1]) else np.nan
+                last_px = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
+
+                base_row = {
+                    "Symbol": sym,
+                    "Trend Slope": float(trend_m),
+                    "Bars Since Cross": int(bars_since),
+                    "Cross Time": t_cross,
+                    "EW@Cross": ew_cross,
+                    "EW(last)": ew_last,
+                    "Last Price": last_px,
+                }
+                rows_a.append(base_row)
+
+                # (B) stricter: EW still heading up and higher than at cross
+                if np.isfinite(ew_cross) and np.isfinite(ew_last) and (ew_last > ew_cross) and _series_heading_up(wave_show, confirm_bars=int(confirm_bars)):
+                    rows_b.append(base_row)
+
+            except Exception:
+                continue
+
+        st.subheader("A) Trend UP + Norm EW crossed 0.0 upward (recent)")
+        if not rows_a:
+            st.write("No matches.")
+        else:
+            dfA = pd.DataFrame(rows_a).sort_values(["Bars Since Cross", "Trend Slope", "EW(last)"], ascending=[True, False, False])
+            st.dataframe(dfA.head(max_rows).reset_index(drop=True), use_container_width=True)
+
+        st.subheader("B) Trend UP + Norm EW crossed 0.0 upward AND EW still heading up")
+        if not rows_b:
+            st.write("No matches.")
+        else:
+            dfB = pd.DataFrame(rows_b).sort_values(["Bars Since Cross", "Trend Slope", "EW(last)"], ascending=[True, False, False])
+            st.dataframe(dfB.head(max_rows).reset_index(drop=True), use_container_width=True)
