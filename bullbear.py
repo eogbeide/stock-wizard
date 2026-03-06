@@ -2470,6 +2470,243 @@ def _ntd_minus05_cross_up_mask(ntd: pd.Series) -> pd.Series:
     prev = s.shift(1)
     return ((s >= -0.5) & (s <= -0.4) & (prev < -0.5) & (s > prev)).fillna(False)
 
+# =========================
+# NEW: NTD Positive Cross masks (0.0 and +0.5)
+# =========================
+def _ntd_cross_up_level_mask(ntd: pd.Series, level: float) -> pd.Series:
+    """Cross UP through a level (e.g., 0.0 or +0.5) with upward bar confirmation."""
+    s = _coerce_1d_series(ntd)
+    prev = s.shift(1)
+    return ((s >= float(level)) & (prev < float(level)) & (s > prev)).fillna(False)
+
+@st.cache_data(ttl=120)
+def ntd_zero_cross_row_daily(symbol: str,
+                             daily_view_label: str,
+                             ntd_win: int = 60,
+                             max_bars_since: int = 5):
+    """
+    NTD Positive Cross (Daily):
+      - Price trend line (global slope over selected daily view) must be UP
+      - NTD crosses UP through 0.0 recently
+    """
+    try:
+        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
+        if len(close_show) < 10:
+            return None
+
+        g = _global_slope_1d(close_show)
+        if not (np.isfinite(g) and float(g) > 0.0):
+            return None
+
+        ntd_full = compute_normalized_trend(close_full, window=int(ntd_win))
+        ntd_show = _coerce_1d_series(ntd_full).reindex(close_show.index)
+        if ntd_show.dropna().shape[0] < 2:
+            return None
+
+        mask = _ntd_cross_up_level_mask(ntd_show, level=0.0)
+        if not mask.any():
+            return None
+
+        t = mask[mask].index[-1]
+        bars_since = int((len(close_show) - 1) - int(close_show.index.get_loc(t)))
+        if int(bars_since) > int(max_bars_since):
+            return None
+
+        ntd_cross = float(ntd_show.loc[t]) if np.isfinite(ntd_show.loc[t]) else np.nan
+        ntd_last = float(ntd_show.dropna().iloc[-1]) if len(ntd_show.dropna()) else np.nan
+        last_px = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
+
+        return {
+            "Symbol": symbol,
+            "Frame": "Daily",
+            "Level": 0.0,
+            "Bars Since": int(bars_since),
+            "Cross Time": t,
+            "NTD@Cross": ntd_cross,
+            "NTD(last)": ntd_last,
+            "Global Slope": float(g),
+            "Last Price": last_px,
+        }
+    except Exception:
+        return None
+
+@st.cache_data(ttl=120)
+def ntd_plus05_cross_row_daily(symbol: str,
+                               daily_view_label: str,
+                               ntd_win: int = 60,
+                               max_bars_since: int = 5):
+    """
+    NTD Positive Cross (Daily):
+      - Price trend line (global slope over selected daily view) must be UP
+      - NTD crosses UP through +0.5 recently
+    """
+    try:
+        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
+        if len(close_show) < 10:
+            return None
+
+        g = _global_slope_1d(close_show)
+        if not (np.isfinite(g) and float(g) > 0.0):
+            return None
+
+        ntd_full = compute_normalized_trend(close_full, window=int(ntd_win))
+        ntd_show = _coerce_1d_series(ntd_full).reindex(close_show.index)
+        if ntd_show.dropna().shape[0] < 2:
+            return None
+
+        mask = _ntd_cross_up_level_mask(ntd_show, level=0.5)
+        if not mask.any():
+            return None
+
+        t = mask[mask].index[-1]
+        bars_since = int((len(close_show) - 1) - int(close_show.index.get_loc(t)))
+        if int(bars_since) > int(max_bars_since):
+            return None
+
+        ntd_cross = float(ntd_show.loc[t]) if np.isfinite(ntd_show.loc[t]) else np.nan
+        ntd_last = float(ntd_show.dropna().iloc[-1]) if len(ntd_show.dropna()) else np.nan
+        last_px = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
+
+        return {
+            "Symbol": symbol,
+            "Frame": "Daily",
+            "Level": 0.5,
+            "Bars Since": int(bars_since),
+            "Cross Time": t,
+            "NTD@Cross": ntd_cross,
+            "NTD(last)": ntd_last,
+            "Global Slope": float(g),
+            "Last Price": last_px,
+        }
+    except Exception:
+        return None
+
+@st.cache_data(ttl=120)
+def ntd_zero_cross_row_hourly(symbol: str,
+                              period: str,
+                              ntd_win: int = 60,
+                              max_bars_since: int = 10):
+    """
+    NTD Positive Cross (Hourly / 5m bars):
+      - Price trend line (global slope over intraday window) must be UP
+      - NTD crosses UP through 0.0 recently
+    """
+    try:
+        df = fetch_intraday(symbol, period=period)
+        if df is None or df.empty or "Close" not in df.columns:
+            return None
+        real_times = df.index if isinstance(df.index, pd.DatetimeIndex) else None
+
+        df2 = df.copy()
+        df2.index = pd.RangeIndex(len(df2))
+        hc = _coerce_1d_series(df2["Close"]).ffill().dropna()
+        if len(hc) < 10:
+            return None
+
+        g = _global_slope_1d(hc)
+        if not (np.isfinite(g) and float(g) > 0.0):
+            return None
+
+        ntd = compute_normalized_trend(hc, window=int(ntd_win))
+        ntd = _coerce_1d_series(ntd)
+        if ntd.dropna().shape[0] < 2:
+            return None
+
+        mask = _ntd_cross_up_level_mask(ntd, level=0.0)
+        if not mask.any():
+            return None
+
+        bar = int(mask[mask].index[-1])
+        bars_since = int((len(hc) - 1) - bar)
+        if int(bars_since) > int(max_bars_since):
+            return None
+
+        ts = None
+        if isinstance(real_times, pd.DatetimeIndex) and (0 <= bar < len(real_times)):
+            ts = real_times[bar]
+
+        ntd_cross = float(ntd.iloc[bar]) if np.isfinite(ntd.iloc[bar]) else np.nan
+        ntd_last = float(ntd.dropna().iloc[-1]) if len(ntd.dropna()) else np.nan
+        last_px = float(hc.iloc[-1]) if np.isfinite(hc.iloc[-1]) else np.nan
+
+        return {
+            "Symbol": symbol,
+            "Frame": f"Hourly ({period})",
+            "Level": 0.0,
+            "Bars Since": int(bars_since),
+            "Cross Time": ts,
+            "NTD@Cross": ntd_cross,
+            "NTD(last)": ntd_last,
+            "Global Slope": float(g),
+            "Last Price": last_px,
+        }
+    except Exception:
+        return None
+
+@st.cache_data(ttl=120)
+def ntd_plus05_cross_row_hourly(symbol: str,
+                                period: str,
+                                ntd_win: int = 60,
+                                max_bars_since: int = 10):
+    """
+    NTD Positive Cross (Hourly / 5m bars):
+      - Price trend line (global slope over intraday window) must be UP
+      - NTD crosses UP through +0.5 recently
+    """
+    try:
+        df = fetch_intraday(symbol, period=period)
+        if df is None or df.empty or "Close" not in df.columns:
+            return None
+        real_times = df.index if isinstance(df.index, pd.DatetimeIndex) else None
+
+        df2 = df.copy()
+        df2.index = pd.RangeIndex(len(df2))
+        hc = _coerce_1d_series(df2["Close"]).ffill().dropna()
+        if len(hc) < 10:
+            return None
+
+        g = _global_slope_1d(hc)
+        if not (np.isfinite(g) and float(g) > 0.0):
+            return None
+
+        ntd = compute_normalized_trend(hc, window=int(ntd_win))
+        ntd = _coerce_1d_series(ntd)
+        if ntd.dropna().shape[0] < 2:
+            return None
+
+        mask = _ntd_cross_up_level_mask(ntd, level=0.5)
+        if not mask.any():
+            return None
+
+        bar = int(mask[mask].index[-1])
+        bars_since = int((len(hc) - 1) - bar)
+        if int(bars_since) > int(max_bars_since):
+            return None
+
+        ts = None
+        if isinstance(real_times, pd.DatetimeIndex) and (0 <= bar < len(real_times)):
+            ts = real_times[bar]
+
+        ntd_cross = float(ntd.iloc[bar]) if np.isfinite(ntd.iloc[bar]) else np.nan
+        ntd_last = float(ntd.dropna().iloc[-1]) if len(ntd.dropna()) else np.nan
+        last_px = float(hc.iloc[-1]) if np.isfinite(hc.iloc[-1]) else np.nan
+
+        return {
+            "Symbol": symbol,
+            "Frame": f"Hourly ({period})",
+            "Level": 0.5,
+            "Bars Since": int(bars_since),
+            "Cross Time": ts,
+            "NTD@Cross": ntd_cross,
+            "NTD(last)": ntd_last,
+            "Global Slope": float(g),
+            "Last Price": last_px,
+        }
+    except Exception:
+        return None
+
 @st.cache_data(ttl=120)
 def ntd_minus05_cross_row_daily(symbol: str,
                                daily_view_label: str,
@@ -3345,7 +3582,7 @@ with tab4:
             st.pyplot(fig)
 
 # =========================
-# TAB 5 — NTD -0.75 Scanner  ✅ UPDATED (adds hourly list where global slope > 0)
+# TAB 5 — NTD -0.75 Scanner
 # =========================
 with tab5:
     st.header("NTD -0.75 Scanner")
@@ -4117,12 +4354,16 @@ with tab21:
                 st.dataframe(dfs[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 22 — NTD -0.5 Cross
+# TAB 22 — NTD -0.5 Cross  ✅ UPDATED (adds NTD Positive Cross lists: 0.0 and +0.5 when trendline is upward)
 # =========================
 with tab22:
     st.header("NTD -0.5 Cross")
     st.caption(
-        "Lists symbols where **regression slope > 0** and **NTD crossed up into [-0.5, -0.4]**.\n"
+        "Existing lists:\n"
+        "• **NTD -0.5 Cross**: regression slope > 0 and **NTD crossed up into [-0.5, -0.4]**.\n\n"
+        "NEW lists (NTD Positive Cross, trendline UP):\n"
+        "• **NTD 0.0 Cross Up**: **trendline is upward** and **NTD crossed up through 0.0**.\n"
+        "• **NTD +0.5 Cross Up**: **trendline is upward** and **NTD crossed up through +0.5**.\n\n"
         "Daily uses selected Daily view range; Hourly uses 24/48/96 lookback."
     )
 
@@ -4132,11 +4373,14 @@ with tab22:
     hours = c3.selectbox("Hourly scan window", ["24h", "48h", "96h"], index=0, key=f"ntd05_hr_win_{mode}")
     max_rows = c4.slider("Max rows", 10, 200, 50, 10, key=f"ntd05_rows_{mode}")
 
-    run22 = st.button("Run NTD -0.5 Cross Scan", key=f"btn_run_ntd05_{mode}", use_container_width=True)
+    run22 = st.button("Run NTD Cross Scan", key=f"btn_run_ntd05_{mode}", use_container_width=True)
 
     if run22:
-        st.subheader("Daily")
-        d_rows = []
+        # ---------- DAILY ----------
+        d_minus05_rows = []
+        d_zero_rows = []
+        d_plus05_rows = []
+
         for sym in universe:
             r = ntd_minus05_cross_row_daily(
                 symbol=sym,
@@ -4146,16 +4390,58 @@ with tab22:
                 max_bars_since=int(within_daily),
             )
             if r:
-                d_rows.append(r)
+                d_minus05_rows.append(r)
 
-        if not d_rows:
-            st.write("No matches.")
-        else:
-            df = pd.DataFrame(d_rows).sort_values(["Bars Since", "NTD(last)"], ascending=[True, False])
-            st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
+            r0 = ntd_zero_cross_row_daily(
+                symbol=sym,
+                daily_view_label=daily_view,
+                ntd_win=60,
+                max_bars_since=int(within_daily),
+            )
+            if r0:
+                d_zero_rows.append(r0)
 
-        st.subheader(f"Hourly ({hours})")
-        h_rows = []
+            r5 = ntd_plus05_cross_row_daily(
+                symbol=sym,
+                daily_view_label=daily_view,
+                ntd_win=60,
+                max_bars_since=int(within_daily),
+            )
+            if r5:
+                d_plus05_rows.append(r5)
+
+        st.subheader("Daily")
+        cD1, cD2, cD3 = st.columns(3)
+
+        with cD1:
+            st.subheader("NTD -0.5 Cross (into [-0.5, -0.4])")
+            if not d_minus05_rows:
+                st.write("No matches.")
+            else:
+                df = pd.DataFrame(d_minus05_rows).sort_values(["Bars Since", "NTD(last)"], ascending=[True, False])
+                st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
+
+        with cD2:
+            st.subheader("NTD 0.0 Cross Up (Trendline UP)")
+            if not d_zero_rows:
+                st.write("No matches.")
+            else:
+                df = pd.DataFrame(d_zero_rows).sort_values(["Bars Since", "NTD(last)", "Global Slope"], ascending=[True, False, False])
+                st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
+
+        with cD3:
+            st.subheader("NTD +0.5 Cross Up (Trendline UP)")
+            if not d_plus05_rows:
+                st.write("No matches.")
+            else:
+                df = pd.DataFrame(d_plus05_rows).sort_values(["Bars Since", "NTD(last)", "Global Slope"], ascending=[True, False, False])
+                st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
+
+        # ---------- HOURLY ----------
+        h_minus05_rows = []
+        h_zero_rows = []
+        h_plus05_rows = []
+
         for sym in universe:
             r = ntd_minus05_cross_row_hourly(
                 symbol=sym,
@@ -4165,16 +4451,55 @@ with tab22:
                 max_bars_since=int(within_hourly),
             )
             if r:
-                h_rows.append(r)
+                h_minus05_rows.append(r)
 
-        if not h_rows:
-            st.write("No matches.")
-        else:
-            df = pd.DataFrame(h_rows).sort_values(["Bars Since", "NTD(last)"], ascending=[True, False])
-            st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
+            r0 = ntd_zero_cross_row_hourly(
+                symbol=sym,
+                period=period_map[hours],
+                ntd_win=60,
+                max_bars_since=int(within_hourly),
+            )
+            if r0:
+                h_zero_rows.append(r0)
+
+            r5 = ntd_plus05_cross_row_hourly(
+                symbol=sym,
+                period=period_map[hours],
+                ntd_win=60,
+                max_bars_since=int(within_hourly),
+            )
+            if r5:
+                h_plus05_rows.append(r5)
+
+        st.subheader(f"Hourly ({hours})")
+        cH1, cH2, cH3 = st.columns(3)
+
+        with cH1:
+            st.subheader("NTD -0.5 Cross (into [-0.5, -0.4])")
+            if not h_minus05_rows:
+                st.write("No matches.")
+            else:
+                df = pd.DataFrame(h_minus05_rows).sort_values(["Bars Since", "NTD(last)"], ascending=[True, False])
+                st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
+
+        with cH2:
+            st.subheader("NTD 0.0 Cross Up (Trendline UP)")
+            if not h_zero_rows:
+                st.write("No matches.")
+            else:
+                df = pd.DataFrame(h_zero_rows).sort_values(["Bars Since", "NTD(last)", "Global Slope"], ascending=[True, False, False])
+                st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
+
+        with cH3:
+            st.subheader("NTD +0.5 Cross Up (Trendline UP)")
+            if not h_plus05_rows:
+                st.write("No matches.")
+            else:
+                df = pd.DataFrame(h_plus05_rows).sort_values(["Bars Since", "NTD(last)", "Global Slope"], ascending=[True, False, False])
+                st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 23 — Trend and Slope Align  ✅ UPDATED (adds Bars Since Cross / Cross Direction / Time Crossed to all tables)
+# TAB 23 — Trend and Slope Align
 # =========================
 with tab23:
     st.header("Trend and Slope Align")
@@ -4303,7 +4628,7 @@ with tab23:
                 st.dataframe(dfs[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 24 — NPX 0.0 Cross Trend/PTD  ✅ NEW
+# TAB 24 — NPX 0.0 Cross Trend/PTD
 # =========================
 with tab24:
     st.header("NPX 0.0 Cross Trend/PTD")
@@ -4418,7 +4743,7 @@ with tab24:
                 st.dataframe(dfb[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 25 — Magic Cross  ✅ NEW
+# TAB 25 — Magic Cross
 # =========================
 with tab25:
     st.header("Magic Cross")
@@ -4676,7 +5001,7 @@ with tab25:
         _show_magic_hourly_section("48h", rows_48)
 
 # =========================
-# TAB 26 — Max History Marker ✅ NEW
+# TAB 26 — Max History Marker
 # =========================
 with tab26:
     st.header("Max History Marker")
@@ -4733,7 +5058,6 @@ with tab26:
                 st.write("No matches.")
             else:
                 dfu = pd.DataFrame(up_rows)
-                # Prefer freshest crosses first, then stronger current NTD
                 dfu = dfu.sort_values(["Bars Since Cross", "NTD(last)", "Recent Global Slope"], ascending=[True, False, False])
                 st.dataframe(dfu[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
 
@@ -4743,12 +5067,11 @@ with tab26:
                 st.write("No matches.")
             else:
                 dfd = pd.DataFrame(down_rows)
-                # Prefer freshest crosses first, then more negative current NTD
                 dfd = dfd.sort_values(["Bars Since Cross", "NTD(last)", "Recent Global Slope"], ascending=[True, True, True])
                 st.dataframe(dfd[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 27 — Daily Bet ✅ NEW
+# TAB 27 — Daily Bet
 # =========================
 with tab27:
     st.header("Daily Bet")
@@ -4822,7 +5145,7 @@ with tab27:
                 st.dataframe(dfb[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 28 — Regression Reversal ✅ NEW (Daily + Hourly)
+# TAB 28 — Regression Reversal
 # =========================
 with tab28:
     st.header("Regression Reversal")
