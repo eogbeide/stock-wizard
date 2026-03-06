@@ -423,284 +423,205 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
     ax.plot(s.index, yhat, "-", linewidth=2.4, color=color, label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return m
 
-# =========================
-# NEW: Hot Cake helpers
-# =========================
-def _trend_slope_1d(series_like) -> float:
-    s = _coerce_1d_series(series_like).dropna()
-    if len(s) < 3:
-        return float("nan")
-    x = np.arange(len(s), dtype=float)
-    try:
-        m, _ = np.polyfit(x, s.to_numpy(dtype=float), 1)
-    except Exception:
-        return float("nan")
-    return float(m)
+# ---- Supertrend helpers (hourly overlay) ----
+def _true_range(df: pd.DataFrame):
+    hl = (df["High"] - df["Low"]).abs()
+    hc = (df["High"] - df["Close"].shift()).abs()
+    lc = (df["Low"]  - df["Close"].shift()).abs()
+    return pd.concat([hl, hc, lc], axis=1).max(axis=1)
 
-def _cross_up_level(series_like, level: float) -> pd.Series:
-    s = _coerce_1d_series(series_like)
-    prev = s.shift(1)
-    return ((s >= float(level)) & (prev < float(level))).fillna(False)
+def compute_atr(df: pd.DataFrame, period: int = 10) -> pd.Series:
+    tr = _true_range(df[['High','Low','Close']])
+    return tr.ewm(alpha=1/period, adjust=False).mean()
 
-def _series_heading_up(series_like, confirm_bars: int = 1) -> bool:
-    s = _coerce_1d_series(series_like).dropna()
-    confirm_bars = max(1, int(confirm_bars))
-    if len(s) < confirm_bars + 1:
-        return False
-    d = s.diff().dropna()
-    if len(d) < confirm_bars:
-        return False
-    return bool(np.all(d.iloc[-confirm_bars:] > 0))
-
-def _bars_since(idx: pd.Index, t) -> int:
-    try:
-        if isinstance(idx, pd.DatetimeIndex):
-            loc = int(idx.get_loc(t))
+def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float = 3.0):
+    if df is None or df.empty or not {'High','Low','Close'}.issubset(df.columns):
+        idx = df.index if df is not None else pd.Index([])
+        return pd.DataFrame(index=idx, columns=["ST","in_uptrend","upperband","lowerband"])
+    ohlc = df[['High','Low','Close']].copy()
+    hl2 = (ohlc['High'] + ohlc['Low']) / 2.0
+    atr = compute_atr(ohlc, atr_period)
+    upperband = hl2 + atr_mult * atr
+    lowerband = hl2 - atr_mult * atr
+    st_line = pd.Series(index=ohlc.index, dtype=float)
+    in_up   = pd.Series(index=ohlc.index, dtype=bool)
+    st_line.iloc[0] = upperband.iloc[0]
+    in_up.iloc[0]   = True
+    for i in range(1, len(ohlc)):
+        prev_st = st_line.iloc[i-1]
+        prev_up = in_up.iloc[i-1]
+        up_i = min(upperband.iloc[i], prev_st) if prev_up else upperband.iloc[i]
+        dn_i = max(lowerband.iloc[i], prev_st) if not prev_up else lowerband.iloc[i]
+        close_i = ohlc['Close'].iloc[i]
+        if close_i > up_i:
+            curr_up = True
+        elif close_i < dn_i:
+            curr_up = False
         else:
-            loc = int(t)
-        return int((len(idx) - 1) - loc)
-    except Exception:
-        return 10**9
+            curr_up = prev_up
+        in_up.iloc[i]   = curr_up
+        st_line.iloc[i] = dn_i if curr_up else up_i
+    return pd.DataFrame({
+        "ST": st_line, "in_uptrend": in_up,
+        "upperband": upperband, "lowerband": lowerband
+    })
 
-@st.cache_data(ttl=120)
-def hotcake_npo_cross_row_daily(symbol: str,
-                                daily_view_label: str,
-                                npo_level: float = -0.25,
-                                npo_fast_: int = 12,
-                                npo_slow_: int = 26,
-                                npo_norm_: int = 240,
-                                confirm_up_bars: int = 1,
-                                max_bars_since: int = 10):
-    """
-    Daily: NPO crosses UP through npo_level recently AND NPO is going up.
-    Returns slopes + last values; caller filters by trend direction (up/down).
-    """
+# ---- Forex News (Yahoo Finance) ----
+@st.cache_data(ttl=120, show_spinner=False)
+def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
+    rows = []
     try:
-        close_full = fetch_hist(symbol).dropna()
-        if close_full.empty:
-            return None
-        close_show = subset_by_daily_view(close_full, daily_view_label).dropna()
-        if len(close_show) < 20:
-            return None
+        news_list = yf.Ticker(symbol).news or []
+    except Exception:
+        news_list = []
+    for item in news_list:
+        ts = item.get("providerPublishTime") or item.get("pubDate")
+        if ts is None:
+            continue
+        try:
+            dt_utc = pd.to_datetime(ts, unit="s", utc=True)
+        except (ValueError, OverflowError, TypeError):
+            try:
+                dt_utc = pd.to_datetime(ts, utc=True)
+            except Exception:
+                continue
+        dt_pst = dt_utc.tz_convert(PACIFIC)
+        rows.append({
+            "time": dt_pst,
+            "title": item.get("title", ""),
+            "publisher": item.get("publisher", ""),
+            "link": item.get("link", "")
+        })
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    now_utc = pd.Timestamp.now(tz="UTC")
+    d1 = (now_utc - pd.Timedelta(days=window_days)).tz_convert(PACIFIC)
+    return df[df["time"] >= d1].sort_values("time")
 
-        trend_m = _trend_slope_1d(close_show)
+def draw_news_markers(ax, times, ymin, ymax, label="News"):
+    for t in times:
+        try:
+            ax.axvline(t, color="tab:red", alpha=0.18, linewidth=1)
+        except Exception:
+            pass
+    ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
 
-        npo_full = compute_npo(close_full, fast=int(npo_fast_), slow=int(npo_slow_), norm_win=int(npo_norm_))
-        npo_show = _coerce_1d_series(npo_full).reindex(close_show.index).dropna()
-        if len(npo_show) < 3:
-            return None
-
-        cross_up = _cross_up_level(npo_show, level=float(npo_level))
-        if not cross_up.any():
-            return None
-
-        t_cross = cross_up[cross_up].index[-1]
-        bars_since = _bars_since(npo_show.index, t_cross)
-        if int(bars_since) > int(max_bars_since):
-            return None
-
-        # "going upward"
-        if not _series_heading_up(npo_show, confirm_bars=int(confirm_up_bars)):
-            return None
-        npo_cross = float(npo_show.loc[t_cross]) if np.isfinite(npo_show.loc[t_cross]) else np.nan
-        npo_last = float(npo_show.iloc[-1]) if np.isfinite(npo_show.iloc[-1]) else np.nan
-        if not (np.isfinite(npo_cross) and np.isfinite(npo_last) and (npo_last > npo_cross)):
-            return None
-
-        last_px = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
-
-        return {
-            "Symbol": symbol,
-            "Frame": "Daily",
-            "Bars Since Cross": int(bars_since),
-            "Cross Time": t_cross,
-            "NPO@Cross": npo_cross,
-            "NPO(last)": npo_last,
-            "Trend Slope": float(trend_m) if np.isfinite(trend_m) else np.nan,
-            "Last Price": last_px,
-        }
+# --- Signal helpers ---
+def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
+                        fc_vals: pd.Series, threshold: float, prox: float):
+    """Return signal info if last price is near hourly S/R and model confidence passes threshold."""
+    try:
+        last_close = float(hc.iloc[-1])
+        res = float(res_h.iloc[-1])
+        sup = float(sup_h.iloc[-1])
     except Exception:
         return None
 
-@st.cache_data(ttl=120)
-def hotcake_support_reversal_row_daily(symbol: str,
-                                       daily_view_label: str,
-                                       confirm_up_bars: int = 1,
-                                       max_bars_since: int = 10,
-                                       prox: float = 0.0025):
-    """
-    Daily: Trend up AND price recently reversed from Support (30-day rolling min),
-    and price is now going up.
-    """
-    try:
-        close_full = fetch_hist(symbol).dropna()
-        if close_full.empty:
-            return None
-        close_show = subset_by_daily_view(close_full, daily_view_label).dropna()
-        if len(close_show) < 20:
-            return None
-
-        trend_m = _trend_slope_1d(close_show)
-        if not (np.isfinite(trend_m) and trend_m > 0.0):
-            return None
-
-        sup_full = close_full.rolling(30, min_periods=1).min()
-        sup = _coerce_1d_series(sup_full).reindex(close_show.index).ffill()
-
-        p = _coerce_1d_series(close_show).astype(float)
-        s = _coerce_1d_series(sup).reindex(p.index).ffill()
-
-        touched = p.shift(1) <= s.shift(1) * (1.0 + float(prox))
-        moved_up = p > p.shift(1)
-        ev = (touched & moved_up).fillna(False)
-        if not ev.any():
-            return None
-
-        t = ev[ev].index[-1]
-        bars_since = _bars_since(p.index, t)
-        if int(bars_since) > int(max_bars_since):
-            return None
-
-        if not _series_heading_up(p, confirm_bars=int(confirm_up_bars)):
-            return None
-
-        last_px = float(p.iloc[-1]) if np.isfinite(p.iloc[-1]) else np.nan
-        sup_at = float(s.loc[t]) if np.isfinite(s.loc[t]) else np.nan
-
-        return {
-            "Symbol": symbol,
-            "Frame": "Daily",
-            "Bars Since Reversal": int(bars_since),
-            "Reversal Time": t,
-            "Support": sup_at,
-            "Last Price": last_px,
-            "Trend Slope": float(trend_m),
-        }
-    except Exception:
-        return None
-# =========================
-# NEW: Hot Cake helpers (Hourly)
-# =========================
-@st.cache_data(ttl=120)
-def hotcake_npo_cross_row_hourly(symbol: str,
-                                 period: str,
-                                 npo_level: float = -0.25,
-                                 npo_fast_: int = 12,
-                                 npo_slow_: int = 26,
-                                 npo_norm_: int = 240,
-                                 confirm_up_bars: int = 1,
-                                 max_bars_since: int = 30):
-    """
-    Hourly (5m bars): NPO crosses UP through npo_level recently AND NPO is going up.
-    Returns slopes + last values; caller filters by trend direction (up/down).
-    """
-    try:
-        intr = fetch_intraday(symbol, period=period)
-        if intr is None or intr.empty or "Close" not in intr:
-            return None
-
-        hc = _coerce_1d_series(intr["Close"]).ffill().dropna()
-        if len(hc) < 60:
-            return None
-
-        trend_m = _trend_slope_1d(hc)
-
-        npo = compute_npo(hc, fast=int(npo_fast_), slow=int(npo_slow_), norm_win=int(npo_norm_))
-        npo = _coerce_1d_series(npo).dropna()
-        if len(npo) < 3:
-            return None
-
-        cross_up = _cross_up_level(npo, level=float(npo_level))
-        if not cross_up.any():
-            return None
-
-        bar = int(cross_up[cross_up].index[-1])
-        bars_since = int((len(npo) - 1) - bar)
-        if int(bars_since) > int(max_bars_since):
-            return None
-
-        if not _series_heading_up(npo, confirm_bars=int(confirm_up_bars)):
-            return None
-
-        npo_cross = float(npo.iloc[bar]) if np.isfinite(npo.iloc[bar]) else np.nan
-        npo_last = float(npo.iloc[-1]) if np.isfinite(npo.iloc[-1]) else np.nan
-        if not (np.isfinite(npo_cross) and np.isfinite(npo_last) and (npo_last > npo_cross)):
-            return None
-
-        last_px = float(hc.iloc[-1]) if np.isfinite(hc.iloc[-1]) else np.nan
-
-        cross_time = intr.index[bar] if isinstance(intr.index, pd.DatetimeIndex) and (0 <= bar < len(intr.index)) else bar
-
-        return {
-            "Symbol": symbol,
-            "Frame": f"Hourly ({period})",
-            "Bars Since Cross": int(bars_since),
-            "Cross Time": cross_time,
-            "NPO@Cross": npo_cross,
-            "NPO(last)": npo_last,
-            "Trend Slope": float(trend_m) if np.isfinite(trend_m) else np.nan,
-            "Last Price": last_px,
-        }
-    except Exception:
+    if not np.all(np.isfinite([last_close, res, sup])) or res <= sup:
         return None
 
-@st.cache_data(ttl=120)
-def hotcake_support_reversal_row_hourly(symbol: str,
-                                        period: str,
-                                        confirm_up_bars: int = 1,
-                                        max_bars_since: int = 30,
-                                        sr_lb: int = 60,
-                                        prox: float = 0.0025):
-    """
-    Hourly (5m bars): Trend up AND price recently reversed from Support (rolling min),
-    and price is now going up.
-    """
-    try:
-        intr = fetch_intraday(symbol, period=period)
-        if intr is None or intr.empty or "Close" not in intr:
-            return None
+    near_support = last_close <= sup * (1.0 + prox)
+    near_resist  = last_close >= res * (1.0 - prox)
 
-        hc = _coerce_1d_series(intr["Close"]).ffill().dropna()
-        if len(hc) < 60:
-            return None
-
-        trend_m = _trend_slope_1d(hc)
-        if not (np.isfinite(trend_m) and trend_m > 0.0):
-            return None
-
-        sup = hc.rolling(int(sr_lb), min_periods=1).min().ffill()
-        p = hc.astype(float)
-        s = _coerce_1d_series(sup).reindex(p.index).ffill()
-
-        touched = p.shift(1) <= s.shift(1) * (1.0 + float(prox))
-        moved_up = p > p.shift(1)
-        ev = (touched & moved_up).fillna(False)
-        if not ev.any():
-            return None
-
-        bar = int(ev[ev].index[-1])
-        bars_since = int((len(p) - 1) - bar)
-        if int(bars_since) > int(max_bars_since):
-            return None
-
-        if not _series_heading_up(p, confirm_bars=int(confirm_up_bars)):
-            return None
-
-        last_px = float(p.iloc[-1]) if np.isfinite(p.iloc[-1]) else np.nan
-        sup_at = float(s.iloc[bar]) if np.isfinite(s.iloc[bar]) else np.nan
-        rev_time = intr.index[bar] if isinstance(intr.index, pd.DatetimeIndex) and (0 <= bar < len(intr.index)) else bar
-
-        return {
-            "Symbol": symbol,
-            "Frame": f"Hourly ({period})",
-            "Bars Since Reversal": int(bars_since),
-            "Reversal Time": rev_time,
-            "Support": sup_at,
-            "Last Price": last_px,
-            "Trend Slope": float(trend_m),
-        }
-    except Exception:
+    fc = np.asarray(_coerce_1d_series(fc_vals).dropna(), dtype=float)
+    if fc.size == 0:
         return None
+    p_up_from_here = float(np.mean(fc > last_close))
+    p_dn_from_here = float(np.mean(fc < last_close))
+
+    if near_support and p_up_from_here >= threshold:
+        return {
+            "side": "BUY",
+            "prob": p_up_from_here,
+            "level": sup,
+            "reason": f"Near support {fmt_price_val(sup)} with {fmt_pct(p_up_from_here)} up-confidence ≥ {fmt_pct(threshold)}"
+        }
+    if near_resist and p_dn_from_here >= threshold:
+        return {
+            "side": "SELL",
+            "prob": p_dn_from_here,
+            "level": res,
+            "reason": f"Near resistance {fmt_price_val(res)} with {fmt_pct(p_dn_from_here)} down-confidence ≥ {fmt_pct(threshold)}"
+        }
+    return None
+
+EW_CONFIDENCE = 0.95  # >95% confidence for EW signals
+
+def elliott_conf_signal(price_now: float, fc_vals: pd.Series, conf: float = EW_CONFIDENCE):
+    """Signal for EW panel using SARIMAX distribution vs current price."""
+    fc = _coerce_1d_series(fc_vals).dropna().to_numpy(dtype=float)
+    if fc.size == 0 or not np.isfinite(price_now):
+        return None
+    p_up = float(np.mean(fc > price_now))
+    p_dn = float(np.mean(fc < price_now))
+    if p_up >= conf:
+        return {"side": "BUY", "prob": p_up}
+    if p_dn >= conf:
+        return {"side": "SELL", "prob": p_dn}
+    return None
+
+# --- Normalized Elliott Wave (simple, dependency-free) ----
+def compute_normalized_elliott_wave(close: pd.Series,
+                                    pivot_lb: int = 7,
+                                    norm_win: int = 240) -> tuple[pd.Series, pd.DataFrame]:
+    """
+    Returns:
+      wave_norm: pd.Series in [-1,1] (tanh(zscore) of close vs rolling mean/std)
+      pivots_df: DataFrame with 'time','price','type' ('H'/'L') and 'wave' labels (1..5 repeating)
+    """
+    s = _coerce_1d_series(close).dropna()
+    if s.empty:
+        return pd.Series(index=close.index, dtype=float), pd.DataFrame(columns=["time","price","type","wave"])
+
+    # Normalization: rolling z-score, then squash to [-1,1]
+    minp = max(10, norm_win//10)
+    mean = s.rolling(norm_win, min_periods=minp).mean()
+    std  = s.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
+    z = (s - mean) / std
+    wave_norm = np.tanh(z / 2.0)  # smoother, bounded [-1,1]
+    wave_norm = wave_norm.reindex(close.index)
+
+    # Pivot detection via centered rolling extrema
+    if pivot_lb % 2 == 0:
+        pivot_lb += 1
+    half = pivot_lb // 2
+    roll_max = s.rolling(pivot_lb, center=True).max()
+    roll_min = s.rolling(pivot_lb, center=True).min()
+
+    pivots = []
+    for i in range(half, len(s)-half):
+        if not np.isfinite(s.iloc[i]):
+            continue
+        if s.iloc[i] == roll_max.iloc[i]:
+            pivots.append((s.index[i], float(s.iloc[i]), 'H'))
+        elif s.iloc[i] == roll_min.iloc[i]:
+            pivots.append((s.index[i], float(s.iloc[i]), 'L'))
+
+    # De-duplicate consecutive same-type pivots
+    dedup = []
+    for t, p, typ in pivots:
+        if not dedup:
+            dedup.append((t,p,typ))
+        else:
+            pt, pp, ptyp = dedup[-1]
+            if typ == ptyp:
+                if (typ == 'H' and p > pp) or (typ == 'L' and p < pp):
+                    dedup[-1] = (t,p,typ)
+            else:
+                dedup.append((t,p,typ))
+
+    # Assign simple 1..5 wave counting
+    waves = []
+    wave_num = 1
+    for t, p, typ in dedup:
+        waves.append((t,p,typ,wave_num))
+        wave_num += 1
+        if wave_num > 5:
+            wave_num = 1
+
+    pivots_df = pd.DataFrame(waves, columns=["time","price","type","wave"])
+    return wave_norm, pivots_df
 
 # --- Session init ---
 if 'run_all' not in st.session_state:
@@ -709,12 +630,11 @@ if 'run_all' not in st.session_state:
     st.session_state.hour_range = "24h"
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
-    "Metrics",
-    "Hot Cake"
+    "Metrics"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -1077,6 +997,7 @@ with tab1:
             "Lower":    st.session_state.fc_ci.iloc[:,0],
             "Upper":    st.session_state.fc_ci.iloc[:,1]
         }, index=st.session_state.fc_idx))
+
 # --- Tab 2: Enhanced Forecast ---
 with tab2:
     st.header("Enhanced Forecast")
@@ -1450,292 +1371,3 @@ with tab4:
             "Days": [int(df0['Bull'].sum()), int((~df0['Bull']).sum())]
         }).set_index("Type")
         st.bar_chart(dist, use_container_width=True)
-
-# =========================
-# NEW: Hot Cake core utilities + Daily helpers
-# =========================
-def _trend_slope_1d(series_like) -> float:
-    s = _coerce_1d_series(series_like).dropna()
-    if len(s) < 3:
-        return float("nan")
-    x = np.arange(len(s), dtype=float)
-    try:
-        m, _ = np.polyfit(x, s.to_numpy(dtype=float), 1)
-    except Exception:
-        return float("nan")
-    return float(m)
-
-def _cross_up_level(series_like: pd.Series, level: float) -> pd.Series:
-    s = _coerce_1d_series(series_like)
-    prev = s.shift(1)
-    return ((s >= float(level)) & (prev < float(level))).fillna(False)
-
-def _series_heading_up(series_like: pd.Series, confirm_bars: int = 1) -> bool:
-    s = _coerce_1d_series(series_like).dropna()
-    confirm_bars = max(1, int(confirm_bars))
-    if len(s) < confirm_bars + 1:
-        return False
-    d = s.diff().dropna()
-    if len(d) < confirm_bars:
-        return False
-    return bool(np.all(d.iloc[-confirm_bars:] > 0))
-
-@st.cache_data(ttl=120)
-def hotcake_npo_cross_row_daily(symbol: str,
-                                daily_view_label: str,
-                                npo_level: float = -0.25,
-                                npo_fast_: int = 12,
-                                npo_slow_: int = 26,
-                                npo_norm_: int = 240,
-                                confirm_up_bars: int = 1,
-                                max_bars_since: int = 20):
-    """
-    Daily: Trend slope computed over the visible daily view.
-    Condition: NPO crosses UP through npo_level recently, and NPO is going up.
-    """
-    try:
-        close = fetch_hist(symbol).dropna()
-        if close.empty:
-            return None
-
-        close_show = subset_by_daily_view(close, daily_view_label).dropna()
-        if len(close_show) < 30:
-            return None
-
-        trend_m = _trend_slope_1d(close_show)
-
-        npo = compute_npo(close, fast=int(npo_fast_), slow=int(npo_slow_), norm_win=int(npo_norm_))
-        npo_show = _coerce_1d_series(npo).reindex(close_show.index).dropna()
-        if len(npo_show) < 3:
-            return None
-
-        cross_up = _cross_up_level(npo_show, level=float(npo_level))
-        if not cross_up.any():
-            return None
-
-        t_cross = cross_up[cross_up].index[-1]
-        bars_since = int((len(npo_show) - 1) - int(npo_show.index.get_loc(t_cross)))
-        if int(bars_since) > int(max_bars_since):
-            return None
-
-        if not _series_heading_up(npo_show, confirm_bars=int(confirm_up_bars)):
-            return None
-
-        npo_cross = float(npo_show.loc[t_cross]) if np.isfinite(npo_show.loc[t_cross]) else np.nan
-        npo_last = float(npo_show.iloc[-1]) if np.isfinite(npo_show.iloc[-1]) else np.nan
-        if not (np.isfinite(npo_cross) and np.isfinite(npo_last) and (npo_last > npo_cross)):
-            return None
-
-        last_px = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
-
-        return {
-            "Symbol": symbol,
-            "Frame": "Daily",
-            "Bars Since Cross": int(bars_since),
-            "Cross Time": t_cross,
-            "NPO@Cross": npo_cross,
-            "NPO(last)": npo_last,
-            "Trend Slope": float(trend_m) if np.isfinite(trend_m) else np.nan,
-            "Last Price": last_px,
-        }
-    except Exception:
-        return None
-
-@st.cache_data(ttl=120)
-def hotcake_support_reversal_row_daily(symbol: str,
-                                       daily_view_label: str,
-                                       sr_lb: int = 30,
-                                       prox: float = 0.0025,
-                                       confirm_up_bars: int = 1,
-                                       max_bars_since: int = 20):
-    """
-    Daily: Trend up AND price recently reversed from Support (rolling min), and price is now going up.
-    """
-    try:
-        close = fetch_hist(symbol).dropna()
-        if close.empty:
-            return None
-
-        close_show = subset_by_daily_view(close, daily_view_label).dropna()
-        if len(close_show) < 30:
-            return None
-
-        trend_m = _trend_slope_1d(close_show)
-        if not (np.isfinite(trend_m) and trend_m > 0.0):
-            return None
-
-        sup = close.rolling(int(sr_lb), min_periods=1).min().reindex(close_show.index).ffill()
-        p = _coerce_1d_series(close_show).astype(float)
-        s = _coerce_1d_series(sup).reindex(p.index).ffill()
-
-        touched = p.shift(1) <= s.shift(1) * (1.0 + float(prox))
-        moved_up = p > p.shift(1)
-        ev = (touched & moved_up).fillna(False)
-        if not ev.any():
-            return None
-
-        t = ev[ev].index[-1]
-        bars_since = int((len(p) - 1) - int(p.index.get_loc(t)))
-        if int(bars_since) > int(max_bars_since):
-            return None
-
-        if not _series_heading_up(p, confirm_bars=int(confirm_up_bars)):
-            return None
-
-        last_px = float(p.iloc[-1]) if np.isfinite(p.iloc[-1]) else np.nan
-        sup_at = float(s.loc[t]) if np.isfinite(s.loc[t]) else np.nan
-
-        return {
-            "Symbol": symbol,
-            "Frame": "Daily",
-            "Bars Since Reversal": int(bars_since),
-            "Reversal Time": t,
-            "Support": sup_at,
-            "Last Price": last_px,
-            "Trend Slope": float(trend_m),
-        }
-    except Exception:
-        return None
-
-# =========================
-# TAB 5 — Hot Cake  ✅ NEW
-# =========================
-with tab5:
-    st.header("Hot Cake")
-    st.caption(
-        "Daily + Hourly lists:\n"
-        "(1) **Trend UP** and **NPO** recently crossed **UP** through **-0.25**, and is still going up.\n"
-        "(2) **Trend DOWN** and **NPO** recently crossed **UP** through **-0.25**, and is still going up.\n"
-        "(3) **Trend UP** and **Price** recently reversed from **Support**, and price is now going up."
-    )
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-    max_rows = c1.slider("Max rows per list", 10, 300, 60, 10, key="hotcake_rows")
-    within_daily = c2.selectbox("Daily: within N bars", [3, 5, 10, 15, 20, 30], index=2, key="hotcake_within_d")
-    within_hourly = c3.selectbox("Hourly: within N bars", [3, 5, 10, 15, 20, 30, 60], index=5, key="hotcake_within_h")
-    hours = c4.selectbox("Hourly scan window", ["24h", "48h", "96h"], index=0, key="hotcake_hr_win")
-    confirm_up = c5.slider("Confirm 'going up' bars", 1, 5, 1, 1, key="hotcake_confirm")
-
-    run_hot = st.button("Run Hot Cake Scan", key="btn_run_hotcake", use_container_width=True)
-
-    if run_hot:
-        period_map_hot = {"24h": "1d", "48h": "2d", "96h": "4d"}
-        hr_period = period_map_hot.get(hours, "1d")
-
-        # ---------- DAILY ----------
-        daily_npo_rows = []
-        daily_rev_rows = []
-
-        for sym in universe:
-            r = hotcake_npo_cross_row_daily(
-                symbol=sym,
-                daily_view_label=daily_view,
-                npo_level=-0.25,
-                npo_fast_=int(npo_fast),
-                npo_slow_=int(npo_slow),
-                npo_norm_=int(npo_norm_win),
-                confirm_up_bars=int(confirm_up),
-                max_bars_since=int(within_daily),
-            )
-            if r:
-                daily_npo_rows.append(r)
-
-            rr = hotcake_support_reversal_row_daily(
-                symbol=sym,
-                daily_view_label=daily_view,
-                sr_lb=30,
-                prox=float(sr_prox_pct),
-                confirm_up_bars=int(confirm_up),
-                max_bars_since=int(within_daily),
-            )
-            if rr:
-                daily_rev_rows.append(rr)
-
-        d_uptrend_npo = [r for r in daily_npo_rows if np.isfinite(r.get("Trend Slope", np.nan)) and float(r["Trend Slope"]) > 0.0]
-        d_dntrend_npo = [r for r in daily_npo_rows if np.isfinite(r.get("Trend Slope", np.nan)) and float(r["Trend Slope"]) < 0.0]
-
-        st.subheader("Daily Chart")
-        d1, d2, d3 = st.columns(3)
-
-        with d1:
-            st.subheader("1) Trend UP + NPO crossed UP through -0.25")
-            if not d_uptrend_npo:
-                st.write("No matches.")
-            else:
-                df = pd.DataFrame(d_uptrend_npo).sort_values(["Bars Since Cross", "NPO(last)", "Trend Slope"], ascending=[True, False, False])
-                st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
-
-        with d2:
-            st.subheader("2) Trend DOWN + NPO crossed UP through -0.25")
-            if not d_dntrend_npo:
-                st.write("No matches.")
-            else:
-                df = pd.DataFrame(d_dntrend_npo).sort_values(["Bars Since Cross", "NPO(last)", "Trend Slope"], ascending=[True, False, True])
-                st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
-
-        with d3:
-            st.subheader("3) Trend UP + Price reversed from Support and going up")
-            if not daily_rev_rows:
-                st.write("No matches.")
-            else:
-                df = pd.DataFrame(daily_rev_rows).sort_values(["Bars Since Reversal", "Trend Slope"], ascending=[True, False])
-                st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
-
-        # ---------- HOURLY ----------
-        hourly_npo_rows = []
-        hourly_rev_rows = []
-
-        for sym in universe:
-            r = hotcake_npo_cross_row_hourly(
-                symbol=sym,
-                period=hr_period,
-                npo_level=-0.25,
-                npo_fast_=int(npo_fast),
-                npo_slow_=int(npo_slow),
-                npo_norm_=int(npo_norm_win),
-                confirm_up_bars=int(confirm_up),
-                max_bars_since=int(within_hourly),
-            )
-            if r:
-                hourly_npo_rows.append(r)
-
-            rr = hotcake_support_reversal_row_hourly(
-                symbol=sym,
-                period=hr_period,
-                confirm_up_bars=int(confirm_up),
-                max_bars_since=int(within_hourly),
-                sr_lb=60,
-                prox=float(sr_prox_pct),
-            )
-            if rr:
-                hourly_rev_rows.append(rr)
-
-        h_uptrend_npo = [r for r in hourly_npo_rows if np.isfinite(r.get("Trend Slope", np.nan)) and float(r["Trend Slope"]) > 0.0]
-        h_dntrend_npo = [r for r in hourly_npo_rows if np.isfinite(r.get("Trend Slope", np.nan)) and float(r["Trend Slope"]) < 0.0]
-
-        st.subheader(f"Hourly Chart ({hours})")
-        h1, h2, h3 = st.columns(3)
-
-        with h1:
-            st.subheader("1) Trend UP + NPO crossed UP through -0.25")
-            if not h_uptrend_npo:
-                st.write("No matches.")
-            else:
-                df = pd.DataFrame(h_uptrend_npo).sort_values(["Bars Since Cross", "NPO(last)", "Trend Slope"], ascending=[True, False, False])
-                st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
-
-        with h2:
-            st.subheader("2) Trend DOWN + NPO crossed UP through -0.25")
-            if not h_dntrend_npo:
-                st.write("No matches.")
-            else:
-                df = pd.DataFrame(h_dntrend_npo).sort_values(["Bars Since Cross", "NPO(last)", "Trend Slope"], ascending=[True, False, True])
-                st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
-
-        with h3:
-            st.subheader("3) Trend UP + Price reversed from Support and going up")
-            if not hourly_rev_rows:
-                st.write("No matches.")
-            else:
-                df = pd.DataFrame(hourly_rev_rows).sort_values(["Bars Since Reversal", "Trend Slope"], ascending=[True, False])
-                st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
