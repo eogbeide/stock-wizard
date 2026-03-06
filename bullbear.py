@@ -1877,6 +1877,118 @@ def _bars_since_last_event(index_like, event_time) -> int:
         return 10**9
 
 # =========================
+# NEW: Successful Cross helper (Daily)
+# =========================
+@st.cache_data(ttl=120)
+def successful_cross_row_daily(symbol: str,
+                               daily_view_label: str,
+                               slope_lb: int,
+                               ntd_win: int = 60,
+                               max_bars_since_zero: int = 10,
+                               attempt_lookback_bars: int = 180,
+                               low_threshold: float = -0.5,
+                               confirm_bars_up: int = 1):
+    """
+    Successful Cross (Daily):
+      - Trendline slope > 0 AND Regression slope > 0
+      - NPX attempted to cross ABOVE NTD but failed (cross-up then later cross-down before success)
+      - NPX fell below `low_threshold` after the failed attempt
+      - NPX later crossed UP through 0.0 and is going up
+
+    Returns a row dict, else None.
+    """
+    try:
+        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
+        if len(close_show) < 30:
+            return None
+
+        global_m = _global_slope_1d(close_show)
+        _, _, _, local_m, r2 = regression_with_band(close_show, lookback=min(len(close_show), int(slope_lb)))
+        if not (np.isfinite(global_m) and np.isfinite(local_m) and float(global_m) > 0.0 and float(local_m) > 0.0):
+            return None
+
+        ntd = _coerce_1d_series(compute_normalized_trend(close_full, window=int(ntd_win))).reindex(close_show.index)
+        npx = _coerce_1d_series(compute_normalized_price(close_full, window=int(ntd_win))).reindex(close_show.index)
+
+        ok = ntd.notna() & npx.notna()
+        if ok.sum() < 10:
+            return None
+        ntd = ntd[ok]
+        npx = npx[ok]
+
+        up0, _ = npx_zero_cross_masks(npx, level=0.0)
+        up0 = up0.reindex(npx.index, fill_value=False)
+        if not up0.any():
+            return None
+
+        t0 = up0[up0].index[-1]
+        loc0 = int(npx.index.get_loc(t0))
+        bars_since0 = int((len(npx) - 1) - loc0)
+        if int(bars_since0) > int(max_bars_since_zero):
+            return None
+
+        npx_at0 = float(npx.loc[t0]) if np.isfinite(npx.loc[t0]) else np.nan
+        npx_last = float(npx.iloc[-1]) if np.isfinite(npx.iloc[-1]) else np.nan
+        if not (np.isfinite(npx_at0) and np.isfinite(npx_last) and (npx_last > npx_at0)):
+            return None
+        if not _series_heading_up(npx, confirm_bars=int(confirm_bars_up)):
+            return None
+
+        start = max(0, loc0 - int(max(10, attempt_lookback_bars)))
+        npx_pre = npx.iloc[start:loc0]
+        ntd_pre = ntd.reindex(npx_pre.index)
+
+        if len(npx_pre) < 10 or ntd_pre.dropna().shape[0] < 10:
+            return None
+
+        up_mask, dn_mask = _cross_series(npx_pre, ntd_pre)
+        up_mask = up_mask.reindex(npx_pre.index, fill_value=False)
+        dn_mask = dn_mask.reindex(npx_pre.index, fill_value=False)
+
+        if not up_mask.any():
+            return None
+
+        t_attempt = up_mask[up_mask].index[-1]
+        dn_after = dn_mask[(dn_mask.index > t_attempt)]
+        if not dn_after.any():
+            return None
+        t_fail = dn_after[dn_after].index[0]
+
+        # Low after failed attempt (and before 0-cross)
+        if t_fail not in npx.index:
+            return None
+        sub = npx.loc[t_fail:t0]
+        if sub.dropna().empty:
+            return None
+        low_val = float(sub.min())
+        if not np.isfinite(low_val) or float(low_val) > float(low_threshold):
+            return None
+        t_low = sub.idxmin()
+
+        last_px = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
+
+        return {
+            "Symbol": symbol,
+            "Bars Since 0 Cross": int(bars_since0),
+            "0 Cross Time": t0,
+            "Attempt Time": t_attempt,
+            "Fail Time": t_fail,
+            "Low Time": t_low,
+            "NPX@Attempt": float(npx.loc[t_attempt]) if np.isfinite(npx.loc[t_attempt]) else np.nan,
+            "NTD@Attempt": float(ntd.loc[t_attempt]) if np.isfinite(ntd.loc[t_attempt]) else np.nan,
+            "NPX@Low": float(npx.loc[t_low]) if np.isfinite(npx.loc[t_low]) else np.nan,
+            "NPX@0Cross": npx_at0,
+            "NPX(last)": npx_last,
+            "Trendline Slope": float(global_m),
+            "Regression Slope": float(local_m),
+            "R2": float(r2) if np.isfinite(r2) else np.nan,
+            "Last Price": last_px,
+        }
+    except Exception:
+        return None
+
+# =========================
 # NEW: Regression Reversal helpers (Daily + Hourly)
 # =========================
 def _sr_reversal_event_time(price: pd.Series,
@@ -3103,7 +3215,7 @@ if "run_all" not in st.session_state:
 (
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11,
     tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19, tab20, tab21, tab22, tab23, tab24, tab25, tab26, tab27,
-    tab28
+    tab28, tab29
 ) = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
@@ -3133,6 +3245,7 @@ if "run_all" not in st.session_state:
     "Max History Marker",
     "Daily Bet",
     "Regression Reversal",
+    "Successful Cross",
 ])
 
 period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
@@ -4895,4 +5008,57 @@ with tab28:
             df = pd.DataFrame(h_rows)
             df["_score"] = df["Trendline Slope"].astype(float).fillna(0) + df["Regression Slope"].astype(float).fillna(0)
             df = df.sort_values(["Side", "Bars Since", "_score", "R2"], ascending=[True, True, False, False])
+            st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
+
+# =========================
+# TAB 29 — Successful Cross ✅ NEW (Daily)
+# =========================
+with tab29:
+    st.header("Successful Cross")
+    st.caption(
+        "Daily scanner: symbols where **Trendline Slope > 0** and **Regression Slope > 0**, and:\n"
+        "• **NPX attempted to cross ABOVE NTD but failed** (cross-up then cross-down)\n"
+        "• **NPX fell below -0.5** after the failed attempt\n"
+        "• **NPX later crossed UP through 0.0** and is **going up**"
+    )
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    within_zero = c1.selectbox("Within N bars since NPX 0.0 cross-up", [3, 5, 10, 15, 20], index=2, key=f"succ_within0_{mode}")
+    attempt_lb = c2.selectbox("Attempt lookback (bars)", [60, 120, 180, 240, 360], index=2, key=f"succ_attemptlb_{mode}")
+    confirm_up = c3.selectbox("NPX heading-up confirm (bars)", [1, 2, 3, 4], index=0, key=f"succ_confirm_{mode}")
+    max_rows = c4.slider("Max rows", 10, 300, 60, 10, key=f"succ_rows_{mode}")
+    run29 = c5.button("Run Successful Cross Scan", key=f"btn_run_successful_cross_{mode}", use_container_width=True)
+
+    if run29:
+        rows = []
+        for sym in universe:
+            r = successful_cross_row_daily(
+                symbol=sym,
+                daily_view_label=daily_view,
+                slope_lb=slope_lb_daily,
+                ntd_win=int(ntd_window),
+                max_bars_since_zero=int(within_zero),
+                attempt_lookback_bars=int(attempt_lb),
+                low_threshold=-0.5,
+                confirm_bars_up=int(confirm_up),
+            )
+            if r:
+                rows.append(r)
+
+        show_cols = [
+            "Symbol",
+            "Bars Since 0 Cross", "0 Cross Time",
+            "Attempt Time", "Fail Time", "Low Time",
+            "NPX@Attempt", "NTD@Attempt",
+            "NPX@Low", "NPX@0Cross", "NPX(last)",
+            "Trendline Slope", "Regression Slope", "R2",
+            "Last Price",
+        ]
+
+        if not rows:
+            st.write("No matches.")
+        else:
+            df = pd.DataFrame(rows)
+            df["_score"] = df["Trendline Slope"].astype(float).fillna(0) + df["Regression Slope"].astype(float).fillna(0)
+            df = df.sort_values(["Bars Since 0 Cross", "_score", "R2"], ascending=[True, False, False])
             st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
