@@ -454,6 +454,9 @@ show_fibs = st.sidebar.checkbox("Show Fibonacci", value=True, key="sb_show_fibs"
 slope_lb_daily  = st.sidebar.slider("Daily slope lookback (bars)", 10, 360, 90, 10, key="sb_slope_lb_daily")
 slope_lb_hourly = st.sidebar.slider("Hourly slope lookback (bars)", 12, 480, 120, 6, key="sb_slope_lb_hourly")
 
+# ✅ NEW (requested): turn ±2σ regression band lines OFF by default, with checkbox to enable
+show_2sigma_lines = st.sidebar.checkbox("Show ±2σ regression bands (price charts)", value=False, key="sb_show_2sigma_lines")
+
 st.sidebar.subheader("MACD")
 show_macd = st.sidebar.checkbox("Show MACD chart", value=False, key="sb_show_macd")
 
@@ -2753,7 +2756,9 @@ def render_daily_chart(symbol: str, daily_view_label: str):
     # Local regression + bands
     if not yhat_d.dropna().empty:
         ax.plot(yhat_d.index, yhat_d.values, "-", linewidth=2, label=f"Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
-    if not upper_d.dropna().empty and not lower_d.dropna().empty:
+
+    # ✅ UPDATED (requested): ±2σ lines are OFF by default; only plot when show_2sigma_lines is enabled
+    if show_2sigma_lines and (not upper_d.dropna().empty) and (not lower_d.dropna().empty):
         ax.plot(upper_d.index, upper_d.values, "--", linewidth=2.2, color="black", alpha=0.85, label="+2σ")
         ax.plot(lower_d.index, lower_d.values, "--", linewidth=2.2, color="black", alpha=0.85, label="-2σ")
         bounce_sig = find_band_bounce_signal(close, upper_d, lower_d, m_d)
@@ -2959,7 +2964,9 @@ def render_hourly_chart(symbol: str, period: str, hour_range_label: str):
     # Local regression + bands + bounce
     if not yhat_h.dropna().empty:
         ax.plot(yhat_h.index, yhat_h.values, "-", linewidth=2, label=f"Slope {slope_lb_hourly} ({fmt_slope(m_h)}/bar)")
-    if not up_h.dropna().empty and not lo_h.dropna().empty:
+
+    # ✅ UPDATED (requested): ±2σ lines are OFF by default; only plot when show_2sigma_lines is enabled
+    if show_2sigma_lines and (not up_h.dropna().empty) and (not lo_h.dropna().empty):
         ax.plot(up_h.index, up_h.values, "--", linewidth=2.2, color="black", alpha=0.85, label="+2σ")
         ax.plot(lo_h.index, lo_h.values, "--", linewidth=2.2, color="black", alpha=0.85, label="-2σ")
         bounce_sig = find_band_bounce_signal(hc, up_h, lo_h, m_h)
@@ -3086,6 +3093,12 @@ def render_hourly_chart(symbol: str, period: str, hour_range_label: str):
         "trade_instruction": trade_txt,
         "last_price": px_val,
     }
+
+# =========================
+# ✅ NEW (requested): 2σ lines toggle (OFF by default)
+# =========================
+st.sidebar.subheader("Regression Bands")
+show_2sigma_lines = st.sidebar.checkbox("Show ±2σ lines", value=False, key="sb_show_2sigma_lines")
 
 # =========================
 # Session state init
