@@ -2428,6 +2428,50 @@ if "run_all" not in st.session_state:
     st.session_state.mode_at_run = mode
 
 # =========================
+# Tabs visibility (DEFAULT: only show key tabs)
+# =========================
+st.sidebar.subheader("Tabs")
+show_all_tabs = st.sidebar.checkbox(
+    "Show all tabs (advanced)",
+    value=False,
+    key=f"sb_show_all_tabs_{mode}"
+)
+
+# Hide non-default tabs via CSS, but keep underlying code/tabs unchanged.
+# Default shown tabs:
+#  1 Original Forecast
+#  2 Enhanced Forecast
+#  3 Bull vs Bear
+#  6 Long-Term History
+# 23 Trend and Slope Align
+# 24 Trend Buy
+if not show_all_tabs:
+    st.markdown("""
+    <style>
+      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(4),
+      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(5),
+      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(7),
+      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(8),
+      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(9),
+      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(10),
+      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(11),
+      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(12),
+      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(13),
+      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(14),
+      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(15),
+      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(16),
+      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(17),
+      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(18),
+      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(19),
+      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(20),
+      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(21),
+      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(22) {
+        display: none !important;
+      }
+    </style>
+    """, unsafe_allow_html=True)
+
+# =========================
 # Tabs
 # =========================
 (
@@ -3778,7 +3822,6 @@ with tab24:
             st.write("No matches.")
         else:
             df = pd.DataFrame(d_rows)
-            # Format PST timestamp for display, keep original for sorting if needed
             if "Cross Time (PST)" in df.columns:
                 try:
                     df["_cross_ts"] = pd.to_datetime(df["Cross Time (PST)"], errors="coerce")
