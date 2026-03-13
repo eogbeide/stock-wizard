@@ -2428,45 +2428,53 @@ if "run_all" not in st.session_state:
     st.session_state.mode_at_run = mode
 
 # =========================
-# Tabs visibility (DEFAULT: only show key tabs)
+# Tabs: show only 6 by default (hide the rest unless enabled)
 # =========================
-st.sidebar.subheader("Tabs")
-show_all_tabs = st.sidebar.checkbox(
-    "Show all tabs (advanced)",
+show_advanced_tabs = st.sidebar.checkbox(
+    "Show advanced tabs (all scanners)",
     value=False,
-    key=f"sb_show_all_tabs_{mode}"
+    key=f"sb_show_advanced_tabs_{mode}"
 )
 
-# Hide non-default tabs via CSS, but keep underlying code/tabs unchanged.
-# Default shown tabs:
-#  1 Original Forecast
-#  2 Enhanced Forecast
-#  3 Bull vs Bear
-#  6 Long-Term History
-# 23 Trend and Slope Align
-# 24 Trend Buy
-if not show_all_tabs:
+if not show_advanced_tabs:
+    # Tab order in the existing list:
+    # 1 Original Forecast
+    # 2 Enhanced Forecast
+    # 3 Bull vs Bear
+    # 6 Long-Term History
+    # 23 Trend and Slope Align
+    # 24 Trend Buy
     st.markdown("""
     <style>
-      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(4),
-      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(5),
-      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(7),
-      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(8),
-      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(9),
-      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(10),
-      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(11),
-      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(12),
-      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(13),
-      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(14),
-      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(15),
-      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(16),
-      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(17),
-      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(18),
-      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(19),
-      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(20),
-      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(21),
-      div[data-baseweb="tab-list"] > div[data-baseweb="tab"]:nth-child(22) {
-        display: none !important;
+      /* Hide all tabs by default */
+      div[data-baseweb="tab-list"] div[data-baseweb="tab"] { display: none !important; }
+
+      /* Show only the 6 default tabs */
+      div[data-baseweb="tab-list"] div[data-baseweb="tab"]:nth-child(1),
+      div[data-baseweb="tab-list"] div[data-baseweb="tab"]:nth-child(2),
+      div[data-baseweb="tab-list"] div[data-baseweb="tab"]:nth-child(3),
+      div[data-baseweb="tab-list"] div[data-baseweb="tab"]:nth-child(6),
+      div[data-baseweb="tab-list"] div[data-baseweb="tab"]:nth-child(23),
+      div[data-baseweb="tab-list"] div[data-baseweb="tab"]:nth-child(24) {
+        display: flex !important;
+      }
+
+      /* Reorder to: Original, Enhanced, Trend&Slope Align, Trend Buy, Bull vs Bear, Long-Term */
+      div[data-baseweb="tab-list"] div[data-baseweb="tab"]:nth-child(1)  { order: 1 !important; }
+      div[data-baseweb="tab-list"] div[data-baseweb="tab"]:nth-child(2)  { order: 2 !important; }
+      div[data-baseweb="tab-list"] div[data-baseweb="tab"]:nth-child(23) { order: 3 !important; }
+      div[data-baseweb="tab-list"] div[data-baseweb="tab"]:nth-child(24) { order: 4 !important; }
+      div[data-baseweb="tab-list"] div[data-baseweb="tab"]:nth-child(3)  { order: 5 !important; }
+      div[data-baseweb="tab-list"] div[data-baseweb="tab"]:nth-child(6)  { order: 6 !important; }
+    </style>
+    """, unsafe_allow_html=True)
+else:
+    # Show all tabs (restore visibility/order)
+    st.markdown("""
+    <style>
+      div[data-baseweb="tab-list"] div[data-baseweb="tab"] {
+        display: flex !important;
+        order: initial !important;
       }
     </style>
     """, unsafe_allow_html=True)
@@ -3777,7 +3785,7 @@ with tab23:
             st.dataframe(dfs[show_cols_base].head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 24 — Trend Buy ✅ NEW
+# TAB 24 — Trend Buy
 # =========================
 with tab24:
     st.header("Trend Buy")
