@@ -1693,6 +1693,81 @@ def trend_buy_row_hourly(symbol: str,
         return None
 
 # =========================
+# NEW: Kijun Cross Up (Daily) helper
+# =========================
+@st.cache_data(ttl=120)
+def kijun_cross_up_row_daily(symbol: str,
+                             daily_view_label: str,
+                             slope_lb: int,
+                             max_bars_since: int = 5,
+                             kijun_base: int = 26,
+                             ichi_conv: int = 9,
+                             ichi_spanb: int = 52):
+    """
+    Daily Kijun Cross Up:
+      - Global trendline slope > 0  (within daily_view_label)
+      - Regression slope > 0        (within daily_view_label, slope_lb)
+      - Price crossed UP through Ichimoku Kijun (base=26) recently (within max_bars_since)
+    """
+    try:
+        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
+        if len(close_show) < 30:
+            return None
+
+        tm = _global_slope_1d(close_show)
+        _, _, _, rm, r2 = regression_with_band(close_show, lookback=min(len(close_show), int(slope_lb)))
+        if not (np.isfinite(tm) and np.isfinite(rm)):
+            return None
+        if not (float(tm) > 0.0 and float(rm) > 0.0):
+            return None
+
+        ohlc = fetch_hist_ohlc(symbol)
+        if ohlc is None or ohlc.empty or not {"High", "Low", "Close"}.issubset(ohlc.columns):
+            return None
+
+        _, kijun_full, _, _, _ = ichimoku_lines(
+            ohlc["High"], ohlc["Low"], ohlc["Close"],
+            conv=int(ichi_conv), base=int(kijun_base), span_b=int(ichi_spanb), shift_cloud=False
+        )
+        kijun_show = _coerce_1d_series(kijun_full).reindex(close_show.index).ffill().bfill()
+
+        ok = close_show.notna() & kijun_show.notna()
+        if ok.sum() < 2:
+            return None
+        c = close_show[ok]
+        k = kijun_show[ok]
+
+        cross_up, _ = _cross_series(c, k)
+        cross_up = cross_up.reindex(c.index, fill_value=False)
+        if not cross_up.any():
+            return None
+
+        t_cross = cross_up[cross_up].index[-1]
+        bars_since = int((len(c) - 1) - int(c.index.get_loc(t_cross)))
+        if int(bars_since) > int(max_bars_since):
+            return None
+
+        last_px = float(c.iloc[-1]) if np.isfinite(c.iloc[-1]) else np.nan
+        cross_px = float(c.loc[t_cross]) if np.isfinite(c.loc[t_cross]) else np.nan
+        kij_last = float(k.iloc[-1]) if np.isfinite(k.iloc[-1]) else np.nan
+
+        return {
+            "Symbol": symbol,
+            "Frame": "Daily",
+            "Bars Since Cross": int(bars_since),
+            "Cross Time (PST)": t_cross,
+            "Price@Cross": cross_px,
+            "Kijun(last)": kij_last,
+            "Trendline Slope": float(tm),
+            "Regression Slope": float(rm),
+            "R2": float(r2) if np.isfinite(r2) else np.nan,
+            "Last Price": last_px,
+        }
+    except Exception:
+        return None
+
+# =========================
 # Slope Candidates helper (Daily view)
 # =========================
 @st.cache_data(ttl=120)
@@ -2428,15 +2503,16 @@ if "run_all" not in st.session_state:
     st.session_state.mode_at_run = mode
 
 # =========================
-# Tabs  ✅ UPDATED (only 6 tabs shown; others removed)
+# Tabs  ✅ UPDATED (added 7th tab)
 # =========================
 (
-    tab1, tab2, tab3, tab4, tab5, tab6
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7
 ) = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Trend and Slope Align",
     "Trend Buy",
+    "Kijun Cross Up",
     "Bull vs Bear",
     "Long-Term History",
 ])
@@ -2997,9 +3073,73 @@ with tab4:
             st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 5 — Bull vs Bear
+# TAB 5 — Kijun Cross Up (NEW)
 # =========================
 with tab5:
+    st.header("Kijun Cross Up (Daily)")
+    st.caption(
+        "Shows symbols where (Daily):\n"
+        "• **Global Trendline Slope > 0**\n"
+        "• **Regression Slope > 0**\n"
+        "• **Price recently crossed UP through Ichimoku Kijun (base=26)**\n\n"
+        "Kijun is computed from daily OHLC using Ichimoku base window (default 26).\n"
+        "Cross is detected as **Close crosses above Kijun**."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    max_rows = c1.slider("Max rows", 10, 300, 60, 10, key=f"kijun_rows_{mode}")
+    within_bars = c2.selectbox("Within N bars (daily)", [1, 2, 3, 5, 10, 15, 20, 30, 60], index=3, key=f"kijun_within_{mode}")
+    min_abs_slope = c3.slider("Min |slope| filter (optional)", 0.0, 1.0, 0.0, 0.01, key=f"kijun_minabs_{mode}")
+
+    run_k = st.button("Run Kijun Cross Up Scan", key=f"btn_run_kijun_{mode}", use_container_width=True)
+
+    if run_k:
+        rows = []
+        for sym in universe:
+            r = kijun_cross_up_row_daily(
+                symbol=sym,
+                daily_view_label=daily_view,
+                slope_lb=slope_lb_daily,
+                max_bars_since=int(within_bars),
+                kijun_base=int(ichi_base),
+                ichi_conv=int(ichi_conv),
+                ichi_spanb=int(ichi_spanb),
+            )
+            if not r:
+                continue
+            if float(min_abs_slope) > 0.0:
+                try:
+                    if (abs(float(r.get("Trendline Slope", np.nan))) < float(min_abs_slope)) and (abs(float(r.get("Regression Slope", np.nan))) < float(min_abs_slope)):
+                        continue
+                except Exception:
+                    pass
+            rows.append(r)
+
+        show_cols = [
+            "Symbol", "Frame",
+            "Bars Since Cross", "Cross Time (PST)",
+            "Trendline Slope", "Regression Slope", "R2",
+            "Price@Cross", "Kijun(last)", "Last Price"
+        ]
+
+        if not rows:
+            st.write("No matches.")
+        else:
+            df = pd.DataFrame(rows)
+            if "Cross Time (PST)" in df.columns:
+                try:
+                    df["_cross_ts"] = pd.to_datetime(df["Cross Time (PST)"], errors="coerce")
+                    df["Cross Time (PST)"] = df["_cross_ts"].dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+                except Exception:
+                    pass
+            df["_score"] = df["Trendline Slope"].astype(float) + df["Regression Slope"].astype(float)
+            df = df.sort_values(["Bars Since Cross", "_score", "R2"], ascending=[True, False, False])
+            st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
+
+# =========================
+# TAB 6 — Bull vs Bear
+# =========================
+with tab6:
     st.header("Bull vs Bear")
     st.caption("Bull/Bear is computed over the chosen lookback using daily closes.")
 
@@ -3033,9 +3173,9 @@ with tab5:
             st.pyplot(fig)
 
 # =========================
-# TAB 6 — Long-Term History
+# TAB 7 — Long-Term History
 # =========================
-with tab6:
+with tab7:
     st.header("Long-Term History")
     st.caption("Max history with global trendline (recent slice) and optional BB/NTD overlay.")
 
@@ -3055,3 +3195,16 @@ with tab6:
             ax.legend(loc="upper left")
             style_axes(ax)
             st.pyplot(fig)
+
+            if show_ntd:
+                ntd = compute_normalized_trend(s, window=ntd_window).dropna()
+                fig2, ax2 = plt.subplots(figsize=(14, 2.8))
+                if shade_ntd:
+                    shade_ntd_regions(ax2, ntd)
+                ax2.plot(ntd.index, ntd.values, label="NTD")
+                ax2.axhline(0.0, linestyle="--", linewidth=1.0, color="black")
+                ax2.set_ylim(-1.1, 1.1)
+                ax2.set_title("NTD (max history)")
+                ax2.legend(loc="upper left")
+                style_axes(ax2)
+                st.pyplot(fig2)
