@@ -1549,6 +1549,77 @@ def trend_slope_align_row(symbol: str, daily_view_label: str, slope_lb: int):
         return None
 
 # =========================
+# NEW: Price ↔ Regression Cross (Daily) helper
+# =========================
+@st.cache_data(ttl=120)
+def price_regression_cross_row_daily(symbol: str,
+                                     daily_view_label: str,
+                                     slope_lb: int,
+                                     max_bars_since: int = 5):
+    """
+    Daily Price↔Regression Cross:
+      - BUY: Trendline slope > 0 AND Regression slope > 0 AND price crossed UP through regression line recently.
+      - SELL: Trendline slope < 0 AND Regression slope < 0 AND price crossed DOWN through regression line recently.
+    """
+    try:
+        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
+        if len(close_show) < 20:
+            return None
+
+        tm = _global_slope_1d(close_show)
+        yhat, _, _, rm, r2 = regression_with_band(close_show, lookback=min(len(close_show), int(slope_lb)))
+        yhat = _coerce_1d_series(yhat).reindex(close_show.index)
+
+        ok = close_show.notna() & yhat.notna()
+        if ok.sum() < 3:
+            return None
+        p = close_show[ok]
+        l = yhat[ok]
+
+        cross_up, cross_dn = _cross_series(p, l)
+        last_price = float(p.iloc[-1]) if np.isfinite(p.iloc[-1]) else np.nan
+        last_reg = float(l.iloc[-1]) if np.isfinite(l.iloc[-1]) else np.nan
+
+        # BUY candidate
+        if np.isfinite(tm) and np.isfinite(rm) and float(tm) > 0.0 and float(rm) > 0.0 and cross_up.any():
+            t_cross = cross_up[cross_up].index[-1]
+            bars_since = int((len(p) - 1) - int(p.index.get_loc(t_cross)))
+            if int(bars_since) <= int(max_bars_since):
+                return {
+                    "Symbol": symbol,
+                    "Side": "BUY",
+                    "Bars Since Cross": int(bars_since),
+                    "Cross Time": t_cross,
+                    "Trendline Slope": float(tm),
+                    "Regression Slope": float(rm),
+                    "R2": float(r2) if np.isfinite(r2) else np.nan,
+                    "Last Price": last_price,
+                    "Regression Line (last)": last_reg,
+                }
+
+        # SELL candidate
+        if np.isfinite(tm) and np.isfinite(rm) and float(tm) < 0.0 and float(rm) < 0.0 and cross_dn.any():
+            t_cross = cross_dn[cross_dn].index[-1]
+            bars_since = int((len(p) - 1) - int(p.index.get_loc(t_cross)))
+            if int(bars_since) <= int(max_bars_since):
+                return {
+                    "Symbol": symbol,
+                    "Side": "SELL",
+                    "Bars Since Cross": int(bars_since),
+                    "Cross Time": t_cross,
+                    "Trendline Slope": float(tm),
+                    "Regression Slope": float(rm),
+                    "R2": float(r2) if np.isfinite(r2) else np.nan,
+                    "Last Price": last_price,
+                    "Regression Line (last)": last_reg,
+                }
+
+        return None
+    except Exception:
+        return None
+
+# =========================
 # NEW: Trend Buy helpers (Daily + Hourly)
 # =========================
 @st.cache_data(ttl=120)
@@ -2428,15 +2499,16 @@ if "run_all" not in st.session_state:
     st.session_state.mode_at_run = mode
 
 # =========================
-# Tabs  ✅ UPDATED (only 6 tabs shown; others removed)
+# Tabs  ✅ UPDATED (new tab added)
 # =========================
 (
-    tab1, tab2, tab3, tab4, tab5, tab6
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7
 ) = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Trend and Slope Align",
     "Trend Buy",
+    "Price↔Regression Cross",
     "Bull vs Bear",
     "Long-Term History",
 ])
@@ -2720,7 +2792,7 @@ with tab3:
                 if len(hc) < 40:
                     continue
 
-                tm_h = _global_slope_1d(hc)  # global trendline slope (intraday window)
+                tm_h = _global_slope_1d(hc)
                 _, _, _, rm_h, r2_h = regression_with_band(hc, lookback=min(len(hc), int(slope_lb_hourly)))
 
                 if not (np.isfinite(tm_h) and np.isfinite(rm_h)):
@@ -2997,9 +3069,86 @@ with tab4:
             st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 5 — Bull vs Bear
+# TAB 5 — Price↔Regression Cross (Daily)
 # =========================
 with tab5:
+    st.header("Price↔Regression Cross (Daily)")
+    st.caption(
+        "Shows symbols where:\n"
+        "• **BUY:** Trendline slope > 0 AND Regression slope > 0 AND **Price crossed UP through Regression line** recently.\n"
+        "• **SELL:** Trendline slope < 0 AND Regression slope < 0 AND **Price crossed DOWN through Regression line** recently."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    max_rows = c1.slider("Max rows per list", 10, 300, 60, 10, key=f"prc_rows_{mode}")
+    within_bars = c2.slider("Max bars since cross", 0, 60, 5, 1, key=f"prc_within_{mode}")
+    min_abs_slope = c3.slider("Min |slope| filter (optional)", 0.0, 1.0, 0.0, 0.01, key=f"prc_minabs_{mode}")
+
+    run_prc = st.button("Run Price↔Regression Cross Scan", key=f"btn_run_prc_{mode}", use_container_width=True)
+
+    if run_prc:
+        rows = []
+        for sym in universe:
+            r = price_regression_cross_row_daily(
+                symbol=sym,
+                daily_view_label=daily_view,
+                slope_lb=slope_lb_daily,
+                max_bars_since=int(within_bars),
+            )
+            if not r:
+                continue
+            tm = float(r.get("Trendline Slope", np.nan))
+            rm = float(r.get("Regression Slope", np.nan))
+            if float(min_abs_slope) > 0.0:
+                if (abs(tm) < float(min_abs_slope)) and (abs(rm) < float(min_abs_slope)):
+                    continue
+            rows.append(r)
+
+        buys = [r for r in rows if str(r.get("Side", "")).upper() == "BUY"]
+        sells = [r for r in rows if str(r.get("Side", "")).upper() == "SELL"]
+
+        show_cols = [
+            "Symbol", "Side",
+            "Bars Since Cross", "Cross Time",
+            "Trendline Slope", "Regression Slope", "R2",
+            "Last Price", "Regression Line (last)"
+        ]
+
+        cL, cR = st.columns(2)
+        with cL:
+            st.subheader("BUY: Price crossed UP through regression line")
+            if not buys:
+                st.write("No matches.")
+            else:
+                df = pd.DataFrame(buys)
+                try:
+                    df["_ct"] = pd.to_datetime(df["Cross Time"], errors="coerce")
+                    df["Cross Time"] = df["_ct"].dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+                except Exception:
+                    pass
+                df["_score"] = df["Trendline Slope"].astype(float) + df["Regression Slope"].astype(float)
+                df = df.sort_values(["Bars Since Cross", "_score", "R2"], ascending=[True, False, False])
+                st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
+
+        with cR:
+            st.subheader("SELL: Price crossed DOWN through regression line")
+            if not sells:
+                st.write("No matches.")
+            else:
+                df = pd.DataFrame(sells)
+                try:
+                    df["_ct"] = pd.to_datetime(df["Cross Time"], errors="coerce")
+                    df["Cross Time"] = df["_ct"].dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+                except Exception:
+                    pass
+                df["_score"] = df["Trendline Slope"].astype(float) + df["Regression Slope"].astype(float)
+                df = df.sort_values(["Bars Since Cross", "_score", "R2"], ascending=[True, True, False])
+                st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
+
+# =========================
+# TAB 6 — Bull vs Bear
+# =========================
+with tab6:
     st.header("Bull vs Bear")
     st.caption("Bull/Bear is computed over the chosen lookback using daily closes.")
 
@@ -3033,9 +3182,9 @@ with tab5:
             st.pyplot(fig)
 
 # =========================
-# TAB 6 — Long-Term History
+# TAB 7 — Long-Term History
 # =========================
-with tab6:
+with tab7:
     st.header("Long-Term History")
     st.caption("Max history with global trendline (recent slice) and optional BB/NTD overlay.")
 
@@ -3055,3 +3204,16 @@ with tab6:
             ax.legend(loc="upper left")
             style_axes(ax)
             st.pyplot(fig)
+
+            if show_ntd:
+                ntd = compute_normalized_trend(s, window=ntd_window).dropna()
+                fig2, ax2 = plt.subplots(figsize=(14, 2.8))
+                if shade_ntd:
+                    shade_ntd_regions(ax2, ntd)
+                ax2.plot(ntd.index, ntd.values, label="NTD")
+                ax2.axhline(0.0, linestyle="--", linewidth=1.0, color="black")
+                ax2.set_ylim(-1.1, 1.1)
+                ax2.set_title("NTD (max history)")
+                ax2.legend(loc="upper left")
+                style_axes(ax2)
+                st.pyplot(fig2)
