@@ -1837,6 +1837,76 @@ def npx_buy_signal_row_daily(symbol: str,
         return None
 
 # =========================
+# NEW: HMA Signal helper (Daily)
+# =========================
+@st.cache_data(ttl=120)
+def hma_cross_up_row_daily(symbol: str,
+                           daily_view_label: str,
+                           slope_lb: int,
+                           hma_len: int,
+                           max_bars_since: int = 5):
+    """
+    Daily HMA Cross (Up):
+      - Price crossed UP through HMA recently (<= max_bars_since)
+    Returns row with slopes for downstream filtering:
+      (1) global>0 & regression>0 & cross up
+      (2) global>0 & cross up
+      (3) regression>0 & cross up
+    """
+    try:
+        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
+        if len(close_show) < 20:
+            return None
+
+        tm = _global_slope_1d(close_show)
+        _, _, _, rm, r2 = regression_with_band(close_show, lookback=min(len(close_show), int(slope_lb)))
+
+        hma = compute_hma(close_show, period=int(hma_len))
+        ok = close_show.notna() & hma.notna()
+        if ok.sum() < 3:
+            return None
+
+        p = close_show[ok]
+        h = hma[ok]
+
+        cross_up, _ = _cross_series(p, h)
+        if not cross_up.any():
+            return None
+
+        t_cross = cross_up[cross_up].index[-1]
+        bars_since = int((len(p) - 1) - int(p.index.get_loc(t_cross)))
+        if int(bars_since) > int(max_bars_since):
+            return None
+
+        if isinstance(t_cross, pd.Timestamp):
+            try:
+                if t_cross.tz is None:
+                    t_cross = t_cross.tz_localize(PACIFIC)
+                else:
+                    t_cross = t_cross.tz_convert(PACIFIC)
+            except Exception:
+                pass
+
+        last_px = float(p.iloc[-1]) if np.isfinite(p.iloc[-1]) else np.nan
+        last_hma = float(h.iloc[-1]) if np.isfinite(h.iloc[-1]) else np.nan
+
+        return {
+            "Symbol": symbol,
+            "Frame": "Daily",
+            "Bars Since Cross": int(bars_since),
+            "Cross Time": t_cross,
+            "Trendline Slope": float(tm) if np.isfinite(tm) else np.nan,
+            "Regression Slope": float(rm) if np.isfinite(rm) else np.nan,
+            "R2": float(r2) if np.isfinite(r2) else np.nan,
+            "Last Price": last_px,
+            "HMA (last)": last_hma,
+            "HMA Len": int(hma_len),
+        }
+    except Exception:
+        return None
+
+# =========================
 # Slope Candidates helper (Daily view)
 # =========================
 @st.cache_data(ttl=120)
@@ -2575,13 +2645,14 @@ if "run_all" not in st.session_state:
 # Tabs  ✅ UPDATED (new tab added)
 # =========================
 (
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9
 ) = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Trend and Slope Align",
     "Trend Buy",
     "NPX Buy Signal",
+    "HMA Signal",
     "Price↔Regression Cross",
     "Bull vs Bear",
     "Long-Term History",
@@ -3202,9 +3273,122 @@ with tab5:
             st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 6 — Price↔Regression Cross (Daily)
+# TAB 6 — HMA Signal (Daily)
 # =========================
 with tab6:
+    st.header("HMA Signal (Daily)")
+    st.caption(
+        "Shows symbols where **Price recently crossed UP through HMA** on the **Daily** price chart.\n\n"
+        "Lists:\n"
+        "1) **Trendline > 0 AND Regression > 0** + Cross Up\n"
+        "2) **Trendline > 0** + Cross Up\n"
+        "3) **Regression > 0** + Cross Up\n"
+    )
+
+    c1, c2, c3 = st.columns(3)
+    max_rows = c1.slider("Max rows per list", 10, 300, 60, 10, key=f"hmas_rows_{mode}")
+    within_bars = c2.slider("Max bars since Price↔HMA cross (up)", 0, 60, 5, 1, key=f"hmas_within_{mode}")
+    min_abs_slope = c3.slider("Min |slope| filter (optional)", 0.0, 1.0, 0.0, 0.01, key=f"hmas_minabs_{mode}")
+
+    run_hmas = st.button("Run HMA Signal Scan", key=f"btn_run_hmas_{mode}", use_container_width=True)
+
+    if run_hmas:
+        base_rows = []
+        for sym in universe:
+            r = hma_cross_up_row_daily(
+                symbol=sym,
+                daily_view_label=daily_view,
+                slope_lb=slope_lb_daily,
+                hma_len=int(hma_period),
+                max_bars_since=int(within_bars),
+            )
+            if not r:
+                continue
+
+            tm = float(r.get("Trendline Slope", np.nan))
+            rm = float(r.get("Regression Slope", np.nan))
+
+            if float(min_abs_slope) > 0.0:
+                # apply this as a soft filter: allow through if either slope meets threshold
+                keep = (np.isfinite(tm) and abs(tm) >= float(min_abs_slope)) or (np.isfinite(rm) and abs(rm) >= float(min_abs_slope))
+                if not keep:
+                    continue
+
+            base_rows.append(r)
+
+        show_cols = [
+            "Symbol", "Frame",
+            "Bars Since Cross", "Cross Time",
+            "Trendline Slope", "Regression Slope", "R2",
+            "Last Price", "HMA (last)", "HMA Len"
+        ]
+
+        def _fmt_cross_time(df: pd.DataFrame, col: str = "Cross Time") -> pd.DataFrame:
+            if df is None or df.empty or col not in df.columns:
+                return df
+            try:
+                df["_ct"] = pd.to_datetime(df[col], errors="coerce")
+                df[col] = df["_ct"].dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+            except Exception:
+                pass
+            return df
+
+        # 1) Trendline>0 AND Regression>0
+        rows_1 = []
+        # 2) Trendline>0
+        rows_2 = []
+        # 3) Regression>0
+        rows_3 = []
+
+        for r in base_rows:
+            tm = float(r.get("Trendline Slope", np.nan))
+            rm = float(r.get("Regression Slope", np.nan))
+            if np.isfinite(tm) and np.isfinite(rm) and (tm > 0.0) and (rm > 0.0):
+                rows_1.append(r)
+            if np.isfinite(tm) and (tm > 0.0):
+                rows_2.append(r)
+            if np.isfinite(rm) and (rm > 0.0):
+                rows_3.append(r)
+
+        cA, cB, cC = st.columns(3)
+
+        with cA:
+            st.subheader("1) Trendline > 0 AND Regression > 0 + Cross Up")
+            if not rows_1:
+                st.write("No matches.")
+            else:
+                df = pd.DataFrame(rows_1)
+                df = _fmt_cross_time(df, "Cross Time")
+                df["_score"] = df["Trendline Slope"].astype(float) + df["Regression Slope"].astype(float)
+                df = df.sort_values(["Bars Since Cross", "_score", "R2"], ascending=[True, False, False])
+                st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
+
+        with cB:
+            st.subheader("2) Trendline > 0 + Cross Up")
+            if not rows_2:
+                st.write("No matches.")
+            else:
+                df = pd.DataFrame(rows_2)
+                df = _fmt_cross_time(df, "Cross Time")
+                df["_score"] = df["Trendline Slope"].astype(float)
+                df = df.sort_values(["Bars Since Cross", "_score", "R2"], ascending=[True, False, False])
+                st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
+
+        with cC:
+            st.subheader("3) Regression > 0 + Cross Up")
+            if not rows_3:
+                st.write("No matches.")
+            else:
+                df = pd.DataFrame(rows_3)
+                df = _fmt_cross_time(df, "Cross Time")
+                df["_score"] = df["Regression Slope"].astype(float)
+                df = df.sort_values(["Bars Since Cross", "_score", "R2"], ascending=[True, False, False])
+                st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
+
+# =========================
+# TAB 7 — Price↔Regression Cross (Daily)
+# =========================
+with tab7:
     st.header("Price↔Regression Cross (Daily)")
     st.caption(
         "Shows symbols where:\n"
@@ -3279,9 +3463,9 @@ with tab6:
                 st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 7 — Bull vs Bear
+# TAB 8 — Bull vs Bear
 # =========================
-with tab7:
+with tab8:
     st.header("Bull vs Bear")
     st.caption("Bull/Bear is computed over the chosen lookback using daily closes.")
 
@@ -3315,9 +3499,9 @@ with tab7:
             st.pyplot(fig)
 
 # =========================
-# TAB 8 — Long-Term History
+# TAB 9 — Long-Term History
 # =========================
-with tab8:
+with tab9:
     st.header("Long-Term History")
     st.caption("Max history with global trendline (recent slice) and optional BB/NTD overlay.")
 
