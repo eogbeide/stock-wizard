@@ -1,6 +1,6 @@
 # bullbear.py — Complete updated Streamlit app (Batch 1/3)
 # -------------------------------------------------------
-import streamlit as stdd
+import streamlit as stx
 import pandas as pd
 import numpy as np
 import yfinance as yf
