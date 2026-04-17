@@ -1548,7 +1548,7 @@ def price_regression_cross_row_daily(symbol: str,
         return None
 
 # =========================
-# NEW: Trend Buy helpers (Daily + Hourly)
+# Trend Buy / Hot Buy helpers (Daily + Hourly)
 # =========================
 @st.cache_data(ttl=120)
 def trend_buy_row_daily(symbol: str,
@@ -1557,7 +1557,7 @@ def trend_buy_row_daily(symbol: str,
                         ntd_win: int = 60,
                         max_bars_since: int = 5):
     """
-    Trend Buy (Daily):
+    Trend Buy / Hot Buy (Daily):
       - Trendline Slope > 0
       - Regression Slope > 0
       - NPX crossed UP through 0.0 recently (within max_bars_since)
@@ -1626,7 +1626,7 @@ def trend_buy_row_hourly(symbol: str,
                          ntd_win: int = 60,
                          max_bars_since: int = 10):
     """
-    Trend Buy (Hourly / intraday 5m bars):
+    Trend Buy / Hot Buy (Hourly / intraday 5m bars):
       - Trendline Slope > 0
       - Regression Slope > 0
       - NPX crossed UP through 0.0 recently (within max_bars_since bars)
@@ -1956,7 +1956,6 @@ def npx_sell_signal_row_hourly(symbol: str,
         }
     except Exception:
         return None
-
 def _series_heading_up(series_like: pd.Series, confirm_bars: int = 1) -> bool:
     s = _coerce_1d_series(series_like).dropna()
     confirm_bars = max(1, int(confirm_bars))
@@ -2520,15 +2519,16 @@ if "run_all" not in st.session_state:
     st.session_state.mode_at_run = mode
 
 # =========================
-# Tabs  ✅ UPDATED
+# Tabs  ✅ UPDATED: added Hot Buy only
 # =========================
 (
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
 ) = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Trend and Slope Align",
     "Trend Buy",
+    "Hot Buy",
     "Green Zone Buy Alert",
     "Zero Cross",
     "Green Cross",
@@ -2665,7 +2665,6 @@ with tab3:
     max_cross_bars_hourly = c4.slider("Hourly max bars since NPX↔NTD cross", 0, 480, 60, 5, key=f"tsa_cross_h_{mode}")
 
     run3 = st.button("Run Trend and Slope Align", key=f"btn_run_tsa_{mode}", use_container_width=True)
-
     if run3:
         buys_d, sells_d = [], []
         buys_cross_d, sells_cross_d = [], []
@@ -2840,6 +2839,7 @@ with tab3:
                 dfs["_score"] = dfs["Trendline Slope"].astype(float) + dfs["Regression Slope"].astype(float)
                 dfs = dfs.sort_values(["_score", "R2"], ascending=[True, False])
                 st.dataframe(dfs[show_cols_base].head(max_rows).reset_index(drop=True), use_container_width=True)
+
         with cSR:
             st.subheader("Daily Sell + NPX recently crossed NTD (Cross Dir = Down)")
             if not sells_cross_d:
@@ -2984,9 +2984,99 @@ with tab4:
                 st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 5 — Green Zone Buy Alert
+# TAB 5 — Hot Buy  ✅ NEW
 # =========================
 with tab5:
+    st.header("Hot Buy")
+    st.caption(
+        "Shows symbols from the **Daily** and **Hourly** charts where:\n"
+        "• **Global trend is upward**\n"
+        "• **Regression line is upward**\n"
+        "• **NPX (Norm Price)** recently crossed **UP** through **0.0** on the **NTD/NPX** chart."
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    max_rows = c1.slider("Max rows per list", 10, 300, 60, 10, key=f"hotbuy_rows_{mode}")
+    within_daily = c2.slider("Daily: Max bars since NPX 0.0 cross", 0, 60, 5, 1, key=f"hotbuy_within_d_{mode}")
+    hours = c3.selectbox("Hourly scan window", ["24h", "48h", "96h"], index=0, key=f"hotbuy_hr_win_{mode}")
+    within_hourly = c4.slider("Hourly: Max bars since NPX 0.0 cross (5m bars)", 0, 480, 60, 5, key=f"hotbuy_within_h_{mode}")
+
+    run_hot_buy = st.button("Run Hot Buy Scan", key=f"btn_run_hotbuy_{mode}", use_container_width=True)
+
+    if run_hot_buy:
+        daily_rows, hourly_rows = [], []
+
+        for sym in universe:
+            r = trend_buy_row_daily(
+                symbol=sym,
+                daily_view_label=daily_view,
+                slope_lb=slope_lb_daily,
+                ntd_win=int(ntd_window),
+                max_bars_since=int(within_daily),
+            )
+            if r:
+                daily_rows.append(r)
+
+        hr_period = period_map.get(hours, "1d")
+        for sym in universe:
+            r = trend_buy_row_hourly(
+                symbol=sym,
+                period=hr_period,
+                slope_lb=slope_lb_hourly,
+                ntd_win=int(ntd_window),
+                max_bars_since=int(within_hourly),
+            )
+            if r:
+                r2 = dict(r)
+                r2["Frame"] = f"Hourly({hours})"
+                hourly_rows.append(r2)
+
+        show_cols = [
+            "Symbol", "Frame",
+            "Bars Since Cross", "Cross Time (PST)",
+            "Trendline Slope", "Regression Slope", "R2",
+            "NPX@Cross", "NPX(last)",
+            "Last Price"
+        ]
+
+        def _fmt_hot_buy_cross_time_col(df: pd.DataFrame, col: str = "Cross Time (PST)") -> pd.DataFrame:
+            if df is None or df.empty or col not in df.columns:
+                return df
+            try:
+                df["_ct"] = pd.to_datetime(df[col], errors="coerce")
+                df[col] = df["_ct"].dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+            except Exception:
+                pass
+            return df
+
+        r1, r2 = st.columns(2)
+
+        with r1:
+            st.subheader("Daily")
+            if not daily_rows:
+                st.write("No matches.")
+            else:
+                df = pd.DataFrame(daily_rows)
+                df = _fmt_hot_buy_cross_time_col(df, "Cross Time (PST)")
+                df["_score"] = df["Trendline Slope"].astype(float) + df["Regression Slope"].astype(float)
+                df = df.sort_values(["Bars Since Cross", "_score", "R2"], ascending=[True, False, False])
+                st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
+
+        with r2:
+            st.subheader(f"Hourly ({hours})")
+            if not hourly_rows:
+                st.write("No matches.")
+            else:
+                df = pd.DataFrame(hourly_rows)
+                df = _fmt_hot_buy_cross_time_col(df, "Cross Time (PST)")
+                df["_score"] = df["Trendline Slope"].astype(float) + df["Regression Slope"].astype(float)
+                df = df.sort_values(["Bars Since Cross", "_score", "R2"], ascending=[True, False, False])
+                st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
+
+# =========================
+# TAB 6 — Green Zone Buy Alert
+# =========================
+with tab6:
     st.header("Green Zone Buy Alert")
     st.caption(
         "Shows symbols where:\n"
@@ -3039,9 +3129,9 @@ with tab5:
             st.write("No matches.")
 
 # =========================
-# TAB 6 — Zero Cross  ✅ NEW
+# TAB 7 — Zero Cross
 # =========================
-with tab6:
+with tab7:
     st.header("Zero Cross")
     st.caption(
         "Shows symbols from the **Daily** and **Hourly** charts where:\n"
@@ -3177,9 +3267,9 @@ with tab6:
                 st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 7 — Green Cross  ✅ NEW
+# TAB 8 — Green Cross
 # =========================
-with tab7:
+with tab8:
     st.header("Green Cross")
     st.caption(
         "Shows symbols from the **Daily** and **Hourly** charts where:\n"
@@ -3323,7 +3413,7 @@ with tab7:
                 st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 8 — HMA Signal (Daily)
+# TAB 9 — HMA Signal (Daily)
 # =========================
 def hma_cross_up_row_daily(symbol: str,
                            daily_view_label: str,
@@ -3369,7 +3459,7 @@ def hma_cross_up_row_daily(symbol: str,
     except Exception:
         return None
 
-with tab8:
+with tab9:
     st.header("HMA Signal (Daily)")
     st.caption(
         "Shows symbols where **Price recently crossed UP through HMA** on the **Daily** price chart.\n\n"
@@ -3465,9 +3555,9 @@ with tab8:
                 st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 9 — Price↔Regression Cross (Daily)
+# TAB 10 — Price↔Regression Cross (Daily)
 # =========================
-with tab9:
+with tab10:
     st.header("Price↔Regression Cross (Daily)")
     st.caption(
         "Shows symbols where:\n"
@@ -3542,9 +3632,9 @@ with tab9:
                 st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 10 — Bull vs Bear
+# TAB 11 — Bull vs Bear
 # =========================
-with tab10:
+with tab11:
     st.header("Bull vs Bear")
     st.caption("Bull/Bear is computed over the chosen lookback using daily closes.")
 
@@ -3578,9 +3668,9 @@ with tab10:
             st.pyplot(fig)
 
 # =========================
-# TAB 11 — Long-Term History
+# TAB 12 — Long-Term History
 # =========================
-with tab11:
+with tab12:
     st.header("Long-Term History")
     st.caption("Max history with global trendline (recent slice) and optional BB/NTD overlay.")
 
@@ -3615,7 +3705,7 @@ with tab11:
                 st.pyplot(fig2)
 
 # =========================
-# TAB 12 — NTD Buy Signal
+# TAB 13 — NTD Buy Signal
 # =========================
 def _ntd_minus05_cross_up_mask(ntd: pd.Series) -> pd.Series:
     """Cross up through -0.5 into [-0.5, -0.4], upward."""
@@ -3713,7 +3803,7 @@ def ntd_minus05_cross_row_hourly(symbol: str,
     except Exception:
         return None
 
-with tab12:
+with tab13:
     st.header("NTD Buy Signal")
     st.caption(
         "Shows symbols where **NTD** recently crossed **UP** through the **-0.5** line on the NTD/NPX indicator panel.\n"
