@@ -777,6 +777,70 @@ def _cross_series(price: pd.Series, line: pd.Series):
     cross_dn = (~above) & (above.shift(1).fillna(False))
     return cross_up.reindex(p.index, fill_value=False), cross_dn.reindex(p.index, fill_value=False)
 
+def _strict_cross_series(price: pd.Series, line: pd.Series):
+    """
+    Strict crossover masks that do not treat the first valid bar as a cross.
+    This is used by scanners where Bars Since Cross must reflect a real prior cross.
+    """
+    p = _coerce_1d_series(price)
+    l = _coerce_1d_series(line)
+    ok = p.notna() & l.notna()
+    if ok.sum() < 2:
+        idx = p.index if len(p) else l.index
+        return pd.Series(False, index=idx), pd.Series(False, index=idx)
+
+    p = p[ok]
+    l = l[ok]
+    diff = p - l
+    prev_diff = diff.shift(1)
+
+    cross_up = (diff > 0.0) & (prev_diff <= 0.0)
+    cross_dn = (diff < 0.0) & (prev_diff >= 0.0)
+
+    if len(cross_up):
+        cross_up.iloc[0] = False
+        cross_dn.iloc[0] = False
+
+    return cross_up.fillna(False).reindex(p.index, fill_value=False), cross_dn.fillna(False).reindex(p.index, fill_value=False)
+
+def _bars_since_event(index_like, event_time) -> int:
+    """
+    Count bars from the full chart index, not from a filtered indicator-only index.
+    """
+    if event_time is None or index_like is None or len(index_like) == 0:
+        return 10**9
+
+    idx = pd.Index(index_like)
+    try:
+        loc = idx.get_loc(event_time)
+        if isinstance(loc, slice):
+            pos = int(loc.stop - 1)
+        elif isinstance(loc, np.ndarray):
+            if loc.dtype == bool:
+                found = np.flatnonzero(loc)
+                if len(found) == 0:
+                    return 10**9
+                pos = int(found[-1])
+            else:
+                pos = int(loc[-1])
+        elif isinstance(loc, (list, tuple)):
+            pos = int(loc[-1])
+        else:
+            pos = int(loc)
+        return int((len(idx) - 1) - pos)
+    except Exception:
+        pass
+
+    try:
+        event_ts = pd.Timestamp(event_time)
+        values = pd.to_datetime(idx, errors="coerce")
+        pos_values = np.flatnonzero(values <= event_ts)
+        if len(pos_values) == 0:
+            return 10**9
+        return int((len(idx) - 1) - int(pos_values[-1]))
+    except Exception:
+        return 10**9
+
 def annotate_crossover(ax, ts, px, side: str, note: str = ""):
     if side == "BUY":
         ax.scatter([ts], [px], marker="P", s=90, color="tab:green", zorder=7)
@@ -1356,7 +1420,6 @@ def annotate_macd_signal(ax, ts, px, side: str):
         ax.scatter([ts], [px], marker="*", s=180, color="tab:green", zorder=10, label="MACD BUY (HMA55+S/R)")
     else:
         ax.scatter([ts], [px], marker="*", s=180, color="tab:red", zorder=10, label="MACD SELL (HMA55+S/R)")
-
 # =========================
 # Scanners: cached small computations
 # =========================
@@ -1507,13 +1570,13 @@ def price_regression_cross_row_daily(symbol: str,
         p = close_show[ok]
         l = yhat[ok]
 
-        cross_up, cross_dn = _cross_series(p, l)
+        cross_up, cross_dn = _strict_cross_series(p, l)
         last_price = float(p.iloc[-1]) if np.isfinite(p.iloc[-1]) else np.nan
         last_reg = float(l.iloc[-1]) if np.isfinite(l.iloc[-1]) else np.nan
 
         if np.isfinite(tm) and np.isfinite(rm) and float(tm) > 0.0 and float(rm) > 0.0 and cross_up.any():
             t_cross = cross_up[cross_up].index[-1]
-            bars_since = int((len(p) - 1) - int(p.index.get_loc(t_cross)))
+            bars_since = _bars_since_event(close_show.index, t_cross)
             if int(bars_since) <= int(max_bars_since):
                 return {
                     "Symbol": symbol,
@@ -1529,7 +1592,7 @@ def price_regression_cross_row_daily(symbol: str,
 
         if np.isfinite(tm) and np.isfinite(rm) and float(tm) < 0.0 and float(rm) < 0.0 and cross_dn.any():
             t_cross = cross_dn[cross_dn].index[-1]
-            bars_since = int((len(p) - 1) - int(p.index.get_loc(t_cross)))
+            bars_since = _bars_since_event(close_show.index, t_cross)
             if int(bars_since) <= int(max_bars_since):
                 return {
                     "Symbol": symbol,
@@ -1583,11 +1646,13 @@ def trend_buy_row_daily(symbol: str,
             return None
 
         cross_up, _ = npx_zero_cross_masks(npx_show, level=0.0)
+        if len(cross_up):
+            cross_up.iloc[0] = False
         if not cross_up.any():
             return None
 
         t_cross = cross_up[cross_up].index[-1]
-        bars_since = int((len(npx_show) - 1) - int(npx_show.index.get_loc(t_cross)))
+        bars_since = _bars_since_event(close_show.index, t_cross)
         if int(bars_since) > int(max_bars_since):
             return None
 
@@ -1654,11 +1719,13 @@ def trend_buy_row_hourly(symbol: str,
             return None
 
         cross_up, _ = npx_zero_cross_masks(npx, level=0.0)
+        if len(cross_up):
+            cross_up.iloc[0] = False
         if not cross_up.any():
             return None
 
         t_cross = cross_up[cross_up].index[-1]
-        bars_since = int((len(npx) - 1) - int(npx.index.get_loc(t_cross)))
+        bars_since = _bars_since_event(close.index, t_cross)
         if int(bars_since) > int(max_bars_since):
             return None
 
@@ -1697,13 +1764,19 @@ def _npx_minus05_cross_up_mask(npx: pd.Series) -> pd.Series:
     """Cross up through -0.5, upward."""
     s = _coerce_1d_series(npx)
     prev = s.shift(1)
-    return ((s >= -0.5) & (prev < -0.5) & (s > prev)).fillna(False)
+    out = ((s >= -0.5) & (prev < -0.5) & (s > prev)).fillna(False)
+    if len(out):
+        out.iloc[0] = False
+    return out
 
 def _npx_plus05_cross_down_mask(npx: pd.Series) -> pd.Series:
     """Cross down through +0.5, downward."""
     s = _coerce_1d_series(npx)
     prev = s.shift(1)
-    return ((s <= 0.5) & (prev > 0.5) & (s < prev)).fillna(False)
+    out = ((s <= 0.5) & (prev > 0.5) & (s < prev)).fillna(False)
+    if len(out):
+        out.iloc[0] = False
+    return out
 
 @st.cache_data(ttl=120)
 def npx_buy_signal_row_daily(symbol: str,
@@ -1738,7 +1811,7 @@ def npx_buy_signal_row_daily(symbol: str,
             return None
 
         t_cross = mask[mask].index[-1]
-        bars_since = int((len(npx_show) - 1) - int(npx_show.index.get_loc(t_cross)))
+        bars_since = _bars_since_event(close_show.index, t_cross)
         if int(bars_since) > int(max_bars_since):
             return None
 
@@ -1800,7 +1873,7 @@ def npx_sell_signal_row_daily(symbol: str,
             return None
 
         t_cross = mask[mask].index[-1]
-        bars_since = int((len(npx_show) - 1) - int(npx_show.index.get_loc(t_cross)))
+        bars_since = _bars_since_event(close_show.index, t_cross)
         if int(bars_since) > int(max_bars_since):
             return None
 
@@ -1864,7 +1937,7 @@ def npx_buy_signal_row_hourly(symbol: str,
             return None
 
         t_cross = mask[mask].index[-1]
-        bars_since = int((len(npx) - 1) - int(npx.index.get_loc(t_cross)))
+        bars_since = _bars_since_event(close.index, t_cross)
         if int(bars_since) > int(max_bars_since):
             return None
 
@@ -1928,7 +2001,7 @@ def npx_sell_signal_row_hourly(symbol: str,
             return None
 
         t_cross = mask[mask].index[-1]
-        bars_since = int((len(npx) - 1) - int(npx.index.get_loc(t_cross)))
+        bars_since = _bars_since_event(close.index, t_cross)
         if int(bars_since) > int(max_bars_since):
             return None
 
@@ -1956,6 +2029,7 @@ def npx_sell_signal_row_hourly(symbol: str,
         }
     except Exception:
         return None
+
 def _series_heading_up(series_like: pd.Series, confirm_bars: int = 1) -> bool:
     s = _coerce_1d_series(series_like).dropna()
     confirm_bars = max(1, int(confirm_bars))
@@ -2005,7 +2079,7 @@ def green_zone_buy_alert_row_daily(symbol: str,
         ntd_show = ntd_show[ok]
         npx_show = npx_show[ok]
 
-        up_mask, _ = _cross_series(npx_show, ntd_show)
+        up_mask, _ = _strict_cross_series(npx_show, ntd_show)
         up_mask = up_mask.reindex(ntd_show.index, fill_value=False)
 
         valid = up_mask & (npx_show < 0.0) & (ntd_show < 0.0)
@@ -2013,7 +2087,7 @@ def green_zone_buy_alert_row_daily(symbol: str,
             return None
 
         t_cross = valid[valid].index[-1]
-        bars_since = int((len(ntd_show) - 1) - int(ntd_show.index.get_loc(t_cross)))
+        bars_since = _bars_since_event(close_show.index, t_cross)
         if bars_since > int(max_bars_since):
             return None
 
@@ -2075,7 +2149,7 @@ def green_zone_buy_alert_row_hourly(symbol: str,
         ntd = ntd[ok]
         npx = npx[ok]
 
-        up_mask, _ = _cross_series(npx, ntd)
+        up_mask, _ = _strict_cross_series(npx, ntd)
         up_mask = up_mask.reindex(ntd.index, fill_value=False)
 
         valid = up_mask & (npx < 0.0) & (ntd < 0.0)
@@ -2083,7 +2157,7 @@ def green_zone_buy_alert_row_hourly(symbol: str,
             return None
 
         t_cross = valid[valid].index[-1]
-        bars_since = int((len(ntd) - 1) - int(ntd.index.get_loc(t_cross)))
+        bars_since = _bars_since_event(close.index, t_cross)
         if bars_since > int(max_bars_since):
             return None
 
@@ -2279,7 +2353,6 @@ def render_daily_chart(symbol: str, view_label: str):
         "trade_instruction": trade_txt,
         "last_price": last_px,
     }
-
 # =========================
 # Hourly chart renderer
 # =========================
@@ -2519,7 +2592,7 @@ if "run_all" not in st.session_state:
     st.session_state.mode_at_run = mode
 
 # =========================
-# Tabs  ✅ UPDATED: added Hot Buy only
+# Tabs
 # =========================
 (
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
@@ -2665,6 +2738,7 @@ with tab3:
     max_cross_bars_hourly = c4.slider("Hourly max bars since NPX↔NTD cross", 0, 480, 60, 5, key=f"tsa_cross_h_{mode}")
 
     run3 = st.button("Run Trend and Slope Align", key=f"btn_run_tsa_{mode}", use_container_width=True)
+
     if run3:
         buys_d, sells_d = [], []
         buys_cross_d, sells_cross_d = [], []
@@ -2701,13 +2775,13 @@ with tab3:
                     if ok.sum() >= 2:
                         ntd_d = ntd_d[ok]
                         npx_d = npx_d[ok]
-                        up_mask, dn_mask = _cross_series(npx_d, ntd_d)
+                        up_mask, dn_mask = _strict_cross_series(npx_d, ntd_d)
                         up_mask = up_mask.reindex(ntd_d.index, fill_value=False)
                         dn_mask = dn_mask.reindex(ntd_d.index, fill_value=False)
 
-                        if (float(tm) > 0.0) and (float(rm) > 0.0) and up_mask.any():
+                        if np.isfinite(tm) and np.isfinite(rm) and (float(tm) > 0.0) and (float(rm) > 0.0) and up_mask.any():
                             t_cross = up_mask[up_mask].index[-1]
-                            bars_since = int((len(ntd_d) - 1) - int(ntd_d.index.get_loc(t_cross)))
+                            bars_since = _bars_since_event(close_show.index, t_cross)
                             if bars_since <= int(max_cross_bars_daily):
                                 row2 = base_row.copy()
                                 row2["NPX↔NTD Cross Time"] = t_cross
@@ -2717,9 +2791,9 @@ with tab3:
                                 row2["Cross Dir"] = "Up"
                                 buys_cross_d.append(row2)
 
-                        if (float(tm) < 0.0) and (float(rm) < 0.0) and dn_mask.any():
+                        if np.isfinite(tm) and np.isfinite(rm) and (float(tm) < 0.0) and (float(rm) < 0.0) and dn_mask.any():
                             t_cross = dn_mask[dn_mask].index[-1]
-                            bars_since = int((len(ntd_d) - 1) - int(ntd_d.index.get_loc(t_cross)))
+                            bars_since = _bars_since_event(close_show.index, t_cross)
                             if bars_since <= int(max_cross_bars_daily):
                                 row2 = base_row.copy()
                                 row2["NPX↔NTD Cross Time"] = t_cross
@@ -2769,13 +2843,13 @@ with tab3:
                 ntd_h = ntd_h[ok2]
                 npx_h = npx_h[ok2]
 
-                up_mask, dn_mask = _cross_series(npx_h, ntd_h)
+                up_mask, dn_mask = _strict_cross_series(npx_h, ntd_h)
                 up_mask = up_mask.reindex(ntd_h.index, fill_value=False)
                 dn_mask = dn_mask.reindex(ntd_h.index, fill_value=False)
 
-                if (float(tm_h) > 0.0) and (float(rm_h) > 0.0) and up_mask.any():
+                if np.isfinite(tm_h) and np.isfinite(rm_h) and (float(tm_h) > 0.0) and (float(rm_h) > 0.0) and up_mask.any():
                     t_cross = up_mask[up_mask].index[-1]
-                    bars_since = int((len(ntd_h) - 1) - int(ntd_h.index.get_loc(t_cross)))
+                    bars_since = _bars_since_event(hc.index, t_cross)
                     if bars_since <= int(max_cross_bars_hourly):
                         row2 = base_row.copy()
                         row2["NPX↔NTD Cross Time"] = t_cross
@@ -2785,9 +2859,9 @@ with tab3:
                         row2["Cross Dir"] = "Up"
                         buys_cross_h.append(row2)
 
-                if (float(tm_h) < 0.0) and (float(rm_h) < 0.0) and dn_mask.any():
+                if np.isfinite(tm_h) and np.isfinite(rm_h) and (float(tm_h) < 0.0) and (float(rm_h) < 0.0) and dn_mask.any():
                     t_cross = dn_mask[dn_mask].index[-1]
-                    bars_since = int((len(ntd_h) - 1) - int(ntd_h.index.get_loc(t_cross)))
+                    bars_since = _bars_since_event(hc.index, t_cross)
                     if bars_since <= int(max_cross_bars_hourly):
                         row2 = base_row.copy()
                         row2["NPX↔NTD Cross Time"] = t_cross
@@ -2984,7 +3058,7 @@ with tab4:
                 st.dataframe(df[show_cols].head(max_rows).reset_index(drop=True), use_container_width=True)
 
 # =========================
-# TAB 5 — Hot Buy  ✅ NEW
+# TAB 5 — Hot Buy
 # =========================
 with tab5:
     st.header("Hot Buy")
@@ -3167,11 +3241,13 @@ with tab7:
                     continue
 
                 cross_up, _ = npx_zero_cross_masks(npx_show, level=0.0)
+                if len(cross_up):
+                    cross_up.iloc[0] = False
                 if not cross_up.any():
                     continue
 
                 t_cross = cross_up[cross_up].index[-1]
-                bars_since = int((len(npx_show) - 1) - int(npx_show.index.get_loc(t_cross)))
+                bars_since = _bars_since_event(close_show.index, t_cross)
                 if bars_since > int(within_daily):
                     continue
 
@@ -3208,11 +3284,13 @@ with tab7:
                     continue
 
                 cross_up, _ = npx_zero_cross_masks(npx, level=0.0)
+                if len(cross_up):
+                    cross_up.iloc[0] = False
                 if not cross_up.any():
                     continue
 
                 t_cross = cross_up[cross_up].index[-1]
-                bars_since = int((len(npx) - 1) - int(npx.index.get_loc(t_cross)))
+                bars_since = _bars_since_event(close.index, t_cross)
                 if bars_since > int(within_hourly):
                     continue
 
@@ -3311,7 +3389,7 @@ with tab8:
                     continue
 
                 t_cross = below_mask[below_mask].index[-1]
-                bars_since = int((len(npx_show) - 1) - int(npx_show.index.get_loc(t_cross)))
+                bars_since = _bars_since_event(close_show.index, t_cross)
                 if bars_since > int(within_daily):
                     continue
 
@@ -3354,7 +3432,7 @@ with tab8:
                     continue
 
                 t_cross = below_mask[below_mask].index[-1]
-                bars_since = int((len(npx) - 1) - int(npx.index.get_loc(t_cross)))
+                bars_since = _bars_since_event(close.index, t_cross)
                 if bars_since > int(within_hourly):
                     continue
 
@@ -3437,12 +3515,12 @@ def hma_cross_up_row_daily(symbol: str,
 
         p = close_show[ok]
         h = hma[ok]
-        up_mask, _ = _cross_series(p, h)
+        up_mask, _ = _strict_cross_series(p, h)
         if not up_mask.any():
             return None
 
         t_cross = up_mask[up_mask].index[-1]
-        bars_since = int((len(p) - 1) - int(p.index.get_loc(t_cross)))
+        bars_since = _bars_since_event(close_show.index, t_cross)
         if bars_since > int(max_bars_since):
             return None
 
@@ -3711,7 +3789,10 @@ def _ntd_minus05_cross_up_mask(ntd: pd.Series) -> pd.Series:
     """Cross up through -0.5 into [-0.5, -0.4], upward."""
     s = _coerce_1d_series(ntd)
     prev = s.shift(1)
-    return ((s >= -0.5) & (s <= -0.4) & (prev < -0.5) & (s > prev)).fillna(False)
+    out = ((s >= -0.5) & (s <= -0.4) & (prev < -0.5) & (s > prev)).fillna(False)
+    if len(out):
+        out.iloc[0] = False
+    return out
 
 @st.cache_data(ttl=120)
 def ntd_minus05_cross_row_daily(symbol: str,
@@ -3739,7 +3820,7 @@ def ntd_minus05_cross_row_daily(symbol: str,
             return None
 
         t = mask[mask].index[-1]
-        bars_since = int((len(close_show) - 1) - int(close_show.index.get_loc(t)))
+        bars_since = _bars_since_event(close_show.index, t)
         if int(bars_since) > int(max_bars_since):
             return None
 
@@ -3785,7 +3866,7 @@ def ntd_minus05_cross_row_hourly(symbol: str,
             return None
 
         t = mask[mask].index[-1]
-        bars_since = int((len(ntd) - 1) - int(ntd.index.get_loc(t)))
+        bars_since = _bars_since_event(hc.index, t)
         if int(bars_since) > int(max_bars_since):
             return None
 
