@@ -48,12 +48,10 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Ribbon tabs + nicer chart container
 st.markdown("""
 <style>
   #MainMenu, header, footer {visibility: hidden;}
 
-  /* Ribbon tabs */
   div[data-baseweb="tab-list"] {
     flex-wrap: wrap !important;
     overflow-x: visible !important;
@@ -92,7 +90,6 @@ st.markdown("""
     box-shadow: 0 0 0 3px rgba(49, 51, 63, 0.18) !important;
   }
 
-  /* Chart container */
   div[data-testid="stImage"] {
     border: 1px solid rgba(49, 51, 63, 0.12);
     border-radius: 14px;
@@ -286,7 +283,6 @@ def subset_by_daily_view(obj, view_label: str):
         start = end - pd.Timedelta(days=days_map.get(view_label, 365))
     return obj.loc[(idx >= start) & (idx <= end)]
 
-# FX helpers
 def pip_size_for_symbol(symbol: str):
     s = str(symbol).upper()
     if "=X" not in s:
@@ -295,7 +291,8 @@ def pip_size_for_symbol(symbol: str):
 
 def _diff_text(a: float, b: float, symbol: str) -> str:
     try:
-        av = float(a); bv = float(b)
+        av = float(a)
+        bv = float(b)
     except Exception:
         return ""
     ps = pip_size_for_symbol(symbol)
@@ -313,11 +310,6 @@ def format_trade_instruction(trend_slope: float,
                              close_val: float,
                              symbol: str,
                              global_trend_slope: float = None) -> str:
-    """
-    BUY only when Global slope and Local slope agree UP.
-    SELL only when Global slope and Local slope agree DOWN.
-    Otherwise show ALERT.
-    """
     def _finite(x):
         try:
             return np.isfinite(float(x))
@@ -376,7 +368,6 @@ def make_gapless_ohlc(df: pd.DataFrame,
                       price_cols=("Open", "High", "Low", "Close"),
                       gap_mult: float = 12.0,
                       min_gap_seconds: float = 3600.0) -> pd.DataFrame:
-    """Remove price gaps across large time-gaps by applying cumulative offset."""
     if df is None or df.empty:
         return df
     if not isinstance(df.index, pd.DatetimeIndex):
@@ -386,7 +377,7 @@ def make_gapless_ohlc(df: pd.DataFrame,
 
     ref_col = "Open" if "Open" in df.columns else "Close"
     close = pd.to_numeric(df["Close"], errors="coerce")
-    refp  = pd.to_numeric(df[ref_col], errors="coerce")
+    refp = pd.to_numeric(df[ref_col], errors="coerce")
 
     idx = close.index
     diffs = idx.to_series().diff().dt.total_seconds().dropna()
@@ -402,13 +393,13 @@ def make_gapless_ohlc(df: pd.DataFrame,
 
     for i in range(1, len(close)):
         try:
-            dt_sec = float((idx[i] - idx[i-1]).total_seconds())
+            dt_sec = float((idx[i] - idx[i - 1]).total_seconds())
         except Exception:
             dt_sec = 0.0
 
         if dt_sec >= thr:
-            prev_close = float(close.iloc[i-1]) if np.isfinite(close.iloc[i-1]) else np.nan
-            curr_ref   = float(refp.iloc[i])    if np.isfinite(refp.iloc[i])    else np.nan
+            prev_close = float(close.iloc[i - 1]) if np.isfinite(close.iloc[i - 1]) else np.nan
+            curr_ref = float(refp.iloc[i]) if np.isfinite(refp.iloc[i]) else np.nan
             if np.isfinite(prev_close) and np.isfinite(curr_ref):
                 offset += (curr_ref - prev_close)
 
@@ -451,8 +442,7 @@ def _map_times_to_bar_positions(real_times: pd.DatetimeIndex, times_list):
         idxer = real_times.get_indexer(t, method="nearest")
     except Exception:
         return []
-    pos = [int(i) for i in idxer if int(i) >= 0]
-    return pos
+    return [int(i) for i in idxer if int(i) >= 0]
 
 # =========================
 # Mode switching
@@ -461,8 +451,8 @@ def _reset_run_state_for_mode_switch():
     st.session_state.run_all = False
     st.session_state.ticker = None
     for k in [
-        "df_hist","df_ohlc","fc_idx","fc_vals","fc_ci",
-        "intraday","chart","hour_range","mode_at_run"
+        "df_hist", "df_ohlc", "fc_idx", "fc_vals", "fc_ci",
+        "intraday", "chart", "hour_range", "mode_at_run"
     ]:
         st.session_state.pop(k, None)
 
@@ -505,7 +495,7 @@ daily_view = st.sidebar.selectbox("Daily view range:", ["Historical", "6M", "12M
 
 show_fibs = st.sidebar.checkbox("Show Fibonacci", value=True, key="sb_show_fibs")
 
-slope_lb_daily  = st.sidebar.slider("Daily slope lookback (bars)", 10, 360, 90, 10, key="sb_slope_lb_daily")
+slope_lb_daily = st.sidebar.slider("Daily slope lookback (bars)", 10, 360, 90, 10, key="sb_slope_lb_daily")
 slope_lb_hourly = st.sidebar.slider("Hourly slope lookback (bars)", 12, 480, 120, 6, key="sb_slope_lb_hourly")
 
 st.sidebar.subheader("MACD")
@@ -532,7 +522,8 @@ nrsi_period = st.sidebar.slider("RSI period (unused)", 5, 60, 14, 1, key="sb_nrs
 st.sidebar.subheader("NTD Channel (Hourly)")
 show_ntd_channel = st.sidebar.checkbox(
     "Highlight when price is between S/R (S↔R) on NTD",
-    value=True, key="sb_ntd_channel"
+    value=True,
+    key="sb_ntd_channel"
 )
 
 st.sidebar.subheader("Hourly Supertrend")
@@ -542,7 +533,7 @@ atr_mult = st.sidebar.slider("ATR multiplier", 1.0, 5.0, 3.0, 0.5, key="sb_atr_m
 st.sidebar.subheader("Parabolic SAR")
 show_psar = st.sidebar.checkbox("Show Parabolic SAR", value=True, key="sb_psar_show")
 psar_step = st.sidebar.slider("PSAR acceleration step", 0.01, 0.20, 0.02, 0.01, key="sb_psar_step")
-psar_max  = st.sidebar.slider("PSAR max acceleration", 0.10, 1.00, 0.20, 0.10, key="sb_psar_max")
+psar_max = st.sidebar.slider("PSAR max acceleration", 0.10, 1.00, 0.20, 0.10, key="sb_psar_max")
 
 st.sidebar.subheader("Signal Logic")
 signal_threshold = st.sidebar.slider("S/R proximity signal threshold", 0.50, 0.99, 0.90, 0.01, key="sb_sig_thr")
@@ -589,19 +580,18 @@ else:
     news_window_days = 7
     show_sessions_pst = False
 
-# Universe
 if mode == "Stock":
     universe = sorted([
-        "AAPL","SPY","AMZN","DIA","TSLA","SPGI","JPM","VTWG","PLTR","NVDA",
-        "META","SITM","MARA","GOOG","HOOD","BABA","IBM","AVGO","GUSH","VOO",
-        "MSFT","TSM","NFLX","MP","AAL","URI","DAL","BBAI","QUBT","AMD","SMCI",
-        "ORCL","TLT"
+        "AAPL", "SPY", "AMZN", "DIA", "TSLA", "SPGI", "JPM", "VTWG", "PLTR", "NVDA",
+        "META", "SITM", "MARA", "GOOG", "HOOD", "BABA", "IBM", "AVGO", "GUSH", "VOO",
+        "MSFT", "TSM", "NFLX", "MP", "AAL", "URI", "DAL", "BBAI", "QUBT", "AMD", "SMCI",
+        "ORCL", "TLT"
     ])
 else:
     universe = [
-        "EURUSD=X","EURJPY=X","GBPUSD=X","USDJPY=X","AUDUSD=X","NZDUSD=X","CADJPY=X","USDCHF=X",
-        "HKDJPY=X","USDCAD=X","USDCNY=X","EURGBP=X","EURCAD=X","NZDJPY=X","USDKRW=X",
-        "USDHKD=X","EURHKD=X","GBPHKD=X","GBPJPY=X","CNHJPY=X","AUDJPY=X","GBPCAD=X"
+        "EURUSD=X", "EURJPY=X", "GBPUSD=X", "USDJPY=X", "AUDUSD=X", "NZDUSD=X", "CADJPY=X", "USDCHF=X",
+        "HKDJPY=X", "USDCAD=X", "USDCNY=X", "EURGBP=X", "EURCAD=X", "NZDJPY=X", "USDKRW=X",
+        "USDHKD=X", "EURHKD=X", "GBPHKD=X", "GBPJPY=X", "CNHJPY=X", "AUDJPY=X", "GBPCAD=X"
     ]
 
 # =========================
@@ -636,7 +626,7 @@ def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
     df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"), progress=False)
     if df is None or df.empty:
         return pd.DataFrame()
-    need = ["Open","High","Low","Close"]
+    need = ["Open", "High", "Low", "Close"]
     have = [c for c in need if c in df.columns]
     if len(have) < 4:
         return pd.DataFrame()
@@ -662,7 +652,7 @@ def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
         df = df.tz_convert(PACIFIC)
     except Exception:
         pass
-    if {"Open","High","Low","Close"}.issubset(df.columns):
+    if {"Open", "High", "Low", "Close"}.issubset(df.columns):
         df = make_gapless_ohlc(df)
     return df
 
@@ -671,17 +661,22 @@ def compute_sarimax_forecast(series_like):
     series = _coerce_1d_series(series_like).dropna()
     if series.empty:
         idx = pd.date_range(pd.Timestamp.now(tz=PACIFIC).normalize() + timedelta(days=1), periods=30, freq="D", tz=PACIFIC)
-        return idx, pd.Series(index=idx, dtype=float), pd.DataFrame(index=idx, columns=["lower","upper"])
+        return idx, pd.Series(index=idx, dtype=float), pd.DataFrame(index=idx, columns=["lower", "upper"])
     if isinstance(series.index, pd.DatetimeIndex):
         if series.index.tz is None:
             series.index = series.index.tz_localize(PACIFIC)
         else:
             series.index = series.index.tz_convert(PACIFIC)
     try:
-        model = SARIMAX(series, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
+        model = SARIMAX(series, order=(1, 1, 1), seasonal_order=(1, 1, 1, 12)).fit(disp=False)
     except Exception:
-        model = SARIMAX(series, order=(1,1,1), seasonal_order=(1,1,1,12),
-                        enforce_stationarity=False, enforce_invertibility=False).fit(disp=False)
+        model = SARIMAX(
+            series,
+            order=(1, 1, 1),
+            seasonal_order=(1, 1, 1, 12),
+            enforce_stationarity=False,
+            enforce_invertibility=False
+        ).fit(disp=False)
     fc = model.get_forecast(steps=30)
     idx = pd.date_range(series.index[-1] + timedelta(days=1), periods=30, freq="D", tz=PACIFIC)
     ci = fc.conf_int()
@@ -689,7 +684,6 @@ def compute_sarimax_forecast(series_like):
     pm = fc.predicted_mean
     pm.index = idx
     return idx, pm, ci
-# -------------------------------------------------------
 
 # =========================
 # Regression / bands / triggers
@@ -719,10 +713,10 @@ def regression_with_band(series_like, lookback: int = 0, z: float = 2.0):
     yhat = m * x + b
     resid = y - yhat
     dof = max(len(y) - 2, 1)
-    std = float(np.sqrt(np.sum(resid**2) / dof))
-    ss_res = float(np.sum(resid**2))
-    ss_tot = float(np.sum((y - y.mean())**2))
-    r2 = float("nan") if ss_tot <= 0 else float(1.0 - ss_res/ss_tot)
+    std = float(np.sqrt(np.sum(resid ** 2) / dof))
+    ss_res = float(np.sum(resid ** 2))
+    ss_tot = float(np.sum((y - y.mean()) ** 2))
+    r2 = float("nan") if ss_tot <= 0 else float(1.0 - ss_res / ss_tot)
     yhat_s = pd.Series(yhat, index=s.index)
     upper_s = pd.Series(yhat + z * std, index=s.index)
     lower_s = pd.Series(yhat - z * std, index=s.index)
@@ -783,11 +777,13 @@ def find_band_bounce_signal(price: pd.Series,
     mask = p.notna() & u.notna() & l.notna()
     if mask.sum() < 2:
         return None
-    p = p[mask]; u = u[mask]; l = l[mask]
+    p = p[mask]
+    u = u[mask]
+    l = l[mask]
 
     inside = (p <= u) & (p >= l)
-    below  = p < l
-    above  = p > u
+    below = p < l
+    above = p > u
 
     try:
         slope = float(slope_val)
@@ -816,17 +812,14 @@ def _cross_series(price: pd.Series, line: pd.Series):
     if ok.sum() < 2:
         idx = p.index if len(p) else l.index
         return pd.Series(False, index=idx), pd.Series(False, index=idx)
-    p = p[ok]; l = l[ok]
+    p = p[ok]
+    l = l[ok]
     above = p > l
     cross_up = above & (~above.shift(1).fillna(False))
     cross_dn = (~above) & (above.shift(1).fillna(False))
     return cross_up.reindex(p.index, fill_value=False), cross_dn.reindex(p.index, fill_value=False)
 
 def _strict_cross_series(price: pd.Series, line: pd.Series):
-    """
-    Strict crossover masks that do not treat the first valid bar as a cross.
-    This is used by scanners where Bars Since Cross must reflect a real prior cross.
-    """
     p = _coerce_1d_series(price)
     l = _coerce_1d_series(line)
     ok = p.notna() & l.notna()
@@ -846,14 +839,14 @@ def _strict_cross_series(price: pd.Series, line: pd.Series):
         cross_up.iloc[0] = False
         cross_dn.iloc[0] = False
 
-    return cross_up.fillna(False).reindex(p.index, fill_value=False), cross_dn.fillna(False).reindex(p.index, fill_value=False)
+    return (
+        cross_up.fillna(False).reindex(p.index, fill_value=False),
+        cross_dn.fillna(False).reindex(p.index, fill_value=False),
+    )
 
 def _bars_since_event(index_like, event_time) -> int:
-    """
-    Count bars from the full chart index, not from a filtered indicator-only index.
-    """
     if event_time is None or index_like is None or len(index_like) == 0:
-        return 10**9
+        return 10 ** 9
 
     idx = pd.Index(index_like)
     try:
@@ -864,7 +857,7 @@ def _bars_since_event(index_like, event_time) -> int:
             if loc.dtype == bool:
                 found = np.flatnonzero(loc)
                 if len(found) == 0:
-                    return 10**9
+                    return 10 ** 9
                 pos = int(found[-1])
             else:
                 pos = int(loc[-1])
@@ -881,26 +874,21 @@ def _bars_since_event(index_like, event_time) -> int:
         values = pd.to_datetime(idx, errors="coerce")
         pos_values = np.flatnonzero(values <= event_ts)
         if len(pos_values) == 0:
-            return 10**9
+            return 10 ** 9
         return int((len(idx) - 1) - int(pos_values[-1]))
     except Exception:
-        return 10**9
+        return 10 ** 9
 
 def annotate_crossover(ax, ts, px, side: str, note: str = ""):
     if side == "BUY":
         ax.scatter([ts], [px], marker="P", s=90, color="tab:green", zorder=7)
         label = "BUY" if not note else f"BUY {note}"
-        ax.text(ts, px, f"  {label}", va="bottom", fontsize=9,
-                color="tab:green", fontweight="bold")
+        ax.text(ts, px, f"  {label}", va="bottom", fontsize=9, color="tab:green", fontweight="bold")
     else:
         ax.scatter([ts], [px], marker="X", s=90, color="tab:red", zorder=7)
         label = "SELL" if not note else f"SELL {note}"
-        ax.text(ts, px, f"  {label}", va="top", fontsize=9,
-                color="tab:red", fontweight="bold")
+        ax.text(ts, px, f"  {label}", va="top", fontsize=9, color="tab:red", fontweight="bold")
 
-# =========================
-# Fibonacci
-# =========================
 def fibonacci_levels(series_like):
     s = _coerce_1d_series(series_like).dropna()
     hi = float(s.max()) if not s.empty else np.nan
@@ -910,30 +898,30 @@ def fibonacci_levels(series_like):
     diff = hi - lo
     return {
         "0%": hi,
-        "23.6%": hi - 0.236*diff,
-        "38.2%": hi - 0.382*diff,
-        "50%": hi - 0.5*diff,
-        "61.8%": hi - 0.618*diff,
-        "78.6%": hi - 0.786*diff,
-        "100%": lo
+        "23.6%": hi - 0.236 * diff,
+        "38.2%": hi - 0.382 * diff,
+        "50%": hi - 0.5 * diff,
+        "61.8%": hi - 0.618 * diff,
+        "78.6%": hi - 0.786 * diff,
+        "100%": lo,
     }
 
 def fib_touch_masks(price: pd.Series, proximity_pct_of_range: float = 0.02):
     p = _coerce_1d_series(price).dropna()
     if p.empty:
         idx = _coerce_1d_series(price).index
-        return (pd.Series(False, index=idx), pd.Series(False, index=idx), {})
+        return pd.Series(False, index=idx), pd.Series(False, index=idx), {}
     fibs = fibonacci_levels(p)
     if not fibs:
-        return (pd.Series(False, index=p.index), pd.Series(False, index=p.index), {})
+        return pd.Series(False, index=p.index), pd.Series(False, index=p.index), {}
     hi = float(fibs.get("0%", np.nan))
     lo = float(fibs.get("100%", np.nan))
     rng = hi - lo
     if not (np.isfinite(hi) and np.isfinite(lo) and np.isfinite(rng)) or rng <= 0:
-        return (pd.Series(False, index=p.index), pd.Series(False, index=p.index), fibs)
+        return pd.Series(False, index=p.index), pd.Series(False, index=p.index), fibs
     tol = float(proximity_pct_of_range) * rng
     if not np.isfinite(tol) or tol <= 0:
-        return (pd.Series(False, index=p.index), pd.Series(False, index=p.index), fibs)
+        return pd.Series(False, index=p.index), pd.Series(False, index=p.index), fibs
     near_hi = (p >= (hi - tol)).reindex(p.index, fill_value=False)
     near_lo = (p <= (lo + tol)).reindex(p.index, fill_value=False)
     return near_hi, near_lo, fibs
@@ -946,10 +934,10 @@ def npx_zero_cross_masks(npx: pd.Series, level: float = 0.0):
     return cross_up.fillna(False), cross_dn.fillna(False)
 
 def fib_npx_zero_cross_signal_masks(price: pd.Series,
-                                   npx: pd.Series,
-                                   horizon_bars: int = 15,
-                                   proximity_pct_of_range: float = 0.02,
-                                   npx_level: float = 0.0):
+                                    npx: pd.Series,
+                                    horizon_bars: int = 15,
+                                    proximity_pct_of_range: float = 0.02,
+                                    npx_level: float = 0.0):
     p = _coerce_1d_series(price)
     x = _coerce_1d_series(npx).reindex(p.index)
     near_hi, near_lo, fibs = fib_touch_masks(p, proximity_pct_of_range=float(proximity_pct_of_range))
@@ -977,9 +965,6 @@ def overlay_fib_npx_signals(ax,
     if sell_idx:
         ax.scatter(sell_idx, p.loc[sell_idx], marker="v", s=120, color="tab:red", zorder=11, label=label_sell)
 
-# =========================
-# Indicators: MACD / HMA / BB / NTD / NPX / ROC / RSI
-# =========================
 def compute_roc(series_like, n: int = 10) -> pd.Series:
     s = _coerce_1d_series(series_like)
     base = s.dropna()
@@ -995,8 +980,8 @@ def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
     delta = s.diff()
     up = delta.clip(lower=0.0)
     down = -delta.clip(upper=0.0)
-    roll_up = up.ewm(alpha=1/period, adjust=False).mean()
-    roll_down = down.ewm(alpha=1/period, adjust=False).mean().replace(0, np.nan)
+    roll_up = up.ewm(alpha=1 / period, adjust=False).mean()
+    roll_down = down.ewm(alpha=1 / period, adjust=False).mean().replace(0, np.nan)
     rs = roll_up / roll_down
     rsi = 100 - (100 / (1 + rs))
     return rsi.reindex(s.index)
@@ -1009,7 +994,7 @@ def compute_macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int =
     ema_fast = s.ewm(span=int(fast), adjust=False).mean()
     ema_slow = s.ewm(span=int(slow), adjust=False).mean()
     macd = ema_fast - ema_slow
-    sig  = macd.ewm(span=int(signal), adjust=False).mean()
+    sig = macd.ewm(span=int(signal), adjust=False).mean()
     hist = macd - sig
     return macd.reindex(s.index), sig.reindex(s.index), hist.reindex(s.index)
 
@@ -1046,7 +1031,7 @@ def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_em
     width = (upper - lower).replace(0, np.nan)
     pctb = ((s - lower) / width).clip(0.0, 1.0)
     nbb = pctb * 2.0 - 1.0
-    return (mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index))
+    return mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index)
 
 def compute_normalized_trend(close: pd.Series, window: int = 60) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
@@ -1097,8 +1082,7 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
     m, b = np.polyfit(x, s.values, 1)
     yhat = m * x + b
     color = "green" if m >= 0 else "red"
-    ax.plot(s.index, yhat, linestyle="--", linewidth=2.4, color=color,
-            label=f"{label_prefix} ({fmt_slope(m)}/bar)")
+    ax.plot(s.index, yhat, linestyle="--", linewidth=2.4, color=color, label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return float(m)
 
 def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = True):
@@ -1119,47 +1103,46 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = 
         if dn_idx:
             ax.scatter(dn_idx, ntd.loc[dn_idx], marker="x", s=60, color="tab:red", zorder=9, label="Price↓NTD")
 
-# =========================
-# Ichimoku / ATR / Supertrend / PSAR
-# =========================
 def ichimoku_lines(high: pd.Series, low: pd.Series, close: pd.Series,
                    conv: int = 9, base: int = 26, span_b: int = 52, shift_cloud: bool = True):
     h = _coerce_1d_series(high)
     l = _coerce_1d_series(low)
     c = _coerce_1d_series(close)
     idx = c.index.union(h.index).union(l.index)
-    h = h.reindex(idx); l = l.reindex(idx); c = c.reindex(idx)
+    h = h.reindex(idx)
+    l = l.reindex(idx)
+    c = c.reindex(idx)
 
-    tenkan = ((h.rolling(conv).max() + l.rolling(conv).min()) / 2.0)
-    kijun  = ((h.rolling(base).max() + l.rolling(base).min()) / 2.0)
+    tenkan = (h.rolling(conv).max() + l.rolling(conv).min()) / 2.0
+    kijun = (h.rolling(base).max() + l.rolling(base).min()) / 2.0
     senkou_a = (tenkan + kijun) / 2.0
-    senkou_b = ((h.rolling(span_b).max() + l.rolling(span_b).min()) / 2.0)
+    senkou_b = (h.rolling(span_b).max() + l.rolling(span_b).min()) / 2.0
 
     if shift_cloud:
         senkou_a = senkou_a.shift(base)
         senkou_b = senkou_b.shift(base)
-        chikou   = c.shift(-base)
+        chikou = c.shift(-base)
     else:
-        chikou   = c
+        chikou = c
     return tenkan.reindex(idx), kijun.reindex(idx), senkou_a.reindex(idx), senkou_b.reindex(idx), chikou.reindex(idx)
 
 def _compute_atr_from_ohlc(df: pd.DataFrame, period: int = 10) -> pd.Series:
-    if df is None or df.empty or not {"High","Low","Close"}.issubset(df.columns):
+    if df is None or df.empty or not {"High", "Low", "Close"}.issubset(df.columns):
         return pd.Series(dtype=float)
     high = _coerce_1d_series(df["High"])
-    low  = _coerce_1d_series(df["Low"])
-    close= _coerce_1d_series(df["Close"])
+    low = _coerce_1d_series(df["Low"])
+    close = _coerce_1d_series(df["Close"])
     tr1 = high - low
     tr2 = (high - close.shift(1)).abs()
-    tr3 = (low  - close.shift(1)).abs()
+    tr3 = (low - close.shift(1)).abs()
     tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-    atr = tr.ewm(alpha=1/period, adjust=False).mean()
+    atr = tr.ewm(alpha=1 / period, adjust=False).mean()
     return atr.reindex(df.index)
 
 def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float = 3.0) -> pd.DataFrame:
-    if df is None or df.empty or not {"High","Low","Close"}.issubset(df.columns):
-        return pd.DataFrame(columns=["ST","in_uptrend"])
-    ohlc = df[["High","Low","Close"]].copy()
+    if df is None or df.empty or not {"High", "Low", "Close"}.issubset(df.columns):
+        return pd.DataFrame(columns=["ST", "in_uptrend"])
+    ohlc = df[["High", "Low", "Close"]].copy()
     atr = _compute_atr_from_ohlc(ohlc, period=atr_period)
     hl2 = (ohlc["High"] + ohlc["Low"]) / 2.0
     upperband = hl2 + atr_mult * atr
@@ -1173,26 +1156,27 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
             in_uptrend.iloc[i] = True
             st_line.iloc[i] = lowerband.iloc[i]
             continue
-        if ohlc["Close"].iloc[i] > upperband.iloc[i-1]:
+        if ohlc["Close"].iloc[i] > upperband.iloc[i - 1]:
             in_uptrend.iloc[i] = True
-        elif ohlc["Close"].iloc[i] < lowerband.iloc[i-1]:
+        elif ohlc["Close"].iloc[i] < lowerband.iloc[i - 1]:
             in_uptrend.iloc[i] = False
         else:
-            in_uptrend.iloc[i] = in_uptrend.iloc[i-1]
-            if in_uptrend.iloc[i] and lowerband.iloc[i] < lowerband.iloc[i-1]:
-                lowerband.iloc[i] = lowerband.iloc[i-1]
-            if (not in_uptrend.iloc[i]) and upperband.iloc[i] > upperband.iloc[i-1]:
-                upperband.iloc[i] = upperband.iloc[i-1]
+            in_uptrend.iloc[i] = in_uptrend.iloc[i - 1]
+            if in_uptrend.iloc[i] and lowerband.iloc[i] < lowerband.iloc[i - 1]:
+                lowerband.iloc[i] = lowerband.iloc[i - 1]
+            if (not in_uptrend.iloc[i]) and upperband.iloc[i] > upperband.iloc[i - 1]:
+                upperband.iloc[i] = upperband.iloc[i - 1]
         st_line.iloc[i] = lowerband.iloc[i] if in_uptrend.iloc[i] else upperband.iloc[i]
     return pd.DataFrame({"ST": st_line, "in_uptrend": in_uptrend})
 
 def compute_psar_from_ohlc(df: pd.DataFrame, step: float = 0.02, max_step: float = 0.2) -> pd.DataFrame:
-    if df is None or df.empty or not {"High","Low"}.issubset(df.columns):
-        return pd.DataFrame(columns=["PSAR","in_uptrend"])
+    if df is None or df.empty or not {"High", "Low"}.issubset(df.columns):
+        return pd.DataFrame(columns=["PSAR", "in_uptrend"])
     high = _coerce_1d_series(df["High"])
-    low  = _coerce_1d_series(df["Low"])
+    low = _coerce_1d_series(df["Low"])
     idx = high.index.union(low.index)
-    high = high.reindex(idx); low = low.reindex(idx)
+    high = high.reindex(idx)
+    low = low.reindex(idx)
 
     psar = pd.Series(index=idx, dtype=float)
     in_uptrend = pd.Series(index=idx, dtype=bool)
@@ -1203,12 +1187,14 @@ def compute_psar_from_ohlc(df: pd.DataFrame, step: float = 0.02, max_step: float
     af = step
 
     for i in range(1, len(idx)):
-        prev_psar = psar.iloc[i-1]
-        if in_uptrend.iloc[i-1]:
+        prev_psar = psar.iloc[i - 1]
+        if in_uptrend.iloc[i - 1]:
             psar.iloc[i] = prev_psar + af * (ep - prev_psar)
-            psar.iloc[i] = min(psar.iloc[i],
-                               float(low.iloc[i-1]),
-                               float(low.iloc[i-2]) if i >= 2 else float(low.iloc[i-1]))
+            psar.iloc[i] = min(
+                psar.iloc[i],
+                float(low.iloc[i - 1]),
+                float(low.iloc[i - 2]) if i >= 2 else float(low.iloc[i - 1]),
+            )
             if high.iloc[i] > ep:
                 ep = float(high.iloc[i])
                 af = min(af + step, max_step)
@@ -1221,9 +1207,11 @@ def compute_psar_from_ohlc(df: pd.DataFrame, step: float = 0.02, max_step: float
                 in_uptrend.iloc[i] = True
         else:
             psar.iloc[i] = prev_psar + af * (ep - prev_psar)
-            psar.iloc[i] = max(psar.iloc[i],
-                               float(high.iloc[i-1]),
-                               float(high.iloc[i-2]) if i >= 2 else float(high.iloc[i-1]))
+            psar.iloc[i] = max(
+                psar.iloc[i],
+                float(high.iloc[i - 1]),
+                float(high.iloc[i - 2]) if i >= 2 else float(high.iloc[i - 1]),
+            )
             if low.iloc[i] < ep:
                 ep = float(low.iloc[i])
                 af = min(af + step, max_step)
@@ -1236,23 +1224,19 @@ def compute_psar_from_ohlc(df: pd.DataFrame, step: float = 0.02, max_step: float
                 in_uptrend.iloc[i] = False
     return pd.DataFrame({"PSAR": psar, "in_uptrend": in_uptrend})
 
-# =========================
-# Pivots
-# =========================
 def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
-    if ohlc is None or ohlc.empty or not {"High","Low","Close"}.issubset(ohlc.columns):
+    if ohlc is None or ohlc.empty or not {"High", "Low", "Close"}.issubset(ohlc.columns):
         return {}
     ohlc = ohlc.sort_index()
     row = ohlc.iloc[-2] if len(ohlc) >= 2 else ohlc.iloc[-1]
     H, L, C = float(row["High"]), float(row["Low"]), float(row["Close"])
-    P  = (H + L + C) / 3.0
-    R1 = 2 * P - L; S1 = 2 * P - H
-    R2 = P + (H - L); S2 = P - (H - L)
+    P = (H + L + C) / 3.0
+    R1 = 2 * P - L
+    S1 = 2 * P - H
+    R2 = P + (H - L)
+    S2 = P - (H - L)
     return {"P": P, "R1": R1, "S1": S1, "R2": R2, "S2": S2}
 
-# =========================
-# Forex sessions + Yahoo news
-# =========================
 NY_TZ = pytz.timezone("America/New_York")
 LDN_TZ = pytz.timezone("Europe/London")
 
@@ -1261,17 +1245,17 @@ def session_markers_for_index(idx: pd.DatetimeIndex, session_tz, open_hr: int, c
     if not isinstance(idx, pd.DatetimeIndex) or idx.tz is None or idx.empty:
         return opens, closes
     start_d = idx[0].astimezone(session_tz).date()
-    end_d   = idx[-1].astimezone(session_tz).date()
+    end_d = idx[-1].astimezone(session_tz).date()
     rng = pd.date_range(start=start_d, end=end_d, freq="D")
     lo, hi = idx.min(), idx.max()
     for d in rng:
         try:
-            dt_open_local  = session_tz.localize(datetime(d.year, d.month, d.day, open_hr, 0, 0), is_dst=None)
+            dt_open_local = session_tz.localize(datetime(d.year, d.month, d.day, open_hr, 0, 0), is_dst=None)
             dt_close_local = session_tz.localize(datetime(d.year, d.month, d.day, close_hr, 0, 0), is_dst=None)
         except Exception:
-            dt_open_local  = session_tz.localize(datetime(d.year, d.month, d.day, open_hr, 0, 0))
+            dt_open_local = session_tz.localize(datetime(d.year, d.month, d.day, open_hr, 0, 0))
             dt_close_local = session_tz.localize(datetime(d.year, d.month, d.day, close_hr, 0, 0))
-        dt_open_pst  = dt_open_local.astimezone(PACIFIC)
+        dt_open_pst = dt_open_local.astimezone(PACIFIC)
         dt_close_pst = dt_close_local.astimezone(PACIFIC)
         if lo <= dt_open_pst <= hi:
             opens.append(dt_open_pst)
@@ -1281,7 +1265,7 @@ def session_markers_for_index(idx: pd.DatetimeIndex, session_tz, open_hr: int, c
 
 def compute_session_lines(idx: pd.DatetimeIndex):
     ldn_open, ldn_close = session_markers_for_index(idx, LDN_TZ, 8, 17)
-    ny_open, ny_close   = session_markers_for_index(idx, NY_TZ, 8, 17)
+    ny_open, ny_close = session_markers_for_index(idx, NY_TZ, 8, 17)
     return {"ldn_open": ldn_open, "ldn_close": ldn_close, "ny_open": ny_open, "ny_close": ny_close}
 
 def draw_session_lines(ax, lines: dict, alpha: float = 0.35):
@@ -1294,9 +1278,9 @@ def draw_session_lines(ax, lines: dict, alpha: float = 0.35):
     for t in lines.get("ny_close", []):
         ax.axvline(t, linestyle="--", linewidth=1.0, color="tab:orange", alpha=alpha)
     handles = [
-        Line2D([0], [0], color="tab:blue",   linestyle="-",  linewidth=1.6, label="London Open"),
-        Line2D([0], [0], color="tab:blue",   linestyle="--", linewidth=1.6, label="London Close"),
-        Line2D([0], [0], color="tab:orange", linestyle="-",  linewidth=1.6, label="New York Open"),
+        Line2D([0], [0], color="tab:blue", linestyle="-", linewidth=1.6, label="London Open"),
+        Line2D([0], [0], color="tab:blue", linestyle="--", linewidth=1.6, label="London Close"),
+        Line2D([0], [0], color="tab:orange", linestyle="-", linewidth=1.6, label="New York Open"),
         Line2D([0], [0], color="tab:orange", linestyle="--", linewidth=1.6, label="New York Close"),
     ]
     labels = [h.get_label() for h in handles]
@@ -1325,7 +1309,7 @@ def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
             "time": dt_pst,
             "title": item.get("title", ""),
             "publisher": item.get("publisher", ""),
-            "link": item.get("link", "")
+            "link": item.get("link", ""),
         })
     df = pd.DataFrame(rows)
     if df.empty:
@@ -1341,7 +1325,6 @@ def draw_news_markers(ax, times, label="News"):
         except Exception:
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
-
 # =========================
 # NTD channel-in-range (hourly panel)
 # =========================
@@ -1391,10 +1374,10 @@ def overlay_inrange_on_ntd(ax, price: pd.Series, sup: pd.Series, res: pd.Series)
     enter_from_below = (state.shift(1) == -1) & (state == 0)
     enter_from_above = (state.shift(1) == 1) & (state == 0)
     if enter_from_below.any():
-        ax.scatter(price.index[enter_from_below], [0.92]*int(enter_from_below.sum()),
+        ax.scatter(price.index[enter_from_below], [0.92] * int(enter_from_below.sum()),
                    marker="^", s=60, color="tab:green", zorder=7, label="Enter from S")
     if enter_from_above.any():
-        ax.scatter(price.index[enter_from_above], [0.92]*int(enter_from_above.sum()),
+        ax.scatter(price.index[enter_from_above], [0.92] * int(enter_from_above.sum()),
                    marker="v", s=60, color="tab:orange", zorder=7, label="Enter from R")
 
     last = state.dropna().iloc[-1] if state.dropna().shape[0] else np.nan
@@ -1429,19 +1412,23 @@ def find_macd_hma_sr_signal(close: pd.Series,
     ok = c.notna() & h.notna() & m.notna() & s_sup.notna() & s_res.notna()
     if ok.sum() < 3:
         return None
-    c = c[ok]; h = h[ok]; m = m[ok]; s_sup = s_sup[ok]; s_res = s_res[ok]
+    c = c[ok]
+    h = h[ok]
+    m = m[ok]
+    s_sup = s_sup[ok]
+    s_res = s_res[ok]
 
     cross_up, cross_dn = _cross_series(c, h)
     cross_up = cross_up.reindex(c.index, fill_value=False)
     cross_dn = cross_dn.reindex(c.index, fill_value=False)
 
     near_support = c <= s_sup * (1.0 + prox)
-    near_resist  = c >= s_res * (1.0 - prox)
+    near_resist = c >= s_res * (1.0 - prox)
 
     uptrend = np.isfinite(global_trend_slope) and float(global_trend_slope) > 0
     downtrend = np.isfinite(global_trend_slope) and float(global_trend_slope) < 0
 
-    buy_mask  = uptrend   & (m < 0.0) & cross_up & near_support
+    buy_mask = uptrend & (m < 0.0) & cross_up & near_support
     sell_mask = downtrend & (m > 0.0) & cross_dn & near_resist
 
     last_buy = buy_mask[buy_mask].index[-1] if buy_mask.any() else None
@@ -1465,6 +1452,17 @@ def annotate_macd_signal(ax, ts, px, side: str):
         ax.scatter([ts], [px], marker="*", s=180, color="tab:green", zorder=10, label="MACD BUY (HMA55+S/R)")
     else:
         ax.scatter([ts], [px], marker="*", s=180, color="tab:red", zorder=10, label="MACD SELL (HMA55+S/R)")
+
+# =========================
+# Global slope helper
+# =========================
+def _global_slope_1d(series_like):
+    s = _coerce_1d_series(series_like).dropna()
+    if len(s) < 2:
+        return float("nan")
+    x = np.arange(len(s), dtype=float)
+    m, _ = np.polyfit(x, s.to_numpy(dtype=float), 1)
+    return float(m)
 
 # =========================
 # Scanners: cached small computations
@@ -1625,12 +1623,6 @@ def trend_buy_row_daily(symbol: str,
                         slope_lb: int,
                         ntd_win: int = 60,
                         max_bars_since: int = 5):
-    """
-    Trend Buy / Hot Buy (Daily):
-      - Trendline Slope > 0
-      - Regression Slope > 0
-      - NPX crossed UP through 0.0 recently (within max_bars_since bars)
-    """
     try:
         close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
         close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
@@ -1695,13 +1687,6 @@ def trend_buy_row_hourly(symbol: str,
                          slope_lb: int,
                          ntd_win: int = 60,
                          max_bars_since: int = 10):
-    """
-    Trend Buy / Hot Buy (Hourly / intraday 5m bars):
-      - Trendline Slope > 0
-      - Regression Slope > 0
-      - NPX crossed UP through 0.0 recently (within max_bars_since bars)
-    Cross Time returned in PST (intraday index is PACIFIC).
-    """
     try:
         df = fetch_intraday(symbol, period=period)
         if df is None or df.empty or "Close" not in df.columns:
@@ -1764,13 +1749,6 @@ def green_zone_buy_alert_row_daily(symbol: str,
                                    slope_lb: int,
                                    ntd_win: int = 60,
                                    max_bars_since: int = 5):
-    """
-    Daily:
-      - Trendline slope > 0
-      - Regression slope > 0
-      - NPX crossed UP through NTD recently
-      - Both NPX and NTD were below 0.0 at cross
-    """
     try:
         close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
         close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
@@ -1833,13 +1811,6 @@ def green_zone_buy_alert_row_hourly(symbol: str,
                                     slope_lb: int,
                                     ntd_win: int = 60,
                                     max_bars_since: int = 60):
-    """
-    Hourly:
-      - Trendline slope > 0
-      - Regression slope > 0
-      - NPX crossed UP through NTD recently
-      - Both NPX and NTD were below 0.0 at cross
-    """
     try:
         df = fetch_intraday(symbol, period=period)
         if df is None or df.empty or "Close" not in df.columns:
@@ -1903,13 +1874,6 @@ def zero_cross_signal_row_daily(symbol: str,
                                 slope_lb: int,
                                 ntd_win: int = 60,
                                 max_bars_since: int = 5):
-    """
-    Zero Cross:
-      - Trendline slope > 0
-      - Regression slope > 0
-      - NPX recently crossed UP through 0.0
-      - NPX@Cross must be > 0.0
-    """
     try:
         close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
         close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
@@ -1974,13 +1938,6 @@ def zero_cross_signal_row_hourly(symbol: str,
                                  slope_lb: int,
                                  ntd_win: int = 60,
                                  max_bars_since: int = 10):
-    """
-    Zero Cross:
-      - Trendline slope > 0
-      - Regression slope > 0
-      - NPX recently crossed UP through 0.0
-      - NPX@Cross must be > 0.0
-    """
     try:
         df = fetch_intraday(symbol, period=period)
         if df is None or df.empty or "Close" not in df.columns:
@@ -2047,13 +2004,6 @@ def green_cross_signal_row_daily(symbol: str,
                                  slope_lb: int,
                                  ntd_win: int = 60,
                                  max_bars_since: int = 5):
-    """
-    Green Cross:
-      - Trendline slope > 0
-      - Regression slope > 0
-      - NPX recently crossed UP through NTD
-      - NTD@Cross must be > 0.0
-    """
     try:
         close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
         close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
@@ -2088,6 +2038,7 @@ def green_cross_signal_row_daily(symbol: str,
         bars_since = _bars_since_event(close_show.index, t_cross)
         if int(bars_since) > int(max_bars_since):
             return None
+
         ntd_at_cross = float(ntd_show.loc[t_cross]) if np.isfinite(ntd_show.loc[t_cross]) else np.nan
         if not (np.isfinite(ntd_at_cross) and ntd_at_cross > 0.0):
             return None
@@ -2124,13 +2075,6 @@ def green_cross_signal_row_hourly(symbol: str,
                                   slope_lb: int,
                                   ntd_win: int = 60,
                                   max_bars_since: int = 10):
-    """
-    Green Cross:
-      - Trendline slope > 0
-      - Regression slope > 0
-      - NPX recently crossed UP through NTD
-      - NTD@Cross must be > 0.0
-    """
     try:
         df = fetch_intraday(symbol, period=period)
         if df is None or df.empty or "Close" not in df.columns:
@@ -2196,17 +2140,6 @@ def green_cross_signal_row_hourly(symbol: str,
         }
     except Exception:
         return None
-
-# =========================
-# Global slope helper
-# =========================
-def _global_slope_1d(series_like):
-    s = _coerce_1d_series(series_like).dropna()
-    if len(s) < 2:
-        return float("nan")
-    x = np.arange(len(s), dtype=float)
-    m, _ = np.polyfit(x, s.to_numpy(dtype=float), 1)
-    return float(m)
 
 @st.cache_data(ttl=120)
 def hma_signal_row_daily(symbol: str,
@@ -2623,6 +2556,122 @@ def ntd_cross_row_hourly(symbol: str,
         return None
 
 # =========================
+# New scanner — Green Marker
+# =========================
+@st.cache_data(ttl=120)
+def green_marker_row_daily(symbol: str,
+                           daily_view_label: str,
+                           ntd_win: int = 60,
+                           max_bars_since: int = 5):
+    try:
+        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        close = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
+        if len(close) < 20:
+            return None
+
+        global_slope = _global_slope_1d(close)
+        if not (np.isfinite(global_slope) and float(global_slope) > 0.0):
+            return None
+
+        ntd = _coerce_1d_series(compute_normalized_trend(close, window=int(ntd_win)))
+        npx = _coerce_1d_series(compute_normalized_price(close, window=int(ntd_win)))
+        ok = ntd.notna() & npx.notna()
+        if ok.sum() < 2:
+            return None
+        ntd = ntd[ok]
+        npx = npx[ok]
+
+        up_mask, _ = _strict_cross_series(npx, ntd)
+        up_mask = up_mask.reindex(ntd.index, fill_value=False)
+        green_mask = up_mask & (ntd > 0.0)
+        if not green_mask.any():
+            return None
+
+        green_times = list(green_mask[green_mask].index)
+        t_start = green_times[0]
+        t_last = green_times[-1]
+        bars_since = _bars_since_event(close.index, t_last)
+        if bars_since > int(max_bars_since):
+            return None
+
+        _, _, _, rm, r2 = regression_with_band(close, lookback=min(len(close), int(slope_lb_daily)))
+
+        return {
+            "Symbol": symbol,
+            "Frame": "Daily",
+            "Green Dot Start (PST)": t_start,
+            "Most Recent Green Dot (PST)": t_last,
+            "Bars Since Most Recent": int(bars_since),
+            "Green Dot Count": int(len(green_times)),
+            "Trendline Slope": float(global_slope),
+            "Regression Slope": float(rm) if np.isfinite(rm) else np.nan,
+            "R2": float(r2) if np.isfinite(r2) else np.nan,
+            "NTD(last)": float(ntd.iloc[-1]) if np.isfinite(ntd.iloc[-1]) else np.nan,
+            "NPX(last)": float(npx.iloc[-1]) if np.isfinite(npx.iloc[-1]) else np.nan,
+            "Last Price": float(close.iloc[-1]) if np.isfinite(close.iloc[-1]) else np.nan,
+        }
+    except Exception:
+        return None
+
+@st.cache_data(ttl=120)
+def green_marker_row_hourly(symbol: str,
+                            period: str,
+                            ntd_win: int = 60,
+                            max_bars_since: int = 10):
+    try:
+        df = fetch_intraday(symbol, period=period)
+        if df is None or df.empty or "Close" not in df.columns:
+            return None
+
+        close = _coerce_1d_series(df["Close"]).ffill().dropna()
+        if len(close) < 40:
+            return None
+
+        global_slope = _global_slope_1d(close)
+        if not (np.isfinite(global_slope) and float(global_slope) > 0.0):
+            return None
+
+        ntd = _coerce_1d_series(compute_normalized_trend(close, window=int(ntd_win)))
+        npx = _coerce_1d_series(compute_normalized_price(close, window=int(ntd_win)))
+        ok = ntd.notna() & npx.notna()
+        if ok.sum() < 2:
+            return None
+        ntd = ntd[ok]
+        npx = npx[ok]
+
+        up_mask, _ = _strict_cross_series(npx, ntd)
+        up_mask = up_mask.reindex(ntd.index, fill_value=False)
+        green_mask = up_mask & (ntd > 0.0)
+        if not green_mask.any():
+            return None
+
+        green_times = list(green_mask[green_mask].index)
+        t_start = green_times[0]
+        t_last = green_times[-1]
+        bars_since = _bars_since_event(close.index, t_last)
+        if bars_since > int(max_bars_since):
+            return None
+
+        _, _, _, rm, r2 = regression_with_band(close, lookback=min(len(close), int(slope_lb_hourly)))
+
+        return {
+            "Symbol": symbol,
+            "Frame": f"Hourly({period})",
+            "Green Dot Start (PST)": t_start,
+            "Most Recent Green Dot (PST)": t_last,
+            "Bars Since Most Recent": int(bars_since),
+            "Green Dot Count": int(len(green_times)),
+            "Trendline Slope": float(global_slope),
+            "Regression Slope": float(rm) if np.isfinite(rm) else np.nan,
+            "R2": float(r2) if np.isfinite(r2) else np.nan,
+            "NTD(last)": float(ntd.iloc[-1]) if np.isfinite(ntd.iloc[-1]) else np.nan,
+            "NPX(last)": float(npx.iloc[-1]) if np.isfinite(npx.iloc[-1]) else np.nan,
+            "Last Price": float(close.iloc[-1]) if np.isfinite(close.iloc[-1]) else np.nan,
+        }
+    except Exception:
+        return None
+
+# =========================
 # Daily chart renderer
 # =========================
 def render_daily_chart(symbol: str, view_label: str):
@@ -2909,6 +2958,16 @@ def render_hourly_chart(symbol: str, period: str = "1d"):
     if macd_sig_row_h is not None:
         annotate_macd_signal(ax, macd_sig_row_h["time"], macd_sig_row_h["price"], macd_sig_row_h["side"])
 
+    if mode == "Forex" and show_fx_news and real_times is not None:
+        news_df = fetch_yf_news(symbol, window_days=news_window_days)
+        if news_df is not None and not news_df.empty:
+            draw_news_markers(ax, list(news_df["time"]), label="News")
+
+    if mode == "Forex" and show_sessions_pst and real_times is not None:
+        handles_sess, labels_sess = draw_session_lines(ax, compute_session_lines(real_times), alpha=0.28)
+    else:
+        handles_sess, labels_sess = [], []
+
     px_val = _safe_current_yahoo_price(symbol, fallback=_safe_last_float(hc))
     if np.isfinite(px_val):
         ax.axhline(px_val, linestyle="--", linewidth=1.0, color="black", alpha=0.5)
@@ -2920,7 +2979,6 @@ def render_hourly_chart(symbol: str, period: str = "1d"):
         f"{symbol} — Hourly ({period})  |  Global={fmt_slope(global_m_h)}  Local={fmt_slope(m_h)}  R²={fmt_r2(r2_h)}  Rev={fmt_pct(rev_prob_h)}"
     )
 
-    handles_sess, labels_sess = [], []
     handles, labels = ax.get_legend_handles_labels()
     handles = list(handles) + list(handles_sess)
     labels = list(labels) + list(labels_sess)
@@ -3090,7 +3148,8 @@ if "run_all" not in st.session_state:
 # Tabs
 # =========================
 (
-    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8,
+    tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16
 ) = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
@@ -3107,6 +3166,7 @@ if "run_all" not in st.session_state:
     "Long-Term History",
     "NTD Buy Signal",
     "NTD Cross",
+    "Green Marker",
 ])
 
 period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
@@ -3661,3 +3721,37 @@ with tab15:
                 st.info("No symbols found.")
             else:
                 st.dataframe(neg_df, use_container_width=True)
+
+# =========================
+# TAB 16 — Green Marker
+# =========================
+with tab16:
+    st.header("Green Marker")
+    st.caption("Lists symbols where green dots recently started, the global trend is upward, and shows the green-dot count.")
+
+    c1, c2, c3 = st.columns([1, 1, 1])
+    frame_choice = c1.selectbox("Frame", ["Daily", "Hourly"], key=f"gm_frame_{mode}")
+    hour_choice = c2.selectbox("Hourly lookback", ["24h", "48h", "96h"], key=f"gm_hour_{mode}")
+    max_rows = int(c3.number_input("Max rows", min_value=5, max_value=500, value=100, step=5, key=f"gm_rows_{mode}"))
+
+    if st.button("Scan Green Marker", key=f"btn_gm_{mode}", use_container_width=True):
+        rows = []
+        with st.spinner("Scanning..."):
+            for symbol in universe:
+                row = (
+                    green_marker_row_daily(symbol, daily_view, ntd_win=ntd_window, max_bars_since=5)
+                    if frame_choice == "Daily"
+                    else green_marker_row_hourly(symbol, period_map[hour_choice], ntd_win=ntd_window, max_bars_since=10)
+                )
+                if row is not None:
+                    rows.append(row)
+
+        out = pd.DataFrame(rows)
+        if out.empty:
+            st.info("No Green Marker symbols found.")
+        else:
+            out = out.sort_values(
+                ["Bars Since Most Recent", "Green Dot Count", "R2", "Symbol"],
+                ascending=[True, False, False, True]
+            ).head(max_rows)
+            st.dataframe(out, use_container_width=True)
