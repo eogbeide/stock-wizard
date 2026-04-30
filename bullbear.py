@@ -1,5 +1,3 @@
-# bullbear.py — Complete updated Streamlit app (Batch 1/3)
-# -------------------------------------------------------
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -12,36 +10,9 @@ import pytz
 from matplotlib.transforms import blended_transform_factory
 from matplotlib.lines import Line2D
 
-# =========================
-# Styling / Page
-# =========================
-def _apply_mpl_theme():
-    """Clean matplotlib look (STYLE ONLY)."""
-    try:
-        plt.rcParams.update({
-            "figure.dpi": 120,
-            "savefig.dpi": 140,
-            "figure.facecolor": "white",
-            "axes.facecolor": "white",
-            "axes.edgecolor": "0.25",
-            "axes.linewidth": 0.9,
-            "axes.titleweight": "bold",
-            "axes.titlesize": 12,
-            "axes.labelsize": 10,
-            "xtick.labelsize": 9,
-            "ytick.labelsize": 9,
-            "grid.alpha": 0.18,
-            "grid.linewidth": 0.8,
-            "legend.fontsize": 9,
-            "legend.framealpha": 0.70,
-            "legend.fancybox": True,
-            "lines.linewidth": 1.6,
-        })
-    except Exception:
-        pass
-
-_apply_mpl_theme()
-
+# ---------------------------
+# Page config + UI CSS
+# ---------------------------
 st.set_page_config(
     page_title="📊 Dashboard & Forecasts",
     page_icon="📈",
@@ -49,88 +20,37 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Ribbon tabs + nicer chart container
 st.markdown("""
 <style>
   #MainMenu, header, footer {visibility: hidden;}
-
-  /* Ribbon tabs */
-  div[data-baseweb="tab-list"] {
-    flex-wrap: wrap !important;
-    overflow-x: visible !important;
-    gap: 0.45rem !important;
-    padding: 0.35rem 0.35rem 0.25rem 0.35rem !important;
-    border-bottom: 1px solid rgba(49, 51, 63, 0.18) !important;
-  }
-  div[data-baseweb="tab"] { flex: 0 0 auto !important; }
-  div[data-baseweb="tab"] > button,
-  div[data-baseweb="tab"] button {
-    border: 1px solid rgba(49, 51, 63, 0.22) !important;
-    background: rgba(255,255,255,0.92) !important;
-    padding: 0.45rem 0.75rem !important;
-    border-radius: 6px !important;
-    font-weight: 800 !important;
-    letter-spacing: 0.01em !important;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.06) !important;
-    transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease !important;
-    white-space: nowrap !important;
-  }
-  div[data-baseweb="tab"] > button:hover,
-  div[data-baseweb="tab"] button:hover {
-    transform: translateY(-1px) !important;
-    box-shadow: 0 6px 16px rgba(0,0,0,0.10) !important;
-  }
-  div[data-baseweb="tab"] > button[aria-selected="true"],
-  div[data-baseweb="tab"] button[aria-selected="true"] {
-    background: rgba(49, 51, 63, 0.92) !important;
-    color: white !important;
-    border-color: rgba(49, 51, 63, 0.92) !important;
-    box-shadow: 0 10px 22px rgba(0,0,0,0.16) !important;
-  }
-  div[data-baseweb="tab"] > button:focus,
-  div[data-baseweb="tab"] button:focus {
-    outline: none !important;
-    box-shadow: 0 0 0 3px rgba(49, 51, 63, 0.18) !important;
-  }
-
-  /* Chart container */
-  div[data-testid="stImage"] {
-    border: 1px solid rgba(49, 51, 63, 0.12);
-    border-radius: 14px;
-    background: rgba(255,255,255,0.65);
-    box-shadow: 0 8px 24px rgba(0,0,0,0.06);
-    padding: 0.35rem 0.35rem 0.15rem 0.35rem;
-    overflow: hidden;
-  }
-  div[data-testid="stImage"] img { border-radius: 12px; }
-
   @media (max-width: 600px) {
-    div[data-baseweb="tab-list"] { gap: 0.30rem !important; }
+    .css-18e3th9 {
+      transform: none !important;
+      visibility: visible !important;
+      width: 100% !important;
+      position: relative !important;
+      margin-bottom: 1rem;
+    }
+    .css-1v3fvcr { margin-left: 0 !important; }
   }
 </style>
 """, unsafe_allow_html=True)
 
-# =========================
-# Time / Auto-refresh (PST)
-# =========================
+# ---------------------------
+# Auto-refresh (PST)
+# ---------------------------
+REFRESH_INTERVAL = 120  # seconds
 PACIFIC = pytz.timezone("US/Pacific")
-REFRESH_INTERVAL = 120
-
-def _rerun():
-    try:
-        st.rerun()
-    except Exception:
-        try:
-            st.experimental_rerun()
-        except Exception:
-            pass
 
 def auto_refresh():
     if "last_refresh" not in st.session_state:
         st.session_state.last_refresh = time.time()
     elif time.time() - st.session_state.last_refresh > REFRESH_INTERVAL:
         st.session_state.last_refresh = time.time()
-        _rerun()
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
 
 auto_refresh()
 elapsed = time.time() - st.session_state.last_refresh
@@ -142,25 +62,70 @@ st.sidebar.markdown(
     f"**Next in:** ~{remaining}s"
 )
 
-# =========================
-# Shared helpers
-# =========================
+# ---------------------------
+# Mode buttons (Forex / Stocks)
+# ---------------------------
+def _reset_run_state_for_mode_switch():
+    """
+    When switching modes, reset run state so:
+      • selectbox keys don't crash due to old values not in new universe
+      • charts/forecast don't show stale data
+    """
+    st.session_state.run_all = False
+    st.session_state.ticker = None
+    st.session_state.pop("df_hist", None)
+    st.session_state.pop("df_ohlc", None)
+    st.session_state.pop("fc_idx", None)
+    st.session_state.pop("fc_vals", None)
+    st.session_state.pop("fc_ci", None)
+    st.session_state.pop("intraday", None)
+    st.session_state.pop("chart", None)
+    st.session_state.pop("hour_range", None)
+    st.session_state.pop("mode_at_run", None)
+
+if "asset_mode" not in st.session_state:
+    st.session_state.asset_mode = "Forex"  # default
+
+st.title("📊 Dashboard & Forecasts")
+mcol1, mcol2 = st.columns(2)
+
+if mcol1.button("🌐 Forex", use_container_width=True, key="btn_mode_forex"):
+    if st.session_state.asset_mode != "Forex":
+        st.session_state.asset_mode = "Forex"
+        _reset_run_state_for_mode_switch()
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
+
+if mcol2.button("📈 Stocks", use_container_width=True, key="btn_mode_stock"):
+    if st.session_state.asset_mode != "Stock":
+        st.session_state.asset_mode = "Stock"
+        _reset_run_state_for_mode_switch()
+        try:
+            st.experimental_rerun()
+        except Exception:
+            pass
+
+mode = st.session_state.asset_mode
+st.caption(f"**Current mode:** {mode}")
+
+# ---------------------------
+# Aesthetic helper (no logic change)
+# ---------------------------
 def style_axes(ax):
+    """Simple, consistent, user-friendly chart styling."""
     try:
-        ax.grid(True, which="major", alpha=0.18, linewidth=0.8)
-        ax.minorticks_on()
-        ax.grid(True, which="minor", alpha=0.07, linewidth=0.6)
+        ax.grid(True, alpha=0.22, linewidth=0.8)
         ax.set_axisbelow(True)
         for spine in ["top", "right"]:
             ax.spines[spine].set_visible(False)
-        for spine in ["left", "bottom"]:
-            ax.spines[spine].set_alpha(0.25)
-        ax.tick_params(axis="both", which="major", length=4, width=0.9, colors="0.25")
-        ax.tick_params(axis="both", which="minor", length=2, width=0.6, colors="0.35")
-        ax.margins(x=0.01)
     except Exception:
         pass
 
+# ---------------------------
+# Core helpers
+# ---------------------------
 def _coerce_1d_series(obj) -> pd.Series:
     if obj is None:
         return pd.Series(dtype=float)
@@ -251,7 +216,6 @@ def _diff_text(a: float, b: float, symbol: str) -> str:
     return f"Δ {diff:.3f}"
 
 ALERT_TEXT = "ALERT: Trend may be changing - Open trade position with caution while still following the signals on the chat."
-FIB_ALERT_TEXT = "ALERT: Fibonacci Guidance — Prices often reverse at the 100% and 0% lines. It's essential to implement risk management when trading near these Fibonacci levels."
 
 def format_trade_instruction(trend_slope: float,
                              buy_val: float,
@@ -260,9 +224,13 @@ def format_trade_instruction(trend_slope: float,
                              symbol: str,
                              global_trend_slope: float = None) -> str:
     """
-    BUY only when Global slope and Local slope agree UP.
-    SELL only when Global slope and Local slope agree DOWN.
-    Otherwise show ALERT.
+    UPDATED (prior request):
+      - Show BUY instruction only when Global Trendline slope and Local Slope agree (both UP)
+      - Show SELL instruction only when Global Trendline slope and Local Slope agree (both DOWN)
+      - Otherwise show an alert message.
+
+    Backward-compatibility:
+      - If global_trend_slope is None, falls back to the prior behavior (uses only trend_slope).
     """
     def _finite(x):
         try:
@@ -274,16 +242,19 @@ def format_trade_instruction(trend_slope: float,
     exit_sell = float(sell_val) if _finite(sell_val) else float(close_val)
 
     if global_trend_slope is None:
+        uptrend = False
         try:
             uptrend = float(trend_slope) >= 0.0
         except Exception:
-            uptrend = False
+            pass
+
         if uptrend:
             leg_a_val, leg_b_val = entry_buy, exit_sell
             text = f"▲ BUY @{fmt_price_val(leg_a_val)} → ▼ SELL @{fmt_price_val(leg_b_val)}"
         else:
             leg_a_val, leg_b_val = exit_sell, entry_buy
             text = f"▼ SELL @{fmt_price_val(leg_a_val)} → ▲ BUY @{fmt_price_val(leg_b_val)}"
+
         text += f" • {_diff_text(leg_a_val, leg_b_val, symbol)}"
         return text
 
@@ -291,15 +262,19 @@ def format_trade_instruction(trend_slope: float,
         g = float(global_trend_slope)
         l = float(trend_slope)
     except Exception:
-        return ALERT_TEXT
+        g = np.nan
+        l = np.nan
+
+    alert_txt = ALERT_TEXT
 
     if (not np.isfinite(g)) or (not np.isfinite(l)):
-        return ALERT_TEXT
+        return alert_txt
 
     sg = float(np.sign(g))
     sl = float(np.sign(l))
+
     if sg == 0.0 or sl == 0.0:
-        return ALERT_TEXT
+        return alert_txt
 
     if sg > 0 and sl > 0:
         leg_a_val, leg_b_val = entry_buy, exit_sell
@@ -313,16 +288,23 @@ def format_trade_instruction(trend_slope: float,
         text += f" • {_diff_text(leg_a_val, leg_b_val, symbol)}"
         return text
 
-    return ALERT_TEXT
+    return alert_txt
+
 
 # =========================
-# Gapless intraday OHLC
+# Part 2/8 — bullbear.py
 # =========================
+# ---------------------------
+# Gapless (continuous) intraday prices
+# ---------------------------
 def make_gapless_ohlc(df: pd.DataFrame,
                       price_cols=("Open", "High", "Low", "Close"),
                       gap_mult: float = 12.0,
                       min_gap_seconds: float = 3600.0) -> pd.DataFrame:
-    """Remove price gaps across large time-gaps by applying cumulative offset."""
+    """
+    Remove *price gaps* at session breaks by applying a cumulative offset so that
+    the first bar after a large time-gap STARTS (Open) at the previous bar's Close.
+    """
     if df is None or df.empty:
         return df
     if not isinstance(df.index, pd.DatetimeIndex):
@@ -331,6 +313,7 @@ def make_gapless_ohlc(df: pd.DataFrame,
         return df
 
     ref_col = "Open" if "Open" in df.columns else "Close"
+
     close = pd.to_numeric(df["Close"], errors="coerce")
     refp  = pd.to_numeric(df[ref_col], errors="coerce")
 
@@ -400,41 +383,9 @@ def _map_times_to_bar_positions(real_times: pd.DatetimeIndex, times_list):
     pos = [int(i) for i in idxer if int(i) >= 0]
     return pos
 
-# =========================
-# Mode switching
-# =========================
-def _reset_run_state_for_mode_switch():
-    st.session_state.run_all = False
-    st.session_state.ticker = None
-    for k in [
-        "df_hist","df_ohlc","fc_idx","fc_vals","fc_ci",
-        "intraday","chart","hour_range","mode_at_run"
-    ]:
-        st.session_state.pop(k, None)
-
-if "asset_mode" not in st.session_state:
-    st.session_state.asset_mode = "Forex"
-
-st.title("📊 Dashboard & Forecasts")
-mcol1, mcol2 = st.columns(2)
-if mcol1.button("🌐 Forex", use_container_width=True, key="btn_mode_forex"):
-    if st.session_state.asset_mode != "Forex":
-        st.session_state.asset_mode = "Forex"
-        _reset_run_state_for_mode_switch()
-        _rerun()
-
-if mcol2.button("📈 Stocks", use_container_width=True, key="btn_mode_stock"):
-    if st.session_state.asset_mode != "Stock":
-        st.session_state.asset_mode = "Stock"
-        _reset_run_state_for_mode_switch()
-        _rerun()
-
-mode = st.session_state.asset_mode
-st.caption(f"**Current mode:** {mode}")
-
-# =========================
-# Sidebar config
-# =========================
+# ---------------------------
+# Sidebar configuration
+# ---------------------------
 st.sidebar.title("Configuration")
 st.sidebar.markdown(f"### Asset Class: **{mode}**")
 
@@ -444,12 +395,21 @@ if st.sidebar.button("🧹 Clear cache (data + run state)", use_container_width=
     except Exception:
         pass
     _reset_run_state_for_mode_switch()
-    _rerun()
+    for k in ["sb_show_fibs", "sb_show_mom_hourly", "sb_show_macd"]:
+        if k in st.session_state:
+            try:
+                del st.session_state[k]
+            except Exception:
+                pass
+    try:
+        st.experimental_rerun()
+    except Exception:
+        pass
 
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2, key="sb_bb_period")
 daily_view = st.sidebar.selectbox("Daily view range:", ["Historical", "6M", "12M", "24M"], index=2, key="sb_daily_view")
 
-show_fibs = st.sidebar.checkbox("Show Fibonacci", value=True, key="sb_show_fibs")
+show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=True, key="sb_show_fibs")
 
 slope_lb_daily  = st.sidebar.slider("Daily slope lookback (bars)", 10, 360, 90, 10, key="sb_slope_lb_daily")
 slope_lb_hourly = st.sidebar.slider("Hourly slope lookback (bars)", 12, 480, 120, 6, key="sb_slope_lb_hourly")
@@ -495,6 +455,7 @@ signal_threshold = st.sidebar.slider("S/R proximity signal threshold", 0.50, 0.9
 sr_prox_pct = st.sidebar.slider("S/R proximity (%)", 0.05, 1.00, 0.25, 0.05, key="sb_sr_prox") / 100.0
 
 st.sidebar.subheader("NTD (Daily/Hourly)")
+# UPDATED (THIS REQUEST): use a new key so Daily NTD displays ON by default again
 show_ntd = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd_v2")
 ntd_window = st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
 shade_ntd = st.sidebar.checkbox("Shade NTD (green=up, red=down)", value=True, key="sb_ntd_shade")
@@ -516,7 +477,7 @@ bb_use_ema = st.sidebar.checkbox("Use EMA midline (vs SMA)", value=False, key="s
 st.sidebar.subheader("Probabilistic HMA Crossover (Price Charts)")
 show_hma = st.sidebar.checkbox("Show HMA crossover signal", value=True, key="sb_hma_show")
 hma_period = st.sidebar.slider("HMA period", 5, 120, 55, 1, key="sb_hma_period")
-hma_conf = st.sidebar.slider("Crossover confidence (label-only)", 0.50, 0.99, 0.95, 0.01, key="sb_hma_conf")
+hma_conf = st.sidebar.slider("Crossover confidence (unused label-only)", 0.50, 0.99, 0.95, 0.01, key="sb_hma_conf")
 
 st.sidebar.subheader("HMA(55) Reversal on NTD")
 show_hma_rev_ntd = st.sidebar.checkbox("Mark HMA cross + slope reversal on NTD", value=True, key="sb_hma_rev_ntd")
@@ -535,7 +496,6 @@ else:
     news_window_days = 7
     show_sessions_pst = False
 
-# Universe
 if mode == "Stock":
     universe = sorted([
         "AAPL","SPY","AMZN","DIA","TSLA","SPGI","JPM","VTWG","PLTR","NVDA",
@@ -545,79 +505,64 @@ if mode == "Stock":
     ])
 else:
     universe = [
-        "EURUSD=X","EURJPY=X","GBPUSD=X","USDJPY=X","AUDUSD=X","NZDUSD=X","CADJPY=X","USDCHF=X",
-        "HKDJPY=X","USDCAD=X","USDCNY=X","EURGBP=X","EURCAD=X","NZDJPY=X","USDKRW=X",
+        "EURUSD=X","EURJPY=X","GBPUSD=X","USDJPY=X","AUDUSD=X","NZDUSD=X","CADJPY=X",
+        "HKDJPY=X","USDCAD=X","USDCNY=X","USDCHF=X","EURGBP=X","EURCAD=X","NZDJPY=X",
         "USDHKD=X","EURHKD=X","GBPHKD=X","GBPJPY=X","CNHJPY=X","AUDJPY=X","GBPCAD=X"
     ]
 
-# =========================
+# ---------------------------
 # Data fetchers
-# =========================
+# ---------------------------
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
-    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"), progress=False)
-    if df is None or df.empty or "Close" not in df.columns:
-        return pd.Series(dtype=float)
-    s = df["Close"].asfreq("D").ffill()
-    if isinstance(s.index, pd.DatetimeIndex) and s.index.tz is None:
-        s.index = s.index.tz_localize(PACIFIC)
-    elif isinstance(s.index, pd.DatetimeIndex):
-        s.index = s.index.tz_convert(PACIFIC)
+    s = (yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))["Close"]
+         .asfreq("D").ffill())
+    try:
+        s = s.tz_localize(PACIFIC)
+    except TypeError:
+        s = s.tz_convert(PACIFIC)
     return s
 
 @st.cache_data(ttl=120)
 def fetch_hist_max(ticker: str) -> pd.Series:
-    df = yf.download(ticker, period="max", progress=False)
-    if df is None or df.empty or "Close" not in df.columns:
-        return pd.Series(dtype=float)
-    s = df["Close"].dropna().asfreq("D").ffill()
-    if isinstance(s.index, pd.DatetimeIndex) and s.index.tz is None:
-        s.index = s.index.tz_localize(PACIFIC)
-    elif isinstance(s.index, pd.DatetimeIndex):
-        s.index = s.index.tz_convert(PACIFIC)
+    df = yf.download(ticker, period="max")[["Close"]].dropna()
+    s = df["Close"].asfreq("D").ffill()
+    try:
+        s = s.tz_localize(PACIFIC)
+    except TypeError:
+        s = s.tz_convert(PACIFIC)
     return s
 
 @st.cache_data(ttl=120)
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
-    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"), progress=False)
-    if df is None or df.empty:
-        return pd.DataFrame()
-    need = ["Open","High","Low","Close"]
-    have = [c for c in need if c in df.columns]
-    if len(have) < 4:
-        return pd.DataFrame()
-    out = df[need].dropna()
-    if isinstance(out.index, pd.DatetimeIndex) and out.index.tz is None:
-        out.index = out.index.tz_localize(PACIFIC)
-    elif isinstance(out.index, pd.DatetimeIndex):
-        out.index = out.index.tz_convert(PACIFIC)
-    return out
+    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[
+        ["Open","High","Low","Close"]
+    ].dropna()
+    try:
+        df = df.tz_localize(PACIFIC)
+    except TypeError:
+        df = df.tz_convert(PACIFIC)
+    return df
 
 @st.cache_data(ttl=120)
 def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
-    df = yf.download(ticker, period=period, interval="5m", progress=False)
+    df = yf.download(ticker, period=period, interval="5m")
     if df is None or df.empty:
-        return pd.DataFrame()
+        return df
     try:
         df = df.tz_localize("UTC")
     except TypeError:
         pass
-    except Exception:
-        pass
-    try:
-        df = df.tz_convert(PACIFIC)
-    except Exception:
-        pass
+    df = df.tz_convert(PACIFIC)
+
     if {"Open","High","Low","Close"}.issubset(df.columns):
         df = make_gapless_ohlc(df)
+
     return df
 
 @st.cache_data(ttl=120)
 def compute_sarimax_forecast(series_like):
     series = _coerce_1d_series(series_like).dropna()
-    if series.empty:
-        idx = pd.date_range(pd.Timestamp.now(tz=PACIFIC).normalize() + timedelta(days=1), periods=30, freq="D", tz=PACIFIC)
-        return idx, pd.Series(index=idx, dtype=float), pd.DataFrame(index=idx, columns=["lower","upper"])
     if isinstance(series.index, pd.DatetimeIndex):
         if series.index.tz is None:
             series.index = series.index.tz_localize(PACIFIC)
@@ -625,22 +570,53 @@ def compute_sarimax_forecast(series_like):
             series.index = series.index.tz_convert(PACIFIC)
     try:
         model = SARIMAX(series, order=(1,1,1), seasonal_order=(1,1,1,12)).fit(disp=False)
-    except Exception:
-        model = SARIMAX(series, order=(1,1,1), seasonal_order=(1,1,1,12),
-                        enforce_stationarity=False, enforce_invertibility=False).fit(disp=False)
+    except np.linalg.LinAlgError:
+        model = SARIMAX(
+            series,
+            order=(1,1,1),
+            seasonal_order=(1,1,1,12),
+            enforce_stationarity=False,
+            enforce_invertibility=False
+        ).fit(disp=False)
     fc = model.get_forecast(steps=30)
     idx = pd.date_range(series.index[-1] + timedelta(days=1), periods=30, freq="D", tz=PACIFIC)
-    ci = fc.conf_int()
-    ci.index = idx
-    pm = fc.predicted_mean
-    pm.index = idx
-    return idx, pm, ci
-# bullbear.py — Complete updated Streamlit app (Batch 2/3)
-# -------------------------------------------------------
+    return idx, fc.predicted_mean, fc.conf_int()
+
+def fibonacci_levels(series_like):
+    s = _coerce_1d_series(series_like).dropna()
+    hi = float(s.max()) if not s.empty else np.nan
+    lo = float(s.min()) if not s.empty else np.nan
+    if not np.isfinite(hi) or not np.isfinite(lo) or hi == lo:
+        return {}
+    diff = hi - lo
+    return {
+        "0%": hi,
+        "23.6%": hi - 0.236*diff,
+        "38.2%": hi - 0.382*diff,
+        "50%": hi - 0.5*diff,
+        "61.8%": hi - 0.618*diff,
+        "78.6%": hi - 0.786*diff,
+        "100%": lo
+    }
+
+def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
+    if ohlc is None or ohlc.empty or not {"High","Low","Close"}.issubset(ohlc.columns):
+        return {}
+    ohlc = ohlc.sort_index()
+    row = ohlc.iloc[-2] if len(ohlc) >= 2 else ohlc.iloc[-1]
+    H, L, C = float(row["High"]), float(row["Low"]), float(row["Close"])
+    P  = (H + L + C) / 3.0
+    R1 = 2 * P - L; S1 = 2 * P - H
+    R2 = P + (H - L); S2 = P - (H - L)
+    return {"P": P, "R1": R1, "S1": S1, "R2": R2, "S2": S2}
+
 
 # =========================
-# Regression / bands / triggers
+# Part 3/8 — bullbear.py
 # =========================
+# ---------------------------
+# Regression & ±2σ band
+# ---------------------------
 def slope_line(series_like, lookback: int):
     s = _coerce_1d_series(series_like).dropna()
     if s.shape[0] < 2:
@@ -653,7 +629,29 @@ def slope_line(series_like, lookback: int):
     yhat = pd.Series(m * x + b, index=s.index)
     return yhat, float(m)
 
+def regression_r2(series_like, lookback: int):
+    s = _coerce_1d_series(series_like).dropna()
+    if lookback > 0:
+        s = s.iloc[-lookback:]
+    if s.shape[0] < 2:
+        return float("nan")
+    x = np.arange(len(s), dtype=float)
+    y = s.to_numpy(dtype=float)
+    m, b = np.polyfit(x, y, 1)
+    yhat = m*x + b
+    ss_res = np.sum((y - yhat)**2)
+    ss_tot = np.sum((y - y.mean())**2)
+    if ss_tot <= 0:
+        return float("nan")
+    return float(1.0 - ss_res/ss_tot)
+
 def regression_with_band(series_like, lookback: int = 0, z: float = 2.0):
+    """
+    Linear regression on last `lookback` bars with:
+      • fitted trendline
+      • symmetric ±z·σ band (σ = std of residuals)
+      • R² of the fit
+    """
     s = _coerce_1d_series(series_like).dropna()
     if lookback > 0:
         s = s.iloc[-lookback:]
@@ -684,6 +682,7 @@ def slope_reversal_probability(series_like,
     n = len(s)
     if n < slope_window + horizon + 5:
         return float("nan")
+
     try:
         sign_curr = np.sign(float(current_slope))
     except Exception:
@@ -715,6 +714,7 @@ def slope_reversal_probability(series_like,
         match += 1
         if sign_future != sign_past:
             flips += 1
+
     if match == 0:
         return float("nan")
     return float(flips / match)
@@ -723,6 +723,9 @@ def find_band_bounce_signal(price: pd.Series,
                             upper_band: pd.Series,
                             lower_band: pd.Series,
                             slope_val: float):
+    """
+    Detect the most recent BUY/SELL signal based on a 'bounce' off the ±2σ band.
+    """
     p = _coerce_1d_series(price)
     u = _coerce_1d_series(upper_band).reindex(p.index)
     l = _coerce_1d_series(lower_band).reindex(p.index)
@@ -730,7 +733,10 @@ def find_band_bounce_signal(price: pd.Series,
     mask = p.notna() & u.notna() & l.notna()
     if mask.sum() < 2:
         return None
-    p = p[mask]; u = u[mask]; l = l[mask]
+
+    p = p[mask]
+    u = u.reindex(p.index)
+    l = l.reindex(p.index)
 
     inside = (p <= u) & (p >= l)
     below  = p < l
@@ -745,15 +751,17 @@ def find_band_bounce_signal(price: pd.Series,
 
     if slope > 0:
         candidates = inside & below.shift(1, fill_value=False)
-        if not candidates.any():
+        idx = list(candidates[candidates].index)
+        if not idx:
             return None
-        t = candidates[candidates].index[-1]
+        t = idx[-1]
         return {"time": t, "price": float(p.loc[t]), "side": "BUY"}
     else:
         candidates = inside & above.shift(1, fill_value=False)
-        if not candidates.any():
+        idx = list(candidates[candidates].index)
+        if not idx:
             return None
-        t = candidates[candidates].index[-1]
+        t = idx[-1]
         return {"time": t, "price": float(p.loc[t]), "side": "SELL"}
 
 def _cross_series(price: pd.Series, line: pd.Series):
@@ -763,7 +771,8 @@ def _cross_series(price: pd.Series, line: pd.Series):
     if ok.sum() < 2:
         idx = p.index if len(p) else l.index
         return pd.Series(False, index=idx), pd.Series(False, index=idx)
-    p = p[ok]; l = l[ok]
+    p = p[ok]
+    l = l[ok]
     above = p > l
     cross_up = above & (~above.shift(1).fillna(False))
     cross_dn = (~above) & (above.shift(1).fillna(False))
@@ -781,88 +790,124 @@ def annotate_crossover(ax, ts, px, side: str, note: str = ""):
         ax.text(ts, px, f"  {label}", va="top", fontsize=9,
                 color="tab:red", fontweight="bold")
 
-# =========================
-# Fibonacci
-# =========================
-def fibonacci_levels(series_like):
-    s = _coerce_1d_series(series_like).dropna()
-    hi = float(s.max()) if not s.empty else np.nan
-    lo = float(s.min()) if not s.empty else np.nan
-    if not np.isfinite(hi) or not np.isfinite(lo) or hi == lo:
-        return {}
-    diff = hi - lo
-    return {
-        "0%": hi,
-        "23.6%": hi - 0.236*diff,
-        "38.2%": hi - 0.382*diff,
-        "50%": hi - 0.5*diff,
-        "61.8%": hi - 0.618*diff,
-        "78.6%": hi - 0.786*diff,
-        "100%": lo
-    }
-
-def fib_touch_masks(price: pd.Series, proximity_pct_of_range: float = 0.02):
-    p = _coerce_1d_series(price).dropna()
-    if p.empty:
-        idx = _coerce_1d_series(price).index
-        return (pd.Series(False, index=idx), pd.Series(False, index=idx), {})
-    fibs = fibonacci_levels(p)
-    if not fibs:
-        return (pd.Series(False, index=p.index), pd.Series(False, index=p.index), {})
-    hi = float(fibs.get("0%", np.nan))
-    lo = float(fibs.get("100%", np.nan))
-    rng = hi - lo
-    if not (np.isfinite(hi) and np.isfinite(lo) and np.isfinite(rng)) or rng <= 0:
-        return (pd.Series(False, index=p.index), pd.Series(False, index=p.index), fibs)
-    tol = float(proximity_pct_of_range) * rng
-    if not np.isfinite(tol) or tol <= 0:
-        return (pd.Series(False, index=p.index), pd.Series(False, index=p.index), fibs)
-    near_hi = (p >= (hi - tol)).reindex(p.index, fill_value=False)
-    near_lo = (p <= (lo + tol)).reindex(p.index, fill_value=False)
-    return near_hi, near_lo, fibs
-
-def npx_zero_cross_masks(npx: pd.Series, level: float = 0.0):
-    s = _coerce_1d_series(npx)
-    prev = s.shift(1)
-    cross_up = (s >= float(level)) & (prev < float(level))
-    cross_dn = (s <= float(level)) & (prev > float(level))
-    return cross_up.fillna(False), cross_dn.fillna(False)
-
-def fib_npx_zero_cross_signal_masks(price: pd.Series,
-                                   npx: pd.Series,
-                                   horizon_bars: int = 15,
-                                   proximity_pct_of_range: float = 0.02,
-                                   npx_level: float = 0.0):
+# ---------------------------
+# NEW (THIS REQUEST): Slope BUY/SELL Trigger (leaderline + legend)
+# ---------------------------
+def find_slope_trigger_after_band_reversal(price: pd.Series,
+                                          yhat: pd.Series,
+                                          upper_band: pd.Series,
+                                          lower_band: pd.Series,
+                                          horizon: int = 15):
+    """
+    BUY trigger:
+      - price touches/breaches LOWER band, then crosses ABOVE the slope line (yhat)
+    SELL trigger:
+      - price touches/breaches UPPER band, then crosses BELOW the slope line (yhat)
+    Returns the most recent trigger dict or None.
+    """
     p = _coerce_1d_series(price)
-    x = _coerce_1d_series(npx).reindex(p.index)
-    near_hi, near_lo, fibs = fib_touch_masks(p, proximity_pct_of_range=float(proximity_pct_of_range))
-    up0, dn0 = npx_zero_cross_masks(x, level=float(npx_level))
-    hz = max(1, int(horizon_bars))
-    touched_lo_recent = near_lo.rolling(hz + 1, min_periods=1).max().astype(bool)
-    touched_hi_recent = near_hi.rolling(hz + 1, min_periods=1).max().astype(bool)
-    buy_mask = up0.reindex(p.index, fill_value=False) & touched_lo_recent.reindex(p.index, fill_value=False)
-    sell_mask = dn0.reindex(p.index, fill_value=False) & touched_hi_recent.reindex(p.index, fill_value=False)
-    return buy_mask.fillna(False), sell_mask.fillna(False), fibs
+    y = _coerce_1d_series(yhat).reindex(p.index)
+    u = _coerce_1d_series(upper_band).reindex(p.index)
+    l = _coerce_1d_series(lower_band).reindex(p.index)
 
-def overlay_fib_npx_signals(ax,
-                            price: pd.Series,
-                            buy_mask: pd.Series,
-                            sell_mask: pd.Series,
-                            label_buy: str = "Fibonacci BUY",
-                            label_sell: str = "Fibonacci SELL"):
-    p = _coerce_1d_series(price)
-    bm = _coerce_1d_series(buy_mask).reindex(p.index).fillna(0).astype(bool) if buy_mask is not None else pd.Series(False, index=p.index)
-    sm = _coerce_1d_series(sell_mask).reindex(p.index).fillna(0).astype(bool) if sell_mask is not None else pd.Series(False, index=p.index)
-    buy_idx = list(bm[bm].index)
-    sell_idx = list(sm[sm].index)
-    if buy_idx:
-        ax.scatter(buy_idx, p.loc[buy_idx], marker="^", s=120, color="tab:green", zorder=11, label=label_buy)
-    if sell_idx:
-        ax.scatter(sell_idx, p.loc[sell_idx], marker="v", s=120, color="tab:red", zorder=11, label=label_sell)
+    ok = p.notna() & y.notna() & u.notna() & l.notna()
+    if ok.sum() < 3:
+        return None
+    p = p[ok]; y = y[ok]; u = u[ok]; l = l[ok]
+
+    cross_up, cross_dn = _cross_series(p, y)
+    below = (p <= l)
+    above = (p >= u)
+
+    hz = max(1, int(horizon))
+
+    def _last_touch_before(t_idx, touch_mask: pd.Series):
+        try:
+            loc = int(p.index.get_loc(t_idx))
+        except Exception:
+            return None
+        j0 = max(0, loc - hz)
+        window = touch_mask.iloc[j0:loc+1]
+        if not window.any():
+            return None
+        return window[window].index[-1]
+
+    last_buy_cross = cross_up[cross_up].index[-1] if cross_up.any() else None
+    last_sell_cross = cross_dn[cross_dn].index[-1] if cross_dn.any() else None
+
+    buy_tr = None
+    if last_buy_cross is not None:
+        t_touch = _last_touch_before(last_buy_cross, below)
+        if t_touch is not None:
+            buy_tr = {
+                "side": "BUY",
+                "touch_time": t_touch,
+                "touch_price": float(p.loc[t_touch]),
+                "cross_time": last_buy_cross,
+                "cross_price": float(p.loc[last_buy_cross]),
+            }
+
+    sell_tr = None
+    if last_sell_cross is not None:
+        t_touch = _last_touch_before(last_sell_cross, above)
+        if t_touch is not None:
+            sell_tr = {
+                "side": "SELL",
+                "touch_time": t_touch,
+                "touch_price": float(p.loc[t_touch]),
+                "cross_time": last_sell_cross,
+                "cross_price": float(p.loc[last_sell_cross]),
+            }
+
+    if buy_tr is None and sell_tr is None:
+        return None
+    if buy_tr is None:
+        return sell_tr
+    if sell_tr is None:
+        return buy_tr
+
+    return buy_tr if buy_tr["cross_time"] >= sell_tr["cross_time"] else sell_tr
+
+def annotate_slope_trigger(ax, trig: dict):
+    if trig is None:
+        return
+    side = trig.get("side", "")
+    t0 = trig.get("touch_time")
+    p0 = trig.get("touch_price")
+    t1 = trig.get("cross_time")
+    p1 = trig.get("cross_price")
+    if t0 is None or t1 is None:
+        return
+    if not (np.isfinite(p0) and np.isfinite(p1)):
+        return
+
+    col = "tab:green" if side == "BUY" else "tab:red"
+    lbl = f"Slope {side} Trigger"
+    ax.annotate(
+        "",
+        xy=(t1, p1),
+        xytext=(t0, p0),
+        arrowprops=dict(arrowstyle="->", color=col, lw=2.0, alpha=0.85),
+        zorder=9
+    )
+    ax.scatter([t1], [p1], marker="o", s=90, color=col, zorder=10, label=lbl)
+    ax.text(
+        t1, p1,
+        f"  {lbl}",
+        color=col,
+        fontsize=9,
+        fontweight="bold",
+        va="bottom" if side == "BUY" else "top",
+        zorder=10
+    )
+
 
 # =========================
-# Indicators: MACD / HMA / BB / NTD / NPX / ROC / RSI
+# Part 4/8 — bullbear.py
 # =========================
+# ---------------------------
+# Other indicators
+# ---------------------------
 def compute_roc(series_like, n: int = 10) -> pd.Series:
     s = _coerce_1d_series(series_like)
     base = s.dropna()
@@ -884,6 +929,10 @@ def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
     rsi = 100 - (100 / (1 + rs))
     return rsi.reindex(s.index)
 
+def compute_nrsi(close: pd.Series, period: int = 14) -> pd.Series:
+    rsi = compute_rsi(close, period=period)
+    return ((rsi - 50.0) / 50.0).clip(-1.0, 1.0).reindex(rsi.index)
+
 def compute_macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9):
     s = _coerce_1d_series(close).astype(float)
     if s.empty:
@@ -896,40 +945,54 @@ def compute_macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int =
     hist = macd - sig
     return macd.reindex(s.index), sig.reindex(s.index), hist.reindex(s.index)
 
-def _wma(s: pd.Series, window: int) -> pd.Series:
-    s = _coerce_1d_series(s).astype(float)
-    if s.empty or window < 1:
-        return pd.Series(index=s.index, dtype=float)
-    w = np.arange(1, window + 1, dtype=float)
-    return s.rolling(window, min_periods=window).apply(lambda x: float(np.dot(x, w) / w.sum()), raw=True)
-
-def compute_hma(close: pd.Series, period: int = 55) -> pd.Series:
+def compute_nmacd(close: pd.Series, fast: int = 12, slow: int = 26,
+                  signal: int = 9, norm_win: int = 240):
     s = _coerce_1d_series(close).astype(float)
-    if s.empty or period < 2:
-        return pd.Series(index=s.index, dtype=float)
-    half = max(1, int(period / 2))
-    sqrtp = max(1, int(np.sqrt(period)))
-    wma_half = _wma(s, half)
-    wma_full = _wma(s, period)
-    diff = 2 * wma_half - wma_full
-    hma = _wma(diff, sqrtp)
-    return hma.reindex(s.index)
+    if s.empty:
+        return (pd.Series(index=s.index, dtype=float),)*3
+    ema_fast = s.ewm(span=int(fast), adjust=False).mean()
+    ema_slow = s.ewm(span=int(slow), adjust=False).mean()
+    macd = ema_fast - ema_slow
+    sig  = macd.ewm(span=int(signal), adjust=False).mean()
+    minp = max(10, norm_win//10)
 
-def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_ema: bool = False):
-    s = _coerce_1d_series(close).astype(float)
-    idx = s.index
-    if s.empty or window < 2 or not np.isfinite(mult):
-        empty = pd.Series(index=idx, dtype=float)
-        return empty, empty, empty, empty, empty
-    minp = max(2, window // 2)
-    mid = s.ewm(span=window, adjust=False).mean() if use_ema else s.rolling(window, min_periods=minp).mean()
-    std = s.rolling(window, min_periods=minp).std().replace(0, np.nan)
-    upper = mid + mult * std
-    lower = mid - mult * std
-    width = (upper - lower).replace(0, np.nan)
-    pctb = ((s - lower) / width).clip(0.0, 1.0)
-    nbb = pctb * 2.0 - 1.0
-    return (mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index))
+    def _norm(x):
+        m = x.rolling(norm_win, min_periods=minp).mean()
+        sd = x.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
+        z = (x - m) / sd
+        return np.tanh(z / 2.0)
+
+    nmacd = _norm(macd)
+    nsignal = _norm(sig)
+    nhist = nmacd - nsignal
+    return (nmacd.reindex(s.index), nsignal.reindex(s.index), nhist.reindex(s.index))
+
+def compute_nvol(volume: pd.Series, norm_win: int = 240) -> pd.Series:
+    v = _coerce_1d_series(volume).astype(float)
+    if v.empty:
+        return pd.Series(index=v.index, dtype=float)
+    minp = max(10, norm_win//10)
+    m = v.rolling(norm_win, min_periods=minp).mean()
+    sd = v.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
+    z = (v - m) / sd
+    return np.tanh(z / 3.0)
+
+def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int = 240) -> pd.Series:
+    s = _coerce_1d_series(close)
+    if s.empty or fast <= 0 or slow <= 0:
+        return pd.Series(index=s.index, dtype=float)
+    if fast >= slow:
+        fast = max(1, slow - 1)
+        if fast >= slow:
+            return pd.Series(index=s.index, dtype=float)
+    ema_fast = s.ewm(span=int(fast), adjust=False).mean()
+    ema_slow = s.ewm(span=int(slow), adjust=False).mean().replace(0, np.nan)
+    ppo = (ema_fast - ema_slow) / ema_slow * 100.0
+    minp = max(10, int(norm_win)//10)
+    mean = ppo.rolling(int(norm_win), min_periods=minp).mean()
+    std  = ppo.rolling(int(norm_win), min_periods=minp).std().replace(0, np.nan)
+    z = (ppo - mean) / std
+    return np.tanh(z / 2.0).reindex(s.index)
 
 def compute_normalized_trend(close: pd.Series, window: int = 60) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
@@ -984,47 +1047,126 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
             label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return float(m)
 
-def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = True):
-    npx = _coerce_1d_series(npx)
-    ntd = _coerce_1d_series(ntd)
-    idx = ntd.index.union(npx.index)
-    npx = npx.reindex(idx)
-    ntd = ntd.reindex(idx)
-    if npx.dropna().empty:
-        return
-    ax.plot(npx.index, npx.values, "-", linewidth=1.2, color="tab:gray", alpha=0.9, label="NPX (Norm Price)")
-    if mark_crosses and not ntd.dropna().empty:
-        up_mask, dn_mask = _cross_series(npx, ntd)
-        up_idx = list(up_mask[up_mask].index)
-        dn_idx = list(dn_mask[dn_mask].index)
-        if up_idx:
-            ax.scatter(up_idx, ntd.loc[up_idx], marker="o", s=40, color="tab:green", zorder=9, label="Price↑NTD")
-        if dn_idx:
-            ax.scatter(dn_idx, ntd.loc[dn_idx], marker="x", s=60, color="tab:red", zorder=9, label="Price↓NTD")
+def _wma(s: pd.Series, window: int) -> pd.Series:
+    s = _coerce_1d_series(s).astype(float)
+    if s.empty or window < 1:
+        return pd.Series(index=s.index, dtype=float)
+    w = np.arange(1, window + 1, dtype=float)
+    return s.rolling(window, min_periods=window).apply(lambda x: float(np.dot(x, w) / w.sum()), raw=True)
+
+def compute_hma(close: pd.Series, period: int = 55) -> pd.Series:
+    s = _coerce_1d_series(close).astype(float)
+    if s.empty or period < 2:
+        return pd.Series(index=s.index, dtype=float)
+    half = max(1, int(period / 2))
+    sqrtp = max(1, int(np.sqrt(period)))
+    wma_half = _wma(s, half)
+    wma_full = _wma(s, period)
+    diff = 2 * wma_half - wma_full
+    hma = _wma(diff, sqrtp)
+    return hma.reindex(s.index)
+
+def find_macd_hma_sr_signal(close: pd.Series,
+                            hma: pd.Series,
+                            macd: pd.Series,
+                            sup: pd.Series,
+                            res: pd.Series,
+                            global_trend_slope: float,
+                            prox: float = 0.0025):
+    c = _coerce_1d_series(close).astype(float)
+    h = _coerce_1d_series(hma).reindex(c.index)
+    m = _coerce_1d_series(macd).reindex(c.index)
+    s_sup = _coerce_1d_series(sup).reindex(c.index).ffill()
+    s_res = _coerce_1d_series(res).reindex(c.index).ffill()
+
+    ok = c.notna() & h.notna() & m.notna() & s_sup.notna() & s_res.notna()
+    if ok.sum() < 3:
+        return None
+
+    c = c[ok]; h = h[ok]; m = m[ok]; s_sup = s_sup[ok]; s_res = s_res[ok]
+
+    cross_up, cross_dn = _cross_series(c, h)
+    cross_up = cross_up.reindex(c.index, fill_value=False)
+    cross_dn = cross_dn.reindex(c.index, fill_value=False)
+
+    near_support = c <= s_sup * (1.0 + prox)
+    away_from_support = (c - s_sup) > (c.shift(1) - s_sup.shift(1))
+    near_resist = c >= s_res * (1.0 - prox)
+    away_from_resist = (s_res - c) > (s_res.shift(1) - c.shift(1))
+
+    uptrend = np.isfinite(global_trend_slope) and float(global_trend_slope) > 0
+    downtrend = np.isfinite(global_trend_slope) and float(global_trend_slope) < 0
+
+    buy_mask = uptrend & (m < 0.0) & cross_up & near_support & away_from_support
+    sell_mask = downtrend & (m > 0.0) & cross_dn & near_resist & away_from_resist
+
+    last_buy = buy_mask[buy_mask].index[-1] if buy_mask.any() else None
+    last_sell = sell_mask[sell_mask].index[-1] if sell_mask.any() else None
+    if last_buy is None and last_sell is None:
+        return None
+
+    if last_sell is None:
+        t = last_buy; side = "BUY"
+    elif last_buy is None:
+        t = last_sell; side = "SELL"
+    else:
+        t = last_buy if last_buy >= last_sell else last_sell
+        side = "BUY" if t == last_buy else "SELL"
+
+    px = float(c.loc[t]) if np.isfinite(c.loc[t]) else np.nan
+    note = "MACD/HMA55 + S/R"
+    return {"time": t, "price": px, "side": side, "note": note}
+
+def annotate_macd_signal(ax, ts, px, side: str):
+    if side == "BUY":
+        ax.scatter([ts], [px], marker="*", s=180, color="tab:green", zorder=10, label="MACD BUY (HMA55+S/R)")
+    else:
+        ax.scatter([ts], [px], marker="*", s=180, color="tab:red", zorder=10, label="MACD SELL (HMA55+S/R)")
+
+def compute_bbands(close: pd.Series, window: int = 20, mult: float = 2.0, use_ema: bool = False):
+    s = _coerce_1d_series(close).astype(float)
+    idx = s.index
+    if s.empty or window < 2 or not np.isfinite(mult):
+        empty = pd.Series(index=idx, dtype=float)
+        return empty, empty, empty, empty, empty
+    minp = max(2, window // 2)
+    mid = s.ewm(span=window, adjust=False).mean() if use_ema else s.rolling(window, min_periods=minp).mean()
+    std = s.rolling(window, min_periods=minp).std().replace(0, np.nan)
+    upper = mid + mult * std
+    lower = mid - mult * std
+    width = (upper - lower).replace(0, np.nan)
+    pctb = ((s - lower) / width).clip(0.0, 1.0)
+    nbb = pctb * 2.0 - 1.0
+    return (mid.reindex(s.index), upper.reindex(s.index), lower.reindex(s.index), pctb.reindex(s.index), nbb.reindex(s.index))
+
 
 # =========================
-# Ichimoku / ATR / Supertrend / PSAR
+# Part 5/8 — bullbear.py
 # =========================
+# ---------------------------
+# Ichimoku, Supertrend, PSAR
+# ---------------------------
 def ichimoku_lines(high: pd.Series, low: pd.Series, close: pd.Series,
                    conv: int = 9, base: int = 26, span_b: int = 52, shift_cloud: bool = True):
     h = _coerce_1d_series(high)
     l = _coerce_1d_series(low)
     c = _coerce_1d_series(close)
     idx = c.index.union(h.index).union(l.index)
-    h = h.reindex(idx); l = l.reindex(idx); c = c.reindex(idx)
+    h = h.reindex(idx)
+    l = l.reindex(idx)
+    c = c.reindex(idx)
 
     tenkan = ((h.rolling(conv).max() + l.rolling(conv).min()) / 2.0)
     kijun  = ((h.rolling(base).max() + l.rolling(base).min()) / 2.0)
     senkou_a = (tenkan + kijun) / 2.0
     senkou_b = ((h.rolling(span_b).max() + l.rolling(span_b).min()) / 2.0)
-
     if shift_cloud:
         senkou_a = senkou_a.shift(base)
         senkou_b = senkou_b.shift(base)
         chikou   = c.shift(-base)
     else:
         chikou   = c
-    return tenkan.reindex(idx), kijun.reindex(idx), senkou_a.reindex(idx), senkou_b.reindex(idx), chikou.reindex(idx)
+    return (tenkan.reindex(idx), kijun.reindex(idx), senkou_a.reindex(idx), senkou_b.reindex(idx), chikou.reindex(idx))
 
 def _compute_atr_from_ohlc(df: pd.DataFrame, period: int = 10) -> pd.Series:
     if df is None or df.empty or not {"High","Low","Close"}.issubset(df.columns):
@@ -1056,6 +1198,7 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
             in_uptrend.iloc[i] = True
             st_line.iloc[i] = lowerband.iloc[i]
             continue
+
         if ohlc["Close"].iloc[i] > upperband.iloc[i-1]:
             in_uptrend.iloc[i] = True
         elif ohlc["Close"].iloc[i] < lowerband.iloc[i-1]:
@@ -1066,7 +1209,9 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
                 lowerband.iloc[i] = lowerband.iloc[i-1]
             if (not in_uptrend.iloc[i]) and upperband.iloc[i] > upperband.iloc[i-1]:
                 upperband.iloc[i] = upperband.iloc[i-1]
+
         st_line.iloc[i] = lowerband.iloc[i] if in_uptrend.iloc[i] else upperband.iloc[i]
+
     return pd.DataFrame({"ST": st_line, "in_uptrend": in_uptrend})
 
 def compute_psar_from_ohlc(df: pd.DataFrame, step: float = 0.02, max_step: float = 0.2) -> pd.DataFrame:
@@ -1075,7 +1220,8 @@ def compute_psar_from_ohlc(df: pd.DataFrame, step: float = 0.02, max_step: float
     high = _coerce_1d_series(df["High"])
     low  = _coerce_1d_series(df["Low"])
     idx = high.index.union(low.index)
-    high = high.reindex(idx); low = low.reindex(idx)
+    high = high.reindex(idx)
+    low  = low.reindex(idx)
 
     psar = pd.Series(index=idx, dtype=float)
     in_uptrend = pd.Series(index=idx, dtype=bool)
@@ -1117,25 +1263,139 @@ def compute_psar_from_ohlc(df: pd.DataFrame, step: float = 0.02, max_step: float
                 af = step
             else:
                 in_uptrend.iloc[i] = False
+
     return pd.DataFrame({"PSAR": psar, "in_uptrend": in_uptrend})
 
-# =========================
-# Pivots
-# =========================
-def current_daily_pivots(ohlc: pd.DataFrame) -> dict:
-    if ohlc is None or ohlc.empty or not {"High","Low","Close"}.issubset(ohlc.columns):
-        return {}
-    ohlc = ohlc.sort_index()
-    row = ohlc.iloc[-2] if len(ohlc) >= 2 else ohlc.iloc[-1]
-    H, L, C = float(row["High"]), float(row["Low"]), float(row["Close"])
-    P  = (H + L + C) / 3.0
-    R1 = 2 * P - L; S1 = 2 * P - H
-    R2 = P + (H - L); S2 = P - (H - L)
-    return {"P": P, "R1": R1, "S1": S1, "R2": R2, "S2": S2}
+def detect_hma_reversal_masks(price: pd.Series, hma: pd.Series, lookback: int = 3):
+    h = _coerce_1d_series(hma)
+    slope = h.diff().rolling(lookback, min_periods=1).mean()
+    sign_now = np.sign(slope)
+    sign_prev = np.sign(slope.shift(1))
+    cross_up, cross_dn = _cross_series(price, hma)
+    buy_rev  = cross_up & (sign_now > 0) & (sign_prev < 0)
+    sell_rev = cross_dn & (sign_now < 0) & (sign_prev > 0)
+    return buy_rev.fillna(False), sell_rev.fillna(False)
+
+def overlay_hma_reversal_on_ntd(ax, price: pd.Series, hma: pd.Series,
+                               lookback: int = 3, y_up: float = 0.95, y_dn: float = -0.95,
+                               period: int = 55, ntd: pd.Series = None):
+    buy_rev, sell_rev = detect_hma_reversal_masks(price, hma, lookback=lookback)
+    idx_up = list(buy_rev[buy_rev].index)
+    idx_dn = list(sell_rev[sell_rev].index)
+    if len(idx_up):
+        ax.scatter(idx_up, [y_up]*len(idx_up), marker="s", s=70, color="tab:green", zorder=8, label=f"HMA({period}) REV")
+    if len(idx_dn):
+        ax.scatter(idx_dn, [y_dn]*len(idx_dn), marker="D", s=70, color="tab:red", zorder=8, label=f"HMA({period}) REV")
+
+def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = True):
+    npx = _coerce_1d_series(npx)
+    ntd = _coerce_1d_series(ntd)
+    idx = ntd.index.union(npx.index)
+    npx = npx.reindex(idx)
+    ntd = ntd.reindex(idx)
+    if npx.dropna().empty:
+        return
+    ax.plot(npx.index, npx.values, "-", linewidth=1.2, color="tab:gray", alpha=0.9, label="NPX (Norm Price)")
+    if mark_crosses and not ntd.dropna().empty:
+        up_mask, dn_mask = _cross_series(npx, ntd)
+        up_idx = list(up_mask[up_mask].index)
+        dn_idx = list(dn_mask[dn_mask].index)
+        if len(up_idx):
+            ax.scatter(up_idx, ntd.loc[up_idx], marker="o", s=40, color="tab:green", zorder=9, label="Price↑NTD")
+        if len(dn_idx):
+            ax.scatter(dn_idx, ntd.loc[dn_idx], marker="x", s=60, color="tab:red", zorder=9, label="Price↓NTD")
+
+def overlay_ntd_triangles_by_trend(ax, ntd: pd.Series, trend_slope: float, upper: float = 0.75, lower: float = -0.75):
+    s = _coerce_1d_series(ntd).dropna()
+    if s.empty or not np.isfinite(trend_slope):
+        return
+    uptrend = trend_slope > 0
+    downtrend = trend_slope < 0
+
+    cross_up0 = (s >= 0.0) & (s.shift(1) < 0.0)
+    cross_dn0 = (s <= 0.0) & (s.shift(1) > 0.0)
+    idx_up0 = list(cross_up0[cross_up0].index)
+    idx_dn0 = list(cross_dn0[cross_dn0].index)
+
+    cross_out_hi = (s >= upper) & (s.shift(1) < upper)
+    cross_out_lo = (s <= lower) & (s.shift(1) > lower)
+    idx_hi = list(cross_out_hi[cross_out_hi].index)
+    idx_lo = list(cross_out_lo[cross_out_lo].index)
+
+    if uptrend:
+        if idx_up0:
+            ax.scatter(idx_up0, [0.0]*len(idx_up0), marker="^", s=95, color="tab:green", zorder=10, label="NTD 0↑")
+        if idx_lo:
+            ax.scatter(idx_lo, s.loc[idx_lo], marker="^", s=85, color="tab:green", zorder=10, label="NTD < -0.75")
+    if downtrend:
+        if idx_dn0:
+            ax.scatter(idx_dn0, [0.0]*len(idx_dn0), marker="v", s=95, color="tab:red", zorder=10, label="NTD 0↓")
+        if idx_hi:
+            ax.scatter(idx_hi, s.loc[idx_hi], marker="v", s=85, color="tab:red", zorder=10, label="NTD > +0.75")
+
+def _n_consecutive_increasing(series: pd.Series, n: int = 2) -> bool:
+    s = _coerce_1d_series(series).dropna()
+    if len(s) < n+1:
+        return False
+    deltas = np.diff(s.iloc[-(n+1):])
+    return bool(np.all(deltas > 0))
+
+def _n_consecutive_decreasing(series: pd.Series, n: int = 2) -> bool:
+    s = _coerce_1d_series(series).dropna()
+    if len(s) < n+1:
+        return False
+    deltas = np.diff(s.iloc[-(n+1):])
+    return bool(np.all(deltas < 0))
+
+def overlay_ntd_sr_reversal_stars(ax,
+                                 price: pd.Series,
+                                 sup: pd.Series,
+                                 res: pd.Series,
+                                 trend_slope: float,
+                                 ntd: pd.Series,
+                                 prox: float = 0.0025,
+                                 bars_confirm: int = 2):
+    p = _coerce_1d_series(price).dropna()
+    if p.empty:
+        return
+    s_sup = _coerce_1d_series(sup).reindex(p.index).ffill().bfill()
+    s_res = _coerce_1d_series(res).reindex(p.index).ffill().bfill()
+    s_ntd = _coerce_1d_series(ntd).reindex(p.index)
+
+    t = p.index[-1]
+    if not (t in s_sup.index and t in s_res.index and t in s_ntd.index):
+        return
+    c0 = float(p.iloc[-1])
+    c1 = float(p.iloc[-2]) if len(p) >= 2 else np.nan
+    S0 = float(s_sup.loc[t]) if pd.notna(s_sup.loc[t]) else np.nan
+    R0 = float(s_res.loc[t]) if pd.notna(s_res.loc[t]) else np.nan
+    ntd0 = float(s_ntd.loc[t]) if pd.notna(s_ntd.loc[t]) else np.nan
+    if not np.all(np.isfinite([c0, S0, R0, ntd0])):
+        return
+
+    near_support = c0 <= S0 * (1.0 + prox)
+    near_resist  = c0 >= R0 * (1.0 - prox)
+
+    toward_res = toward_sup = False
+    if np.isfinite(c1):
+        toward_res = (R0 - c0) < (R0 - c1)
+        toward_sup = (c0 - S0) < (c1 - S0)
+
+    buy_cond  = (trend_slope > 0) and near_support and _n_consecutive_increasing(p, bars_confirm) and toward_res
+    sell_cond = (trend_slope < 0) and near_resist  and _n_consecutive_decreasing(p, bars_confirm) and toward_sup
+
+    if buy_cond:
+        ax.scatter([t], [ntd0], marker="*", s=170, color="tab:green", zorder=12, label="BUY ★ (Support reversal)")
+    if sell_cond:
+        ax.scatter([t], [ntd0], marker="*", s=170, color="tab:red", zorder=12, label="SELL ★ (Resistance reversal)")
+
 
 # =========================
-# Forex sessions + Yahoo news
+# Part 6/8 — bullbear.py
 # =========================
+# ---------------------------
+# Sessions (PST)
+# ---------------------------
 NY_TZ = pytz.timezone("America/New_York")
 LDN_TZ = pytz.timezone("Europe/London")
 
@@ -1176,6 +1436,7 @@ def draw_session_lines(ax, lines: dict, alpha: float = 0.35):
         ax.axvline(t, linestyle="-", linewidth=1.0, color="tab:orange", alpha=alpha)
     for t in lines.get("ny_close", []):
         ax.axvline(t, linestyle="--", linewidth=1.0, color="tab:orange", alpha=alpha)
+
     handles = [
         Line2D([0], [0], color="tab:blue",   linestyle="-",  linewidth=1.6, label="London Open"),
         Line2D([0], [0], color="tab:blue",   linestyle="--", linewidth=1.6, label="London Close"),
@@ -1185,6 +1446,9 @@ def draw_session_lines(ax, lines: dict, alpha: float = 0.35):
     labels = [h.get_label() for h in handles]
     return handles, labels
 
+# ---------------------------
+# News (Yahoo Finance)
+# ---------------------------
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
     rows = []
@@ -1198,7 +1462,7 @@ def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
             continue
         try:
             dt_utc = pd.to_datetime(ts, unit="s", utc=True)
-        except Exception:
+        except (ValueError, OverflowError, TypeError):
             try:
                 dt_utc = pd.to_datetime(ts, utc=True)
             except Exception:
@@ -1225,9 +1489,9 @@ def draw_news_markers(ax, times, label="News"):
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
 
-# =========================
-# NTD channel-in-range (hourly panel)
-# =========================
+# ---------------------------
+# Channel-in-range helpers for NTD panel
+# ---------------------------
 def channel_state_series(price: pd.Series, sup: pd.Series, res: pd.Series, eps: float = 0.0) -> pd.Series:
     p = _coerce_1d_series(price)
     s_sup = _coerce_1d_series(sup).reindex(p.index)
@@ -1293,65 +1557,58 @@ def overlay_inrange_on_ntd(ax, price: pd.Series, sup: pd.Series, res: pd.Series)
                 bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=col, alpha=0.85))
     return last
 
-# =========================
-# MACD/HMA/SR combined signal (used on charts + scanners)
-# =========================
-def find_macd_hma_sr_signal(close: pd.Series,
-                            hma: pd.Series,
-                            macd: pd.Series,
-                            sup: pd.Series,
-                            res: pd.Series,
-                            global_trend_slope: float,
-                            prox: float = 0.0025):
-    c = _coerce_1d_series(close).astype(float)
-    h = _coerce_1d_series(hma).reindex(c.index)
-    m = _coerce_1d_series(macd).reindex(c.index)
-    s_sup = _coerce_1d_series(sup).reindex(c.index).ffill()
-    s_res = _coerce_1d_series(res).reindex(c.index).ffill()
+def rolling_midline(series_like: pd.Series, window: int) -> pd.Series:
+    s = _coerce_1d_series(series_like).astype(float)
+    if s.empty:
+        return pd.Series(index=s.index, dtype=float)
+    roll = s.rolling(window, min_periods=1)
+    mid = (roll.max() + roll.min()) / 2.0
+    return mid.reindex(s.index)
 
-    ok = c.notna() & h.notna() & m.notna() & s_sup.notna() & s_res.notna()
-    if ok.sum() < 3:
-        return None
-    c = c[ok]; h = h[ok]; m = m[ok]; s_sup = s_sup[ok]; s_res = s_res[ok]
+def _has_volume_to_plot(vol: pd.Series) -> bool:
+    s = _coerce_1d_series(vol).astype(float).replace([np.inf, -np.inf], np.nan).dropna()
+    if s.shape[0] < 2:
+        return False
+    arr = s.to_numpy(dtype=float)
+    vmax = float(np.nanmax(arr))
+    vmin = float(np.nanmin(arr))
+    return (np.isfinite(vmax) and vmax > 0.0) or (np.isfinite(vmin) and vmin < 0.0)
 
-    cross_up, cross_dn = _cross_series(c, h)
-    cross_up = cross_up.reindex(c.index, fill_value=False)
-    cross_dn = cross_dn.reindex(c.index, fill_value=False)
+# ---------------------------
+# Cached last values for scanning
+# ---------------------------
+@st.cache_data(ttl=120)
+def last_daily_ntd_value(symbol: str, ntd_win: int):
+    try:
+        s = fetch_hist(symbol)
+        ntd = compute_normalized_trend(s, window=ntd_win).dropna()
+        if ntd.empty:
+            return np.nan, None
+        return float(ntd.iloc[-1]), ntd.index[-1]
+    except Exception:
+        return np.nan, None
 
-    near_support = c <= s_sup * (1.0 + prox)
-    near_resist  = c >= s_res * (1.0 - prox)
+@st.cache_data(ttl=120)
+def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
+    try:
+        df = fetch_intraday(symbol, period=period)
+        if df is None or df.empty or "Close" not in df:
+            return np.nan, None
+        s = df["Close"].ffill()
+        ntd = compute_normalized_trend(s, window=ntd_win).dropna()
+        if ntd.empty:
+            return np.nan, None
+        return float(ntd.iloc[-1]), ntd.index[-1]
+    except Exception:
+        return np.nan, None
 
-    uptrend = np.isfinite(global_trend_slope) and float(global_trend_slope) > 0
-    downtrend = np.isfinite(global_trend_slope) and float(global_trend_slope) < 0
-
-    buy_mask  = uptrend   & (m < 0.0) & cross_up & near_support
-    sell_mask = downtrend & (m > 0.0) & cross_dn & near_resist
-
-    last_buy = buy_mask[buy_mask].index[-1] if buy_mask.any() else None
-    last_sell = sell_mask[sell_mask].index[-1] if sell_mask.any() else None
-    if last_buy is None and last_sell is None:
-        return None
-
-    if last_sell is None:
-        t, side = last_buy, "BUY"
-    elif last_buy is None:
-        t, side = last_sell, "SELL"
-    else:
-        t = last_buy if last_buy >= last_sell else last_sell
-        side = "BUY" if t == last_buy else "SELL"
-
-    px = float(c.loc[t]) if np.isfinite(c.loc[t]) else np.nan
-    return {"time": t, "price": px, "side": side, "note": "MACD/HMA55 + S/R"}
-
-def annotate_macd_signal(ax, ts, px, side: str):
-    if side == "BUY":
-        ax.scatter([ts], [px], marker="*", s=180, color="tab:green", zorder=10, label="MACD BUY (HMA55+S/R)")
-    else:
-        ax.scatter([ts], [px], marker="*", s=180, color="tab:red", zorder=10, label="MACD SELL (HMA55+S/R)")
 
 # =========================
-# Scanners: cached small computations
+# Part 7/8 — bullbear.py
 # =========================
+# ---------------------------
+# Recent BUY scanner helpers (uses SAME band-bounce logic as the chart)
+# ---------------------------
 @st.cache_data(ttl=120)
 def last_band_bounce_signal_daily(symbol: str, slope_lb: int):
     try:
@@ -1359,18 +1616,23 @@ def last_band_bounce_signal_daily(symbol: str, slope_lb: int):
         p_full = _coerce_1d_series(s).dropna()
         if p_full.empty:
             return None
+
         yhat, up, lo, m, r2 = regression_with_band(p_full, lookback=int(slope_lb))
         sig = find_band_bounce_signal(p_full, up, lo, m)
         if sig is None:
             return None
+
         t = sig.get("time", None)
         if t is None or t not in p_full.index:
             return None
+
         loc = int(p_full.index.get_loc(t))
         bars_since = int((len(p_full) - 1) - loc)
+
         curr = float(p_full.iloc[-1]) if np.isfinite(p_full.iloc[-1]) else np.nan
         spx = float(sig.get("price", np.nan))
         dlt = (curr / spx - 1.0) if np.isfinite(curr) and np.isfinite(spx) and spx != 0 else np.nan
+
         return {
             "Symbol": symbol,
             "Frame": "Daily",
@@ -1392,30 +1654,41 @@ def last_band_bounce_signal_hourly(symbol: str, period: str, slope_lb: int):
         df = fetch_intraday(symbol, period=period)
         if df is None or df.empty or "Close" not in df.columns:
             return None
+
         real_times = df.index if isinstance(df.index, pd.DatetimeIndex) else None
+
         df2 = df.copy()
         df2.index = pd.RangeIndex(len(df2))
         hc = _coerce_1d_series(df2["Close"]).ffill().dropna()
         if hc.empty:
             return None
+
         yhat, up, lo, m, r2 = regression_with_band(hc, lookback=int(slope_lb))
         sig = find_band_bounce_signal(hc, up, lo, m)
         if sig is None:
             return None
+
         bar = sig.get("time", None)
         if bar is None:
             return None
-        bar = int(bar)
+        try:
+            bar = int(bar)
+        except Exception:
+            return None
+
         n = len(hc)
         if bar < 0 or bar >= n:
             return None
         bars_since = int((n - 1) - bar)
+
         ts = None
         if isinstance(real_times, pd.DatetimeIndex) and (0 <= bar < len(real_times)):
             ts = real_times[bar]
+
         curr = float(hc.iloc[-1]) if np.isfinite(hc.iloc[-1]) else np.nan
         spx = float(sig.get("price", np.nan))
         dlt = (curr / spx - 1.0) if np.isfinite(curr) and np.isfinite(spx) and spx != 0 else np.nan
+
         return {
             "Symbol": symbol,
             "Frame": f"Hourly ({period})",
@@ -1431,26 +1704,172 @@ def last_band_bounce_signal_hourly(symbol: str, period: str, slope_lb: int):
     except Exception:
         return None
 
-def _series_heading_up(series_like: pd.Series, confirm_bars: int = 1) -> bool:
-    s = _coerce_1d_series(series_like).dropna()
-    confirm_bars = max(1, int(confirm_bars))
-    if len(s) < confirm_bars + 1:
-        return False
-    d = s.diff().dropna()
-    if len(d) < confirm_bars:
-        return False
-    return bool(np.all(d.iloc[-confirm_bars:] > 0))
+@st.cache_data(ttl=120)
+def last_daily_npx_cross_up_in_uptrend(symbol: str, ntd_win: int, daily_view_label: str):
+    try:
+        s_full = fetch_hist(symbol)
+        close_full = _coerce_1d_series(s_full).dropna()
+        if close_full.empty:
+            return None
+
+        close_show = subset_by_daily_view(close_full, daily_view_label)
+        close_show = _coerce_1d_series(close_show).dropna()
+        if close_show.empty or len(close_show) < 2:
+            return None
+
+        x = np.arange(len(close_show), dtype=float)
+        m, b = np.polyfit(x, close_show.to_numpy(dtype=float), 1)
+        if not np.isfinite(m) or float(m) <= 0.0:
+            return None
+
+        ntd_full = compute_normalized_trend(close_full, window=ntd_win)
+        npx_full = compute_normalized_price(close_full, window=ntd_win)
+
+        ntd_show = _coerce_1d_series(ntd_full).reindex(close_show.index)
+        npx_show = _coerce_1d_series(npx_full).reindex(close_show.index)
+
+        cross_up, _ = _cross_series(npx_show, ntd_show)
+        cross_up = cross_up.reindex(close_show.index, fill_value=False)
+        if not cross_up.any():
+            return None
+
+        t = cross_up[cross_up].index[-1]
+        loc = int(close_show.index.get_loc(t))
+        bars_since = int((len(close_show) - 1) - loc)
+
+        curr_px = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
+        ntd_at = float(ntd_show.loc[t]) if (t in ntd_show.index and np.isfinite(ntd_show.loc[t])) else np.nan
+        npx_at = float(npx_show.loc[t]) if (t in npx_show.index and np.isfinite(npx_show.loc[t])) else np.nan
+
+        ntd_last = float(ntd_show.dropna().iloc[-1]) if len(ntd_show.dropna()) else np.nan
+        npx_last = float(npx_show.dropna().iloc[-1]) if len(npx_show.dropna()) else np.nan
+
+        return {
+            "Symbol": symbol,
+            "Frame": "Daily",
+            "Signal": "NPX↑NTD (Uptrend)",
+            "Bars Since": bars_since,
+            "Cross Time": t,
+            "Global Slope": float(m),
+            "Current Price": curr_px,
+            "NTD@Cross": ntd_at,
+            "NPX@Cross": npx_at,
+            "NTD (last)": ntd_last,
+            "NPX (last)": npx_last,
+        }
+    except Exception:
+        return None
 
 @st.cache_data(ttl=120)
-def last_daily_ntd_zero_cross_up_in_uptrend(symbol: str,
-                                            daily_view_label: str,
-                                            ntd_win: int = 60,
-                                            confirm_bars: int = 1):
+def last_daily_npx_zero_cross_with_local_slope(symbol: str,
+                                               ntd_win: int,
+                                               daily_view_label: str,
+                                               local_slope_lb: int,
+                                               max_abs_npx_at_cross: float,
+                                               direction: str = "up"):
+    try:
+        s_full = fetch_hist(symbol)
+        close_full = _coerce_1d_series(s_full).dropna()
+        if close_full.empty:
+            return None
+
+        close_show = subset_by_daily_view(close_full, daily_view_label)
+        close_show = _coerce_1d_series(close_show).dropna()
+        if close_show.empty or len(close_show) < 3:
+            return None
+
+        npx_full = compute_normalized_price(close_full, window=ntd_win)
+        npx_show = _coerce_1d_series(npx_full).reindex(close_show.index)
+
+        # UPDATED (prior request): use 0.5 cross level instead of 0.0
+        level = 0.5
+
+        prev = npx_show.shift(1)
+        if str(direction).lower().startswith("up"):
+            cross_mask = (npx_show >= level) & (prev < level)
+            sig_label = "NPX 0.5↑"
+        else:
+            cross_mask = (npx_show <= level) & (prev > level)
+            sig_label = "NPX 0.5↓"
+
+        cross_mask = cross_mask.fillna(False)
+        if not cross_mask.any():
+            return None
+
+        eps = float(max_abs_npx_at_cross)
+        near_level = ((npx_show - level).abs() <= eps) & ((prev - level).abs() <= eps)
+        cross_mask = cross_mask & near_level.fillna(False)
+        if not cross_mask.any():
+            return None
+
+        t = cross_mask[cross_mask].index[-1]
+        loc = int(close_show.index.get_loc(t))
+        bars_since = int((len(close_show) - 1) - loc)
+
+        seg = close_show.loc[:t].tail(int(local_slope_lb))
+        seg = _coerce_1d_series(seg).dropna()
+        if len(seg) < 2:
+            return None
+        x = np.arange(len(seg), dtype=float)
+        m, b = np.polyfit(x, seg.to_numpy(dtype=float), 1)
+        if not np.isfinite(m) or float(m) == 0.0:
+            return None
+
+        if sig_label.endswith("↑") and float(m) <= 0.0:
+            return None
+        if sig_label.endswith("↓") and float(m) >= 0.0:
+            return None
+
+        curr_px = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
+        npx_at = float(npx_show.loc[t]) if (t in npx_show.index and np.isfinite(npx_show.loc[t])) else np.nan
+        npx_prev = float(prev.loc[t]) if (t in prev.index and np.isfinite(prev.loc[t])) else np.nan
+        npx_last = float(npx_show.dropna().iloc[-1]) if len(npx_show.dropna()) else np.nan
+
+        return {
+            "Symbol": symbol,
+            "Frame": "Daily",
+            "Daily View": daily_view_label,
+            "Signal": sig_label,
+            "Bars Since": bars_since,
+            "Cross Time": t,
+            "Local Slope": float(m),
+            "Current Price": curr_px,
+            "NPX@Cross": npx_at,
+            "NPX(prev)": npx_prev,
+            "NPX (last)": npx_last,
+            "Zero-Eps": float(eps),
+            "Slope LB": int(local_slope_lb),
+        }
+    except Exception:
+        return None
+
+# ---------------------------
+# NEW (THIS REQUEST): Daily Slope + Support/Resistance reversal + BB mid cross scanner (R²>=0.99)
+# ---------------------------
+@st.cache_data(ttl=120)
+def last_daily_sr_reversal_bbmid(symbol: str,
+                                 daily_view_label: str,
+                                 slope_lb: int,
+                                 sr_lb: int,
+                                 bb_window: int,
+                                 bb_sigma: float,
+                                 bb_ema: bool,
+                                 prox: float,
+                                 bars_confirm: int,
+                                 horizon: int,
+                                 side: str = "BUY",
+                                 min_r2: float = 0.99):
     """
-    NEW tab support:
-      - Daily global trendline slope (in chosen daily view) must be UP
-      - NTD(win=60) crossed UP through 0.0 recently
-      - NTD is heading UP and higher than at cross
+    BUY:
+      - regression slope (lookback) > 0 and R² >= min_r2
+      - touched Support within last `horizon` bars before BB mid cross UP
+      - BB mid cross UP occurs after touch
+      - confirms reversal via consecutive increasing closes
+    SELL:
+      - regression slope (lookback) < 0 and R² >= min_r2
+      - touched Resistance within last `horizon` bars before BB mid cross DOWN
+      - BB mid cross DOWN occurs after touch
+      - confirms reversal via consecutive decreasing closes
     """
     try:
         close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
@@ -1458,378 +1877,324 @@ def last_daily_ntd_zero_cross_up_in_uptrend(symbol: str,
             return None
 
         close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
-        if close_show.empty or len(close_show) < 3:
+        if close_show.empty or len(close_show) < max(10, int(slope_lb), int(sr_lb)):
             return None
 
-        x = np.arange(len(close_show), dtype=float)
-        y = close_show.to_numpy(dtype=float)
-        m, b = np.polyfit(x, y, 1)
-        if not np.isfinite(m) or float(m) <= 0.0:
+        yhat, up, lo, m, r2 = regression_with_band(close_show, lookback=int(slope_lb))
+        if not (np.isfinite(m) and np.isfinite(r2)):
+            return None
+        if float(r2) < float(min_r2):
             return None
 
-        yhat = m * x + b
-        ss_res = float(np.sum((y - yhat) ** 2))
-        ss_tot = float(np.sum((y - y.mean()) ** 2))
-        r2 = float("nan") if ss_tot <= 0 else float(1.0 - ss_res / ss_tot)
-
-        ntd_full = compute_normalized_trend(close_full, window=int(ntd_win))
-        ntd_show = _coerce_1d_series(ntd_full).reindex(close_show.index)
-        if ntd_show.dropna().shape[0] < 2:
+        want_buy = str(side).upper().startswith("B")
+        if want_buy and float(m) <= 0.0:
+            return None
+        if (not want_buy) and float(m) >= 0.0:
             return None
 
-        cross_up0 = (ntd_show >= 0.0) & (ntd_show.shift(1) < 0.0)
-        cross_up0 = cross_up0.fillna(False)
-        if not cross_up0.any():
+        res = close_show.rolling(int(sr_lb), min_periods=1).max()
+        sup = close_show.rolling(int(sr_lb), min_periods=1).min()
+
+        bb_mid, bb_up, bb_lo, _, _ = compute_bbands(close_show, window=int(bb_window), mult=float(bb_sigma), use_ema=bool(bb_ema))
+        if bb_mid.dropna().empty:
             return None
 
-        t_cross = cross_up0[cross_up0].index[-1]
-        loc = int(close_show.index.get_loc(t_cross))
-        bars_since = int((len(close_show) - 1) - loc)
+        cross_up, cross_dn = _cross_series(close_show, bb_mid)
+        hz = max(1, int(horizon))
 
-        ntd_cross = float(ntd_show.loc[t_cross]) if np.isfinite(ntd_show.loc[t_cross]) else np.nan
-        ntd_last = float(ntd_show.dropna().iloc[-1]) if ntd_show.dropna().shape[0] else np.nan
-        if not (np.isfinite(ntd_cross) and np.isfinite(ntd_last)):
-            return None
-        if float(ntd_last) <= float(ntd_cross):
-            return None
-        if not _series_heading_up(ntd_show, confirm_bars=int(confirm_bars)):
-            return None
+        if want_buy:
+            if not cross_up.any():
+                return None
+            t_cross = cross_up[cross_up].index[-1]
 
-        npx_full = compute_normalized_price(close_full, window=int(ntd_win))
-        npx_show = _coerce_1d_series(npx_full).reindex(close_show.index)
-        npx_last = float(npx_show.dropna().iloc[-1]) if npx_show.dropna().shape[0] else np.nan
+            try:
+                loc = int(close_show.index.get_loc(t_cross))
+            except Exception:
+                return None
+            j0 = max(0, loc - hz)
+            touch_mask = close_show.iloc[j0:loc+1] <= (sup.iloc[j0:loc+1] * (1.0 + float(prox)))
+            if not touch_mask.any():
+                return None
+            t_touch = touch_mask[touch_mask].index[-1]
+
+            seg = close_show.loc[:t_cross]
+            if not _n_consecutive_increasing(seg, int(bars_confirm)):
+                return None
+
+        else:
+            if not cross_dn.any():
+                return None
+            t_cross = cross_dn[cross_dn].index[-1]
+
+            try:
+                loc = int(close_show.index.get_loc(t_cross))
+            except Exception:
+                return None
+            j0 = max(0, loc - hz)
+            touch_mask = close_show.iloc[j0:loc+1] >= (res.iloc[j0:loc+1] * (1.0 - float(prox)))
+            if not touch_mask.any():
+                return None
+            t_touch = touch_mask[touch_mask].index[-1]
+
+            seg = close_show.loc[:t_cross]
+            if not _n_consecutive_decreasing(seg, int(bars_confirm)):
+                return None
+
+        bars_since_cross = int((len(close_show) - 1) - int(close_show.index.get_loc(t_cross)))
+
+        curr_px = float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan
+        cross_px = float(close_show.loc[t_cross]) if np.isfinite(close_show.loc[t_cross]) else np.nan
+        mid_px = float(bb_mid.loc[t_cross]) if (t_cross in bb_mid.index and np.isfinite(bb_mid.loc[t_cross])) else np.nan
+        sup_px = float(sup.loc[t_touch]) if (t_touch in sup.index and np.isfinite(sup.loc[t_touch])) else np.nan
+        res_px = float(res.loc[t_touch]) if (t_touch in res.index and np.isfinite(res.loc[t_touch])) else np.nan
 
         return {
             "Symbol": symbol,
-            "Bars Since Cross": int(bars_since),
+            "Side": "BUY" if want_buy else "SELL",
+            "Daily View": daily_view_label,
+            "Bars Since Cross": bars_since_cross,
+            "Touch Time": t_touch,
             "Cross Time": t_cross,
-            "NTD@Cross": float(ntd_cross),
-            "NTD (last)": float(ntd_last),
-            "NPX (last)": float(npx_last) if np.isfinite(npx_last) else np.nan,
-            "Global Slope": float(m),
-            "R2": float(r2) if np.isfinite(r2) else np.nan,
-            "NTD win": int(ntd_win),
-            "Confirm Bars": int(confirm_bars),
+            "Slope": float(m),
+            "R2": float(r2),
+            "Support@Touch": sup_px,
+            "Resistance@Touch": res_px,
+            "BB Mid@Cross": mid_px,
+            "Price@Cross": cross_px,
+            "Current Price": curr_px,
         }
     except Exception:
         return None
 
+
 # =========================
-# Chart renderers
+# Part 8/8 — bullbear.py
 # =========================
-def render_daily_chart(symbol: str, daily_view_label: str):
-    close_full = fetch_hist(symbol)
-    ohlc = fetch_hist_ohlc(symbol)
-    close_full = _coerce_1d_series(close_full).dropna()
-    if close_full.empty:
-        st.warning("No daily data.")
-        return None
+# ---------------------------
+# Session state init
+# ---------------------------
+if "run_all" not in st.session_state:
+    st.session_state.run_all = False
+    st.session_state.ticker = None
+    st.session_state.hour_range = "24h"
+if "hist_years" not in st.session_state:
+    st.session_state.hist_years = 10
 
-    close = subset_by_daily_view(close_full, daily_view_label)
-    close = _coerce_1d_series(close).dropna()
-    if close.empty:
-        st.warning("No daily data in chosen view.")
-        return None
-
-    ema30 = close_full.ewm(span=30).mean().reindex(close.index)
-    res_d = close_full.rolling(sr_lb_daily, min_periods=1).max().reindex(close.index)
-    sup_d = close_full.rolling(sr_lb_daily, min_periods=1).min().reindex(close.index)
-
-    # Local regression band
-    yhat_d, upper_d, lower_d, m_d, r2_d = regression_with_band(close_full, slope_lb_daily)
-    yhat_d = yhat_d.reindex(close.index)
-    upper_d = upper_d.reindex(close.index)
-    lower_d = lower_d.reindex(close.index)
-
-    rev_prob = slope_reversal_probability(close_full, m_d, hist_window=rev_hist_lb, slope_window=slope_lb_daily, horizon=rev_horizon)
-
-    # NTD/NPX
-    ntd = compute_normalized_trend(close_full, window=ntd_window).reindex(close.index) if show_ntd else pd.Series(index=close.index, dtype=float)
-    npx = compute_normalized_price(close_full, window=ntd_window).reindex(close.index) if show_npx_ntd else pd.Series(index=close.index, dtype=float)
-
-    # HMA, MACD (on shown close)
-    hma = compute_hma(close, period=hma_period)
-    macd, macd_sig, macd_hist = compute_macd(close)
-
-    # BB
-    bb_mid, bb_up, bb_lo, bb_pctb, bb_nbb = compute_bbands(close, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
-
-    # Kijun
-    kijun = pd.Series(index=close.index, dtype=float)
-    if show_ichi and (ohlc is not None) and (not ohlc.empty):
-        _, kijun_full, _, _, _ = ichimoku_lines(ohlc["High"], ohlc["Low"], ohlc["Close"],
-                                               conv=ichi_conv, base=ichi_base, span_b=ichi_spanb, shift_cloud=False)
-        kijun = _coerce_1d_series(kijun_full).reindex(close.index).ffill().bfill()
-
-    # Pivots
-    piv = current_daily_pivots(ohlc)
-
-    # Figure with NTD panel
-    fig, (ax, ax2) = plt.subplots(
-        2, 1, sharex=True, figsize=(14, 8),
-        gridspec_kw={"height_ratios": [3.2, 1.3]}
-    )
-    plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93, bottom=0.33)
-
-    ax.set_title(
-        f"{symbol} Daily — {daily_view_label}  |  P(slope rev≤{rev_horizon})={fmt_pct(rev_prob)}"
-    )
-    ax.plot(close.index, close.values, label="Price")
-    ax.plot(ema30.index, ema30.values, "--", label="30 EMA")
-
-    global_m = draw_trend_direction_line(ax, close, label_prefix="Trend (global)")
-
-    if show_hma and not hma.dropna().empty:
-        ax.plot(hma.index, hma.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
-
-    if show_ichi and not kijun.dropna().empty:
-        ax.plot(kijun.index, kijun.values, "-", linewidth=1.8, color="black", label=f"Ichimoku Kijun ({ichi_base})")
-
-    if show_bbands and not bb_up.dropna().empty and not bb_lo.dropna().empty:
-        ax.fill_between(close.index, bb_lo, bb_up, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
-        ax.plot(bb_mid.index, bb_mid.values, "-", linewidth=1.1, label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
-        ax.plot(bb_up.index, bb_up.values, ":", linewidth=1.0)
-        ax.plot(bb_lo.index, bb_lo.values, ":", linewidth=1.0)
-
-    # S/R
-    res_val = float(res_d.iloc[-1]) if len(res_d.dropna()) else np.nan
-    sup_val = float(sup_d.iloc[-1]) if len(sup_d.dropna()) else np.nan
-    if np.isfinite(res_val) and np.isfinite(sup_val):
-        ax.hlines(res_val, xmin=close.index[0], xmax=close.index[-1], colors="tab:red", linewidth=1.6, label=f"R (w={sr_lb_daily})")
-        ax.hlines(sup_val, xmin=close.index[0], xmax=close.index[-1], colors="tab:green", linewidth=1.6, label=f"S (w={sr_lb_daily})")
-        label_on_left(ax, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
-        label_on_left(ax, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
-
-    # Local regression + bands
-    if not yhat_d.dropna().empty:
-        ax.plot(yhat_d.index, yhat_d.values, "-", linewidth=2, label=f"Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
-    if not upper_d.dropna().empty and not lower_d.dropna().empty:
-        ax.plot(upper_d.index, upper_d.values, "--", linewidth=2.2, color="black", alpha=0.85, label="+2σ")
-        ax.plot(lower_d.index, lower_d.values, "--", linewidth=2.2, color="black", alpha=0.85, label="-2σ")
-        bounce_sig = find_band_bounce_signal(close, upper_d, lower_d, m_d)
-        if bounce_sig is not None:
-            annotate_crossover(ax, bounce_sig["time"], bounce_sig["price"], bounce_sig["side"])
-
-    # MACD/HMA/SR star
-    macd_sig_obj = find_macd_hma_sr_signal(
-        close=close, hma=hma, macd=macd, sup=sup_d, res=res_d,
-        global_trend_slope=global_m, prox=sr_prox_pct
-    )
-    macd_instr = "MACD/HMA55: n/a"
-    if macd_sig_obj is not None and np.isfinite(macd_sig_obj.get("price", np.nan)):
-        macd_instr = f"MACD/HMA55: {macd_sig_obj['side']} @ {fmt_price_val(macd_sig_obj['price'])}"
-        annotate_macd_signal(ax, macd_sig_obj["time"], macd_sig_obj["price"], macd_sig_obj["side"])
-    ax.text(0.01, 0.98, macd_instr, transform=ax.transAxes, ha="left", va="top",
-            fontsize=10, fontweight="bold",
-            bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.8), zorder=30)
-
-    # Pivots
-    if piv:
-        for lbl, y in piv.items():
-            ax.hlines(y, xmin=close.index[0], xmax=close.index[-1], linestyles="dashed", linewidth=1.0)
-            ax.text(close.index[-1], y, f" {lbl}={fmt_price_val(y)}", va="center")
-
-    # Fibonacci (levels + fib-npx signal markers)
-    fibs = {}
-    buy_mask = sell_mask = None
-    if show_fibs:
-        fibs = fibonacci_levels(close)
-        for lbl, y in fibs.items():
-            ax.hlines(y, xmin=close.index[0], xmax=close.index[-1], linestyles="dotted", linewidth=1)
-            ax.text(close.index[-1], y, f" {lbl}", va="center")
-        if show_npx_ntd and not npx.dropna().empty:
-            buy_mask, sell_mask, _ = fib_npx_zero_cross_signal_masks(close, npx, horizon_bars=rev_horizon, proximity_pct_of_range=0.02, npx_level=0.0)
-            overlay_fib_npx_signals(ax, close, buy_mask, sell_mask)
-
-    # NTD panel
-    ax2.set_title(f"Daily Indicator Panel — NTD/NPX (win={ntd_window})")
-    if show_ntd and shade_ntd and not ntd.dropna().empty:
-        shade_ntd_regions(ax2, ntd)
-    if show_ntd and not ntd.dropna().empty:
-        ax2.plot(ntd.index, ntd.values, "-", linewidth=1.6, label="NTD")
-        ntd_tr, ntd_m = slope_line(ntd, slope_lb_daily)
-        if not ntd_tr.dropna().empty:
-            ax2.plot(ntd_tr.index, ntd_tr.values, "--", linewidth=2, label=f"NTD trend ({fmt_slope(ntd_m)}/bar)")
-    if show_npx_ntd and not npx.dropna().empty and show_ntd and not ntd.dropna().empty:
-        overlay_npx_on_ntd(ax2, npx, ntd, mark_crosses=mark_npx_cross)
-
-    ax2.axhline(0.0, linestyle="--", linewidth=1.0, color="black", label="0.00")
-    ax2.axhline(0.5, linestyle="-", linewidth=1.2, color="red", label="+0.50")
-    ax2.axhline(-0.5, linestyle="-", linewidth=1.2, color="red", label="-0.50")
-    ax2.axhline(0.75, linestyle="-", linewidth=1.0, color="black", label="+0.75")
-    ax2.axhline(-0.75, linestyle="-", linewidth=1.0, color="black", label="-0.75")
-    ax2.set_ylim(-1.1, 1.1)
-
-    # Legend (combined)
-    handles, labels = [], []
-    h1, l1 = ax.get_legend_handles_labels()
-    h2, l2 = ax2.get_legend_handles_labels()
-    handles += h1 + h2
-    labels += l1 + l2
-    seen = set()
-    hu, lu = [], []
-    for h, l in zip(handles, labels):
-        if not l or l in seen:
-            continue
-        seen.add(l)
-        hu.append(h); lu.append(l)
-    fig.legend(hu, lu, loc="lower center", bbox_to_anchor=(0.5, 0.015), ncol=4,
-               frameon=True, fontsize=9, framealpha=0.65, fancybox=True)
-
-    style_axes(ax); style_axes(ax2)
-    st.pyplot(fig)
-
-    last_px = float(close.iloc[-1]) if np.isfinite(close.iloc[-1]) else np.nan
-    trade_txt = format_trade_instruction(
-        trend_slope=m_d,
-        buy_val=sup_val,
-        sell_val=res_val,
-        close_val=last_px,
-        symbol=symbol,
-        global_trend_slope=global_m
-    )
-
-    return {
-        "close_full": close_full,
-        "close_show": close,
-        "ohlc": ohlc,
-        "global_slope": global_m,
-        "local_slope": m_d,
-        "r2": r2_d,
-        "rev_prob": rev_prob,
-        "trade_instruction": trade_txt,
-        "fibs": fibs,
-        "fib_buy_mask": buy_mask,
-        "fib_sell_mask": sell_mask,
-        "last_price": last_px,
-    }
-
-def render_hourly_chart(symbol: str, period: str, hour_range_label: str):
-    intraday = fetch_intraday(symbol, period=period)
-    if intraday is None or intraday.empty or "Close" not in intraday.columns:
+# ---------------------------
+# Shared hourly renderer (Stock & Forex)
+# ---------------------------
+def render_hourly_views(sel: str,
+                        intraday: pd.DataFrame,
+                        p_up: float,
+                        p_dn: float,
+                        hour_range_label: str,
+                        is_forex: bool,
+                        alert_placeholder=None):
+    if intraday is None or intraday.empty or "Close" not in intraday:
         st.warning("No intraday data available.")
-        return None
+        return
 
     real_times = intraday.index if isinstance(intraday.index, pd.DatetimeIndex) else None
-
-    # Use RangeIndex for clean spacing (gapless), but keep real_times for ticks/markers
     intr_plot = intraday.copy()
     intr_plot.index = pd.RangeIndex(len(intr_plot))
-    df = intr_plot
-    hc = _coerce_1d_series(df["Close"]).ffill()
+    intraday = intr_plot
+
+    hc = intraday["Close"].ffill()
     he = hc.ewm(span=20).mean()
 
-    # S/R
     res_h = hc.rolling(sr_lb_hourly, min_periods=1).max()
     sup_h = hc.rolling(sr_lb_hourly, min_periods=1).min()
 
-    # HMA + MACD
     hma_h = compute_hma(hc, period=hma_period)
     macd_h, macd_sig_h, macd_hist_h = compute_macd(hc)
 
-    # Supertrend + PSAR (needs OHLC)
-    st_df = compute_supertrend(df, atr_period=atr_period, atr_mult=atr_mult) if {"High","Low","Close"}.issubset(df.columns) else pd.DataFrame()
-    st_line = st_df["ST"].reindex(hc.index) if (not st_df.empty and "ST" in st_df.columns) else pd.Series(index=hc.index, dtype=float)
+    st_intraday = compute_supertrend(intraday, atr_period=atr_period, atr_mult=atr_mult)
+    st_line_intr = st_intraday["ST"].reindex(hc.index) if "ST" in st_intraday.columns else pd.Series(dtype=float)
 
-    psar_df = compute_psar_from_ohlc(df, step=psar_step, max_step=psar_max) if (show_psar and {"High","Low"}.issubset(df.columns)) else pd.DataFrame()
-    if not psar_df.empty:
-        psar_df = psar_df.reindex(hc.index)
-
-    # Kijun (no cloud shift)
     kijun_h = pd.Series(index=hc.index, dtype=float)
-    if show_ichi and {"High","Low","Close"}.issubset(df.columns):
-        _, kijun_calc, _, _, _ = ichimoku_lines(df["High"], df["Low"], df["Close"],
-                                               conv=ichi_conv, base=ichi_base, span_b=ichi_spanb, shift_cloud=False)
-        kijun_h = _coerce_1d_series(kijun_calc).reindex(hc.index).ffill().bfill()
+    if {"High","Low","Close"}.issubset(intraday.columns) and show_ichi:
+        _, kijun_h, _, _, _ = ichimoku_lines(
+            intraday["High"], intraday["Low"], intraday["Close"],
+            conv=ichi_conv, base=ichi_base, span_b=ichi_spanb,
+            shift_cloud=False
+        )
+        kijun_h = kijun_h.reindex(hc.index).ffill().bfill()
 
-    # Bollinger
-    bb_mid_h, bb_up_h, bb_lo_h, bb_pctb_h, bb_nbb_h = compute_bbands(hc, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
+    bb_mid_h, bb_up_h, bb_lo_h, bb_pctb_h, bb_nbb_h = compute_bbands(
+        hc, window=bb_win, mult=bb_mult, use_ema=bb_use_ema
+    )
 
-    # Local regression
-    yhat_h, up_h, lo_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
-    rev_prob_h = slope_reversal_probability(hc, m_h, hist_window=rev_hist_lb, slope_window=slope_lb_hourly, horizon=rev_horizon)
+    psar_h_df = compute_psar_from_ohlc(intraday, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
+    if not psar_h_df.empty:
+        psar_h_df = psar_h_df.reindex(hc.index)
 
-    # News + sessions (forex only)
+    yhat_h, upper_h, lower_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
+    slope_sig_h = m_h
+
+    rev_prob_h = slope_reversal_probability(
+        hc,
+        slope_sig_h,
+        hist_window=rev_hist_lb,
+        slope_window=slope_lb_hourly,
+        horizon=rev_horizon,
+    )
+
     fx_news = pd.DataFrame()
-    if (mode == "Forex") and show_fx_news:
-        fx_news = fetch_yf_news(symbol, window_days=news_window_days)
+    if is_forex and show_fx_news:
+        fx_news = fetch_yf_news(sel, window_days=news_window_days)
 
-    # Plot: price + (optional) NTD panel
+    # ---------------------------
+    # UPDATED (THIS REQUEST): show Hourly NTD panel by default (like Daily)
+    # ---------------------------
+    ax2w = None
     if show_nrsi:
-        fig, (ax, axw) = plt.subplots(2, 1, sharex=True, figsize=(14, 7),
-                                      gridspec_kw={"height_ratios": [3.2, 1.3]})
-        plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93, bottom=0.34)
+        fig2, (ax2, ax2w) = plt.subplots(
+            2, 1, sharex=True, figsize=(14, 7),
+            gridspec_kw={"height_ratios": [3.2, 1.3]}
+        )
+        plt.subplots_adjust(hspace=0.05, top=0.90, right=0.93, bottom=0.22)
     else:
-        fig, ax = plt.subplots(figsize=(14, 4))
-        plt.subplots_adjust(top=0.90, right=0.93, bottom=0.34)
-        axw = None
+        fig2, ax2 = plt.subplots(figsize=(14, 4))
+        plt.subplots_adjust(top=0.85, right=0.93, bottom=0.24)
 
-    ax.set_title(f"{symbol} Intraday ({hour_range_label})  |  P(slope rev≤{rev_horizon})={fmt_pct(rev_prob_h)}")
-    ax.plot(hc.index, hc.values, label="Intraday")
-    ax.plot(he.index, he.values, "--", label="20 EMA")
+    ax2.plot(hc.index, hc, label="Intraday")
+    ax2.plot(he.index, he.values, "--", label="20 EMA")
 
-    global_m_h = draw_trend_direction_line(ax, hc, label_prefix="Trend (global)")
+    global_m_h = draw_trend_direction_line(ax2, hc, label_prefix="Trend (global)")
 
     if show_hma and not hma_h.dropna().empty:
-        ax.plot(hma_h.index, hma_h.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
-    if show_ichi and not kijun_h.dropna().empty:
-        ax.plot(kijun_h.index, kijun_h.values, "-", linewidth=1.8, color="black", label=f"Ichimoku Kijun ({ichi_base})")
-    if show_bbands and not bb_up_h.dropna().empty and not bb_lo_h.dropna().empty:
-        ax.fill_between(hc.index, bb_lo_h, bb_up_h, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
-        ax.plot(bb_mid_h.index, bb_mid_h.values, "-", linewidth=1.1, label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
-        ax.plot(bb_up_h.index, bb_up_h.values, ":", linewidth=1.0)
-        ax.plot(bb_lo_h.index, bb_lo_h.values, ":", linewidth=1.0)
+        ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
 
-    # PSAR points
-    if show_psar and (not psar_df.empty) and ("PSAR" in psar_df.columns):
-        up_mask = psar_df["in_uptrend"] == True
+    if show_ichi and not kijun_h.dropna().empty:
+        ax2.plot(kijun_h.index, kijun_h.values, "-", linewidth=1.8, color="black", label=f"Ichimoku Kijun ({ichi_base})")
+
+    if show_bbands and not bb_up_h.dropna().empty and not bb_lo_h.dropna().empty:
+        ax2.fill_between(hc.index, bb_lo_h, bb_up_h, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
+        ax2.plot(bb_mid_h.index, bb_mid_h.values, "-", linewidth=1.1, label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
+        ax2.plot(bb_up_h.index, bb_up_h.values, ":", linewidth=1.0)
+        ax2.plot(bb_lo_h.index, bb_lo_h.values, ":", linewidth=1.0)
+
+    if show_psar and (not psar_h_df.empty) and ("PSAR" in psar_h_df.columns):
+        up_mask = psar_h_df["in_uptrend"] == True
         dn_mask = ~up_mask
         if up_mask.any():
-            ax.scatter(psar_df.index[up_mask], psar_df["PSAR"][up_mask], s=15, color="tab:green", zorder=6,
-                       label=f"PSAR (step={psar_step:.02f}, max={psar_max:.02f})")
+            ax2.scatter(psar_h_df.index[up_mask], psar_h_df["PSAR"][up_mask], s=15, color="tab:green", zorder=6,
+                        label=f"PSAR (step={psar_step:.02f}, max={psar_max:.02f})")
         if dn_mask.any():
-            ax.scatter(psar_df.index[dn_mask], psar_df["PSAR"][dn_mask], s=15, color="tab:red", zorder=6)
+            ax2.scatter(psar_h_df.index[dn_mask], psar_h_df["PSAR"][dn_mask], s=15, color="tab:red", zorder=6)
 
-    # S/R lines
-    res_val = float(res_h.iloc[-1]) if len(res_h.dropna()) else np.nan
-    sup_val = float(sup_h.iloc[-1]) if len(sup_h.dropna()) else np.nan
-    px_val  = float(hc.iloc[-1]) if len(hc.dropna()) else np.nan
+    res_val = sup_val = px_val = np.nan
+    try:
+        res_val = float(res_h.iloc[-1])
+        sup_val = float(sup_h.iloc[-1])
+        px_val  = float(hc.iloc[-1])
+    except Exception:
+        pass
+
     if np.isfinite(res_val) and np.isfinite(sup_val):
-        ax.hlines(res_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:red", linewidth=1.6, label="Resistance")
-        ax.hlines(sup_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:green", linewidth=1.6, label="Support")
-        label_on_left(ax, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
-        label_on_left(ax, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
+        ax2.hlines(res_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance")
+        ax2.hlines(sup_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
+        label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
+        label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
-    # Supertrend
-    if not st_line.dropna().empty:
-        ax.plot(st_line.index, st_line.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
+    if not st_line_intr.empty:
+        ax2.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
 
-    # Local regression + bands + bounce
-    if not yhat_h.dropna().empty:
-        ax.plot(yhat_h.index, yhat_h.values, "-", linewidth=2, label=f"Slope {slope_lb_hourly} ({fmt_slope(m_h)}/bar)")
-    if not up_h.dropna().empty and not lo_h.dropna().empty:
-        ax.plot(up_h.index, up_h.values, "--", linewidth=2.2, color="black", alpha=0.85, label="+2σ")
-        ax.plot(lo_h.index, lo_h.values, "--", linewidth=2.2, color="black", alpha=0.85, label="-2σ")
-        bounce_sig = find_band_bounce_signal(hc, up_h, lo_h, m_h)
-        if bounce_sig is not None:
-            annotate_crossover(ax, bounce_sig["time"], bounce_sig["price"], bounce_sig["side"])
+    if not yhat_h.empty:
+        ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2, label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
+    if not upper_h.empty and not lower_h.empty:
+        ax2.plot(upper_h.index, upper_h.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Slope +2σ")
+        ax2.plot(lower_h.index, lower_h.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Slope -2σ")
 
-    # MACD/HMA/SR star
-    macd_sig_obj = find_macd_hma_sr_signal(
+        bounce_sig_h = find_band_bounce_signal(hc, upper_h, lower_h, slope_sig_h)
+        if bounce_sig_h is not None:
+            annotate_crossover(ax2, bounce_sig_h["time"], bounce_sig_h["price"], bounce_sig_h["side"])
+
+        # leaderline + legend
+        trig_h = find_slope_trigger_after_band_reversal(hc, yhat_h, upper_h, lower_h, horizon=rev_horizon)
+        annotate_slope_trigger(ax2, trig_h)
+
+    if is_forex and show_fx_news and (not fx_news.empty) and isinstance(real_times, pd.DatetimeIndex):
+        news_pos = _map_times_to_bar_positions(real_times, fx_news["time"].tolist())
+        if news_pos:
+            draw_news_markers(ax2, news_pos, label="News")
+
+    instr_txt = format_trade_instruction(
+        trend_slope=slope_sig_h,
+        buy_val=sup_val,
+        sell_val=res_val,
+        close_val=px_val,
+        symbol=sel,
+        global_trend_slope=global_m_h
+    )
+
+    is_alert = isinstance(instr_txt, str) and instr_txt.startswith("ALERT:")
+    if alert_placeholder is not None:
+        if is_alert:
+            alert_placeholder.error(instr_txt)
+        else:
+            alert_placeholder.empty()
+
+    title_instr = instr_txt
+    if alert_placeholder is not None and is_alert:
+        title_instr = ""
+
+    macd_sig = find_macd_hma_sr_signal(
         close=hc, hma=hma_h, macd=macd_h, sup=sup_h, res=res_h,
         global_trend_slope=global_m_h, prox=sr_prox_pct
     )
-    macd_instr = "MACD/HMA55: n/a"
-    if macd_sig_obj is not None and np.isfinite(macd_sig_obj.get("price", np.nan)):
-        macd_instr = f"MACD/HMA55: {macd_sig_obj['side']} @ {fmt_price_val(macd_sig_obj['price'])}"
-        annotate_macd_signal(ax, macd_sig_obj["time"], macd_sig_obj["price"], macd_sig_obj["side"])
-    ax.text(0.01, 0.98, macd_instr, transform=ax.transAxes, ha="left", va="top",
-            fontsize=10, fontweight="bold",
-            bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.8), zorder=20)
 
-    # Forex extras: news + sessions
-    session_handles = session_labels = None
-    if (mode == "Forex") and show_sessions_pst and isinstance(real_times, pd.DatetimeIndex) and not real_times.empty:
+    macd_instr_txt = "MACD/HMA55: n/a"
+    if macd_sig is not None and np.isfinite(macd_sig.get("price", np.nan)):
+        side = macd_sig["side"]
+        macd_instr_txt = f"MACD/HMA55: {side} @ {fmt_price_val(macd_sig['price'])}"
+        annotate_macd_signal(ax2, macd_sig["time"], macd_sig["price"], side)
+
+    ax2.text(
+        0.01, 0.98, macd_instr_txt,
+        transform=ax2.transAxes, ha="left", va="top",
+        fontsize=10, fontweight="bold",
+        bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.8),
+        zorder=20
+    )
+
+    rev_txt_h = fmt_pct(rev_prob_h) if np.isfinite(rev_prob_h) else "n/a"
+    instr_part = f" — {title_instr} " if isinstance(title_instr, str) and title_instr.strip() else " "
+    ax2.set_title(
+        f"{sel} Intraday ({hour_range_label})  "
+        f"↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)}{instr_part}"
+        f"[P(slope rev≤{rev_horizon} bars)={rev_txt_h}]"
+    )
+
+    if np.isfinite(px_val):
+        nbb_txt = ""
+        try:
+            last_pct = float(bb_pctb_h.dropna().iloc[-1]) if show_bbands else np.nan
+            last_nbb = float(bb_nbb_h.dropna().iloc[-1]) if show_bbands else np.nan
+            if np.isfinite(last_nbb) and np.isfinite(last_pct):
+                nbb_txt = f"  |  NBB {last_nbb:+.2f}  •  %B {fmt_pct(last_pct, digits=0)}"
+        except Exception:
+            pass
+        ax2.text(0.99, 0.02,
+                 f"Current price: {fmt_price_val(px_val)}{nbb_txt}",
+                 transform=ax2.transAxes, ha="right", va="bottom",
+                 fontsize=11, fontweight="bold",
+                 bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+
+    ax2.text(0.01, 0.02,
+             f"Slope: {fmt_slope(slope_sig_h)}/bar  |  P(rev≤{rev_horizon} bars): {fmt_pct(rev_prob_h)}",
+             transform=ax2.transAxes, ha="left", va="bottom",
+             fontsize=9, color="black",
+             bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+    ax2.text(0.50, 0.02,
+             f"R² ({slope_lb_hourly} bars): {fmt_r2(r2_h)}",
+             transform=ax2.transAxes, ha="center", va="bottom",
+             fontsize=9, color="black",
+             bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+
+    session_handles = None
+    session_labels = None
+    if is_forex and show_sessions_pst and isinstance(real_times, pd.DatetimeIndex) and not real_times.empty:
         sess = compute_session_lines(real_times)
         sess_pos = {
             "ldn_open": _map_times_to_bar_positions(real_times, sess.get("ldn_open", [])),
@@ -1837,120 +2202,103 @@ def render_hourly_chart(symbol: str, period: str, hour_range_label: str):
             "ny_open": _map_times_to_bar_positions(real_times, sess.get("ny_open", [])),
             "ny_close": _map_times_to_bar_positions(real_times, sess.get("ny_close", [])),
         }
-        session_handles, session_labels = draw_session_lines(ax, sess_pos)
+        session_handles, session_labels = draw_session_lines(ax2, sess_pos)
 
-    if (mode == "Forex") and show_fx_news and (not fx_news.empty) and isinstance(real_times, pd.DatetimeIndex):
-        news_pos = _map_times_to_bar_positions(real_times, fx_news["time"].tolist())
-        if news_pos:
-            draw_news_markers(ax, news_pos, label="News")
-
-    # Fibonacci
-    if show_fibs and not hc.dropna().empty:
+    if show_fibs and not hc.empty:
         fibs_h = fibonacci_levels(hc)
         for lbl, y in fibs_h.items():
-            ax.hlines(y, xmin=hc.index[0], xmax=hc.index[-1], linestyles="dotted", linewidth=1)
-            ax.text(hc.index[-1], y, f" {lbl}", va="center")
+            ax2.hlines(y, xmin=hc.index[0], xmax=hc.index[-1], linestyles="dotted", linewidth=1)
+        for lbl, y in fibs_h.items():
+            ax2.text(hc.index[-1], y, f" {lbl}", va="center")
 
-    # Indicator panel (NTD + NPX + optional in-range shading)
-    if axw is not None:
-        axw.set_title(f"Hourly Indicator Panel — NTD/NPX (win={ntd_window})")
-        ntd = compute_normalized_trend(hc, window=ntd_window) if show_ntd else pd.Series(index=hc.index, dtype=float)
-        npx = compute_normalized_price(hc, window=ntd_window) if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
+    # ---------------------------
+    # UPDATED (THIS REQUEST): render hourly NTD panel (default ON)
+    # ---------------------------
+    if ax2w is not None:
+        ax2w.set_title(f"Hourly Indicator Panel — NTD + NPX + Trend (S/R w={sr_lb_hourly})")
+        ntd_h = compute_normalized_trend(hc, window=ntd_window) if show_ntd else pd.Series(index=hc.index, dtype=float)
+        npx_h = compute_normalized_price(hc, window=ntd_window) if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
 
-        if show_ntd and shade_ntd and not ntd.dropna().empty:
-            shade_ntd_regions(axw, ntd)
-        if show_ntd and not ntd.dropna().empty:
-            axw.plot(ntd.index, ntd.values, "-", linewidth=1.6, label="NTD")
+        if show_ntd and shade_ntd and not _coerce_1d_series(ntd_h).dropna().empty:
+            shade_ntd_regions(ax2w, ntd_h)
+
+        if show_ntd and not _coerce_1d_series(ntd_h).dropna().empty:
+            ax2w.plot(ntd_h.index, ntd_h.values, "-", linewidth=1.6, label=f"NTD (win={ntd_window})")
+            ntd_trend_h, ntd_m_h = slope_line(ntd_h, slope_lb_hourly)
+            if not ntd_trend_h.empty:
+                ax2w.plot(ntd_trend_h.index, ntd_trend_h.values, "--", linewidth=2,
+                          label=f"NTD Trend {slope_lb_hourly} ({fmt_slope(ntd_m_h)}/bar)")
+
+            overlay_ntd_triangles_by_trend(ax2w, ntd_h, trend_slope=m_h, upper=0.75, lower=-0.75)
+            overlay_ntd_sr_reversal_stars(
+                ax2w, price=hc, sup=sup_h, res=res_h,
+                trend_slope=m_h, ntd=ntd_h, prox=sr_prox_pct,
+                bars_confirm=rev_bars_confirm
+            )
+
         if show_ntd_channel:
-            overlay_inrange_on_ntd(axw, price=hc, sup=sup_h, res=res_h)
-        if show_npx_ntd and not npx.dropna().empty and show_ntd and not ntd.dropna().empty:
-            overlay_npx_on_ntd(axw, npx, ntd, mark_crosses=mark_npx_cross)
+            overlay_inrange_on_ntd(ax2w, price=hc, sup=sup_h, res=res_h)
 
-        axw.axhline(0.0, linestyle="--", linewidth=1.0, color="black", label="0.00")
-        axw.axhline(0.5, linestyle="-", linewidth=1.2, color="red", label="+0.50")
-        axw.axhline(-0.5, linestyle="-", linewidth=1.2, color="red", label="-0.50")
-        axw.set_ylim(-1.1, 1.1)
+        if show_npx_ntd and not _coerce_1d_series(npx_h).dropna().empty and not _coerce_1d_series(ntd_h).dropna().empty:
+            overlay_npx_on_ntd(ax2w, npx_h, ntd_h, mark_crosses=mark_npx_cross)
 
-    # Legend combine
-    handles, labels = [], []
-    h1, l1 = ax.get_legend_handles_labels()
-    handles += h1; labels += l1
-    if axw is not None:
-        h2, l2 = axw.get_legend_handles_labels()
-        handles += h2; labels += l2
+        if show_hma_rev_ntd and not hma_h.dropna().empty and not hc.dropna().empty:
+            overlay_hma_reversal_on_ntd(ax2w, hc, hma_h, lookback=hma_rev_lb,
+                                        period=hma_period, ntd=ntd_h)
+
+        ax2w.axhline(0.0, linestyle="--", linewidth=1.0, color="black", label="0.00")
+        ax2w.axhline(0.5, linestyle="-", linewidth=1.2, color="red", label="+0.50")
+        ax2w.axhline(-0.5, linestyle="-", linewidth=1.2, color="red", label="-0.50")
+        ax2w.axhline(0.75, linestyle="-", linewidth=1.0, color="black", label="+0.75")
+        ax2w.axhline(-0.75, linestyle="-", linewidth=1.0, color="black", label="-0.75")
+        ax2w.set_ylim(-1.1, 1.1)
+        ax2w.legend(loc="lower left", framealpha=0.5, fontsize=9)
+        ax2w.set_xlabel("Time (PST)")
+    else:
+        ax2.set_xlabel("Time (PST)")
+
+    ax2.legend(loc="lower left", framealpha=0.5, fontsize=9)
+
     if session_handles and session_labels:
-        handles += list(session_handles)
-        labels += list(session_labels)
+        fig2.legend(
+            handles=session_handles,
+            labels=session_labels,
+            loc="lower center",
+            bbox_to_anchor=(0.5, 0.01),
+            ncol=2,
+            frameon=True,
+            fontsize=9,
+            title="Sessions (PST)",
+            title_fontsize=9
+        )
 
-    seen = set()
-    hu, lu = [], []
-    for h, l in zip(handles, labels):
-        if not l or l in seen:
-            continue
-        seen.add(l)
-        hu.append(h); lu.append(l)
-
-    fig.legend(hu, lu, loc="lower center", bbox_to_anchor=(0.5, 0.015),
-               ncol=4, frameon=True, fontsize=9, framealpha=0.65, fancybox=True)
-
-    # Real time ticks if available
+    # ticks on bottom axis if we have the NTD panel
     if isinstance(real_times, pd.DatetimeIndex):
-        _apply_compact_time_ticks(axw if axw is not None else ax, real_times, n_ticks=8)
+        _apply_compact_time_ticks(ax2w if ax2w is not None else ax2, real_times, n_ticks=8)
 
-    style_axes(ax)
-    if axw is not None:
-        style_axes(axw)
-    st.pyplot(fig)
+    style_axes(ax2)
+    if ax2w is not None:
+        style_axes(ax2w)
+    xlim_price = ax2.get_xlim()
+    st.pyplot(fig2)
 
-    # Optional MACD panel
     if show_macd and not macd_h.dropna().empty:
         figm, axm = plt.subplots(figsize=(14, 2.6))
-        figm.subplots_adjust(top=0.88, bottom=0.45)
         axm.set_title("MACD (optional)")
         axm.plot(macd_h.index, macd_h.values, linewidth=1.4, label="MACD")
         axm.plot(macd_sig_h.index, macd_sig_h.values, linewidth=1.2, label="Signal")
         axm.axhline(0.0, linestyle="--", linewidth=1.0, color="black")
-        axm.legend(loc="upper center", bbox_to_anchor=(0.5, -0.32), ncol=3, framealpha=0.65, fontsize=9, fancybox=True)
+        axm.set_xlim(xlim_price)
+        axm.legend(loc="lower left", framealpha=0.5, fontsize=9)
         if isinstance(real_times, pd.DatetimeIndex):
             _apply_compact_time_ticks(axm, real_times, n_ticks=8)
         style_axes(axm)
         st.pyplot(figm)
 
-    trade_txt = format_trade_instruction(
-        trend_slope=m_h,
-        buy_val=sup_val,
-        sell_val=res_val,
-        close_val=px_val,
-        symbol=symbol,
-        global_trend_slope=global_m_h
-    )
-
-    return {
-        "intraday": intraday,
-        "global_slope": global_m_h,
-        "local_slope": m_h,
-        "r2": r2_h,
-        "rev_prob": rev_prob_h,
-        "trade_instruction": trade_txt,
-        "last_price": px_val,
-    }
-# bullbear.py — Complete updated Streamlit app (Batch 3/3)
-# -------------------------------------------------------
-
-# =========================
-# Session state init
-# =========================
-if "run_all" not in st.session_state:
-    st.session_state.run_all = False
-    st.session_state.ticker = None
-    st.session_state.hour_range = "24h"
-    st.session_state.chart = "Both"
-    st.session_state.mode_at_run = mode
-
-# =========================
+# ---------------------------
 # Tabs
-# =========================
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17, tab18, tab19 = st.tabs([
+# ---------------------------
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -1959,41 +2307,31 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "Long-Term History",
     "Recent BUY Scanner",
     "NPX 0.5-Cross Scanner",
-    "Fib NPX 0.0 Signal Scanner",
-    "Slope Direction Scan",
-    "Trendline Direction Lists",
-    "NTD Hot List",
-    "NTD NPX 0.0-0.2 Scanner",
-    "Uptrend vs Downtrend",
-    "Ichimoku Kijun Scanner",
-    "R² > 45% Daily/Hourly",
-    "R² < 45% Daily/Hourly",
-    "R² Sign ±2σ Proximity (Daily)",
-    "Zero cross"
+    "Daily Slope+BB Reversal Scanner"
 ])
 
-period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
-
-# =========================
-# TAB 1 — Original Forecast
-# =========================
+# ---------------------------
+# TAB 1: ORIGINAL FORECAST
+# ---------------------------
 with tab1:
     st.header("Original Forecast")
-    st.info("Charts persist for the last **Run** ticker. Change ticker and click **Run** to refresh the display.")
+    st.info("Pick a ticker; data is cached for ~2 minutes after first fetch. "
+            "Charts stay on the last RUN ticker until you run again.")
 
     sel = st.selectbox("Ticker:", universe, key=f"orig_ticker_{mode}")
-    chart = st.radio("Chart View:", ["Daily", "Hourly", "Both"], key=f"orig_chart_{mode}")
+    # UPDATED (prior request): use a new key so "Daily" view (and Daily NTD panel) is default again
+    chart = st.radio("Chart View:", ["Daily", "Hourly", "Both"], key=f"orig_chart_{mode}_v2")
 
     hour_range = st.selectbox(
         "Hourly lookback:",
         ["24h", "48h", "96h"],
         index=["24h", "48h", "96h"].index(st.session_state.get("hour_range", "24h")),
-        key=f"orig_hour_range_{mode}"
+        key=f"hour_range_select_{mode}"
     )
+    period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
 
-    run_clicked = st.button("Run Forecast", key=f"btn_run_forecast_{mode}", use_container_width=True)
-    fib_box = st.empty()
-    trade_box = st.empty()
+    run_clicked = st.button("Run Forecast", key=f"btn_run_forecast_{mode}")
+    alert_box = st.empty()
 
     if run_clicked:
         df_hist = fetch_hist(sel)
@@ -2012,45 +2350,251 @@ with tab1:
             "chart": chart,
             "hour_range": hour_range,
             "run_all": True,
-            "mode_at_run": mode,
+            "mode_at_run": mode
         })
 
-    if st.session_state.get("run_all") and st.session_state.get("mode_at_run") == mode and st.session_state.get("ticker"):
-        disp_ticker = st.session_state.ticker
-        st.caption(f"**Displayed (last run):** {disp_ticker}")
+    if st.session_state.get("run_all", False) and st.session_state.get("ticker") is not None and st.session_state.get("mode_at_run") == mode:
+        try:
+            alert_box.empty()
+        except Exception:
+            pass
 
-        # Forecast probabilities
-        close_series = _coerce_1d_series(st.session_state.df_hist).dropna()
-        last_price = float(close_series.iloc[-1]) if len(close_series) else np.nan
-        fc_vals = _coerce_1d_series(st.session_state.fc_vals)
-        p_up = float(np.mean(fc_vals.to_numpy() > last_price)) if (len(fc_vals) and np.isfinite(last_price)) else np.nan
+        disp_ticker = st.session_state.ticker
+        df = st.session_state.df_hist
+        df_ohlc = st.session_state.df_ohlc
+        last_price = _safe_last_float(df)
+
+        p_up = np.mean(st.session_state.fc_vals.to_numpy() > last_price) if np.isfinite(last_price) else np.nan
         p_dn = 1 - p_up if np.isfinite(p_up) else np.nan
 
-        with fib_box.container():
-            st.warning(FIB_ALERT_TEXT)
-            st.caption("Fib+NPX: BUY when touched 100% then NPX crosses up through 0.0 recently; SELL when touched 0% then NPX crosses down through 0.0.")
+        st.caption(f"**Displayed (last run):** {disp_ticker}  •  "
+                   f"Selection now: {sel}{' (run to switch)' if sel != disp_ticker else ''}")
 
-        daily_instr = None
-        hourly_instr = None
-
-        if st.session_state.chart in ("Daily", "Both"):
-            out_d = render_daily_chart(disp_ticker, daily_view)
-            if isinstance(out_d, dict):
-                daily_instr = out_d.get("trade_instruction", None)
-
-        if st.session_state.chart in ("Hourly", "Both"):
-            out_h = render_hourly_chart(disp_ticker, period_map[st.session_state.hour_range], st.session_state.hour_range)
-            if isinstance(out_h, dict):
-                hourly_instr = out_h.get("trade_instruction", None)
-
-        with trade_box.container():
-            if isinstance(daily_instr, str) and daily_instr.strip():
-                (st.error if daily_instr.startswith("ALERT:") else st.success)(f"Daily: {daily_instr}")
-            if isinstance(hourly_instr, str) and hourly_instr.strip():
-                (st.error if hourly_instr.startswith("ALERT:") else st.success)(f"Hourly: {hourly_instr}")
-
+        fx_news = pd.DataFrame()
         if mode == "Forex" and show_fx_news:
             fx_news = fetch_yf_news(disp_ticker, window_days=news_window_days)
+
+        if chart in ("Daily", "Both"):
+            ema30 = df.ewm(span=30).mean()
+            res_d = df.rolling(sr_lb_daily, min_periods=1).max()
+            sup_d = df.rolling(sr_lb_daily, min_periods=1).min()
+
+            yhat_d, upper_d, lower_d, m_d, r2_d = regression_with_band(df, slope_lb_daily)
+            rev_prob_d = slope_reversal_probability(df, m_d, hist_window=rev_hist_lb, slope_window=slope_lb_daily, horizon=rev_horizon)
+            piv = current_daily_pivots(df_ohlc)
+
+            ntd_d = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
+            npx_d_full = compute_normalized_price(df, window=ntd_window) if show_npx_ntd else pd.Series(index=df.index, dtype=float)
+
+            kijun_d = pd.Series(index=df.index, dtype=float)
+            if df_ohlc is not None and not df_ohlc.empty and show_ichi:
+                _, kijun_d, _, _, _ = ichimoku_lines(
+                    df_ohlc["High"], df_ohlc["Low"], df_ohlc["Close"],
+                    conv=ichi_conv, base=ichi_base, span_b=ichi_spanb,
+                    shift_cloud=False
+                )
+                kijun_d = kijun_d.ffill().bfill()
+
+            bb_mid_d, bb_up_d, bb_lo_d, bb_pctb_d, bb_nbb_d = compute_bbands(df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
+
+            df_show = subset_by_daily_view(df, daily_view)
+            ema30_show = ema30.reindex(df_show.index)
+            res_d_show = res_d.reindex(df_show.index)
+            sup_d_show = sup_d.reindex(df_show.index)
+            yhat_d_show = yhat_d.reindex(df_show.index) if not yhat_d.empty else yhat_d
+            upper_d_show = upper_d.reindex(df_show.index) if not upper_d.empty else upper_d
+            lower_d_show = lower_d.reindex(df_show.index) if not lower_d.empty else lower_d
+            ntd_d_show = ntd_d.reindex(df_show.index)
+            npx_d_show = npx_d_full.reindex(df_show.index)
+            kijun_d_show = kijun_d.reindex(df_show.index).ffill().bfill()
+            bb_mid_d_show = bb_mid_d.reindex(df_show.index)
+            bb_up_d_show = bb_up_d.reindex(df_show.index)
+            bb_lo_d_show = bb_lo_d.reindex(df_show.index)
+            bb_pctb_d_show = bb_pctb.reindex(df_show.index) if 'bb_pctb' in globals() else bb_pctb_d.reindex(df_show.index)
+            bb_nbb_d_show = bb_nbb_d.reindex(df_show.index)
+
+            hma_d_show = compute_hma(df, period=hma_period).reindex(df_show.index)
+            macd_d, macd_sig_d, macd_hist_d = compute_macd(df_show)
+
+            psar_d_df = compute_psar_from_ohlc(df_ohlc, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
+            if not psar_d_df.empty and len(df_show.index) > 0:
+                x0, x1 = df_show.index[0], df_show.index[-1]
+                psar_d_df = psar_d_df.loc[(psar_d_df.index >= x0) & (psar_d_df.index <= x1)]
+
+            fig, (ax, axdw) = plt.subplots(
+                2, 1, sharex=True, figsize=(14, 8),
+                gridspec_kw={"height_ratios": [3.2, 1.3]}
+            )
+            plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93)
+
+            rev_txt_d = fmt_pct(rev_prob_d) if np.isfinite(rev_prob_d) else "n/a"
+            ax.set_title(
+                f"{disp_ticker} Daily — {daily_view} — History, EMA, S/R (w={sr_lb_daily}), Slope, Pivots "
+                f"[P(slope rev≤{rev_horizon} bars)={rev_txt_d}]"
+            )
+
+            ax.plot(df_show, label="History")
+            ax.plot(ema30_show, "--", label="30 EMA")
+
+            global_m_d = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
+
+            if show_hma and not hma_d_show.dropna().empty:
+                ax.plot(hma_d_show.index, hma_d_show.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
+
+            if show_ichi and not kijun_d_show.dropna().empty:
+                ax.plot(kijun_d_show.index, kijun_d_show.values, "-", linewidth=1.8, color="black", label=f"Ichimoku Kijun ({ichi_base})")
+
+            if show_bbands and not bb_up_d_show.dropna().empty and not bb_lo_d_show.dropna().empty:
+                ax.fill_between(df_show.index, bb_lo_d_show, bb_up_d_show, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
+                ax.plot(bb_mid_d_show.index, bb_mid_d_show.values, "-", linewidth=1.1,
+                        label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
+                ax.plot(bb_up_d_show.index, bb_up_d_show.values, ":", linewidth=1.0)
+                ax.plot(bb_lo_d_show.index, bb_lo_d_show.values, ":", linewidth=1.0)
+
+            if show_psar and (not psar_d_df.empty) and ("PSAR" in psar_d_df.columns):
+                up_mask = psar_d_df["in_uptrend"] == True
+                dn_mask = ~up_mask
+                if up_mask.any():
+                    ax.scatter(psar_d_df.index[up_mask], psar_d_df["PSAR"][up_mask], s=15, color="tab:green", zorder=6,
+                               label=f"PSAR (step={psar_step:.02f}, max={psar_max:.02f})")
+                if dn_mask.any():
+                    ax.scatter(psar_d_df.index[dn_mask], psar_d_df["PSAR"][dn_mask], s=15, color="tab:red", zorder=6)
+
+            res_val_d = sup_val_d = np.nan
+            try:
+                res_val_d = float(res_d_show.iloc[-1])
+                sup_val_d = float(sup_d_show.iloc[-1])
+            except Exception:
+                pass
+            if np.isfinite(res_val_d) and np.isfinite(sup_val_d):
+                ax.hlines(res_val_d, xmin=df_show.index[0], xmax=df_show.index[-1], colors="tab:red", linestyles="-", linewidth=1.6,
+                          label=f"Resistance (w={sr_lb_daily})")
+                ax.hlines(sup_val_d, xmin=df_show.index[0], xmax=df_show.index[-1], colors="tab:green", linestyles="-", linewidth=1.6,
+                          label=f"Support (w={sr_lb_daily})")
+                label_on_left(ax, res_val_d, f"R {fmt_price_val(res_val_d)}", color="tab:red")
+                label_on_left(ax, sup_val_d, f"S {fmt_price_val(sup_val_d)}", color="tab:green")
+
+            if not yhat_d_show.empty:
+                ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
+                        label=f"Daily Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
+            if not upper_d_show.empty and not lower_d_show.empty:
+                ax.plot(upper_d_show.index, upper_d_show.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Daily Trend +2σ")
+                ax.plot(lower_d_show.index, lower_d_show.values, "--", linewidth=2.2, color="black", alpha=0.85, label="Daily Trend -2σ")
+                bounce_sig_d = find_band_bounce_signal(df_show, upper_d_show, lower_d_show, m_d)
+                if bounce_sig_d is not None:
+                    annotate_crossover(ax, bounce_sig_d["time"], bounce_sig_d["price"], bounce_sig_d["side"])
+
+                trig_d = find_slope_trigger_after_band_reversal(df_show, yhat_d_show, upper_d_show, lower_d_show, horizon=rev_horizon)
+                annotate_slope_trigger(ax, trig_d)
+
+            macd_sig_d = find_macd_hma_sr_signal(
+                close=df_show, hma=hma_d_show, macd=macd_d, sup=sup_d_show, res=res_d_show,
+                global_trend_slope=global_m_d, prox=sr_prox_pct
+            )
+            macd_instr_txt_d = "MACD/HMA55: n/a"
+            if macd_sig_d is not None and np.isfinite(macd_sig_d.get("price", np.nan)):
+                macd_instr_txt_d = f"MACD/HMA55: {macd_sig_d['side']} @ {fmt_price_val(macd_sig_d['price'])}"
+                annotate_macd_signal(ax, macd_sig_d["time"], macd_sig_d["price"], macd_sig_d["side"])
+
+            ax.text(
+                0.01, 0.98, macd_instr_txt_d,
+                transform=ax.transAxes, ha="left", va="top",
+                fontsize=10, fontweight="bold",
+                bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.8),
+                zorder=30
+            )
+
+            if piv and len(df_show) > 0:
+                x0, x1 = df_show.index[0], df_show.index[-1]
+                for lbl, y in piv.items():
+                    ax.hlines(y, xmin=x0, xmax=x1, linestyles="dashed", linewidth=1.0)
+                for lbl, y in piv.items():
+                    ax.text(x1, y, f" {lbl} = {fmt_price_val(y)}", va="center")
+
+            last_px_show = _safe_last_float(df_show)
+            if np.isfinite(last_px_show):
+                nbb_txt = ""
+                try:
+                    last_pct = float(bb_pctb_d_show.dropna().iloc[-1]) if show_bbands else np.nan
+                    last_nbb = float(bb_nbb_d_show.dropna().iloc[-1]) if show_bbands else np.nan
+                    if np.isfinite(last_nbb) and np.isfinite(last_pct):
+                        nbb_txt = f"  |  NBB {last_nbb:+.2f}  •  %B {fmt_pct(last_pct, digits=0)}"
+                except Exception:
+                    pass
+                ax.text(0.99, 0.02,
+                        f"Current price: {fmt_price_val(last_px_show)}{nbb_txt}",
+                        transform=ax.transAxes, ha="right", va="bottom",
+                        fontsize=11, fontweight="bold",
+                        bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+
+            ax.set_ylabel("Price")
+            ax.text(0.50, 0.02, f"R² ({slope_lb_daily} bars): {fmt_r2(r2_d)}",
+                    transform=ax.transAxes, ha="center", va="bottom",
+                    fontsize=9, color="black",
+                    bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
+            ax.legend(loc="lower left", framealpha=0.5, fontsize=9)
+
+            axdw.set_title(f"Daily Indicator Panel — NTD + NPX + Trend (S/R w={sr_lb_daily})")
+            if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
+                shade_ntd_regions(axdw, ntd_d_show)
+            if show_ntd and not ntd_d_show.dropna().empty:
+                axdw.plot(ntd_d_show.index, ntd_d_show, "-", linewidth=1.6, label=f"NTD (win={ntd_window})")
+                ntd_trend_d, ntd_m_d = slope_line(ntd_d_show, slope_lb_daily)
+                if not ntd_trend_d.empty:
+                    axdw.plot(ntd_trend_d.index, ntd_trend_d.values, "--", linewidth=2,
+                              label=f"NTD Trend {slope_lb_daily} ({fmt_slope(ntd_m_d)}/bar)")
+                overlay_ntd_triangles_by_trend(axdw, ntd_d_show, trend_slope=m_d, upper=0.75, lower=-0.75)
+                overlay_ntd_sr_reversal_stars(axdw, price=df_show, sup=sup_d_show, res=res_d_show,
+                                              trend_slope=m_d, ntd=ntd_d_show, prox=sr_prox_pct,
+                                              bars_confirm=rev_bars_confirm)
+            if show_npx_ntd and not npx_d_show.dropna().empty and not ntd_d_show.dropna().empty:
+                overlay_npx_on_ntd(axdw, npx_d_show, ntd_d_show, mark_crosses=mark_npx_cross)
+            if show_hma_rev_ntd and not hma_d_show.dropna().empty and not df_show.dropna().empty:
+                overlay_hma_reversal_on_ntd(axdw, df_show, hma_d_show, lookback=hma_rev_lb,
+                                            period=hma_period, ntd=ntd_d_show)
+
+            axdw.axhline(0.0, linestyle="--", linewidth=1.0, color="black", label="0.00")
+            axdw.axhline(0.5, linestyle="-", linewidth=1.2, color="red", label="+0.50")
+            axdw.axhline(-0.5, linestyle="-", linewidth=1.2, color="red", label="-0.50")
+            axdw.axhline(0.75, linestyle="-", linewidth=1.0, color="black", label="+0.75")
+            axdw.axhline(-0.75, linestyle="-", linewidth=1.0, color="black", label="-0.75")
+
+            axdw.set_ylim(-1.1, 1.1)
+            axdw.set_xlabel("Date (PST)")
+            axdw.legend(loc="lower left", framealpha=0.5, fontsize=9)
+
+            style_axes(ax)
+            style_axes(axdw)
+            st.pyplot(fig)
+
+            if show_macd and not macd_d.dropna().empty:
+                figm, axm = plt.subplots(figsize=(14, 2.6))
+                axm.set_title("MACD (optional)")
+                axm.plot(macd_d.index, macd_d.values, linewidth=1.4, label="MACD")
+                axm.plot(macd_sig_d.index, macd_sig_d.values, linewidth=1.2, label="Signal")
+                axm.axhline(0.0, linestyle="--", linewidth=1.0, color="black")
+                axm.legend(loc="lower left", framealpha=0.5, fontsize=9)
+                style_axes(axm)
+                st.pyplot(figm)
+
+        if chart in ("Hourly", "Both"):
+            intraday = st.session_state.intraday
+            render_hourly_views(
+                sel=disp_ticker,
+                intraday=intraday,
+                p_up=p_up,
+                p_dn=p_dn,
+                hour_range_label=st.session_state.hour_range,
+                is_forex=(mode == "Forex"),
+                alert_placeholder=alert_box
+            )
+        else:
+            try:
+                alert_box.empty()
+            except Exception:
+                pass
+
+        if mode == "Forex" and show_fx_news:
             st.subheader("Recent Forex News (Yahoo Finance)")
             if fx_news.empty:
                 st.write("No recent news available.")
@@ -2060,690 +2604,373 @@ with tab1:
                 st.dataframe(show_cols[["time","publisher","title","link"]].reset_index(drop=True), use_container_width=True)
 
         st.subheader("SARIMAX Forecast (30d)")
-        ci = st.session_state.fc_ci.copy()
-        if ci.shape[1] >= 2:
-            ci.columns = ["Lower", "Upper"] + list(ci.columns[2:])
-        st.dataframe(pd.DataFrame({
+        st.write(pd.DataFrame({
             "Forecast": st.session_state.fc_vals,
-            "Lower":    ci.iloc[:, 0] if ci.shape[1] else np.nan,
-            "Upper":    ci.iloc[:, 1] if ci.shape[1] > 1 else np.nan
-        }, index=st.session_state.fc_idx), use_container_width=True)
-
+            "Lower":    st.session_state.fc_ci.iloc[:, 0],
+            "Upper":    st.session_state.fc_ci.iloc[:, 1]
+        }, index=st.session_state.fc_idx))
     else:
         st.info("Click **Run Forecast** to display charts and forecast.")
 
-# =========================
-# TAB 2 — Enhanced Forecast
-# =========================
+# ---------------------------
+# TAB 2: ENHANCED FORECAST (unchanged)
+# ---------------------------
 with tab2:
     st.header("Enhanced Forecast")
-    st.caption("Same SARIMAX forecast, with an additional chart view for forecast fan and historical residual overview.")
+    if not st.session_state.get("run_all", False) or st.session_state.get("ticker") is None or st.session_state.get("mode_at_run") != mode:
+        st.info("Run Tab 1 first (in the current mode).")
+    else:
+        df = st.session_state.df_hist
+        idx, vals, ci = st.session_state.fc_idx, st.session_state.fc_vals, st.session_state.fc_ci
+        last_price = _safe_last_float(df)
+        p_up = np.mean(vals.to_numpy() > last_price) if np.isfinite(last_price) else np.nan
+        p_dn = 1 - p_up if np.isfinite(p_up) else np.nan
 
-    sel2 = st.selectbox("Ticker:", universe, key=f"enh_ticker_{mode}")
-    run2 = st.button("Run Enhanced Forecast", key=f"btn_run_enh_{mode}", use_container_width=True)
+        st.caption(f"Displayed ticker: **{st.session_state.ticker}**  •  Intraday lookback: **{st.session_state.get('hour_range','24h')}**")
+        view = st.radio("View:", ["Daily", "Intraday", "Both"], key=f"enh_view_{mode}")
 
-    if run2:
-        s = fetch_hist(sel2)
-        s = _coerce_1d_series(s).dropna()
-        idx, fc, ci = compute_sarimax_forecast(s)
+        if view in ("Daily", "Both"):
+            df_show = subset_by_daily_view(df, daily_view)
+            res_d_show = df_show.rolling(sr_lb_daily, min_periods=1).max()
+            sup_d_show = df_show.rolling(sr_lb_daily, min_periods=1).min()
+            hma_d_show = compute_hma(df_show, period=hma_period)
+            macd_d, macd_sig_d, _ = compute_macd(df_show)
 
-        st.subheader("Forecast Fan (30d)")
-        fig, ax = plt.subplots(figsize=(14, 4.8))
-        ax.plot(s.index, s.values, label="History")
-        ax.plot(idx, fc.values, "--", linewidth=2, label="Forecast")
-        if ci is not None and isinstance(ci, pd.DataFrame) and ci.shape[1] >= 2:
-            ax.fill_between(idx, ci.iloc[:, 0].values, ci.iloc[:, 1].values, alpha=0.15, label="Conf. Interval")
-        global_m = draw_trend_direction_line(ax, s.iloc[-min(len(s), 250):], label_prefix="Trend (recent)")
-        ax.set_title(f"{sel2} — Forecast Fan  |  Recent trend slope={fmt_slope(global_m)}")
-        ax.legend(loc="upper left")
+            fig, ax = plt.subplots(figsize=(14, 5))
+            ax.set_title(f"{st.session_state.ticker} Daily (Enhanced) — {daily_view}")
+            ax.plot(df_show.index, df_show.values, label="History")
+            global_m_d = draw_trend_direction_line(ax, df_show, label_prefix="Trend (global)")
+            if show_hma and not hma_d_show.dropna().empty:
+                ax.plot(hma_d_show.index, hma_d_show.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
+
+            if not res_d_show.empty and not sup_d_show.empty:
+                ax.hlines(float(res_d_show.iloc[-1]), xmin=df_show.index[0], xmax=df_show.index[-1], colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance")
+                ax.hlines(float(sup_d_show.iloc[-1]), xmin=df_show.index[0], xmax=df_show.index[-1], colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
+
+            macd_sig = find_macd_hma_sr_signal(df_show, hma_d_show, macd_d, sup_d_show, res_d_show, global_m_d, prox=sr_prox_pct)
+            macd_txt = "MACD/HMA55: n/a"
+            if macd_sig is not None and np.isfinite(macd_sig.get("price", np.nan)):
+                macd_txt = f"MACD/HMA55: {macd_sig['side']} @ {fmt_price_val(macd_sig['price'])}"
+                annotate_macd_signal(ax, macd_sig["time"], macd_sig["price"], macd_sig["side"])
+            ax.text(0.01, 0.98, macd_txt, transform=ax.transAxes, ha="left", va="top",
+                    fontsize=10, fontweight="bold",
+                    bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.8))
+
+            ax.legend(loc="lower left", framealpha=0.5, fontsize=9)
+            style_axes(ax)
+            st.pyplot(fig)
+
+            if show_macd and not macd_d.dropna().empty:
+                figm, axm = plt.subplots(figsize=(14, 2.6))
+                axm.set_title("MACD (optional)")
+                axm.plot(macd_d.index, macd_d.values, linewidth=1.4, label="MACD")
+                axm.plot(macd_sig_d.index, macd_sig_d.values, linewidth=1.2, label="Signal")
+                axm.axhline(0.0, linestyle="--", linewidth=1.0, color="black")
+                axm.legend(loc="lower left", framealpha=0.5, fontsize=9)
+                style_axes(axm)
+                st.pyplot(figm)
+
+        if view in ("Intraday", "Both"):
+            render_hourly_views(
+                sel=st.session_state.ticker,
+                intraday=st.session_state.intraday,
+                p_up=p_up,
+                p_dn=p_dn,
+                hour_range_label=st.session_state.get("hour_range","24h"),
+                is_forex=(mode == "Forex")
+            )
+
+        st.subheader("SARIMAX Forecast (30d)")
+        st.write(pd.DataFrame({
+            "Forecast": vals,
+            "Lower":    ci.iloc[:, 0],
+            "Upper":    ci.iloc[:, 1]
+        }, index=idx))
+
+# ---------------------------
+# TAB 3: BULL vs BEAR
+# ---------------------------
+with tab3:
+    st.header("Bull vs Bear")
+    st.caption("Simple lookback performance overview (based on Bull/Bear lookback selection).")
+
+    sel_bb = st.selectbox("Ticker:", universe, key=f"bb_ticker_{mode}")
+    try:
+        dfp = yf.download(sel_bb, period=bb_period, interval="1d")[["Close"]].dropna()
+    except Exception:
+        dfp = pd.DataFrame()
+
+    if dfp.empty:
+        st.warning("No data available.")
+    else:
+        s = dfp["Close"].astype(float)
+        ret = (float(s.iloc[-1]) / float(s.iloc[0]) - 1.0) if len(s) > 1 else np.nan
+        st.metric(label=f"{sel_bb} return over {bb_period}", value=fmt_pct(ret))
+        fig, ax = plt.subplots(figsize=(14, 4))
+        ax.set_title(f"{sel_bb} — {bb_period} Close")
+        ax.plot(s.index, s.values, label="Close")
+        draw_trend_direction_line(ax, s, label_prefix="Trend (global)")
+        ax.legend(loc="lower left", framealpha=0.5, fontsize=9)
         style_axes(ax)
         st.pyplot(fig)
 
-        st.subheader("Forecast Table")
-        out = pd.DataFrame({"Forecast": fc, "Lower": ci.iloc[:, 0], "Upper": ci.iloc[:, 1]}, index=idx) if (ci is not None and ci.shape[1] >= 2) else pd.DataFrame({"Forecast": fc}, index=idx)
-        st.dataframe(out, use_container_width=True)
-
-# =========================
-# TAB 3 — Bull vs Bear
-# =========================
-with tab3:
-    st.header("Bull vs Bear")
-    st.caption("Bull/Bear is computed over the chosen lookback using daily closes.")
-
-    sel3 = st.selectbox("Ticker:", universe, key=f"bb_ticker_{mode}")
-    run3 = st.button("Run Bull/Bear", key=f"btn_run_bb_{mode}", use_container_width=True)
-
-    if run3:
-        s = fetch_hist(sel3).dropna()
-        if s.empty:
-            st.warning("No data.")
-        else:
-            # Using yfinance period mapping: interpret bb_period in days
-            days_map = {"1mo": 30, "3mo": 90, "6mo": 182, "1y": 365}
-            look_days = days_map.get(bb_period, 182)
-            s_lb = s[s.index >= (s.index.max() - pd.Timedelta(days=look_days))]
-            rets = s_lb.pct_change().dropna()
-            bulls = int((rets > 0).sum())
-            bears = int((rets < 0).sum())
-            flat = int((rets == 0).sum())
-            total = len(rets)
-
-            st.metric("Total days", total)
-            c1, c2, c3c = st.columns(3)
-            c1.metric("Bull days", bulls)
-            c2.metric("Bear days", bears)
-            c3c.metric("Flat days", flat)
-
-            fig, ax = plt.subplots(figsize=(10, 3.6))
-            ax.bar(["Bull", "Bear", "Flat"], [bulls, bears, flat])
-            ax.set_title(f"{sel3} — Bull vs Bear ({bb_period})")
-            style_axes(ax)
-            st.pyplot(fig)
-
-# =========================
-# TAB 4 — Metrics
-# =========================
+# ---------------------------
+# TAB 4: METRICS
+# ---------------------------
 with tab4:
     st.header("Metrics")
-    st.caption("Quick stats based on the selected daily view + latest intraday snapshot.")
+    if not st.session_state.get("run_all", False) or st.session_state.get("ticker") is None or st.session_state.get("mode_at_run") != mode:
+        st.info("Run Tab 1 first (in the current mode).")
+    else:
+        tkr = st.session_state.ticker
+        df = st.session_state.df_hist
+        intr = st.session_state.intraday
 
-    sel4 = st.selectbox("Ticker:", universe, key=f"metrics_ticker_{mode}")
-    run4 = st.button("Compute Metrics", key=f"btn_run_metrics_{mode}", use_container_width=True)
+        st.subheader(f"Current ticker: {tkr}")
 
-    if run4:
-        close = fetch_hist(sel4).dropna()
-        close_show = subset_by_daily_view(close, daily_view).dropna()
-        intr = fetch_intraday(sel4, period="1d")
-        last_intr = float(intr["Close"].dropna().iloc[-1]) if (intr is not None and not intr.empty and "Close" in intr) else np.nan
+        yhat_d, up_d, lo_d, m_d, r2_d = regression_with_band(df, slope_lb_daily)
+        st.write({
+            "Daily slope (reg band)": fmt_slope(m_d),
+            "Daily R²": fmt_r2(r2_d),
+            f"P(slope reverses ≤ {rev_horizon} bars)": fmt_pct(slope_reversal_probability(df, m_d, rev_hist_lb, slope_lb_daily, rev_horizon))
+        })
 
-        if close_show.empty:
-            st.warning("No data.")
-        else:
-            yhat, up, lo, m, r2 = regression_with_band(close_show, lookback=min(len(close_show), slope_lb_daily))
-            vol = float(close_show.pct_change().dropna().std() * np.sqrt(252)) if len(close_show) > 3 else np.nan
-            ret_1m = float(close_show.iloc[-1] / close_show.iloc[max(0, len(close_show)-30)] - 1.0) if len(close_show) > 30 else np.nan
+        if intr is not None and not intr.empty and "Close" in intr:
+            intr_plot = intr.copy()
+            intr_plot.index = pd.RangeIndex(len(intr_plot))
+            hc = intr_plot["Close"].ffill()
+            yhat_h, up_h, lo_h, m_h, r2_h = regression_with_band(hc, slope_lb_hourly)
+            st.write({
+                "Hourly slope (reg band)": fmt_slope(m_h),
+                "Hourly R²": fmt_r2(r2_h),
+                f"P(slope reverses ≤ {rev_horizon} bars) hourly": fmt_pct(slope_reversal_probability(hc, m_h, rev_hist_lb, slope_lb_hourly, rev_horizon))
+            })
 
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Last (daily)", fmt_price_val(float(close_show.iloc[-1])))
-            c2.metric("Last (intraday)", fmt_price_val(last_intr) if np.isfinite(last_intr) else "n/a")
-            c3.metric("Ann. Vol (σ)", fmt_pct(vol, 1))
-
-            c4, c5, c6 = st.columns(3)
-            c4.metric("Slope (local)", fmt_slope(m))
-            c5.metric("R²", fmt_r2(r2))
-            c6.metric("1M Return", fmt_pct(ret_1m, 1))
-
-            st.subheader("Daily view chart")
-            fig, ax = plt.subplots(figsize=(14, 4))
-            ax.plot(close_show.index, close_show.values, label="Close")
-            if not yhat.dropna().empty:
-                ax.plot(yhat.index, yhat.values, "--", linewidth=2, label="Regression")
-            ax.set_title(f"{sel4} — Metrics Chart ({daily_view})")
-            ax.legend(loc="upper left")
-            style_axes(ax)
-            st.pyplot(fig)
-
-# =========================
-# TAB 5 — NTD -0.75 Scanner
-# =========================
+# ---------------------------
+# TAB 5: NTD -0.75 Scanner
+# ---------------------------
 with tab5:
     st.header("NTD -0.75 Scanner")
-    st.caption("Shows symbols where Daily NTD (win=60) is below -0.75 (oversold / strong down normalized trend).")
+    st.caption("Lists symbols where the latest NTD is below -0.75 (using latest intraday for hourly; daily uses daily close).")
 
-    max_rows = st.slider("Max rows", 10, 200, 50, 10, key=f"ntdneg_rows_{mode}")
-    run5 = st.button("Run NTD -0.75 Scan", key=f"btn_run_ntdneg_{mode}", use_container_width=True)
+    scan_frame = st.radio("Frame:", ["Hourly (intraday)", "Daily"], index=0, key=f"ntd_scan_frame_{mode}")
+    run_scan = st.button("Run Scanner", key=f"btn_run_ntd_scan_{mode}")
 
-    if run5:
+    if run_scan:
         rows = []
-        for sym in universe:
-            s = fetch_hist(sym).dropna()
-            if s.empty:
-                continue
-            s_show = subset_by_daily_view(s, daily_view).dropna()
-            ntd = compute_normalized_trend(s, window=60).reindex(s_show.index).dropna()
-            if ntd.empty:
-                continue
-            last_ntd = float(ntd.iloc[-1])
-            if last_ntd <= -0.75:
-                rows.append({
-                    "Symbol": sym,
-                    "NTD(last)": last_ntd,
-                    "Last Price": float(s_show.iloc[-1]),
-                    "AsOf": s_show.index[-1],
-                })
+        if scan_frame.startswith("Hourly"):
+            period = "1d"
+            for sym in universe:
+                val, ts = last_hourly_ntd_value(sym, ntd_window, period=period)
+                if np.isfinite(val) and val < -0.75:
+                    rows.append({"Symbol": sym, "NTD": float(val), "Time": ts})
+        else:
+            for sym in universe:
+                val, ts = last_daily_ntd_value(sym, ntd_window)
+                if np.isfinite(val) and val < -0.75:
+                    rows.append({"Symbol": sym, "NTD": float(val), "Time": ts})
+
         if not rows:
             st.info("No matches.")
         else:
-            df = pd.DataFrame(rows).sort_values("NTD(last)")
-            st.dataframe(df.head(max_rows).reset_index(drop=True), use_container_width=True)
+            out = pd.DataFrame(rows).sort_values("NTD")
+            st.dataframe(out.reset_index(drop=True), use_container_width=True)
 
-# =========================
-# TAB 6 — Long-Term History
-# =========================
+# ---------------------------
+# TAB 6: LONG-TERM HISTORY
+# ---------------------------
 with tab6:
     st.header("Long-Term History")
-    st.caption("Max history with global trendline (recent slice) and optional BB/NTD overlay.")
+    sel_lt = st.selectbox("Ticker:", universe, key=f"lt_ticker_{mode}")
+    try:
+        smax = fetch_hist_max(sel_lt)
+    except Exception:
+        smax = pd.Series(dtype=float)
 
-    sel6 = st.selectbox("Ticker:", universe, key=f"long_ticker_{mode}")
-    run6 = st.button("Run Long-Term", key=f"btn_run_long_{mode}", use_container_width=True)
+    if smax is None or smax.dropna().empty:
+        st.warning("No long-term history available.")
+    else:
+        fig, ax = plt.subplots(figsize=(14, 4))
+        ax.set_title(f"{sel_lt} — Max History")
+        ax.plot(smax.index, smax.values, label="Close")
+        draw_trend_direction_line(ax, smax, label_prefix="Trend (global)")
+        ax.legend(loc="lower left", framealpha=0.5, fontsize=9)
+        style_axes(ax)
+        st.pyplot(fig)
 
-    if run6:
-        s = fetch_hist_max(sel6).dropna()
-        if s.empty:
-            st.warning("No data.")
-        else:
-            fig, ax = plt.subplots(figsize=(14, 4.8))
-            ax.plot(s.index, s.values, label="Close (max history)")
-            recent = s.iloc[-min(len(s), 600):]
-            gm = draw_trend_direction_line(ax, recent, label_prefix="Trend (recent)")
-            ax.set_title(f"{sel6} — Max History  |  Recent slope={fmt_slope(gm)}")
-            ax.legend(loc="upper left")
-            style_axes(ax)
-            st.pyplot(fig)
-
-            if show_ntd:
-                ntd = compute_normalized_trend(s, window=ntd_window).dropna()
-                fig2, ax2 = plt.subplots(figsize=(14, 2.8))
-                if shade_ntd:
-                    shade_ntd_regions(ax2, ntd)
-                ax2.plot(ntd.index, ntd.values, label="NTD")
-                ax2.axhline(0.0, linestyle="--", linewidth=1.0, color="black")
-                ax2.set_ylim(-1.1, 1.1)
-                ax2.set_title("NTD (max history)")
-                ax2.legend(loc="upper left")
-                style_axes(ax2)
-                st.pyplot(fig2)
-
-# =========================
-# TAB 7 — Recent BUY Scanner
-# =========================
+# ---------------------------
+# TAB 7: RECENT BUY SCANNER
+# ---------------------------
 with tab7:
-    st.header("Recent BUY Scanner")
-    st.caption("Finds the most recent band-bounce BUY signals (daily + intraday).")
-
-    c1, c2, c3 = st.columns(3)
-    max_bars = c1.slider("Max bars since signal", 0, 200, 10, 1, key=f"buy_maxbars_{mode}")
-    hours = c2.selectbox("Hourly scan window", ["24h", "48h", "96h"], index=0, key=f"buy_hr_{mode}")
-    run7 = c3.button("Run Recent BUY Scan", key=f"btn_run_buy_scan_{mode}", use_container_width=True)
-
-    if run7:
-        rows = []
-        for sym in universe:
-            r = last_band_bounce_signal_daily(sym, slope_lb_daily)
-            if r and r.get("Side") == "BUY" and int(r.get("Bars Since", 9999)) <= int(max_bars):
-                rows.append(r)
-        df_daily = pd.DataFrame(rows).sort_values(["Bars Since", "DeltaPct"], ascending=[True, False]) if rows else pd.DataFrame()
-        st.subheader("Daily BUY signals")
-        if df_daily.empty:
-            st.write("No matches.")
-        else:
-            st.dataframe(df_daily.reset_index(drop=True), use_container_width=True)
-
-        rows = []
-        for sym in universe:
-            r = last_band_bounce_signal_hourly(sym, period_map[hours], slope_lb_hourly)
-            if r and r.get("Side") == "BUY" and int(r.get("Bars Since", 9999)) <= int(max_bars):
-                rows.append(r)
-        df_h = pd.DataFrame(rows).sort_values(["Bars Since", "DeltaPct"], ascending=[True, False]) if rows else pd.DataFrame()
-        st.subheader(f"Hourly BUY signals ({hours})")
-        if df_h.empty:
-            st.write("No matches.")
-        else:
-            st.dataframe(df_h.reset_index(drop=True), use_container_width=True)
-
-# =========================
-# TAB 8 — NPX 0.5-Cross Scanner
-# =========================
-with tab8:
-    st.header("NPX 0.5-Cross Scanner")
-    st.caption("Lists symbols where NPX crossed up through +0.5 recently (daily view).")
-
-    c1, c2 = st.columns(2)
-    max_bars = c1.slider("Max bars since NPX +0.5 cross-up", 0, 60, 5, 1, key=f"npx05_max_{mode}")
-    run8 = c2.button("Run NPX 0.5 Scan", key=f"btn_run_npx05_{mode}", use_container_width=True)
-
-    if run8:
-        rows = []
-        for sym in universe:
-            s = fetch_hist(sym).dropna()
-            s_show = subset_by_daily_view(s, daily_view).dropna()
-            if len(s_show) < 3:
-                continue
-            npx = compute_normalized_price(s, window=ntd_window).reindex(s_show.index).dropna()
-            if len(npx) < 3:
-                continue
-            cross_up, _ = npx_zero_cross_masks(npx, level=0.5)
-            if not cross_up.any():
-                continue
-            t = cross_up[cross_up].index[-1]
-            bars_since = int((len(npx) - 1) - int(npx.index.get_loc(t)))
-            if bars_since <= int(max_bars):
-                rows.append({
-                    "Symbol": sym,
-                    "Bars Since": bars_since,
-                    "Cross Time": t,
-                    "NPX@Cross": float(npx.loc[t]),
-                    "NPX(last)": float(npx.iloc[-1]),
-                    "Last Price": float(s_show.iloc[-1]),
-                })
-        if not rows:
-            st.info("No matches.")
-        else:
-            df = pd.DataFrame(rows).sort_values(["Bars Since", "NPX(last)"], ascending=[True, False])
-            st.dataframe(df.reset_index(drop=True), use_container_width=True)
-
-# =========================
-# TAB 9 — Fib NPX 0.0 Signal Scanner
-# =========================
-with tab9:
-    st.header("Fib NPX 0.0 Signal Scanner")
-    st.caption("BUY: price touched Fib 100% and NPX crossed up through 0.0 recently. SELL: touched Fib 0% and NPX crossed down through 0.0.")
-
-    c1, c2, c3 = st.columns(3)
-    max_bars = c1.slider("Max bars since signal", 0, 90, 10, 1, key=f"fibsig_max_{mode}")
-    hz = c2.slider("Touch horizon (bars)", 3, 60, 15, 1, key=f"fibsig_hz_{mode}")
-    run9 = c3.button("Run Fib+NPX Scan", key=f"btn_run_fibsig_{mode}", use_container_width=True)
-
-    if run9:
-        rows = []
-        for sym in universe:
-            s = fetch_hist(sym).dropna()
-            s_show = subset_by_daily_view(s, daily_view).dropna()
-            if len(s_show) < 20:
-                continue
-            npx = compute_normalized_price(s, window=ntd_window).reindex(s_show.index)
-            buy_mask, sell_mask, fibs = fib_npx_zero_cross_signal_masks(s_show, npx, horizon_bars=int(hz), proximity_pct_of_range=0.02, npx_level=0.0)
-
-            # Most recent signal
-            last_buy = buy_mask[buy_mask].index[-1] if buy_mask.any() else None
-            last_sell = sell_mask[sell_mask].index[-1] if sell_mask.any() else None
-            if last_buy is None and last_sell is None:
-                continue
-
-            if last_sell is None or (last_buy is not None and last_buy >= last_sell):
-                t, side = last_buy, "BUY"
-            else:
-                t, side = last_sell, "SELL"
-
-            bars_since = int((len(s_show) - 1) - int(s_show.index.get_loc(t)))
-            if bars_since <= int(max_bars):
-                rows.append({
-                    "Symbol": sym,
-                    "Side": side,
-                    "Bars Since": bars_since,
-                    "Time": t,
-                    "Last Price": float(s_show.iloc[-1]),
-                    "NPX(last)": float(_coerce_1d_series(npx).dropna().iloc[-1]) if len(_coerce_1d_series(npx).dropna()) else np.nan,
-                })
-
-        if not rows:
-            st.info("No matches.")
-        else:
-            df = pd.DataFrame(rows).sort_values(["Bars Since", "Side"], ascending=[True, True])
-            st.dataframe(df.reset_index(drop=True), use_container_width=True)
-
-# =========================
-# TAB 10 — Slope Direction Scan
-# =========================
-with tab10:
-    st.header("Slope Direction Scan")
-    st.caption("Lists symbols by local regression slope sign (daily view).")
-
-    c1, c2 = st.columns(2)
-    want = c1.selectbox("Slope sign", ["Up (m>0)", "Down (m<0)"], index=0, key=f"slope_sign_{mode}")
-    run10 = c2.button("Run Slope Scan", key=f"btn_run_slope_{mode}", use_container_width=True)
-
-    if run10:
-        want_up = want.startswith("Up")
-        rows = []
-        for sym in universe:
-            s = fetch_hist(sym).dropna()
-            s_show = subset_by_daily_view(s, daily_view).dropna()
-            if len(s_show) < 20:
-                continue
-            _, _, _, m, r2 = regression_with_band(s_show, lookback=min(len(s_show), slope_lb_daily))
-            if not np.isfinite(m):
-                continue
-            if want_up and m <= 0:
-                continue
-            if (not want_up) and m >= 0:
-                continue
-            rows.append({"Symbol": sym, "Slope": float(m), "R2": float(r2) if np.isfinite(r2) else np.nan, "Last": float(s_show.iloc[-1])})
-        if not rows:
-            st.info("No matches.")
-        else:
-            df = pd.DataFrame(rows).sort_values("Slope", ascending=not want_up)
-            st.dataframe(df.reset_index(drop=True), use_container_width=True)
-
-# =========================
-# TAB 11 — Trendline Direction Lists
-# =========================
-with tab11:
-    st.header("Trendline Direction Lists")
-    st.caption("Uses the global trendline slope (in daily view) to split into Up vs Down.")
-
-    run11 = st.button("Compute Trendline Lists", key=f"btn_run_trendlists_{mode}", use_container_width=True)
-    if run11:
-        ups, dns = [], []
-        for sym in universe:
-            s = fetch_hist(sym).dropna()
-            s_show = subset_by_daily_view(s, daily_view).dropna()
-            if len(s_show) < 10:
-                continue
-            x = np.arange(len(s_show), dtype=float)
-            m, _ = np.polyfit(x, s_show.to_numpy(dtype=float), 1)
-            (ups if m > 0 else dns).append((sym, float(m)))
-        c1, c2 = st.columns(2)
-        with c1:
-            st.subheader("Uptrend (global slope > 0)")
-            df = pd.DataFrame(ups, columns=["Symbol","Global Slope"]).sort_values("Global Slope", ascending=False)
-            st.dataframe(df.reset_index(drop=True), use_container_width=True)
-        with c2:
-            st.subheader("Downtrend (global slope < 0)")
-            df = pd.DataFrame(dns, columns=["Symbol","Global Slope"]).sort_values("Global Slope", ascending=True)
-            st.dataframe(df.reset_index(drop=True), use_container_width=True)
-
-# =========================
-# TAB 12 — NTD Hot List
-# =========================
-with tab12:
-    st.header("NTD Hot List")
-    st.caption("Sorts symbols by |NTD(last)| descending (daily view).")
-
-    run12 = st.button("Run Hot List", key=f"btn_run_ntdhot_{mode}", use_container_width=True)
-    if run12:
-        rows = []
-        for sym in universe:
-            s = fetch_hist(sym).dropna()
-            s_show = subset_by_daily_view(s, daily_view).dropna()
-            if len(s_show) < 10:
-                continue
-            ntd = compute_normalized_trend(s, window=ntd_window).reindex(s_show.index).dropna()
-            if ntd.empty:
-                continue
-            rows.append({
-                "Symbol": sym,
-                "NTD(last)": float(ntd.iloc[-1]),
-                "|NTD|": abs(float(ntd.iloc[-1])),
-                "Last Price": float(s_show.iloc[-1]),
-            })
-        if not rows:
-            st.info("No matches.")
-        else:
-            df = pd.DataFrame(rows).sort_values("|NTD|", ascending=False)
-            st.dataframe(df.reset_index(drop=True), use_container_width=True)
-
-# =========================
-# TAB 13 — NTD NPX 0.0-0.2 Scanner
-# =========================
-with tab13:
-    st.header("NTD NPX 0.0-0.2 Scanner")
-    st.caption("Finds symbols where NTD(last) is between 0.0 and 0.2 and NPX(last) is positive (daily view).")
-
-    c1, c2 = st.columns(2)
-    max_rows = c1.slider("Max rows", 10, 200, 50, 10, key=f"ntd002_rows_{mode}")
-    run13 = c2.button("Run NTD/NPX Range Scan", key=f"btn_run_ntd002_{mode}", use_container_width=True)
-
-    if run13:
-        rows = []
-        for sym in universe:
-            s = fetch_hist(sym).dropna()
-            s_show = subset_by_daily_view(s, daily_view).dropna()
-            if len(s_show) < 20:
-                continue
-            ntd = compute_normalized_trend(s, window=ntd_window).reindex(s_show.index).dropna()
-            npx = compute_normalized_price(s, window=ntd_window).reindex(s_show.index).dropna()
-            if ntd.empty or npx.empty:
-                continue
-            ntd_last = float(ntd.iloc[-1]); npx_last = float(npx.iloc[-1])
-            if 0.0 <= ntd_last <= 0.2 and npx_last > 0:
-                rows.append({"Symbol": sym, "NTD(last)": ntd_last, "NPX(last)": npx_last, "Last Price": float(s_show.iloc[-1])})
-        if not rows:
-            st.info("No matches.")
-        else:
-            df = pd.DataFrame(rows).sort_values(["NTD(last)", "NPX(last)"], ascending=[True, False]).head(max_rows)
-            st.dataframe(df.reset_index(drop=True), use_container_width=True)
-
-# =========================
-# TAB 14 — Uptrend vs Downtrend
-# =========================
-with tab14:
-    st.header("Uptrend vs Downtrend")
-    st.caption("Counts symbols by global slope sign (daily view).")
-
-    run14 = st.button("Run Up/Down Summary", key=f"btn_run_updown_{mode}", use_container_width=True)
-    if run14:
-        up, dn, flat = [], [], []
-        for sym in universe:
-            s = fetch_hist(sym).dropna()
-            s_show = subset_by_daily_view(s, daily_view).dropna()
-            if len(s_show) < 10:
-                continue
-            x = np.arange(len(s_show), dtype=float)
-            m, _ = np.polyfit(x, s_show.to_numpy(dtype=float), 1)
-            if abs(m) < 1e-12:
-                flat.append(sym)
-            elif m > 0:
-                up.append(sym)
-            else:
-                dn.append(sym)
-
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Uptrend", len(up))
-        c2.metric("Downtrend", len(dn))
-        c3.metric("Flat", len(flat))
-
-        st.write("Uptrend:", ", ".join(up) if up else "—")
-        st.write("Downtrend:", ", ".join(dn) if dn else "—")
-        st.write("Flat:", ", ".join(flat) if flat else "—")
-
-# =========================
-# TAB 15 — Ichimoku Kijun Scanner
-# =========================
-with tab15:
-    st.header("Ichimoku Kijun Scanner")
-    st.caption("Lists symbols where price is above/below Kijun (daily view).")
-
-    c1, c2 = st.columns(2)
-    side = c1.selectbox("Condition", ["Price > Kijun", "Price < Kijun"], index=0, key=f"kij_cond_{mode}")
-    run15 = c2.button("Run Kijun Scan", key=f"btn_run_kij_{mode}", use_container_width=True)
-
-    if run15:
-        want_above = side.startswith("Price >")
-        rows = []
-        for sym in universe:
-            ohlc = fetch_hist_ohlc(sym)
-            if ohlc is None or ohlc.empty:
-                continue
-            close = _coerce_1d_series(ohlc["Close"]).dropna()
-            close_show = subset_by_daily_view(close, daily_view).dropna()
-            if len(close_show) < 30:
-                continue
-            _, kijun, _, _, _ = ichimoku_lines(ohlc["High"], ohlc["Low"], ohlc["Close"],
-                                               conv=ichi_conv, base=ichi_base, span_b=ichi_spanb, shift_cloud=False)
-            kijun = _coerce_1d_series(kijun).reindex(close_show.index).ffill().bfill()
-            if kijun.dropna().empty:
-                continue
-            px = float(close_show.iloc[-1]); kj = float(kijun.iloc[-1])
-            cond = (px > kj) if want_above else (px < kj)
-            if cond:
-                rows.append({"Symbol": sym, "Last Price": px, "Kijun": kj, "Diff%": (px/kj - 1.0) if kj else np.nan})
-        if not rows:
-            st.info("No matches.")
-        else:
-            df = pd.DataFrame(rows).sort_values("Diff%", ascending=not want_above)
-            st.dataframe(df.reset_index(drop=True), use_container_width=True)
-
-# =========================
-# TAB 16 — R² > 45% Daily/Hourly
-# =========================
-with tab16:
-    st.header("R² > 45% Daily/Hourly")
-    st.caption("Filters symbols where regression R² exceeds 0.45 (daily view + optional intraday).")
-
-    c1, c2, c3 = st.columns(3)
-    check_hourly = c1.checkbox("Also check hourly", value=False, key=f"r2hi_hr_{mode}")
-    hours = c2.selectbox("Hourly window", ["24h", "48h", "96h"], index=0, key=f"r2hi_win_{mode}")
-    run16 = c3.button("Run R² High Scan", key=f"btn_run_r2hi_{mode}", use_container_width=True)
-
-    if run16:
-        rows = []
-        for sym in universe:
-            s = fetch_hist(sym).dropna()
-            s_show = subset_by_daily_view(s, daily_view).dropna()
-            if len(s_show) < 20:
-                continue
-            _, _, _, m, r2 = regression_with_band(s_show, lookback=min(len(s_show), slope_lb_daily))
-            if np.isfinite(r2) and r2 >= 0.45:
-                rows.append({"Symbol": sym, "Frame": "Daily", "R2": float(r2), "Slope": float(m) if np.isfinite(m) else np.nan})
-        df_d = pd.DataFrame(rows).sort_values("R2", ascending=False) if rows else pd.DataFrame()
-        st.subheader("Daily")
-        st.dataframe(df_d.reset_index(drop=True), use_container_width=True) if not df_d.empty else st.write("No matches.")
-
-        if check_hourly:
-            rows = []
-            for sym in universe:
-                df = fetch_intraday(sym, period=period_map[hours])
-                if df is None or df.empty or "Close" not in df:
-                    continue
-                df2 = df.copy(); df2.index = pd.RangeIndex(len(df2))
-                hc = _coerce_1d_series(df2["Close"]).ffill().dropna()
-                if len(hc) < 40:
-                    continue
-                _, _, _, m, r2 = regression_with_band(hc, lookback=min(len(hc), slope_lb_hourly))
-                if np.isfinite(r2) and r2 >= 0.45:
-                    rows.append({"Symbol": sym, "Frame": f"Hourly({hours})", "R2": float(r2), "Slope": float(m) if np.isfinite(m) else np.nan})
-            df_h = pd.DataFrame(rows).sort_values("R2", ascending=False) if rows else pd.DataFrame()
-            st.subheader("Hourly")
-            st.dataframe(df_h.reset_index(drop=True), use_container_width=True) if not df_h.empty else st.write("No matches.")
-
-# =========================
-# TAB 17 — R² < 45% Daily/Hourly
-# =========================
-with tab17:
-    st.header("R² < 45% Daily/Hourly")
-    st.caption("Filters symbols where regression R² is below 0.45 (daily view + optional intraday).")
-
-    c1, c2, c3 = st.columns(3)
-    check_hourly = c1.checkbox("Also check hourly", value=False, key=f"r2lo_hr_{mode}")
-    hours = c2.selectbox("Hourly window", ["24h", "48h", "96h"], index=0, key=f"r2lo_win_{mode}")
-    run17 = c3.button("Run R² Low Scan", key=f"btn_run_r2lo_{mode}", use_container_width=True)
-
-    if run17:
-        rows = []
-        for sym in universe:
-            s = fetch_hist(sym).dropna()
-            s_show = subset_by_daily_view(s, daily_view).dropna()
-            if len(s_show) < 20:
-                continue
-            _, _, _, m, r2 = regression_with_band(s_show, lookback=min(len(s_show), slope_lb_daily))
-            if np.isfinite(r2) and r2 < 0.45:
-                rows.append({"Symbol": sym, "Frame": "Daily", "R2": float(r2), "Slope": float(m) if np.isfinite(m) else np.nan})
-        df_d = pd.DataFrame(rows).sort_values("R2", ascending=True) if rows else pd.DataFrame()
-        st.subheader("Daily")
-        st.dataframe(df_d.reset_index(drop=True), use_container_width=True) if not df_d.empty else st.write("No matches.")
-
-        if check_hourly:
-            rows = []
-            for sym in universe:
-                df = fetch_intraday(sym, period=period_map[hours])
-                if df is None or df.empty or "Close" not in df:
-                    continue
-                df2 = df.copy(); df2.index = pd.RangeIndex(len(df2))
-                hc = _coerce_1d_series(df2["Close"]).ffill().dropna()
-                if len(hc) < 40:
-                    continue
-                _, _, _, m, r2 = regression_with_band(hc, lookback=min(len(hc), slope_lb_hourly))
-                if np.isfinite(r2) and r2 < 0.45:
-                    rows.append({"Symbol": sym, "Frame": f"Hourly({hours})", "R2": float(r2), "Slope": float(m) if np.isfinite(m) else np.nan})
-            df_h = pd.DataFrame(rows).sort_values("R2", ascending=True) if rows else pd.DataFrame()
-            st.subheader("Hourly")
-            st.dataframe(df_h.reset_index(drop=True), use_container_width=True) if not df_h.empty else st.write("No matches.")
-
-# =========================
-# TAB 18 — R² Sign ±2σ Proximity (Daily)
-# =========================
-with tab18:
-    st.header("R² Sign ±2σ Proximity (Daily)")
-    st.caption("Shows symbols where price is near +2σ (potential SELL in downtrend) or -2σ (potential BUY in uptrend), with R² info.")
-
-    c1, c2, c3 = st.columns(3)
-    near_pct = c1.slider("Near band threshold (% of price)", 0.05, 2.0, 0.25, 0.05, key=f"band_near_{mode}") / 100.0
-    min_r2 = c2.slider("Min R²", 0.00, 0.90, 0.45, 0.05, key=f"band_minr2_{mode}")
-    run18 = c3.button("Run ±2σ Proximity Scan", key=f"btn_run_bandprox_{mode}", use_container_width=True)
-
-    if run18:
-        rows = []
-        for sym in universe:
-            s = fetch_hist(sym).dropna()
-            s_show = subset_by_daily_view(s, daily_view).dropna()
-            if len(s_show) < 30:
-                continue
-            yhat, up, lo, m, r2 = regression_with_band(s_show, lookback=min(len(s_show), slope_lb_daily))
-            if not (np.isfinite(r2) and r2 >= float(min_r2)):
-                continue
-            px = float(s_show.iloc[-1])
-            upv = float(up.iloc[-1]) if len(up.dropna()) else np.nan
-            lov = float(lo.iloc[-1]) if len(lo.dropna()) else np.nan
-            if not (np.isfinite(upv) and np.isfinite(lov) and np.isfinite(px) and px != 0):
-                continue
-            d_up = abs(upv - px) / px
-            d_lo = abs(px - lov) / px
-            prox = None
-            if d_up <= near_pct:
-                prox = "Near +2σ"
-            if d_lo <= near_pct:
-                prox = "Near -2σ" if prox is None else (prox + " & -2σ")
-            if prox is None:
-                continue
-            rows.append({
-                "Symbol": sym,
-                "Proximity": prox,
-                "Last": px,
-                "Slope": float(m),
-                "R2": float(r2),
-                "DistTo+2σ%": d_up,
-                "DistTo-2σ%": d_lo
-            })
-        if not rows:
-            st.info("No matches.")
-        else:
-            df = pd.DataFrame(rows).sort_values(["R2", "Slope"], ascending=[False, False])
-            st.dataframe(df.reset_index(drop=True), use_container_width=True)
-
-# =========================
-# TAB 19 — Zero cross (NEW)
-# =========================
-with tab19:
-    st.header("Zero cross")
+    st.header("Recent BUY Scanner — Daily NPX↑NTD in Uptrend (Stocks + Forex)")
     st.caption(
-        "Lists symbols where **NTD (win=60)** has **recently crossed UP through 0.0**, "
-        "**NTD is heading upward**, and the **Daily chart global trendline is UP**.\n\n"
-        "Scan uses the selected **Daily view range**."
+        "Lists symbols (in the current mode's universe) where **NPX (normalized price)** most recently crossed "
+        "**ABOVE** the **NTD** line (the green circle condition) **AND** the DAILY chart-area global trendline "
+        "(in the selected Daily view range) is **upward**."
+    )
+
+    max_bars = st.slider("Max bars since NPX↑NTD cross", 0, 20, 2, 1, key="buy_scan_npx_max_bars")
+    run_buy_scan = st.button("Run Recent BUY Scan", key="btn_run_recent_buy_scan_npx")
+
+    if run_buy_scan:
+        rows = []
+        for sym in universe:
+            r = last_daily_npx_cross_up_in_uptrend(sym, ntd_win=ntd_window, daily_view_label=daily_view)
+            if r is not None and int(r.get("Bars Since", 9999)) <= int(max_bars):
+                rows.append(r)
+
+        if not rows:
+            st.info("No recent NPX↑NTD crosses found in an upward daily global trend (within the selected bar window).")
+        else:
+            out = pd.DataFrame(rows)
+            if "Bars Since" in out.columns:
+                out["Bars Since"] = out["Bars Since"].astype(int)
+            if "Global Slope" in out.columns:
+                out["Global Slope"] = out["Global Slope"].astype(float)
+            out = out.sort_values(["Bars Since", "Global Slope"], ascending=[True, False])
+            st.dataframe(out.reset_index(drop=True), use_container_width=True)
+
+# ---------------------------
+# TAB 8: NPX 0.5-CROSS SCANNER
+# ---------------------------
+with tab8:
+    st.header("NPX 0.5-Cross Scanner — Local Slope Confirmed (Daily)")
+    st.caption(
+        "Scans the current universe for symbols where **NPX (normalized price)** has **recently crossed 0.5** "
+        "(with NPX very close to 0.5 at the crossing) and the **local price slope** agrees:\n"
+        "• **UP list:** NPX crosses **up** through 0.5 AND local price slope is **up**\n"
+        "• **DOWN list:** NPX crosses **down** through 0.5 AND local price slope is **down**"
     )
 
     c1, c2, c3 = st.columns(3)
-    max_bars = c1.slider("Max bars since NTD 0.0 cross-up", 0, 60, 3, 1, key=f"zc_max_bars_{mode}")
-    confirm_bars = c2.slider("NTD heading-up confirmation (bars)", 1, 5, 1, 1, key=f"zc_confirm_{mode}")
-    run_zero = c3.button("Run Zero cross Scan", key=f"btn_run_zero_cross_{mode}", use_container_width=True)
+    max_bars0 = c1.slider("Max bars since NPX 0.5-cross", 0, 30, 2, 1, key="npx0_max_bars")
+    eps0 = c2.slider("Max |NPX-0.5| at cross (near 0.5)", 0.01, 0.30, 0.08, 0.01, key="npx0_eps")
+    lb_local = c3.slider("Local slope lookback (bars)", 10, 360, int(slope_lb_daily), 10, key="npx0_slope_lb")
 
-    if run_zero:
-        rows = []
+    run0 = st.button("Run NPX 0.5-Cross Scan", key="btn_run_npx0_scan")
+
+    if run0:
+        rows_up, rows_dn = [], []
         for sym in universe:
-            r = last_daily_ntd_zero_cross_up_in_uptrend(
+            r_up = last_daily_npx_zero_cross_with_local_slope(
+                sym, ntd_win=ntd_window, daily_view_label=daily_view,
+                local_slope_lb=lb_local, max_abs_npx_at_cross=eps0, direction="up"
+            )
+            if r_up is not None and int(r_up.get("Bars Since", 9999)) <= int(max_bars0):
+                rows_up.append(r_up)
+
+            r_dn = last_daily_npx_zero_cross_with_local_slope(
+                sym, ntd_win=ntd_window, daily_view_label=daily_view,
+                local_slope_lb=lb_local, max_abs_npx_at_cross=eps0, direction="down"
+            )
+            if r_dn is not None and int(r_dn.get("Bars Since", 9999)) <= int(max_bars0):
+                rows_dn.append(r_dn)
+
+        left, right = st.columns(2)
+
+        with left:
+            st.subheader("NPX 0.5↑ with Local UP Slope")
+            if not rows_up:
+                st.info("No matches.")
+            else:
+                out_up = pd.DataFrame(rows_up)
+                out_up["Bars Since"] = out_up["Bars Since"].astype(int)
+                out_up["Local Slope"] = out_up["Local Slope"].astype(float)
+                out_up = out_up.sort_values(["Bars Since", "Local Slope"], ascending=[True, False])
+                st.dataframe(out_up.reset_index(drop=True), use_container_width=True)
+
+        with right:
+            st.subheader("NPX 0.5↓ with Local DOWN Slope")
+            if not rows_dn:
+                st.info("No matches.")
+            else:
+                out_dn = pd.DataFrame(rows_dn)
+                out_dn["Bars Since"] = out_dn["Bars Since"].astype(int)
+                out_dn["Local Slope"] = out_dn["Local Slope"].astype(float)
+                out_dn = out_dn.sort_values(["Bars Since", "Local Slope"], ascending=[True, True])
+                st.dataframe(out_dn.reset_index(drop=True), use_container_width=True)
+
+# ---------------------------
+# TAB 9: Daily Slope + S/R reversal + BB mid cross scanner (NEW)
+# ---------------------------
+with tab9:
+    st.header("Daily Slope + S/R Reversal + BB Midline Scanner (R² ≥ 0.99)")
+    st.caption(
+        "BUY list:\n"
+        "• Daily regression slope is UP and **R² ≥ 0.99** (99% confidence)\n"
+        "• Price reversed from Support (touch within horizon + confirmed reversal)\n"
+        "• Price crossed ABOVE BB midline\n\n"
+        "SELL list:\n"
+        "• Daily regression slope is DOWN and **R² ≥ 0.99** (99% confidence)\n"
+        "• Price reversed from Resistance (touch within horizon + confirmed reversal)\n"
+        "• Price crossed BELOW BB midline"
+    )
+
+    c1, c2 = st.columns(2)
+    max_bars_since = c1.slider("Max bars since BB mid cross", 0, 60, 10, 1, key="srbb_max_bars_since")
+    r2_thr = c2.slider("Min R² (confidence)", 0.80, 0.99, 0.99, 0.01, key="srbb_r2_thr")
+
+    run_scan = st.button("Run Daily Slope+BB Scan", key="btn_run_daily_slope_bb_scan")
+
+    if run_scan:
+        buy_rows, sell_rows = [], []
+        for sym in universe:
+            rb = last_daily_sr_reversal_bbmid(
                 symbol=sym,
                 daily_view_label=daily_view,
-                ntd_win=60,
-                confirm_bars=int(confirm_bars),
+                slope_lb=slope_lb_daily,
+                sr_lb=sr_lb_daily,
+                bb_window=bb_win,
+                bb_sigma=bb_mult,
+                bb_ema=bb_use_ema,
+                prox=sr_prox_pct,
+                bars_confirm=rev_bars_confirm,
+                horizon=rev_horizon,
+                side="BUY",
+                min_r2=float(r2_thr),
             )
-            if r is None:
-                continue
-            if int(r.get("Bars Since Cross", 9999)) <= int(max_bars):
-                rows.append(r)
+            if rb is not None and int(rb.get("Bars Since Cross", 9999)) <= int(max_bars_since):
+                buy_rows.append(rb)
 
-        if not rows:
-            st.info("No matches.")
-        else:
-            out = pd.DataFrame(rows)
-            out = out.sort_values(["Bars Since Cross", "NTD (last)", "Global Slope"], ascending=[True, False, False])
-            st.dataframe(out.reset_index(drop=True), use_container_width=True)
+            rs = last_daily_sr_reversal_bbmid(
+                symbol=sym,
+                daily_view_label=daily_view,
+                slope_lb=slope_lb_daily,
+                sr_lb=sr_lb_daily,
+                bb_window=bb_win,
+                bb_sigma=bb_mult,
+                bb_ema=bb_use_ema,
+                prox=sr_prox_pct,
+                bars_confirm=rev_bars_confirm,
+                horizon=rev_horizon,
+                side="SELL",
+                min_r2=float(r2_thr),
+            )
+            if rs is not None and int(rs.get("Bars Since Cross", 9999)) <= int(max_bars_since):
+                sell_rows.append(rs)
+
+        left, right = st.columns(2)
+
+        with left:
+            st.subheader("BUY — Up Slope + Support Reversal + BB Mid Cross")
+            if not buy_rows:
+                st.info("No matches.")
+            else:
+                out = pd.DataFrame(buy_rows)
+                out["Bars Since Cross"] = out["Bars Since Cross"].astype(int)
+                out["Slope"] = out["Slope"].astype(float)
+                out["R2"] = out["R2"].astype(float)
+                out = out.sort_values(["Bars Since Cross", "Slope"], ascending=[True, False])
+                st.dataframe(out.reset_index(drop=True), use_container_width=True)
+
+        with right:
+            st.subheader("SELL — Down Slope + Resistance Reversal + BB Mid Cross")
+            if not sell_rows:
+                st.info("No matches.")
+            else:
+                out = pd.DataFrame(sell_rows)
+                out["Bars Since Cross"] = out["Bars Since Cross"].astype(int)
+                out["Slope"] = out["Slope"].astype(float)
+                out["R2"] = out["R2"].astype(float)
+                out = out.sort_values(["Bars Since Cross", "Slope"], ascending=[True, True])
+                st.dataframe(out.reset_index(drop=True), use_container_width=True)
