@@ -1,4 +1,4 @@
-# bullbear.py — Stocks/Forex Dashboard + Forecasts
+# bullbear.py — Stocks/Forex Dashboard + Forecasts (+ Normalized Price Oscillator on EW panels)
 # - Forex news markers on intraday charts
 # - Hourly momentum indicator (ROC%) with robust handling
 # - Momentum trendline & momentum S/R
@@ -13,7 +13,8 @@
 # - All displayed price values formatted to 3 decimal places
 # - Hourly Support/Resistance drawn as STRAIGHT LINES across the entire chart
 # - Current price shown OUTSIDE of chart area (top-right)
-# - Daily Normalized Elliott Wave panel (dates aligned to daily chart, shared x-axis with price)
+# - Normalized Elliott Wave panel for Hourly (dates aligned to hourly chart)
+# - Normalized Elliott Wave panel for Daily (dates aligned to daily chart, shared x-axis with price)
 # - EW panels show BUY/SELL signals when forecast confidence > 95% and display current price on top
 # - EW panels draw a red line at +0.5 and a green line at -0.5
 # - EW panels draw black lines at +0.75 and -0.75
@@ -21,19 +22,9 @@
 # - Adds Normalized Trend Direction (NTD) overlay + optional green/red shading to EW panels with sidebar controls
 # - Daily view selector (Historical / 6M / 12M / 24M)
 # - Red shading under NPO curve on EW panels
-# - Daily trend-direction line (green=uptrend, red=downtrend) with slope label
-# - NTD -0.5 Scanner tab for Stocks & Forex (Daily; plus Hourly for Forex)
-# - Normalized Ichimoku overlay on EW panels (Daily) with sidebar controls
-# - Ichimoku Kijun (Base) line added to Daily & Hourly price charts (solid black, continuous)
-# - UPDATED: Removed Hourly EW panel and added **Normalized RSI (NRSI)** panel below the hourly price chart
-# - UPDATED: RSI panel shows **NRSI + NVol + NMACD(+signal)** with guides at 0 (dashed), ±0.5 (black), ±0.75 (thick red)
-# - UPDATED: Added **NTD overlay & Trend direction with % certainty** to RSI panel
-# - UPDATED: Price chart shows trendline slope in legend + bottom-left; NRSI panel adds trendline + slope; NRSI Trend badge moved to bottom-right
-# - NEW: Scanner lists **Price > Kijun(26)** symbols (Daily for Stocks & FX; Hourly for FX)
-# - NEW: Hourly chart shows **R²** for the trendline (computed over the slope lookback) at the **bottom-center** of the chart (as a percentage)
-# - NEW: **Long-Term History** tab with 5/10/15/20-year buttons showing price with 252d Support/Resistance and an overall trendline
-# - NEW: **Hourly Volume panel** (separate chart) with rolling mid-line and trendline (+ R² badge)
-# - UPDATED: Volume visuals (panels + NVol fills) use blue
+# - NEW: Daily trend-direction line (green=uptrend, red=downtrend) with slope label
+# - NEW: NTD -0.5 Scanner tab for Stocks & Forex (Daily; plus Hourly for Forex)
+# - NEW: Normalized Ichimoku overlay on EW panels (Daily & Hourly) with sidebar controls
 
 import streamlit as st
 import pandas as pd
@@ -46,7 +37,7 @@ import time
 import pytz
 from matplotlib.transforms import blended_transform_factory  # for left-side labels
 
-# --- Page config ---
+# --- Page config (must be the first Streamlit call) ---
 st.set_page_config(
     page_title="📊 Dashboard & Forecasts",
     page_icon="📈",
@@ -113,6 +104,7 @@ def fmt_pct(x, digits: int = 1) -> str:
     return f"{xv:.{digits}%}" if np.isfinite(xv) else "n/a"
 
 def fmt_price_val(y: float) -> str:
+    """Format price values to exactly 3 decimal places with thousands separators."""
     try:
         y = float(y)
     except Exception:
@@ -120,20 +112,7 @@ def fmt_price_val(y: float) -> str:
     return f"{y:,.3f}"
 
 def fmt_slope(m: float) -> str:
-    """Robust slope formatter (handles numpy scalars/arrays)."""
-    try:
-        mv = float(np.squeeze(m))
-    except Exception:
-        return "n/a"
-    return f"{mv:.4f}" if np.isfinite(mv) else "n/a"
-
-def fmt_r2(r2: float, digits: int = 1) -> str:
-    """Format R² as a percentage string (coefficient of determination)."""
-    try:
-        rv = float(r2)
-    except Exception:
-        return "n/a"
-    return fmt_pct(rv, digits=digits) if np.isfinite(rv) else "n/a"
+    return f"{m:.4f}" if np.isfinite(m) else "n/a"
 
 # Place text at the left edge (x in axes coords, y in data coords)
 def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: int = 9):
@@ -151,6 +130,7 @@ def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: i
 
 # Range helper for daily views
 def subset_by_daily_view(obj, view_label: str):
+    """Return series/df subset for Historical / 6M / 12M / 24M based on its own max date."""
     if obj is None or len(obj.index) == 0:
         return obj
     idx = obj.index
@@ -167,27 +147,23 @@ st.sidebar.title("Configuration")
 mode = st.sidebar.selectbox("Forecast Mode:", ["Stock", "Forex"], key="sb_mode")
 bb_period = st.sidebar.selectbox("Bull/Bear Lookback:", ["1mo", "3mo", "6mo", "1y"], index=2, key="sb_bb_period")
 
+# Daily range selector
 daily_view = st.sidebar.selectbox(
     "Daily view range:",
     ["Historical", "6M", "12M", "24M"],
-    index=2,
+    index=2,  # default 12M
     key="sb_daily_view"
 )
 
 show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=False, key="sb_show_fibs")
 
 slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10, key="sb_slope_lb_daily")
-slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120,  6, key="sb_slope_lb_hourly")
+slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120, 6, key="sb_slope_lb_hourly")
 
 # Hourly Momentum controls
 st.sidebar.subheader("Hourly Momentum")
 show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True, key="sb_show_mom_hourly")
 mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, key="sb_mom_lb_hourly")
-
-# Hourly Normalized RSI controls
-st.sidebar.subheader("Hourly Normalized RSI")
-show_nrsi   = st.sidebar.checkbox("Show NRSI (hourly)", value=True, key="sb_show_nrsi")
-nrsi_period = st.sidebar.slider("RSI period (bars)", 5, 60, 14, 1, key="sb_nrsi_period")
 
 # Hourly Supertrend controls
 st.sidebar.subheader("Hourly Supertrend")
@@ -199,33 +175,39 @@ st.sidebar.subheader("Signal Logic (Hourly)")
 signal_threshold = st.sidebar.slider("Signal confidence threshold", 0.50, 0.99, 0.90, 0.01, key="sb_sig_thr")
 sr_prox_pct = st.sidebar.slider("S/R proximity (%)", 0.05, 1.00, 0.25, 0.05, key="sb_sr_prox") / 100.0
 
-# Daily EW controls
+# Elliott Wave controls (Hourly)
+st.sidebar.subheader("Normalized Elliott Wave (Hourly)")
+pivot_lookback = st.sidebar.slider("Pivot lookback (bars)", 3, 21, 7, 2, key="sb_pivot_lb")
+norm_window    = st.sidebar.slider("Normalization window (bars)", 30, 600, 240, 10, key="sb_norm_win")
+waves_to_annotate = st.sidebar.slider("Annotate recent waves", 3, 12, 7, 1, key="sb_wave_ann")
+
+# Elliott Wave controls (Daily)
 st.sidebar.subheader("Normalized Elliott Wave (Daily)")
 pivot_lookback_d = st.sidebar.slider("Pivot lookback (days)", 3, 31, 9, 2, key="sb_pivot_lb_d")
 norm_window_d    = st.sidebar.slider("Normalization window (days)", 30, 1200, 360, 10, key="sb_norm_win_d")
 waves_to_annotate_d = st.sidebar.slider("Annotate recent waves (daily)", 3, 12, 7, 1, key="sb_wave_ann_d")
 
-# NPO overlay controls (for EW panels)
+# NPO overlay controls
 st.sidebar.subheader("Normalized Price Oscillator (overlay on EW panels)")
-show_npo    = st.sidebar.checkbox("Show NPO overlay", value=True, key="sb_show_npo")
-npo_fast    = st.sidebar.slider("NPO fast EMA", 5, 30, 12, 1, key="sb_npo_fast")
-npo_slow    = st.sidebar.slider("NPO slow EMA", 10, 60, 26, 1, key="sb_npo_slow")
-npo_norm_win= st.sidebar.slider("NPO normalization window", 30, 600, 240, 10, key="sb_npo_norm")
+show_npo = st.sidebar.checkbox("Show NPO overlay", value=True, key="sb_show_npo")
+npo_fast = st.sidebar.slider("NPO fast EMA", 5, 30, 12, 1, key="sb_npo_fast")
+npo_slow = st.sidebar.slider("NPO slow EMA", 10, 60, 26, 1, key="sb_npo_slow")
+npo_norm_win = st.sidebar.slider("NPO normalization window", 30, 600, 240, 10, key="sb_npo_norm")
 
-# NTD overlay controls (for EW panels AND RSI panel)
-st.sidebar.subheader("Normalized Trend (EW/RSI panels)")
-show_ntd  = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd")
-ntd_window= st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
-shade_ntd = st.sidebar.checkbox("Shade NTD (EW only: green=up, red=down)", value=True, key="sb_ntd_shade")
+# NTD overlay controls
+st.sidebar.subheader("Normalized Trend (EW panels)")
+show_ntd = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd")
+ntd_window = st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
+shade_ntd = st.sidebar.checkbox("Shade NTD (green=up, red=down)", value=True, key="sb_ntd_shade")
 
-# Ichimoku controls (Normalized for EW panels + Kijun on price)
-st.sidebar.subheader("Normalized Ichimoku (EW panels) + Kijun on price")
-show_ichi = st.sidebar.checkbox("Show Ichimoku", value=True, key="sb_show_ichi")
+# >>> NEW: Ichimoku overlay controls <<<
+st.sidebar.subheader("Normalized Ichimoku (EW panels)")
+show_ichi = st.sidebar.checkbox("Show Ichimoku (normalized)", value=True, key="sb_show_ichi")
 ichi_conv = st.sidebar.slider("Conversion (Tenkan)", 5, 20, 9, 1, key="sb_ichi_conv")
 ichi_base = st.sidebar.slider("Base (Kijun)", 20, 40, 26, 1, key="sb_ichi_base")
-ichi_spanb= st.sidebar.slider("Span B", 40, 80, 52, 1, key="sb_ichi_spanb")
-ichi_norm_win = st.sidebar.slider("Ichimoku normalization window (EW)", 30, 600, 240, 10, key="sb_ichi_norm")
-ichi_price_weight = st.sidebar.slider("Weight: Price vs Cloud (EW)", 0.0, 1.0, 0.6, 0.05, key="sb_ichi_w")
+ichi_spanb = st.sidebar.slider("Span B", 40, 80, 52, 1, key="sb_ichi_spanb")
+ichi_norm_win = st.sidebar.slider("Ichimoku normalization window", 30, 600, 240, 10, key="sb_ichi_norm")
+ichi_price_weight = st.sidebar.slider("Weight: Price vs Cloud (0–1)", 0.0, 1.0, 0.6, 0.05, key="sb_ichi_w")
 
 # Forex news controls (only shown in Forex mode)
 if mode == "Forex":
@@ -256,17 +238,6 @@ def fetch_hist(ticker: str) -> pd.Series:
         yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
         .asfreq("D").fillna(method="ffill")
     )
-    try:
-        s = s.tz_localize(PACIFIC)
-    except TypeError:
-        s = s.tz_convert(PACIFIC)
-    return s
-
-@st.cache_data(ttl=120)
-def fetch_hist_max(ticker: str) -> pd.Series:
-    """Full history (Yahoo 'max'), daily freq with ffill, tz-aware."""
-    df = yf.download(ticker, period="max")[['Close']].dropna()
-    s = df['Close'].asfreq("D").fillna(method="ffill")
     try:
         s = s.tz_localize(PACIFIC)
     except TypeError:
@@ -311,14 +282,15 @@ def compute_sarimax_forecast(series_like):
                         periods=30, freq="D", tz=PACIFIC)
     return idx, fc.predicted_mean, fc.conf_int()
 
-# ---- Indicators ----
+# ---- Indicators (no RSI) ----
 def fibonacci_levels(series_like):
     s = _coerce_1d_series(series_like).dropna()
-    hi = float(s.max()) if not s.empty else np.nan
-    lo = float(s.min()) if not s.empty else np.nan
-    if not np.isfinite(hi) or not np.isfinite(lo) or hi == lo:
+    if s.empty:
         return {}
+    hi = float(s.max()); lo = float(s.min())
     diff = hi - lo
+    if diff == 0:
+        return {"100%": lo}
     return {
         "0%": hi,
         "23.6%": hi - 0.236 * diff,
@@ -357,23 +329,6 @@ def slope_line(series_like, lookback: int):
     yhat = pd.Series(m * x + b, index=s.index)
     return yhat, float(m)
 
-def regression_r2(series_like, lookback: int):
-    """R² for a simple linear fit over the last `lookback` bars of `series_like`."""
-    s = _coerce_1d_series(series_like).dropna()
-    if lookback > 0:
-        s = s.iloc[-lookback:]
-    if s.shape[0] < 2:
-        return float("nan")
-    x = np.arange(len(s), dtype=float)
-    y = s.to_numpy(dtype=float)
-    m, b = np.polyfit(x, y, 1)
-    yhat = m*x + b
-    ss_res = np.sum((y - yhat)**2)
-    ss_tot = np.sum((y - y.mean())**2)
-    if ss_tot <= 0:
-        return float("nan")
-    return float(1.0 - ss_res/ss_tot)
-
 def compute_roc(series_like, n: int = 10) -> pd.Series:
     s = _coerce_1d_series(series_like)
     base = s.dropna()
@@ -382,61 +337,7 @@ def compute_roc(series_like, n: int = 10) -> pd.Series:
     roc = base.pct_change(n) * 100.0
     return roc.reindex(s.index)
 
-# ---- RSI / Normalized RSI ----
-def compute_rsi(close: pd.Series, period: int = 14) -> pd.Series:
-    s = _coerce_1d_series(close).astype(float)
-    if s.empty or period < 2:
-        return pd.Series(index=s.index, dtype=float)
-    delta = s.diff()
-    up = delta.clip(lower=0.0)
-    down = -delta.clip(upper=0.0)
-    roll_up = up.ewm(alpha=1/period, adjust=False).mean()
-    roll_down = down.ewm(alpha=1/period, adjust=False).mean().replace(0, np.nan)
-    rs = roll_up / roll_down
-    rsi = 100 - (100 / (1 + rs))
-    return rsi.reindex(s.index)
-
-def compute_nrsi(close: pd.Series, period: int = 14) -> pd.Series:
-    rsi = compute_rsi(close, period=period)
-    nrsi = ((rsi - 50.0) / 50.0).clip(-1.0, 1.0)
-    return nrsi.reindex(rsi.index)
-
-# ---- Normalized MACD (price-based) ----
-def compute_nmacd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9,
-                  norm_win: int = 240):
-    s = _coerce_1d_series(close).astype(float)
-    if s.empty:
-        return (pd.Series(index=s.index, dtype=float),)*3
-    ema_fast = s.ewm(span=int(fast), adjust=False).mean()
-    ema_slow = s.ewm(span=int(slow), adjust=False).mean()
-    macd = ema_fast - ema_slow
-    sig  = macd.ewm(span=int(signal), adjust=False).mean()
-    hist = macd - sig
-
-    # Normalize MACD & signal to [-1,1] using rolling z then tanh
-    minp = max(10, norm_win//10)
-    def _norm(x):
-        m = x.rolling(norm_win, min_periods=minp).mean()
-        sd = x.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
-        z = (x - m) / sd
-        return np.tanh(z / 2.0)
-    nmacd = _norm(macd)
-    nsignal = _norm(sig)
-    nhist = nmacd - nsignal
-    return nmacd.reindex(s.index), nsignal.reindex(s.index), nhist.reindex(s.index)
-
-# ---- Normalized Volume (z-score → tanh in [-1,1]) ----
-def compute_nvol(volume: pd.Series, norm_win: int = 240) -> pd.Series:
-    v = _coerce_1d_series(volume).astype(float)
-    if v.empty:
-        return pd.Series(index=v.index, dtype=float)
-    minp = max(10, norm_win//10)
-    m = v.rolling(norm_win, min_periods=minp).mean()
-    sd = v.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
-    z = (v - m) / sd
-    return np.tanh(z / 3.0)
-
-# ---- Normalized Price Oscillator (for EW panel) ----
+# ---- Normalized Price Oscillator ----
 def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int = 240) -> pd.Series:
     s = _coerce_1d_series(close)
     if s.empty or not np.isfinite(fast) or not np.isfinite(slow) or fast <= 0 or slow <= 0:
@@ -455,7 +356,7 @@ def compute_npo(close: pd.Series, fast: int = 12, slow: int = 26, norm_win: int 
     npo = np.tanh(z / 2.0)
     return npo.reindex(s.index)
 
-# ---- Normalized Trend Direction (for EW & RSI panels) ----
+# ---- Normalized Trend Direction ----
 def compute_normalized_trend(close: pd.Series, window: int = 60) -> pd.Series:
     s = _coerce_1d_series(close).astype(float)
     if s.empty or window < 3:
@@ -468,13 +369,14 @@ def compute_normalized_trend(close: pd.Series, window: int = 60) -> pd.Series:
             return np.nan
         x = np.arange(len(y), dtype=float)
         try:
-            m, _ = np.polyfit(x, y.to_numpy(dtype=float), 1)
+            m, b = np.polyfit(x, y.to_numpy(dtype=float), 1)
         except Exception:
             return np.nan
         return float(m)
 
     slope_roll = s.rolling(window, min_periods=minp).apply(_slope, raw=False)
     vol = s.rolling(window, min_periods=minp).std().replace(0, np.nan)
+
     ntd_raw = (slope_roll * window) / vol
     ntd = np.tanh(ntd_raw / 2.0)
     return ntd.reindex(s.index)
@@ -552,152 +454,7 @@ def compute_supertrend(df: pd.DataFrame, atr_period: int = 10, atr_mult: float =
         "upperband": upperband, "lowerband": lowerband
     })
 
-# ---- Normalized Elliott Wave (for DAILY panel) ----
-def compute_normalized_elliott_wave(close: pd.Series,
-                                    pivot_lb: int = 7,
-                                    norm_win: int = 240):
-    s = _coerce_1d_series(close).dropna()
-    if s.empty:
-        return pd.Series(index=_coerce_1d_series(close).index, dtype=float), pd.DataFrame(columns=["time","price","type","wave"])
-
-    minp = max(10, norm_win//10)
-    mean = s.rolling(norm_win, min_periods=minp).mean()
-    std  = s.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
-    z = (s - mean) / std
-    wave_norm = np.tanh(z / 2.0)
-    wave_norm = wave_norm.reindex(close.index)
-
-    if pivot_lb % 2 == 0:
-        pivot_lb += 1
-    roll_max = s.rolling(pivot_lb, center=True).max()
-    roll_min = s.rolling(pivot_lb, center=True).min()
-
-    pivots = []
-    half = pivot_lb // 2
-    for i in range(half, len(s)-half):
-        if not np.isfinite(s.iloc[i]):
-            continue
-        if s.iloc[i] == roll_max.iloc[i]:
-            pivots.append((s.index[i], float(s.iloc[i]), 'H'))
-        elif s.iloc[i] == roll_min.iloc[i]:
-            pivots.append((s.index[i], float(s.iloc[i]), 'L'))
-
-    dedup = []
-    for t, p, typ in pivots:
-        if not dedup:
-            dedup.append((t,p,typ))
-        else:
-            pt, pp, ptyp = dedup[-1]
-            if typ == ptyp:
-                if (typ == 'H' and p > pp) or (typ == 'L' and p < pp):
-                    dedup[-1] = (t,p,typ)
-            else:
-                dedup.append((t,p,typ))
-
-    waves = []
-    wave_num = 1
-    for t, p, typ in dedup:
-        waves.append((t,p,typ,wave_num))
-        wave_num += 1
-        if wave_num > 5:
-            wave_num = 1
-
-    pivots_df = pd.DataFrame(waves, columns=["time","price","type","wave"])
-    return wave_norm, pivots_df
-
-# ---- Ichimoku (classic + normalized) ----
-def ichimoku_lines(high: pd.Series, low: pd.Series, close: pd.Series,
-                   conv: int = 9, base: int = 26, span_b: int = 52, shift_cloud: bool = False):
-    H = _coerce_1d_series(high)
-    L = _coerce_1d_series(low)
-    C = _coerce_1d_series(close)
-    if H.empty or L.empty or C.empty:
-        idx = C.index if not C.empty else (H.index if not H.empty else L.index)
-        return (pd.Series(index=idx, dtype=float),)*5
-
-    tenkan = (H.rolling(conv).max() + L.rolling(conv).min()) / 2.0
-    kijun  = (H.rolling(base).max() + L.rolling(base).min()) / 2.0
-    span_a_raw = (tenkan + kijun) / 2.0
-    span_b_raw = (H.rolling(span_b).max() + L.rolling(span_b).min()) / 2.0
-    span_a = span_a_raw.shift(base) if shift_cloud else span_a_raw
-    span_b = span_b_raw.shift(base) if shift_cloud else span_b_raw
-    chikou = C.shift(-base)
-    return tenkan, kijun, span_a, span_b, chikou
-
-def compute_normalized_ichimoku(high: pd.Series, low: pd.Series, close: pd.Series,
-                                conv: int = 9, base: int = 26, span_b: int = 52,
-                                norm_win: int = 240, price_weight: float = 0.6) -> pd.Series:
-    C = _coerce_1d_series(close).astype(float)
-    H = _coerce_1d_series(high).astype(float)
-    L = _coerce_1d_series(low).astype(float)
-    if C.empty or H.empty or L.empty:
-        return pd.Series(index=C.index, dtype=float)
-
-    tenkan, kijun, span_a, span_b, _ = ichimoku_lines(H, L, C, conv=conv, base=base, span_b=span_b, shift_cloud=False)
-    cloud_mid = ((span_a + span_b) / 2.0).reindex(C.index)
-
-    minp = max(10, norm_win // 10)
-    vol = C.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
-
-    z1 = (C - cloud_mid) / vol
-    z2 = (tenkan - kijun) / vol
-
-    blend = price_weight * z1 + (1.0 - price_weight) * z2
-    n_ichi = np.tanh(blend / 2.0)
-    return n_ichi.reindex(C.index)
-
-# ========= Signals & News helpers =========
-EW_CONFIDENCE = 0.95
-
-def elliott_conf_signal(price_now: float, fc_vals: pd.Series, conf: float = EW_CONFIDENCE):
-    fc = _coerce_1d_series(fc_vals).dropna().to_numpy(dtype=float)
-    if fc.size == 0 or not np.isfinite(price_now):
-        return None
-    p_up = float(np.mean(fc > price_now))
-    p_dn = float(np.mean(fc < price_now))
-    if p_up >= conf:
-        return {"side": "BUY", "prob": p_up}
-    if p_dn >= conf:
-        return {"side": "SELL", "prob": p_dn}
-    return None
-
-def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
-                        fc_vals: pd.Series, threshold: float, prox: float):
-    try:
-        last_close = float(hc.iloc[-1])
-        res = float(res_h.iloc[-1])
-        sup = float(sup_h.iloc[-1])
-    except Exception:
-        return None
-
-    if not np.all(np.isfinite([last_close, res, sup])) or res <= sup:
-        return None
-
-    near_support = last_close <= sup * (1.0 + prox)
-    near_resist  = last_close >= res * (1.0 - prox)
-
-    fc = np.asarray(_coerce_1d_series(fc_vals).dropna(), dtype=float)
-    if fc.size == 0:
-        return None
-    p_up_from_here = float(np.mean(fc > last_close))
-    p_dn_from_here = float(np.mean(fc < last_close))
-
-    if near_support and p_up_from_here >= threshold:
-        return {
-            "side": "BUY",
-            "prob": p_up_from_here,
-            "level": sup,
-            "reason": f"Near support {fmt_price_val(sup)} with {fmt_pct(p_up_from_here)} up-confidence ≥ {fmt_pct(threshold)}"
-        }
-    if near_resist and p_dn_from_here >= threshold:
-        return {
-            "side": "SELL",
-            "prob": p_dn_from_here,
-            "level": res,
-            "reason": f"Near resistance {fmt_price_val(res)} with {fmt_pct(p_dn_from_here)} down-confidence ≥ {fmt_pct(threshold)}"
-        }
-    return None
-
+# ---- Forex News (Yahoo Finance) ----
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
     rows = []
@@ -738,7 +495,176 @@ def draw_news_markers(ax, times, ymin, ymax, label="News"):
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
 
-# ========= Cached last values for scanning =========
+# --- Signal helpers ---
+def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
+                        fc_vals: pd.Series, threshold: float, prox: float):
+    """Return signal info if last price is near hourly S/R and model confidence passes threshold."""
+    try:
+        last_close = float(hc.iloc[-1])
+        res = float(res_h.iloc[-1])
+        sup = float(sup_h.iloc[-1])
+    except Exception:
+        return None
+
+    if not np.all(np.isfinite([last_close, res, sup])) or res <= sup:
+        return None
+
+    near_support = last_close <= sup * (1.0 + prox)
+    near_resist  = last_close >= res * (1.0 - prox)
+
+    fc = np.asarray(_coerce_1d_series(fc_vals).dropna(), dtype=float)
+    if fc.size == 0:
+        return None
+    p_up_from_here = float(np.mean(fc > last_close))
+    p_dn_from_here = float(np.mean(fc < last_close))
+
+    if near_support and p_up_from_here >= threshold:
+        return {
+            "side": "BUY",
+            "prob": p_up_from_here,
+            "level": sup,
+            "reason": f"Near support {fmt_price_val(sup)} with {fmt_pct(p_up_from_here)} up-confidence ≥ {fmt_pct(threshold)}"
+        }
+    if near_resist and p_dn_from_here >= threshold:
+        return {
+            "side": "SELL",
+            "prob": p_dn_from_here,
+            "level": res,
+            "reason": f"Near resistance {fmt_price_val(res)} with {fmt_pct(p_dn_from_here)} down-confidence ≥ {fmt_pct(threshold)}"
+        }
+    return None
+
+EW_CONFIDENCE = 0.95  # >95% confidence for EW signals
+
+def elliott_conf_signal(price_now: float, fc_vals: pd.Series, conf: float = EW_CONFIDENCE):
+    """Signal for EW panel using SARIMAX distribution vs current price."""
+    fc = _coerce_1d_series(fc_vals).dropna().to_numpy(dtype=float)
+    if fc.size == 0 or not np.isfinite(price_now):
+        return None
+    p_up = float(np.mean(fc > price_now))
+    p_dn = float(np.mean(fc < price_now))
+    if p_up >= conf:
+        return {"side": "BUY", "prob": p_up}
+    if p_dn >= conf:
+        return {"side": "SELL", "prob": p_dn}
+    return None
+
+# --- Normalized Elliott Wave (simple, dependency-free) ----
+def compute_normalized_elliott_wave(close: pd.Series,
+                                    pivot_lb: int = 7,
+                                    norm_win: int = 240):
+    """
+    Returns:
+      wave_norm: pd.Series in [-1,1] (tanh(zscore) of close vs rolling mean/std)
+      pivots_df: DataFrame with 'time','price','type' ('H'/'L') and 'wave' labels (1..5 repeating)
+    """
+    s = _coerce_1d_series(close).dropna()
+    if s.empty:
+        return pd.Series(index=close.index, dtype=float), pd.DataFrame(columns=["time","price","type","wave"])
+
+    # Normalization: rolling z-score, then squash to [-1,1]
+    minp = max(10, norm_win//10)
+    mean = s.rolling(norm_win, min_periods=minp).mean()
+    std  = s.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
+    z = (s - mean) / std
+    wave_norm = np.tanh(z / 2.0)  # smoother, bounded [-1,1]
+    wave_norm = wave_norm.reindex(close.index)
+
+    # Pivot detection via centered rolling extrema
+    if pivot_lb % 2 == 0:
+        pivot_lb += 1
+    roll_max = s.rolling(pivot_lb, center=True).max()
+    roll_min = s.rolling(pivot_lb, center=True).min()
+
+    pivots = []
+    half = pivot_lb // 2
+    for i in range(half, len(s)-half):
+        if not np.isfinite(s.iloc[i]):
+            continue
+        if s.iloc[i] == roll_max.iloc[i]:
+            pivots.append((s.index[i], float(s.iloc[i]), 'H'))
+        elif s.iloc[i] == roll_min.iloc[i]:
+            pivots.append((s.index[i], float(s.iloc[i]), 'L'))
+
+    # De-duplicate consecutive same-type pivots
+    dedup = []
+    for t, p, typ in pivots:
+        if not dedup:
+            dedup.append((t,p,typ))
+        else:
+            pt, pp, ptyp = dedup[-1]
+            if typ == ptyp:
+                if (typ == 'H' and p > pp) or (typ == 'L' and p < pp):
+                    dedup[-1] = (t,p,typ)
+            else:
+                dedup.append((t,p,typ))
+
+    # Assign simple 1..5 wave counting
+    waves = []
+    wave_num = 1
+    for t, p, typ in dedup:
+        waves.append((t,p,typ,wave_num))
+        wave_num += 1
+        if wave_num > 5:
+            wave_num = 1
+
+    pivots_df = pd.DataFrame(waves, columns=["time","price","type","wave"])
+    return wave_norm, pivots_df
+
+# ========= NEW: Ichimoku (normalized) =========
+def ichimoku_lines(high: pd.Series, low: pd.Series, close: pd.Series,
+                   conv: int = 9, base: int = 26, span_b: int = 52, shift_cloud: bool = False):
+    """
+    Compute Ichimoku components without forward displacement by default.
+    If shift_cloud=True, Span A/B are shifted forward by 'base' periods (classical),
+    otherwise returned aligned to current index (better for overlays/normalization).
+    """
+    H = _coerce_1d_series(high)
+    L = _coerce_1d_series(low)
+    C = _coerce_1d_series(close)
+    if H.empty or L.empty or C.empty:
+        idx = C.index if not C.empty else (H.index if not H.empty else L.index)
+        return (pd.Series(index=idx, dtype=float),)*5
+
+    tenkan = (H.rolling(conv).max() + L.rolling(conv).min()) / 2.0
+    kijun  = (H.rolling(base).max() + L.rolling(base).min()) / 2.0
+    span_a_raw = (tenkan + kijun) / 2.0
+    span_b_raw = (H.rolling(span_b).max() + L.rolling(span_b).min()) / 2.0
+    span_a = span_a_raw.shift(base) if shift_cloud else span_a_raw
+    span_b = span_b_raw.shift(base) if shift_cloud else span_b_raw
+    chikou = C.shift(-base)  # classic lagging line; not used in normalization
+    return tenkan, kijun, span_a, span_b, chikou
+
+def compute_normalized_ichimoku(high: pd.Series, low: pd.Series, close: pd.Series,
+                                conv: int = 9, base: int = 26, span_b: int = 52,
+                                norm_win: int = 240, price_weight: float = 0.6) -> pd.Series:
+    """
+    Returns a single bounded oscillator in [-1, 1] blending:
+      - z1: (Price - CloudMid) / rolling_std(close)
+      - z2: (Tenkan - Kijun) / rolling_std(close)
+    Then: tanh( (price_weight*z1 + (1-price_weight)*z2) / 2 )
+    Span A/B are *not* forward-shifted so values align with price/EW at time t.
+    """
+    C = _coerce_1d_series(close).astype(float)
+    H = _coerce_1d_series(high).astype(float)
+    L = _coerce_1d_series(low).astype(float)
+    if C.empty or H.empty or L.empty:
+        return pd.Series(index=C.index, dtype=float)
+
+    tenkan, kijun, span_a, span_b, _ = ichimoku_lines(H, L, C, conv=conv, base=base, span_b=span_b, shift_cloud=False)
+    cloud_mid = ((span_a + span_b) / 2.0).reindex(C.index)
+
+    minp = max(10, norm_win // 10)
+    vol = C.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
+
+    z1 = (C - cloud_mid) / vol
+    z2 = (tenkan - kijun) / vol
+
+    blend = price_weight * z1 + (1.0 - price_weight) * z2
+    n_ichi = np.tanh(blend / 2.0)
+    return n_ichi.reindex(C.index)
+
+# ========= Cached "last value" calculators for scanning =========
 @st.cache_data(ttl=120)
 def last_daily_ntd_value(symbol: str, ntd_win: int):
     try:
@@ -764,77 +690,19 @@ def last_hourly_ntd_value(symbol: str, ntd_win: int, period: str = "1d"):
     except Exception:
         return np.nan, None
 
-# ---- Price > Kijun detection (Daily & Hourly) ----
-def _price_above_kijun_from_df(df: pd.DataFrame, base: int = 26):
-    """Returns (above_now, timestamp, close_now, kijun_now) for the latest bar."""
-    if df is None or df.empty or not {'High','Low','Close'}.issubset(df.columns):
-        return False, None, np.nan, np.nan
-    ohlc = df[['High','Low','Close']].copy()
-    _, kijun, _, _, _ = ichimoku_lines(ohlc['High'], ohlc['Low'], ohlc['Close'], base=base)
-    kijun = kijun.ffill().bfill().reindex(ohlc.index)
-    close = ohlc['Close'].astype(float).reindex(ohlc.index)
-
-    mask = close.notna() & kijun.notna()
-    if mask.sum() < 1:
-        return False, None, np.nan, np.nan
-    c_now = float(close[mask].iloc[-1])
-    k_now = float(kijun[mask].iloc[-1])
-    ts = close[mask].index[-1]
-    above = np.isfinite(c_now) and np.isfinite(k_now) and (c_now > k_now)
-    return above, ts if above else None, c_now, k_now
-
-@st.cache_data(ttl=120)
-def price_above_kijun_info_daily(symbol: str, base: int = 26):
-    try:
-        df = fetch_hist_ohlc(symbol)
-        return _price_above_kijun_from_df(df, base=base)
-    except Exception:
-        return False, None, np.nan, np.nan
-
-@st.cache_data(ttl=120)
-def price_above_kijun_info_hourly(symbol: str, period: str = "1d", base: int = 26):
-    try:
-        df = fetch_intraday(symbol, period=period)
-        return _price_above_kijun_from_df(df, base=base)
-    except Exception:
-        return False, None, np.nan, np.nan
-
-# --- Volume helpers (new) ---
-def rolling_midline(series_like: pd.Series, window: int) -> pd.Series:
-    """Mid-line as (rolling max + rolling min)/2 over `window`."""
-    s = _coerce_1d_series(series_like).astype(float)
-    if s.empty:
-        return pd.Series(index=s.index, dtype=float)
-    roll = s.rolling(window, min_periods=1)
-    mid = (roll.max() + roll.min()) / 2.0
-    return mid.reindex(s.index)
-
-def _has_volume_to_plot(vol: pd.Series) -> bool:
-    """Robust scalar check to decide if volume panel should render."""
-    s = _coerce_1d_series(vol).astype(float).replace([np.inf, -np.inf], np.nan).dropna()
-    if s.shape[0] < 2:
-        return False
-    arr = s.to_numpy(dtype=float)
-    vmax = float(np.nanmax(arr))
-    vmin = float(np.nanmin(arr))
-    return (np.isfinite(vmax) and vmax > 0.0) or (np.isfinite(vmin) and vmin < 0.0)
-
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
     st.session_state.ticker = None
     st.session_state.hour_range = "24h"
-if 'hist_years' not in st.session_state:
-    st.session_state.hist_years = 10  # default for Long-Term History tab
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
-    "NTD -0.5 Scanner",
-    "Long-Term History"
+    "NTD -0.5 Scanner"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -902,20 +770,15 @@ with tab1:
             wave_norm_d, piv_df_d = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
             npo_d = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
             ntd_d = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
-            ichi_d = pd.Series(index=df.index, dtype=float)
-            kijun_d = pd.Series(index=df.index, dtype=float)
-
+            # NEW: Ichimoku (normalized) — Daily
             if df_ohlc is not None and not df_ohlc.empty and show_ichi:
                 ichi_d = compute_normalized_ichimoku(
                     df_ohlc["High"], df_ohlc["Low"], df_ohlc["Close"],
                     conv=ichi_conv, base=ichi_base, span_b=ichi_spanb,
                     norm_win=ichi_norm_win, price_weight=ichi_price_weight
                 )
-                _, kijun_d, _, _, _ = ichimoku_lines(
-                    df_ohlc["High"], df_ohlc["Low"], df_ohlc["Close"],
-                    conv=ichi_conv, base=ichi_base, span_b=ichi_spanb, shift_cloud=False
-                )
-                kijun_d = kijun_d.ffill().bfill()
+            else:
+                ichi_d = pd.Series(index=df.index, dtype=float)
 
             df_show     = subset_by_daily_view(df, daily_view)
             ema30_show  = ema30.reindex(df_show.index)
@@ -926,8 +789,7 @@ with tab1:
             wave_d_show = wave_norm_d.reindex(df_show.index)
             npo_d_show  = npo_d.reindex(df_show.index)
             ntd_d_show  = ntd_d.reindex(df_show.index)
-            ichi_d_show = ichi_d.reindex(df_show.index).ffill().bfill()
-            kijun_d_show = kijun_d.reindex(df_show.index).ffill().bfill()
+            ichi_d_show = ichi_d.reindex(df_show.index)
             piv_df_d_show = piv_df_d[(piv_df_d["time"] >= df_show.index.min()) & (piv_df_d["time"] <= df_show.index.max())] if not piv_df_d.empty else piv_df_d
 
             fig, (ax, axdw) = plt.subplots(
@@ -941,10 +803,6 @@ with tab1:
             ax.plot(ema30_show, "--", label="30 EMA")
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
-
-            if show_ichi and not kijun_d_show.dropna().empty:
-                ax.plot(kijun_d_show.index, kijun_d_show.values, "-", linewidth=1.8, color="black",
-                        label=f"Ichimoku Kijun ({ichi_base})")
 
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
@@ -970,7 +828,7 @@ with tab1:
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
 
-            axdw.set_title("Daily Normalized Elliott Wave + NPO + NTD + Ichimoku (normalized)")
+            axdw.set_title("Daily Normalized Elliott Wave + NPO + NTD + Ichimoku")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw, ntd_d_show)
             if show_npo and not npo_d_show.dropna().empty:
@@ -982,7 +840,7 @@ with tab1:
             if show_ntd and not ntd_d_show.dropna().empty:
                 axdw.plot(ntd_d_show.index, ntd_d_show, ":", linewidth=1.2, label=f"NTD (win={ntd_window})")
             if show_ichi and not ichi_d_show.dropna().empty:
-                axdw.plot(ichi_d_show.index, ichi_d_show.values, "-", linewidth=1.4, color="black",
+                axdw.plot(ichi_d_show.index, ichi_d_show, "-.", linewidth=1.2,
                           label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
 
             for yline, style, col, lbl in [
@@ -1012,7 +870,8 @@ with tab1:
             posdw = axdw.get_position()
             label_txt = f"Price: {fmt_price_val(px_daily)}"
             if ew_sig_d is not None:
-                side = ew_sig_d['side']; prob = fmt_pct(ew_sig_d['prob'], digits=0)
+                side = ew_sig_d['side']
+                prob = fmt_pct(ew_sig_d['prob'], digits=0)
                 label_txt += f"  |  {('▲ BUY' if side=='BUY' else '▼ SELL')} @ {fmt_price_val(px_daily)}  ({prob})"
             fig.text(posdw.x1, posdw.y1 + 0.01, label_txt, ha="right", va="bottom",
                      fontsize=10, fontweight="bold")
@@ -1020,7 +879,7 @@ with tab1:
             axdw.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Hourly (price + NRSI/MACD/Vol + momentum + NEW Volume panel) -----
+        # ----- Hourly -----
         if chart in ("Hourly","Both"):
             intraday = st.session_state.intraday
             if intraday is None or intraday.empty or "Close" not in intraday:
@@ -1037,29 +896,14 @@ with tab1:
                 st_intraday = compute_supertrend(intraday, atr_period=atr_period, atr_mult=atr_mult)
                 st_line_intr = st_intraday["ST"].reindex(hc.index) if "ST" in st_intraday else pd.Series(index=hc.index, dtype=float)
 
-                # Ichimoku Kijun on price chart (solid black)
-                kijun_h = pd.Series(index=hc.index, dtype=float)
-                if {'High','Low','Close'}.issubset(intraday.columns) and show_ichi:
-                    _, kijun_h, _, _, _ = ichimoku_lines(
-                        intraday["High"], intraday["Low"], intraday["Close"],
-                        conv=ichi_conv, base=ichi_base, span_b=ichi_spanb, shift_cloud=False
-                    )
-                    kijun_h = kijun_h.reindex(hc.index).ffill().bfill()
-
-                # Lookback slope & R²
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
-                r2_h = regression_r2(hc, slope_lb_hourly)
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
                 plt.subplots_adjust(top=0.85, right=0.93)
 
                 ax2.plot(hc.index, hc, label="Intraday")
                 ax2.plot(hc.index, he, "--", label="20 EMA")
-                ax2.plot(hc.index, trend_h, "--", label=f"Trend (m={fmt_slope(slope_h)}/bar)", linewidth=2)
-
-                if show_ichi and not kijun_h.dropna().empty:
-                    ax2.plot(kijun_h.index, kijun_h.values, "-", linewidth=1.8, color="black",
-                             label=f"Ichimoku Kijun ({ichi_base})")
+                ax2.plot(hc.index, trend_h, "--", label="Trend", linewidth=2)
 
                 res_val = sup_val = px_val = np.nan
                 try:
@@ -1091,18 +935,6 @@ with tab1:
                     ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
                              label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
-                # Bottom-left slope badge inside the price chart
-                ax2.text(0.01, 0.02, f"Slope: {fmt_slope(slope_h)}/bar",
-                         transform=ax2.transAxes, ha="left", va="bottom",
-                         fontsize=9, color="black",
-                         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-
-                # Bottom-center R² badge for trendline over lookback (percentage)
-                ax2.text(0.50, 0.02, f"R² ({slope_lb_hourly} bars): {fmt_r2(r2_h)}",
-                         transform=ax2.transAxes, ha="center", va="bottom",
-                         fontsize=9, color="black",
-                         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-
                 if show_fibs and not hc.empty:
                     fibs_h = fibonacci_levels(hc)
                     for lbl, y in fibs_h.items():
@@ -1131,103 +963,6 @@ with tab1:
                 xlim_price = ax2.get_xlim()
                 st.pyplot(fig2)
 
-                # === NEW: Hourly Volume panel (separate chart) ===
-                vol = _coerce_1d_series(intraday.get("Volume", pd.Series(index=hc.index))).reindex(hc.index).astype(float)
-                if _has_volume_to_plot(vol):
-                    v_mid = rolling_midline(vol, window=max(3, int(slope_lb_hourly)))
-                    v_trend, v_m = slope_line(vol, slope_lb_hourly)
-                    v_r2 = regression_r2(vol, slope_lb_hourly)
-
-                    fig2v, ax2v = plt.subplots(figsize=(14, 2.8))
-                    ax2v.set_title(f"Volume (Hourly) — Mid-line & Trend  |  Slope={fmt_slope(v_m)}/bar")
-                    # BLUE volume area + line
-                    ax2v.fill_between(vol.index, 0, vol, alpha=0.18, label="Volume", color="tab:blue")
-                    ax2v.plot(vol.index, vol, linewidth=1.0, color="tab:blue")
-
-                    # Rolling mid-line (as a curve) + horizontal marker at last mid
-                    ax2v.plot(v_mid.index, v_mid, ":", linewidth=1.6, label=f"Mid-line ({slope_lb_hourly}-roll)")
-                    if v_mid.notna().any():
-                        last_mid = float(v_mid.dropna().iloc[-1])
-                        ax2v.hlines(last_mid, xmin=vol.index[0], xmax=vol.index[-1],
-                                    linestyles="dotted", linewidth=1.0)
-                        label_on_left(ax2v, last_mid, f"Mid {last_mid:,.0f}", color="black")
-
-                    # Trendline
-                    if not v_trend.empty:
-                        ax2v.plot(v_trend.index, v_trend.values, "--", linewidth=2,
-                                  label=f"Trend {slope_lb_hourly} ({fmt_slope(v_m)}/bar)")
-
-                    # Badges
-                    ax2v.text(0.01, 0.02, f"Slope: {fmt_slope(v_m)}/bar",
-                              transform=ax2v.transAxes, ha="left", va="bottom",
-                              fontsize=9, color="black",
-                              bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-                    ax2v.text(0.50, 0.02, f"R² ({slope_lb_hourly} bars): {fmt_r2(v_r2)}",
-                              transform=ax2v.transAxes, ha="center", va="bottom",
-                              fontsize=9, color="black",
-                              bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-
-                    ax2v.set_xlim(xlim_price)
-                    ax2v.set_xlabel("Time (PST)")
-                    ax2v.legend(loc="lower left", framealpha=0.5)
-                    st.pyplot(fig2v)
-
-                # === Normalized RSI Panel (Hourly): NRSI + NMACD(+signal) + NVol + NTD & certainty ===
-                if show_nrsi:
-                    nrsi_h = compute_nrsi(hc, period=nrsi_period)
-                    nmacd_h, nmacd_sig_h, _ = compute_nmacd(hc)
-                    nvol_h = compute_nvol(intraday.get("Volume", pd.Series(index=hc.index)).reindex(hc.index))
-                    ntd_h_rsipanel = compute_normalized_trend(hc, window=ntd_window)
-
-                    # NRSI trendline & slope
-                    nrsi_trend, nrsi_m = slope_line(nrsi_h, slope_lb_hourly)
-
-                    fig2r, ax2r = plt.subplots(figsize=(14,2.8))
-                    ax2r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD")
-
-                    # BLUE NVol fill (both + and -)
-                    posv = nvol_h.where(nvol_h > 0)
-                    negv = nvol_h.where(nvol_h < 0)
-                    ax2r.fill_between(posv.index, 0, posv, alpha=0.10, step=None, label="NVol(+)", color="tab:blue")
-                    ax2r.fill_between(negv.index, 0, negv, alpha=0.10, step=None, label="NVol(-)", color="tab:blue")
-
-                    # Main lines
-                    ax2r.plot(nrsi_h.index, nrsi_h, "-", linewidth=1.4, label="NRSI")
-                    ax2r.plot(nmacd_h.index, nmacd_h, "-", linewidth=1.4, label="NMACD")
-                    ax2r.plot(nmacd_sig_h.index, nmacd_sig_h, "--", linewidth=1.2, label="NMACD signal")
-
-                    # NRSI trendline (dashed red) + slope in legend
-                    if not nrsi_trend.empty:
-                        ax2r.plot(nrsi_trend.index, nrsi_trend.values, "--", linewidth=2,
-                                  color="red",
-                                  label=f"NRSI Trend {slope_lb_hourly} ({fmt_slope(nrsi_m)}/bar)")
-
-                    # NTD overlay + bottom-right trend badge
-                    if show_ntd and not ntd_h_rsipanel.dropna().empty:
-                        ax2r.plot(ntd_h_rsipanel.index, ntd_h_rsipanel, ":", linewidth=1.6,
-                                  label=f"NTD (win={ntd_window})")
-                        last_ntd = float(ntd_h_rsipanel.dropna().iloc[-1])
-                        t_dir = "UP" if last_ntd >= 0 else "DOWN"
-                        color = "tab:green" if last_ntd >= 0 else "tab:red"
-                        certainty = int(round(50 + 50*abs(last_ntd)))  # map [-1,1] → [50,100]
-                        ax2r.text(0.99, 0.06, f"Trend: {t_dir} ({certainty}%)",
-                                  transform=ax2r.transAxes, ha="right", va="bottom",
-                                  fontsize=10, fontweight="bold", color=color,
-                                  bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.85))
-
-                    # Reference lines
-                    ax2r.axhline(0, linestyle="--", linewidth=1, color="black", label="0")
-                    ax2r.axhline(0.5, linestyle="-", linewidth=1.2, color="black", label="+0.5")
-                    ax2r.axhline(-0.5, linestyle="-", linewidth=1.2, color="black", label="-0.5")
-                    ax2r.axhline(0.75, linestyle="-", linewidth=3.0, color="red", label="+0.75")
-                    ax2r.axhline(-0.75, linestyle="-", linewidth=3.0, color="red", label="-0.75")
-
-                    ax2r.set_ylim(-1.1, 1.1)
-                    ax2r.set_xlim(xlim_price)
-                    ax2r.legend(loc="lower left", framealpha=0.5)
-                    ax2r.set_xlabel("Time (PST)")
-                    st.pyplot(fig2r)
-
                 # Momentum panel (ROC%)
                 if show_mom_hourly:
                     roc = compute_roc(hc, n=mom_lb_hourly)
@@ -1246,6 +981,71 @@ with tab1:
                     ax2m.legend(loc="lower left", framealpha=0.5)
                     ax2m.set_xlim(xlim_price)
                     st.pyplot(fig2m)
+
+                # --- Hourly EW panel ---
+                wave_norm, piv_df = compute_normalized_elliott_wave(hc, pivot_lb=pivot_lookback, norm_win=norm_window)
+                npo_h = compute_npo(hc, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=hc.index, dtype=float)
+                ntd_h = compute_normalized_trend(hc, window=ntd_window) if show_ntd else pd.Series(index=hc.index, dtype=float)
+                # NEW: Ichimoku (normalized) — Hourly (requires High/Low)
+                if {'High','Low'}.issubset(intraday.columns) and show_ichi:
+                    ichi_h = compute_normalized_ichimoku(
+                        intraday["High"], intraday["Low"], intraday["Close"],
+                        conv=ichi_conv, base=ichi_base, span_b=ichi_spanb,
+                        norm_win=ichi_norm_win, price_weight=ichi_price_weight
+                    ).reindex(hc.index)
+                else:
+                    ichi_h = pd.Series(index=hc.index, dtype=float)
+
+                fig2w, ax2w = plt.subplots(figsize=(14,2.8))
+                plt.subplots_adjust(top=0.88, right=0.93)
+
+                ax2w.set_title("Normalized Elliott Wave + NPO + NTD + Ichimoku")
+                if show_ntd and shade_ntd and not ntd_h.dropna().empty:
+                    shade_ntd_regions(ax2w, ntd_h)
+                if show_npo and not npo_h.dropna().empty:
+                    shade_npo_regions(ax2w, npo_h)
+
+                ax2w.plot(wave_norm.index, wave_norm, label="Norm EW", linewidth=1.8)
+                if show_npo and not npo_h.dropna().empty:
+                    ax2w.plot(npo_h.index, npo_h, "--", linewidth=1.2, label=f"NPO ({npo_fast},{npo_slow})")
+                if show_ntd and not ntd_h.dropna().empty:
+                    ax2w.plot(ntd_h.index, ntd_h, ":", linewidth=1.2, label=f"NTD (win={ntd_window})")
+                if show_ichi and not ichi_h.dropna().empty:
+                    ax2w.plot(ichi_h.index, ichi_h, "-.", linewidth=1.2,
+                              label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
+
+                ax2w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
+                ax2w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
+                ax2w.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
+                ax2w.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
+                ax2w.axhline(-0.75, color="black", linestyle="-", linewidth=1, label="EW -0.75")
+
+                ax2w.set_ylim(-1.1, 1.1)
+                ax2w.set_xlabel("Time (PST)")
+                ax2w.set_xlim(xlim_price)
+
+                if not piv_df.empty:
+                    show_df = piv_df.tail(int(waves_to_annotate))
+                    for _, r in show_df.iterrows():
+                        t = r["time"]; w = r["wave"]; typ = r["type"]
+                        ylab = 0.9 if typ == 'H' else -0.9
+                        ax2w.annotate(str(int(w)), (t, ylab),
+                                      xytext=(0, 0), textcoords="offset points",
+                                      ha="center", va="center",
+                                      fontsize=9, fontweight="bold")
+
+                px_intr = _safe_last_float(hc)
+                ew_sig_h = elliott_conf_signal(px_intr, st.session_state.fc_vals, EW_CONFIDENCE)
+                pos2w = ax2w.get_position()
+                label_txt_h = f"Price: {fmt_price_val(px_intr)}"
+                if ew_sig_h is not None:
+                    side = ew_sig_h['side']; prob = fmt_pct(ew_sig_h['prob'], digits=0)
+                    label_txt_h += f"  |  {('▲ BUY' if side=='BUY' else '▼ SELL')} @ {fmt_price_val(px_intr)}  ({prob})"
+                fig2w.text(pos2w.x1, pos2w.y1 + 0.01, label_txt_h, ha="right", va="bottom",
+                           fontsize=10, fontweight="bold")
+
+                ax2w.legend(loc="lower left", framealpha=0.5)
+                st.pyplot(fig2w)
 
         if mode == "Forex" and show_fx_news:
             st.subheader("Recent Forex News (Yahoo Finance)")
@@ -1295,20 +1095,15 @@ with tab2:
             wave_norm_d2, piv_df_d2 = compute_normalized_elliott_wave(df, pivot_lb=pivot_lookback_d, norm_win=norm_window_d)
             npo_d2 = compute_npo(df, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=df.index, dtype=float)
             ntd_d2 = compute_normalized_trend(df, window=ntd_window) if show_ntd else pd.Series(index=df.index, dtype=float)
-            ichi_d2 = pd.Series(index=df.index, dtype=float)
-            kijun_d2 = pd.Series(index=df.index, dtype=float)
-
+            # NEW: Ichimoku (normalized) — Daily (Enhanced)
             if df_ohlc is not None and not df_ohlc.empty and show_ichi:
                 ichi_d2 = compute_normalized_ichimoku(
                     df_ohlc["High"], df_ohlc["Low"], df_ohlc["Close"],
                     conv=ichi_conv, base=ichi_base, span_b=ichi_spanb,
                     norm_win=ichi_norm_win, price_weight=ichi_price_weight
                 )
-                _, kijun_d2, _, _, _ = ichimoku_lines(
-                    df_ohlc["High"], df_ohlc["Low"], df_ohlc["Close"],
-                    conv=ichi_conv, base=ichi_base, span_b=ichi_spanb, shift_cloud=False
-                )
-                kijun_d2 = kijun_d2.ffill().bfill()
+            else:
+                ichi_d2 = pd.Series(index=df.index, dtype=float)
 
             df_show     = subset_by_daily_view(df, daily_view)
             ema30_show  = ema30.reindex(df_show.index)
@@ -1319,8 +1114,7 @@ with tab2:
             wave_d_show = wave_norm_d2.reindex(df_show.index)
             npo_d_show  = npo_d2.reindex(df_show.index)
             ntd_d_show  = ntd_d2.reindex(df_show.index)
-            ichi_d2_show = ichi_d2.reindex(df_show.index).ffill().bfill()
-            kijun_d2_show = kijun_d2.reindex(df_show.index).ffill().bfill()
+            ichi_d2_show = ichi_d2.reindex(df_show.index)
             piv_df_d_show = piv_df_d2[(piv_df_d2["time"] >= df_show.index.min()) & (piv_df_d2["time"] <= df_show.index.max())] if not piv_df_d2.empty else piv_df_d2
 
             fig, (ax, axdw2) = plt.subplots(
@@ -1334,9 +1128,6 @@ with tab2:
             ax.plot(ema30_show, "--", label="30 EMA")
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
-            if show_ichi and not kijun_d2_show.dropna().empty:
-                ax.plot(kijun_d2_show.index, kijun_d2_show.values, "-", linewidth=1.8, color="black",
-                        label=f"Ichimoku Kijun ({ichi_base})")
 
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2,
@@ -1362,7 +1153,7 @@ with tab2:
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
 
-            axdw2.set_title("Daily Normalized Elliott Wave + NPO + NTD + Ichimoku (normalized)")
+            axdw2.set_title("Daily Normalized Elliott Wave + NPO + NTD + Ichimoku")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw2, ntd_d_show)
             if show_npo and not npo_d_show.dropna().empty:
@@ -1374,7 +1165,7 @@ with tab2:
             if show_ntd and not ntd_d_show.dropna().empty:
                 axdw2.plot(ntd_d_show.index, ntd_d_show, ":", linewidth=1.2, label=f"NTD (win={ntd_window})")
             if show_ichi and not ichi_d2_show.dropna().empty:
-                axdw2.plot(ichi_d2_show.index, ichi_d2_show.values, "-", linewidth=1.4, color="black",
+                axdw2.plot(ichi_d2_show.index, ichi_d2_show, "-.", linewidth=1.2,
                            label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
 
             for yline, style, col, lbl in [
@@ -1412,7 +1203,6 @@ with tab2:
             axdw2.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-        # ----- Intraday (Hourly) -----
         if view in ("Intraday","Both"):
             intr = st.session_state.intraday
             if intr is None or intr.empty or "Close" not in intr:
@@ -1427,28 +1217,14 @@ with tab2:
                 sup_i = ic.rolling(60, min_periods=1).min()
                 st_intraday = compute_supertrend(intr, atr_period=atr_period, atr_mult=atr_mult)
                 st_line_intr = st_intraday["ST"].reindex(ic.index) if "ST" in st_intraday else pd.Series(index=ic.index, dtype=float)
-
-                kijun_i = pd.Series(index=ic.index, dtype=float)
-                if {'High','Low','Close'}.issubset(intr.columns) and show_ichi:
-                    _, kijun_i, _, _, _ = ichimoku_lines(
-                        intr["High"], intr["Low"], intr["Close"],
-                        conv=ichi_conv, base=ichi_base, span_b=ichi_spanb, shift_cloud=False
-                    )
-                    kijun_i = kijun_i.reindex(ic.index).ffill().bfill()
-
-                # Lookback slope & R²
                 yhat_h, m_h = slope_line(ic, slope_lb_hourly)
-                r2_i = regression_r2(ic, slope_lb_hourly)
 
                 fig3, ax3 = plt.subplots(figsize=(14,4))
                 plt.subplots_adjust(top=0.85, right=0.93)
 
                 ax3.plot(ic.index, ic, label="Intraday")
                 ax3.plot(ic.index, ie, "--", label="20 EMA")
-                ax3.plot(ic.index, trend_i, "--", label=f"Trend (m={fmt_slope(slope_i)}/bar)", linewidth=2)
-                if show_ichi and not kijun_i.dropna().empty:
-                    ax3.plot(kijun_i.index, kijun_i.values, "-", linewidth=1.8, color="black",
-                             label=f"Ichimoku Kijun ({ichi_base})")
+                ax3.plot(ic.index, trend_i, "--", label="Trend", linewidth=2)
 
                 res_val2 = sup_val2 = px_val2 = np.nan
                 try:
@@ -1480,18 +1256,6 @@ with tab2:
                     ax3.plot(yhat_h.index, yhat_h.values, "-", linewidth=2,
                              label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
-                # Bottom-left slope badge
-                ax3.text(0.01, 0.02, f"Slope: {fmt_slope(slope_i)}/bar",
-                         transform=ax3.transAxes, ha="left", va="bottom",
-                         fontsize=9, color="black",
-                         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-
-                # Bottom-center R² badge for trendline over lookback (percentage)
-                ax3.text(0.50, 0.02, f"R² ({slope_lb_hourly} bars): {fmt_r2(r2_i)}",
-                         transform=ax3.transAxes, ha="center", va="bottom",
-                         fontsize=9, color="black",
-                         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-
                 if show_fibs and not ic.empty:
                     fibs_h = fibonacci_levels(ic)
                     for lbl, y in fibs_h.items():
@@ -1512,89 +1276,6 @@ with tab2:
                 xlim_price2 = ax3.get_xlim()
                 st.pyplot(fig3)
 
-                # === NEW: Intraday Volume panel (separate chart in Enhanced tab) ===
-                vol_i = _coerce_1d_series(intr.get("Volume", pd.Series(index=ic.index))).reindex(ic.index).astype(float)
-                if _has_volume_to_plot(vol_i):
-                    v_mid2 = rolling_midline(vol_i, window=max(3, int(slope_lb_hourly)))
-                    v_trend2, v_m2 = slope_line(vol_i, slope_lb_hourly)
-                    v_r2_2 = regression_r2(vol_i, slope_lb_hourly)
-
-                    fig3v, ax3v = plt.subplots(figsize=(14, 2.8))
-                    ax3v.set_title(f"Volume (Hourly) — Mid-line & Trend  |  Slope={fmt_slope(v_m2)}/bar")
-                    # BLUE volume area + line
-                    ax3v.fill_between(vol_i.index, 0, vol_i, alpha=0.18, label="Volume", color="tab:blue")
-                    ax3v.plot(vol_i.index, vol_i, linewidth=1.0, color="tab:blue")
-                    ax3v.plot(v_mid2.index, v_mid2, ":", linewidth=1.6, label=f"Mid-line ({slope_lb_hourly}-roll)")
-                    if v_mid2.notna().any():
-                        last_mid2 = float(v_mid2.dropna().iloc[-1])
-                        ax3v.hlines(last_mid2, xmin=vol_i.index[0], xmax=vol_i.index[-1],
-                                    linestyles="dotted", linewidth=1.0)
-                        label_on_left(ax3v, last_mid2, f"Mid {last_mid2:,.0f}", color="black")
-                    if not v_trend2.empty:
-                        ax3v.plot(v_trend2.index, v_trend2.values, "--", linewidth=2,
-                                  label=f"Trend {slope_lb_hourly} ({fmt_slope(v_m2)}/bar)")
-                    ax3v.text(0.01, 0.02, f"Slope: {fmt_slope(v_m2)}/bar",
-                              transform=ax3v.transAxes, ha="left", va="bottom",
-                              fontsize=9, color="black",
-                              bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-                    ax3v.text(0.50, 0.02, f"R² ({slope_lb_hourly} bars): {fmt_r2(v_r2_2)}",
-                              transform=ax3v.transAxes, ha="center", va="bottom",
-                              fontsize=9, color="black",
-                              bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-                    ax3v.set_xlim(xlim_price2)
-                    ax3v.set_xlabel("Time (PST)")
-                    ax3v.legend(loc="lower left", framealpha=0.5)
-                    st.pyplot(fig3v)
-
-                # === NRSI + NMACD(+signal) + NVol + NTD (+certainty) panel (Intraday view) ===
-                if show_nrsi:
-                    nrsi_i = compute_nrsi(ic, period=nrsi_period)
-                    nmacd_i, nmacd_sig_i, _ = compute_nmacd(ic)
-                    nvol_i = compute_nvol(intr.get("Volume", pd.Series(index=ic.index)).reindex(ic.index))
-                    ntd_i_rsipanel = compute_normalized_trend(ic, window=ntd_window)
-
-                    # NRSI trendline & slope
-                    nrsi_trend2, nrsi_m2 = slope_line(nrsi_i, slope_lb_hourly)
-
-                    fig3r, ax3r = plt.subplots(figsize=(14,2.8))
-                    ax3r.set_title(f"NRSI (p={nrsi_period}) + NVol + NMACD (+signal) + NTD")
-                    # BLUE NVol fill
-                    posv = nvol_i.where(nvol_i > 0)
-                    negv = nvol_i.where(nvol_i < 0)
-                    ax3r.fill_between(posv.index, 0, posv, alpha=0.10, step=None, label="NVol(+)", color="tab:blue")
-                    ax3r.fill_between(negv.index, 0, negv, alpha=0.10, step=None, label="NVol(-)", color="tab:blue")
-                    ax3r.plot(nrsi_i.index, nrsi_i, "-", linewidth=1.4, label="NRSI")
-                    ax3r.plot(nmacd_i.index, nmacd_i, "-", linewidth=1.4, label="NMACD")
-                    ax3r.plot(nmacd_sig_i.index, nmacd_sig_i, "--", linewidth=1.2, label="NMACD signal")
-
-                    if not nrsi_trend2.empty:
-                        ax3r.plot(nrsi_trend2.index, nrsi_trend2.values, "--", linewidth=2,
-                                  color="red",
-                                  label=f"NRSI Trend {slope_lb_hourly} ({fmt_slope(nrsi_m2)}/bar)")
-
-                    if show_ntd and not ntd_i_rsipanel.dropna().empty:
-                        ax3r.plot(ntd_i_rsipanel.index, ntd_i_rsipanel, ":", linewidth=1.6,
-                                  label=f"NTD (win={ntd_window})")
-                        last_ntd = float(ntd_i_rsipanel.dropna().iloc[-1])
-                        t_dir = "UP" if last_ntd >= 0 else "DOWN"
-                        color = "tab:green" if last_ntd >= 0 else "tab:red"
-                        certainty = int(round(50 + 50*abs(last_ntd)))
-                        ax3r.text(0.99, 0.06, f"Trend: {t_dir} ({certainty}%)",
-                                  transform=ax3r.transAxes, ha="right", va="bottom",
-                                  fontsize=10, fontweight="bold", color=color,
-                                  bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=color, alpha=0.85))
-
-                    ax3r.axhline(0, linestyle="--", linewidth=1, color="black", label="0")
-                    ax3r.axhline(0.5, linestyle="-", linewidth=1.2, color="black", label="+0.5")
-                    ax3r.axhline(-0.5, linestyle="-", linewidth=1.2, color="black", label="-0.5")
-                    ax3r.axhline(0.75, linestyle="-", linewidth=3.0, color="red", label="+0.75")
-                    ax3r.axhline(-0.75, linestyle="-", linewidth=3.0, color="red", label="-0.75")
-                    ax3r.set_ylim(-1.1, 1.1)
-                    ax3r.set_xlim(xlim_price2)
-                    ax3r.legend(loc="lower left", framealpha=0.5)
-                    ax3r.set_xlabel("Time (PST)")
-                    st.pyplot(fig3r)
-
                 # Momentum panel (ROC%)
                 if show_mom_hourly:
                     roc_i = compute_roc(ic, n=mom_lb_hourly)
@@ -1613,6 +1294,70 @@ with tab2:
                     ax3m.legend(loc="lower left", framealpha=0.5)
                     ax3m.set_xlim(xlim_price2)
                     st.pyplot(fig3m)
+
+                # --- Hourly EW panel + NPO + NTD + Ichimoku ---
+                wave_norm2, piv_df2 = compute_normalized_elliott_wave(ic, pivot_lb=pivot_lookback, norm_win=norm_window)
+                npo_h2 = compute_npo(ic, fast=npo_fast, slow=npo_slow, norm_win=npo_norm_win) if show_npo else pd.Series(index=ic.index, dtype=float)
+                ntd_h2 = compute_normalized_trend(ic, window=ntd_window) if show_ntd else pd.Series(index=ic.index, dtype=float)
+                if {'High','Low'}.issubset(intr.columns) and show_ichi:
+                    ichi_h2 = compute_normalized_ichimoku(
+                        intr["High"], intr["Low"], intr["Close"],
+                        conv=ichi_conv, base=ichi_base, span_b=ichi_spanb,
+                        norm_win=ichi_norm_win, price_weight=ichi_price_weight
+                    ).reindex(ic.index)
+                else:
+                    ichi_h2 = pd.Series(index=ic.index, dtype=float)
+
+                fig3w, ax3w = plt.subplots(figsize=(14,2.8))
+                plt.subplots_adjust(top=0.88, right=0.93)
+
+                ax3w.set_title("Normalized Elliott Wave + NPO + NTD + Ichimoku")
+                if show_ntd and shade_ntd and not ntd_h2.dropna().empty:
+                    shade_ntd_regions(ax3w, ntd_h2)
+                if show_npo and not npo_h2.dropna().empty:
+                    shade_npo_regions(ax3w, npo_h2)
+
+                ax3w.plot(wave_norm2.index, wave_norm2, label="Norm EW", linewidth=1.8)
+                if show_npo and not npo_h2.dropna().empty:
+                    ax3w.plot(npo_h2.index, npo_h2, "--", linewidth=1.2, label=f"NPO ({npo_fast},{npo_slow})")
+                if show_ntd and not ntd_h2.dropna().empty:
+                    ax3w.plot(ntd_h2.index, ntd_h2, ":", linewidth=1.2, label=f"NTD (win={ntd_window})")
+                if show_ichi and not ichi_h2.dropna().empty:
+                    ax3w.plot(ichi_h2.index, ichi_h2, "-.", linewidth=1.2,
+                              label=f"IchimokuN (c{ichi_conv},b{ichi_base},sb{ichi_spanb})")
+
+                ax3w.axhline(0.0, linestyle="--", linewidth=1, label="EW 0")
+                ax3w.axhline(0.5, color="tab:red", linestyle="-", linewidth=1, label="EW +0.5")
+                ax3w.axhline(-0.5, color="tab:green", linestyle="-", linewidth=1, label="EW -0.5")
+                ax3w.axhline(0.75, color="black", linestyle="-", linewidth=1, label="EW +0.75")
+                ax3w.axhline(-0.75, color="black", linestyle="-", linewidth=1, label="EW -0.75")
+
+                ax3w.set_ylim(-1.1, 1.1)
+                ax3w.set_xlabel("Time (PST)")
+                ax3w.set_xlim(xlim_price2)
+
+                if not piv_df2.empty:
+                    show_df2 = piv_df2.tail(int(waves_to_annotate))
+                    for _, r in show_df2.iterrows():
+                        t = r["time"]; w = r["wave"]; typ = r["type"]
+                        ylab = 0.9 if typ == 'H' else -0.9
+                        ax3w.annotate(str(int(w)), (t, ylab),
+                                      xytext=(0, 0), textcoords="offset points",
+                                      ha="center", va="center",
+                                      fontsize=9, fontweight="bold")
+
+                px_intr2 = _safe_last_float(ic)
+                ew_sig_h2 = elliott_conf_signal(px_intr2, st.session_state.fc_vals, EW_CONFIDENCE)
+                pos3w = ax3w.get_position()
+                label_txt_h2 = f"Price: {fmt_price_val(px_intr2)}"
+                if ew_sig_h2 is not None:
+                    side = ew_sig_h2['side']; prob = fmt_pct(ew_sig_h2['prob'], digits=0)
+                    label_txt_h2 += f"  |  {('▲ BUY' if side=='BUY' else '▼ SELL')} @ {fmt_price_val(px_intr2)}  ({prob})"
+                fig3w.text(pos3w.x1, pos3w.y1 + 0.01, label_txt_h2, ha="right", va="bottom",
+                           fontsize=10, fontweight="bold")
+
+                ax3w.legend(loc="lower left", framealpha=0.5)
+                st.pyplot(fig3w)
 
 # --- Tab 3: Bull vs Bear ---
 with tab3:
@@ -1701,8 +1446,9 @@ with tab4:
 # --- Tab 5: NTD -0.5 Scanner (Stocks & Forex) ---
 with tab5:
     st.header("NTD -0.5 Scanner")
-    st.caption("Shows **symbols with Normalized Trend Direction (NTD) < -0.5** (Daily for Stocks & FX; Hourly for FX). Also lists **Price > Ichimoku Kijun(26)** symbols on the latest bar.")
+    st.caption("Shows **symbols with Normalized Trend Direction (NTD) < -0.5**. Daily for both Stocks & Forex; plus optional **Hourly** for Forex.")
 
+    # Hourly range selector for Forex scanning
     period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
     scan_hour_range = st.selectbox(
         "Hourly lookback for Forex (for Hourly scan below):",
@@ -1719,7 +1465,7 @@ with tab5:
         run = st.button("Scan Universe", key="btn_ntd_scan")
 
     if run:
-        # DAILY scan for both universes — NTD
+        # ---- DAILY scan for both universes ----
         daily_rows = []
         for sym in universe:
             ntd_val, ts = last_daily_ntd_value(sym, ntd_window)
@@ -1739,35 +1485,7 @@ with tab5:
             show["NTD_Daily"] = show["NTD_Daily"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
             st.dataframe(show.reset_index(drop=True), use_container_width=True)
 
-        # DAILY scan for both universes — Price > Kijun
-        st.markdown("---")
-        st.subheader(f"Daily — **Price > Ichimoku Kijun({ichi_base})** (latest bar)")
-        above_rows = []
-        for sym in universe:
-            above, ts, close_now, kij_now = price_above_kijun_info_daily(sym, base=ichi_base)
-            above_rows.append({
-                "Symbol": sym,
-                "AboveNow": above,
-                "Timestamp": ts,
-                "Close": close_now,
-                "Kijun": kij_now
-            })
-        df_above_daily = pd.DataFrame(above_rows)
-        df_above_daily = df_above_daily[df_above_daily["AboveNow"] == True]
-
-        c7, c8 = st.columns(2)
-        c7.metric("Daily Price > Kijun", int(df_above_daily.shape[0]))
-        c8.caption("Criteria: Latest close strictly greater than current Kijun (Base) value.")
-
-        if df_above_daily.empty:
-            st.info("No Daily symbols with Price > Kijun on the latest bar.")
-        else:
-            view_above = df_above_daily.copy()
-            view_above["Close"] = view_above["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-            view_above["Kijun"] = view_above["Kijun"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-            st.dataframe(view_above[["Symbol","Timestamp","Close","Kijun"]].reset_index(drop=True), use_container_width=True)
-
-        # HOURLY scan for Forex — NTD & Price > Kijun
+        # ---- HOURLY scan for Forex only ----
         if mode == "Forex":
             st.markdown("---")
             st.subheader(f"Forex Hourly — NTD < {thresh:+.2f}  ({scan_hour_range} lookback)")
@@ -1788,102 +1506,3 @@ with tab5:
                 showh = below_hour.copy()
                 showh["NTD_Hourly"] = showh["NTD_Hourly"].map(lambda x: f"{x:+.3f}" if np.isfinite(x) else "n/a")
                 st.dataframe(showh.reset_index(drop=True), use_container_width=True)
-
-            st.subheader(f"Forex Hourly — **Price > Ichimoku Kijun({ichi_base})** (latest bar, {scan_hour_range})")
-            habove_rows = []
-            for sym in universe:
-                above_h, ts_h, close_h, kij_h = price_above_kijun_info_hourly(sym, period=scan_period, base=ichi_base)
-                habove_rows.append({
-                    "Symbol": sym,
-                    "AboveNow": above_h,
-                    "Timestamp": ts_h,
-                    "Close": close_h,
-                    "Kijun": kij_h
-                })
-            df_above_hour = pd.DataFrame(habove_rows)
-            df_above_hour = df_above_hour[df_above_hour["AboveNow"] == True]
-
-            c9, c10 = st.columns(2)
-            c9.metric("Hourly Price > Kijun", int(df_above_hour.shape[0]))
-            c10.caption("Criteria: Latest intraday close strictly greater than current Kijun value.")
-
-            if df_above_hour.empty:
-                st.info("No Forex pairs with Price > Kijun on the latest bar.")
-            else:
-                vch = df_above_hour.copy()
-                vch["Close"] = vch["Close"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-                vch["Kijun"] = vch["Kijun"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
-                st.dataframe(vch[["Symbol","Timestamp","Close","Kijun"]].reset_index(drop=True), use_container_width=True)
-
-# --- Tab 6: Long-Term History (5/10/15/20y) ---
-with tab6:
-    st.header("Long-Term History — Price with S/R & Trend")
-    # Ticker selector (defaults to the one used in Tab 1, if set)
-    default_idx = 0
-    if st.session_state.get("ticker") in universe:
-        default_idx = universe.index(st.session_state["ticker"])
-    sym = st.selectbox("Ticker:", universe, index=default_idx, key="hist_long_ticker")
-
-    # Year buttons
-    c1, c2, c3, c4 = st.columns(4)
-    if c1.button("5Y", key="btn_5y"):  st.session_state.hist_years = 5
-    if c2.button("10Y", key="btn_10y"): st.session_state.hist_years = 10
-    if c3.button("15Y", key="btn_15y"): st.session_state.hist_years = 15
-    if c4.button("20Y", key="btn_20y"): st.session_state.hist_years = 20
-    years = int(st.session_state.hist_years)
-    st.caption(f"Showing last **{years} years**. Support/Resistance = rolling **252-day** extremes; trendline fits the shown window.")
-
-    # Fetch full history once; slice to desired years
-    s_full = fetch_hist_max(sym)
-    if s_full is None or s_full.empty:
-        st.warning("No historical data available.")
-    else:
-        end_ts = s_full.index.max()
-        start_ts = end_ts - pd.DateOffset(years=years)
-        s = s_full[s_full.index >= start_ts]
-        if s.empty:
-            st.warning(f"No data in the last {years} years for {sym}.")
-        else:
-            # 252-trading-day rolling extremes (approx 1y)
-            res_roll = s.rolling(252, min_periods=1).max()
-            sup_roll = s.rolling(252, min_periods=1).min()
-            res_last = float(res_roll.iloc[-1]) if len(res_roll) else np.nan
-            sup_last = float(sup_roll.iloc[-1]) if len(sup_roll) else np.nan
-
-            # Overall trendline across the shown window
-            yhat_all, m_all = slope_line(s, lookback=len(s))
-
-            fig, ax = plt.subplots(figsize=(14,5))
-            ax.set_title(f"{sym} — Last {years} Years — Price + 252d S/R + Trend")
-            ax.plot(s.index, s.values, label="Close")
-
-            # Draw S/R as straight lines across the whole window (use last 252d extremes)
-            if np.isfinite(res_last) and np.isfinite(sup_last):
-                ax.hlines(res_last, xmin=s.index[0], xmax=s.index[-1],
-                          colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance (252d)")
-                ax.hlines(sup_last, xmin=s.index[0], xmax=s.index[-1],
-                          colors="tab:green", linestyles="-", linewidth=1.6, label="Support (252d)")
-                label_on_left(ax, res_last, f"R {fmt_price_val(res_last)}", color="tab:red")
-                label_on_left(ax, sup_last, f"S {fmt_price_val(sup_last)}", color="tab:green")
-
-            # Trendline and slope badge
-            if not yhat_all.empty:
-                ax.plot(yhat_all.index, yhat_all.values, "--", linewidth=2,
-                        label=f"Trend (m={fmt_slope(m_all)}/bar)")
-
-                ax.text(0.01, 0.02, f"Slope: {fmt_slope(m_all)}/bar",
-                        transform=ax.transAxes, ha="left", va="bottom",
-                        fontsize=9, color="black",
-                        bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
-
-            # Current price badge (top-right, outside)
-            px_now = _safe_last_float(s)
-            if np.isfinite(px_now):
-                pos = ax.get_position()
-                fig.text(pos.x1, pos.y1 + 0.02, f"Current price: {fmt_price_val(px_now)}",
-                         ha="right", va="bottom", fontsize=11, fontweight="bold")
-
-            ax.set_xlabel("Date (PST)")
-            ax.set_ylabel("Price")
-            ax.legend(loc="lower left", framealpha=0.5)
-            st.pyplot(fig)
