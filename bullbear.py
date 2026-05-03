@@ -1325,6 +1325,7 @@ def draw_news_markers(ax, times, label="News"):
         except Exception:
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
+
 # =========================
 # NTD channel-in-range (hourly panel)
 # =========================
@@ -1463,7 +1464,6 @@ def _global_slope_1d(series_like):
     x = np.arange(len(s), dtype=float)
     m, _ = np.polyfit(x, s.to_numpy(dtype=float), 1)
     return float(m)
-
 # =========================
 # Scanners: cached small computations
 # =========================
@@ -2555,9 +2555,6 @@ def ntd_cross_row_hourly(symbol: str,
     except Exception:
         return None
 
-# =========================
-# New scanner — Green Marker
-# =========================
 @st.cache_data(ttl=120)
 def green_marker_row_daily(symbol: str,
                            daily_view_label: str,
@@ -2666,6 +2663,134 @@ def green_marker_row_hourly(symbol: str,
             "R2": float(r2) if np.isfinite(r2) else np.nan,
             "NTD(last)": float(ntd.iloc[-1]) if np.isfinite(ntd.iloc[-1]) else np.nan,
             "NPX(last)": float(npx.iloc[-1]) if np.isfinite(npx.iloc[-1]) else np.nan,
+            "Last Price": float(close.iloc[-1]) if np.isfinite(close.iloc[-1]) else np.nan,
+        }
+    except Exception:
+        return None
+
+# =========================
+# New scanner — Hot NTD Cross
+# =========================
+@st.cache_data(ttl=120)
+def hot_ntd_cross_row_daily(symbol: str,
+                            daily_view_label: str,
+                            slope_lb: int,
+                            ntd_win: int = 60,
+                            max_bars_since: int = 5):
+    try:
+        close_full = _coerce_1d_series(fetch_hist(symbol)).dropna()
+        close_show = _coerce_1d_series(subset_by_daily_view(close_full, daily_view_label)).dropna()
+        if len(close_show) < 20:
+            return None
+
+        global_slope = _global_slope_1d(close_show)
+        if not (np.isfinite(global_slope) and float(global_slope) > 0.0):
+            return None
+
+        ntd_full = compute_normalized_trend(close_full, window=int(ntd_win))
+        npx_full = compute_normalized_price(close_full, window=int(ntd_win))
+        ntd_show = _coerce_1d_series(ntd_full).reindex(close_show.index)
+        npx_show = _coerce_1d_series(npx_full).reindex(close_show.index)
+
+        ok = ntd_show.notna() & npx_show.notna()
+        if ok.sum() < 2:
+            return None
+        ntd_show = ntd_show[ok]
+        npx_show = npx_show[ok]
+
+        up_mask, _ = _strict_cross_series(npx_show, ntd_show)
+        up_mask = up_mask.reindex(ntd_show.index, fill_value=False)
+
+        region_mask = (ntd_show >= -1.0) & (ntd_show <= -0.5)
+        valid = up_mask & region_mask
+        if not valid.any():
+            return None
+
+        t_cross = valid[valid].index[-1]
+        bars_since = _bars_since_event(close_show.index, t_cross)
+        if bars_since > int(max_bars_since):
+            return None
+
+        _, _, _, rm, r2 = regression_with_band(close_show, lookback=min(len(close_show), int(slope_lb)))
+        if not np.isfinite(rm) or float(rm) == 0.0:
+            return None
+
+        return {
+            "Symbol": symbol,
+            "Frame": "Daily",
+            "Bars Since Cross": int(bars_since),
+            "Cross Time (PST)": t_cross,
+            "Global Trend Slope": float(global_slope),
+            "Regression Bucket": "Regression > 0" if float(rm) > 0.0 else "Regression < 0",
+            "Regression Slope": float(rm),
+            "R2": float(r2) if np.isfinite(r2) else np.nan,
+            "NPX@Cross": float(npx_show.loc[t_cross]) if np.isfinite(npx_show.loc[t_cross]) else np.nan,
+            "NTD@Cross": float(ntd_show.loc[t_cross]) if np.isfinite(ntd_show.loc[t_cross]) else np.nan,
+            "NPX(last)": float(npx_show.iloc[-1]) if np.isfinite(npx_show.iloc[-1]) else np.nan,
+            "NTD(last)": float(ntd_show.iloc[-1]) if np.isfinite(ntd_show.iloc[-1]) else np.nan,
+            "Last Price": float(close_show.iloc[-1]) if np.isfinite(close_show.iloc[-1]) else np.nan,
+        }
+    except Exception:
+        return None
+
+@st.cache_data(ttl=120)
+def hot_ntd_cross_row_hourly(symbol: str,
+                             period: str,
+                             slope_lb: int,
+                             ntd_win: int = 60,
+                             max_bars_since: int = 10):
+    try:
+        df = fetch_intraday(symbol, period=period)
+        if df is None or df.empty or "Close" not in df.columns:
+            return None
+
+        close = _coerce_1d_series(df["Close"]).ffill().dropna()
+        if len(close) < 40:
+            return None
+
+        global_slope = _global_slope_1d(close)
+        if not (np.isfinite(global_slope) and float(global_slope) > 0.0):
+            return None
+
+        ntd = _coerce_1d_series(compute_normalized_trend(close, window=int(ntd_win)))
+        npx = _coerce_1d_series(compute_normalized_price(close, window=int(ntd_win)))
+
+        ok = ntd.notna() & npx.notna()
+        if ok.sum() < 2:
+            return None
+        ntd = ntd[ok]
+        npx = npx[ok]
+
+        up_mask, _ = _strict_cross_series(npx, ntd)
+        up_mask = up_mask.reindex(ntd.index, fill_value=False)
+
+        region_mask = (ntd >= -1.0) & (ntd <= -0.5)
+        valid = up_mask & region_mask
+        if not valid.any():
+            return None
+
+        t_cross = valid[valid].index[-1]
+        bars_since = _bars_since_event(close.index, t_cross)
+        if bars_since > int(max_bars_since):
+            return None
+
+        _, _, _, rm, r2 = regression_with_band(close, lookback=min(len(close), int(slope_lb)))
+        if not np.isfinite(rm) or float(rm) == 0.0:
+            return None
+
+        return {
+            "Symbol": symbol,
+            "Frame": f"Hourly({period})",
+            "Bars Since Cross": int(bars_since),
+            "Cross Time (PST)": t_cross,
+            "Global Trend Slope": float(global_slope),
+            "Regression Bucket": "Regression > 0" if float(rm) > 0.0 else "Regression < 0",
+            "Regression Slope": float(rm),
+            "R2": float(r2) if np.isfinite(r2) else np.nan,
+            "NPX@Cross": float(npx.loc[t_cross]) if np.isfinite(npx.loc[t_cross]) else np.nan,
+            "NTD@Cross": float(ntd.loc[t_cross]) if np.isfinite(ntd.loc[t_cross]) else np.nan,
+            "NPX(last)": float(npx.iloc[-1]) if np.isfinite(npx.iloc[-1]) else np.nan,
+            "NTD(last)": float(ntd.iloc[-1]) if np.isfinite(ntd.iloc[-1]) else np.nan,
             "Last Price": float(close.iloc[-1]) if np.isfinite(close.iloc[-1]) else np.nan,
         }
     except Exception:
@@ -3149,7 +3274,7 @@ if "run_all" not in st.session_state:
 # =========================
 (
     tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8,
-    tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16
+    tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17
 ) = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
@@ -3167,6 +3292,7 @@ if "run_all" not in st.session_state:
     "NTD Buy Signal",
     "NTD Cross",
     "Green Marker",
+    "Hot NTD Cross",
 ])
 
 period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
@@ -3755,3 +3881,50 @@ with tab16:
                 ascending=[True, False, False, True]
             ).head(max_rows)
             st.dataframe(out, use_container_width=True)
+
+# =========================
+# TAB 17 — Hot NTD Cross
+# =========================
+with tab17:
+    st.header("Hot NTD Cross")
+    st.caption("Symbols where NPX recently crossed up through NTD inside the -1.0 to -0.5 region, with global trend > 0, split by regression slope > 0 and regression slope < 0.")
+
+    c1, c2, c3 = st.columns([1, 1, 1])
+    frame_choice = c1.selectbox("Frame", ["Daily", "Hourly"], key=f"hntdc_frame_{mode}")
+    hour_choice = c2.selectbox("Hourly lookback", ["24h", "48h", "96h"], key=f"hntdc_hour_{mode}")
+    max_rows = int(c3.number_input("Max rows", min_value=5, max_value=500, value=100, step=5, key=f"hntdc_rows_{mode}"))
+
+    if st.button("Scan Hot NTD Cross", key=f"btn_hntdc_{mode}", use_container_width=True):
+        rows = []
+        with st.spinner("Scanning..."):
+            for symbol in universe:
+                row = (
+                    hot_ntd_cross_row_daily(symbol, daily_view, slope_lb_daily, ntd_win=ntd_window, max_bars_since=5)
+                    if frame_choice == "Daily"
+                    else hot_ntd_cross_row_hourly(symbol, period_map[hour_choice], slope_lb_hourly, ntd_win=ntd_window, max_bars_since=10)
+                )
+                if row is not None:
+                    rows.append(row)
+
+        out = pd.DataFrame(rows)
+        if out.empty:
+            st.info("No Hot NTD Cross symbols found.")
+        else:
+            pos_df = out[out["Regression Bucket"] == "Regression > 0"].sort_values(
+                ["Bars Since Cross", "R2", "Symbol"], ascending=[True, False, True]
+            ).head(max_rows)
+            neg_df = out[out["Regression Bucket"] == "Regression < 0"].sort_values(
+                ["Bars Since Cross", "R2", "Symbol"], ascending=[True, False, True]
+            ).head(max_rows)
+
+            st.subheader("Hot NTD Cross with Regression > 0")
+            if pos_df.empty:
+                st.info("No symbols found.")
+            else:
+                st.dataframe(pos_df, use_container_width=True)
+
+            st.subheader("Hot NTD Cross with Regression < 0")
+            if neg_df.empty:
+                st.info("No symbols found.")
+            else:
+                st.dataframe(neg_df, use_container_width=True)
