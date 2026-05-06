@@ -2668,9 +2668,6 @@ def green_marker_row_hourly(symbol: str,
     except Exception:
         return None
 
-# =========================
-# New scanner — Hot NTD Cross
-# =========================
 @st.cache_data(ttl=120)
 def hot_ntd_cross_row_daily(symbol: str,
                             daily_view_label: str,
@@ -2897,7 +2894,7 @@ def render_daily_chart(symbol: str, view_label: str):
     if macd_sig_row is not None:
         annotate_macd_signal(ax, macd_sig_row["time"], macd_sig_row["price"], macd_sig_row["side"])
 
-    last_px = float(close.iloc[-1]) if np.isfinite(close.iloc[-1]) else np.nan
+    last_px = _safe_current_yahoo_price(symbol, fallback=_safe_last_float(close))
     if np.isfinite(last_px):
         ax.axhline(last_px, linestyle="--", linewidth=1.0, color="black", alpha=0.5)
         label_on_right(ax, last_px, f"Current {fmt_price_val(last_px)}", color="black", fontsize=9)
@@ -2945,7 +2942,7 @@ def render_daily_chart(symbol: str, view_label: str):
         trend_slope=m_d,
         buy_val=float(sup.dropna().iloc[-1]) if len(sup.dropna()) else float(close.iloc[-1]),
         sell_val=float(res.dropna().iloc[-1]) if len(res.dropna()) else float(close.iloc[-1]),
-        close_val=float(close.iloc[-1]),
+        close_val=last_px,
         symbol=symbol,
         global_trend_slope=global_m,
     )
