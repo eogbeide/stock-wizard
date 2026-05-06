@@ -3405,7 +3405,7 @@ with tab2:
 # =========================
 with tab3:
     st.header("Trend and Slope Align")
-    st.caption("Shows symbols where global trend slope and local regression slope point in the same direction.")
+    st.caption("Shows symbols where global trend slope and local regression slope point in the same direction, plus bars since the most recent price↔regression cross.")
 
     c1, c2, c3 = st.columns([1, 1, 1])
     frame_choice = c1.selectbox("Frame", ["Daily", "Hourly"], key=f"tsa_frame_{mode}")
@@ -3423,7 +3423,7 @@ with tab3:
                         if len(close) < 20:
                             continue
                         g = _global_slope_1d(close)
-                        _, _, _, m, r2 = regression_with_band(close, lookback=min(len(close), int(slope_lb_daily)))
+                        yhat, _, _, m, r2 = regression_with_band(close, lookback=min(len(close), int(slope_lb_daily)))
                         last_px = float(close.iloc[-1]) if np.isfinite(close.iloc[-1]) else np.nan
                         frame_lbl = "Daily"
                     else:
@@ -3433,8 +3433,8 @@ with tab3:
                         close = _coerce_1d_series(df["Close"]).ffill().dropna()
                         if len(close) < 30:
                             continue
+                        yhat, _, _, m, r2 = regression_with_band(close, lookback=min(len(close), int(slope_lb_hourly)))
                         g = _global_slope_1d(close)
-                        _, _, _, m, r2 = regression_with_band(close, lookback=min(len(close), int(slope_lb_hourly)))
                         last_px = float(close.iloc[-1]) if np.isfinite(close.iloc[-1]) else np.nan
                         frame_lbl = f"Hourly({period_map[hour_choice]})"
 
@@ -3445,10 +3445,24 @@ with tab3:
                     if np.sign(g) != np.sign(m):
                         continue
 
+                    cross_up, cross_dn = _strict_cross_series(close, yhat)
+                    t_up = cross_up[cross_up].index[-1] if cross_up.any() else None
+                    t_dn = cross_dn[cross_dn].index[-1] if cross_dn.any() else None
+                    t_cross = None
+                    if t_up is not None and t_dn is not None:
+                        t_cross = t_up if t_up >= t_dn else t_dn
+                    elif t_up is not None:
+                        t_cross = t_up
+                    elif t_dn is not None:
+                        t_cross = t_dn
+
+                    bars_since_cross = int(_bars_since_event(close.index, t_cross)) if t_cross is not None else np.nan
+
                     rows.append({
                         "Symbol": symbol,
                         "Frame": frame_lbl,
                         "Direction": "UP" if g > 0 else "DOWN",
+                        "Bars Since Cross": bars_since_cross,
                         "Trendline Slope": float(g),
                         "Regression Slope": float(m),
                         "R2": float(r2) if np.isfinite(r2) else np.nan,
@@ -3461,7 +3475,10 @@ with tab3:
         if out.empty:
             st.info("No aligned symbols found.")
         else:
-            out = out.sort_values(["Direction", "R2", "Symbol"], ascending=[True, False, True]).head(max_rows)
+            out = out.sort_values(
+                ["Direction", "Bars Since Cross", "R2", "Symbol"],
+                ascending=[True, True, False, True]
+            ).head(max_rows)
             st.dataframe(out, use_container_width=True)
 
 # =========================
