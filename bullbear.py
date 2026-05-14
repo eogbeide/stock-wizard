@@ -323,7 +323,7 @@ else:
 def fetch_hist(ticker: str) -> pd.Series:
     s = (
         yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
-        .asfreq("D").fillna(method="ffill")
+        .asfreq("D").ffill()
     )
     try:
         s = s.tz_localize(PACIFIC)
@@ -334,7 +334,7 @@ def fetch_hist(ticker: str) -> pd.Series:
 @st.cache_data(ttl=120)
 def fetch_hist_max(ticker: str) -> pd.Series:
     df = yf.download(ticker, period="max")[['Close']].dropna()
-    s = df['Close'].asfreq("D").fillna(method="ffill")
+    s = df['Close'].asfreq("D").ffill()
     try:
         s = s.tz_localize(PACIFIC)
     except TypeError:
