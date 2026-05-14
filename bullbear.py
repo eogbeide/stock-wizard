@@ -7,6 +7,7 @@
 #       — shown on both NTD panels and the price charts
 # (UPDATED) Removed hourly Momentum chart and removed red/green NPX↔NTD cross triangles from PRICE charts to reduce noise.
 # (UPDATED) BUY near-support green ribbon now starts with Profit Alert.
+# (UPDATED) Removed thick green/red Trend Direction line from price charts; support/resistance lines remain.
 
 import streamlit as st
 import pandas as pd
@@ -1511,8 +1512,8 @@ with tab1:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2, label=f"Daily Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
             if not yhat_ema_show.empty:
                 ax.plot(yhat_ema_show.index, yhat_ema_show.values, "-", linewidth=2, label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
-            if len(df_show) > 1:
-                draw_trend_direction_line(ax, df_show, label_prefix="Trend")
+            # Removed thick green/red Trend Direction line from the price chart.
+            # Support/resistance and other indicator lines are kept below.
             if piv and len(df_show) > 0:
                 x0, x1 = df_show.index[0], df_show.index[-1]
                 for lbl, y in piv.items():
