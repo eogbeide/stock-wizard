@@ -1,6 +1,7 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (UPDATED) Removed MACD from NTD panels; NTD panels now use a smoothed NPX price overlay.
+# (NEW) Added S/R Reversal Index on NTD panels: BUY after support reversal in uptrend, SELL after resistance reversal in downtrend.
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
 # (UPDATED) Removed hourly Momentum chart, red/green directional PSAR price overlays, and NTD-cross triangles.
@@ -263,6 +264,34 @@ st.sidebar.subheader("Smoothed NPX Overlay (NTD Panels)")
 show_npx_ntd   = st.sidebar.checkbox("Show smoothed NPX overlay on NTD panels", value=True, key="sb_show_npx_ntd")
 npx_smooth_span = st.sidebar.slider("NPX smoothing EMA span", 2, 60, 9, 1, key="sb_npx_smooth_span")
 mark_npx_cross = st.sidebar.checkbox("Mark NTD buy/sell opportunities on NTD panels", value=True, key="sb_mark_npx_cross")
+
+# S/R Reversal Indicator on NTD panels
+st.sidebar.subheader("S/R Reversal Indicator (NTD)")
+show_sr_reversal_ntd = st.sidebar.checkbox(
+    "Show support/resistance reversal indicator",
+    value=True,
+    key="sb_sr_rev_show"
+)
+sr_rev_zone = st.sidebar.slider(
+    "S/R reversal zone strength",
+    0.40, 0.95, 0.65, 0.05,
+    key="sb_sr_rev_zone"
+)
+sr_rev_lookback = st.sidebar.slider(
+    "S/R reversal touch lookback (bars)",
+    2, 20, 5, 1,
+    key="sb_sr_rev_lookback"
+)
+sr_rev_confirm = st.sidebar.slider(
+    "S/R reversal confirmation bars",
+    1, 5, 2, 1,
+    key="sb_sr_rev_confirm"
+)
+sr_rev_smooth = st.sidebar.slider(
+    "S/R reversal index smoothing",
+    1, 20, 4, 1,
+    key="sb_sr_rev_smooth"
+)
 
 # Ichimoku / Kijun
 st.sidebar.subheader("Normalized Ichimoku (EW panels) + Kijun on price")
@@ -931,6 +960,195 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = 
 
 # ========= NTD price-chart triangle overlays remain removed; NTD-panel triangles are opportunity-only =========
 
+# ========= Support/Resistance Reversal Index for NTD panels =========
+def compute_sr_reversal_index(price: pd.Series,
+                              support: pd.Series,
+                              resistance: pd.Series,
+                              smooth_span: int = 4) -> pd.Series:
+    """
+    Channel-position indicator used on the NTD panel:
+      -1.0 means price is at/near support
+      +1.0 means price is at/near resistance
+
+    This makes support/resistance reversals visible on the same normalized
+    scale as NTD, which is better suited for day-trading than raw NPX crosses.
+    """
+    p = _coerce_1d_series(price).astype(float)
+    sup = _coerce_1d_series(support).reindex(p.index).ffill().bfill()
+    res = _coerce_1d_series(resistance).reindex(p.index).ffill().bfill()
+
+    if p.empty:
+        return pd.Series(index=p.index, dtype=float)
+
+    width = (res - sup).replace(0, np.nan)
+    sri = ((p - sup) / width) * 2.0 - 1.0
+    sri = sri.replace([np.inf, -np.inf], np.nan).clip(-1.0, 1.0)
+
+    try:
+        span = int(smooth_span)
+    except Exception:
+        span = 1
+    if span > 1:
+        sri = sri.ewm(span=span, adjust=False).mean()
+
+    return sri.reindex(p.index)
+
+
+def sr_reversal_opportunity_masks(price: pd.Series,
+                                  support: pd.Series,
+                                  resistance: pd.Series,
+                                  trend_slope: float,
+                                  prox: float = 0.0025,
+                                  zone: float = 0.65,
+                                  lookback: int = 5,
+                                  confirm_bars: int = 2,
+                                  smooth_span: int = 4):
+    """
+    BUY rule:
+      - the price-chart trendline is upward,
+      - price recently touched/approached support or the S/R index was in the support zone,
+      - price and S/R index have turned upward for the confirmation window.
+
+    SELL rule:
+      - the price-chart trendline is downward,
+      - price recently touched/approached resistance or the S/R index was in the resistance zone,
+      - price and S/R index have turned downward for the confirmation window.
+    """
+    p = _coerce_1d_series(price).astype(float)
+    sup = _coerce_1d_series(support).reindex(p.index).ffill().bfill()
+    res = _coerce_1d_series(resistance).reindex(p.index).ffill().bfill()
+    sri = compute_sr_reversal_index(p, sup, res, smooth_span=smooth_span)
+
+    idx = p.index
+    buy = pd.Series(False, index=idx)
+    sell = pd.Series(False, index=idx)
+
+    try:
+        slope = float(trend_slope)
+    except Exception:
+        slope = np.nan
+
+    if p.dropna().shape[0] < 3 or not np.isfinite(slope):
+        return buy, sell, sri
+
+    try:
+        lb = max(2, int(lookback))
+    except Exception:
+        lb = 5
+    try:
+        cb = max(1, int(confirm_bars))
+    except Exception:
+        cb = 2
+    try:
+        z = float(zone)
+    except Exception:
+        z = 0.65
+
+    uptrend = slope >= 0.0
+    downtrend = slope < 0.0
+
+    pvals = p.to_numpy(dtype=float)
+    supvals = sup.to_numpy(dtype=float)
+    resvals = res.to_numpy(dtype=float)
+    srivals = sri.to_numpy(dtype=float)
+
+    for i in range(1, len(idx)):
+        if not np.all(np.isfinite([pvals[i], pvals[i-1], srivals[i], srivals[i-1], supvals[i], resvals[i]])):
+            continue
+
+        start_recent = max(0, i - lb)
+        recent_p = pvals[start_recent:i+1]
+        recent_sup = supvals[start_recent:i+1]
+        recent_res = resvals[start_recent:i+1]
+        recent_sri = srivals[start_recent:i+1]
+
+        recent_support_touch = False
+        recent_resistance_touch = False
+        if np.isfinite(recent_p).any() and np.isfinite(recent_sup).any():
+            recent_support_touch = bool(np.nanmin(recent_p - recent_sup * (1.0 + prox)) <= 0.0)
+        if np.isfinite(recent_p).any() and np.isfinite(recent_res).any():
+            recent_resistance_touch = bool(np.nanmax(recent_p - recent_res * (1.0 - prox)) >= 0.0)
+
+        recent_support_zone = bool(np.nanmin(recent_sri) <= -z) if np.isfinite(recent_sri).any() else False
+        recent_resistance_zone = bool(np.nanmax(recent_sri) >= z) if np.isfinite(recent_sri).any() else False
+
+        start_confirm = max(1, i - cb + 1)
+        price_deltas = np.diff(pvals[start_confirm-1:i+1])
+        sri_deltas = np.diff(srivals[start_confirm-1:i+1])
+        if len(price_deltas) < cb or len(sri_deltas) < cb:
+            continue
+
+        price_turn_up = bool(np.all(price_deltas > 0))
+        price_turn_down = bool(np.all(price_deltas < 0))
+        sri_turn_up = bool(np.all(sri_deltas > 0))
+        sri_turn_down = bool(np.all(sri_deltas < 0))
+
+        raw_buy = uptrend and (recent_support_touch or recent_support_zone) and price_turn_up and sri_turn_up
+        raw_sell = downtrend and (recent_resistance_touch or recent_resistance_zone) and price_turn_down and sri_turn_down
+
+        if raw_buy:
+            buy.iloc[i] = True
+        if raw_sell:
+            sell.iloc[i] = True
+
+    # Fire once at the reversal start, not on every follow-through bar.
+    buy = buy & (~buy.shift(1, fill_value=False))
+    sell = sell & (~sell.shift(1, fill_value=False))
+
+    return buy.fillna(False), sell.fillna(False), sri
+
+
+def overlay_sr_reversal_indicator_on_ntd(ax,
+                                         price: pd.Series,
+                                         support: pd.Series,
+                                         resistance: pd.Series,
+                                         trend_slope: float,
+                                         ntd: pd.Series = None,
+                                         prox: float = 0.0025,
+                                         zone: float = 0.65,
+                                         lookback: int = 5,
+                                         confirm_bars: int = 2,
+                                         smooth_span: int = 4):
+    """
+    Adds a day-trading S/R reversal indicator to an NTD panel.
+
+    Green ▲ = price reversed upward from support while the price trendline is up.
+    Red ▼   = price reversed downward from resistance while the price trendline is down.
+    """
+    buy, sell, sri = sr_reversal_opportunity_masks(
+        price=price,
+        support=support,
+        resistance=resistance,
+        trend_slope=trend_slope,
+        prox=prox,
+        zone=zone,
+        lookback=lookback,
+        confirm_bars=confirm_bars,
+        smooth_span=smooth_span,
+    )
+
+    if not sri.dropna().empty:
+        ax.plot(sri.index, sri.values, "-", linewidth=1.4, color="tab:purple", alpha=0.85,
+                label="S/R Reversal Index")
+
+    if ntd is None:
+        yref = sri
+    else:
+        yref = _coerce_1d_series(ntd).reindex(sri.index)
+        if yref.dropna().empty:
+            yref = sri
+
+    if buy.any():
+        idx_buy = list(buy[buy].index)
+        y_buy = yref.reindex(idx_buy).fillna(sri.reindex(idx_buy)).fillna(-zone)
+        ax.scatter(idx_buy, y_buy.values, marker="^", s=120, color="tab:green", zorder=12,
+                   label="BUY: support reversal")
+    if sell.any():
+        idx_sell = list(sell[sell].index)
+        y_sell = yref.reindex(idx_sell).fillna(sri.reindex(idx_sell)).fillna(zone)
+        ax.scatter(idx_sell, y_sell.values, marker="v", s=120, color="tab:red", zorder=12,
+                   label="SELL: resistance reversal")
+
 # ========= Sessions =========
 NY_TZ   = pytz.timezone("America/New_York")
 LDN_TZ  = pytz.timezone("Europe/London")
@@ -1470,7 +1688,7 @@ with tab1:
                 st.info(f"BB Divergence gated off: ADX {adx_last_d:.1f} < {adx_min}")
 
             # --- DAILY INDICATOR PANEL ---
-            axdw.set_title("Daily Indicator Panel — NTD + Smoothed NPX + Trend")
+            axdw.set_title("Daily Indicator Panel — NTD + Smoothed NPX + S/R Reversal + Trend")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw, ntd_d_show)
             if show_ntd and not ntd_d_show.dropna().empty:
@@ -1482,6 +1700,20 @@ with tab1:
 
             if show_npx_ntd and not npx_d_show.dropna().empty and not ntd_d_show.dropna().empty:
                 overlay_npx_on_ntd(axdw, npx_d_show, ntd_d_show, mark_crosses=mark_npx_cross)
+            if show_sr_reversal_ntd and not df_show.dropna().empty and not ntd_d_show.dropna().empty:
+                overlay_sr_reversal_indicator_on_ntd(
+                    axdw,
+                    price=df_show,
+                    support=sup30_show,
+                    resistance=res30_show,
+                    trend_slope=m_d,
+                    ntd=ntd_d_show,
+                    prox=sr_prox_pct,
+                    zone=sr_rev_zone,
+                    lookback=sr_rev_lookback,
+                    confirm_bars=sr_rev_confirm,
+                    smooth_span=sr_rev_smooth,
+                )
             if show_hma_rev_ntd and not hma_d_show.dropna().empty and not df_show.dropna().empty:
                 overlay_hma_reversal_on_ntd(axdw, df_show, hma_d_show, lookback=hma_rev_lb, period=hma_period)
             axdw.axhline(0.0,  linestyle="--", linewidth=1.0, color="black",    label="0.00")
@@ -1705,7 +1937,7 @@ with tab1:
                     ntd_trend_h, ntd_m_h = slope_line(ntd_h, slope_lb_hourly)
                     npx_h = npx_h.reindex(hc.index) if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
-                    ax2r.set_title(f"Hourly Indicator Panel — NTD + Smoothed NPX + Trend (win={ntd_window})")
+                    ax2r.set_title(f"Hourly Indicator Panel — NTD + Smoothed NPX + S/R Reversal + Trend (win={ntd_window})")
                     if shade_ntd and not ntd_h.dropna().empty:
                         shade_ntd_regions(ax2r, ntd_h)
                     if show_ntd_channel and np.isfinite(res_val) and np.isfinite(sup_val):
@@ -1713,6 +1945,20 @@ with tab1:
                     ax2r.plot(ntd_h.index, ntd_h, "-", linewidth=1.6, label="NTD")
                     if show_npx_ntd and not npx_h.dropna().empty and not ntd_h.dropna().empty:
                         overlay_npx_on_ntd(ax2r, npx_h, ntd_h, mark_crosses=mark_npx_cross)
+                    if show_sr_reversal_ntd and not hc.dropna().empty and not ntd_h.dropna().empty:
+                        overlay_sr_reversal_indicator_on_ntd(
+                            ax2r,
+                            price=hc,
+                            support=sup_h,
+                            resistance=res_h,
+                            trend_slope=m_h,
+                            ntd=ntd_h,
+                            prox=sr_prox_pct,
+                            zone=sr_rev_zone,
+                            lookback=sr_rev_lookback,
+                            confirm_bars=sr_rev_confirm,
+                            smooth_span=sr_rev_smooth,
+                        )
                     if not ntd_trend_h.empty:
                         ax2r.plot(ntd_trend_h.index, ntd_trend_h.values, "--", linewidth=2,
                                   label=f"NTD Trend {slope_lb_hourly} ({fmt_slope(ntd_m_h)}/bar)")
