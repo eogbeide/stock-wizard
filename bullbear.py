@@ -1,7 +1,7 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (UPDATED) Removed MACD from NTD panels; NTD panels now use a smoothed NPX price overlay.
-# (NEW) Added S/R Reversal Index on NTD panels: BUY after support reversal in uptrend, SELL after resistance reversal in downtrend.
+# (UPDATED) NTD panels are less noisy: green/red triangles now appear only after confirmed S/R reversals.
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
 # (UPDATED) Removed hourly Momentum chart, red/green directional PSAR price overlays, and NTD-cross triangles.
@@ -263,7 +263,7 @@ shade_ntd = st.sidebar.checkbox("Shade NTD (Daily & Hourly: green=up, red=down)"
 st.sidebar.subheader("Smoothed NPX Overlay (NTD Panels)")
 show_npx_ntd   = st.sidebar.checkbox("Show smoothed NPX overlay on NTD panels", value=True, key="sb_show_npx_ntd")
 npx_smooth_span = st.sidebar.slider("NPX smoothing EMA span", 2, 60, 9, 1, key="sb_npx_smooth_span")
-mark_npx_cross = st.sidebar.checkbox("Mark NTD buy/sell opportunities on NTD panels", value=True, key="sb_mark_npx_cross")
+mark_npx_cross = st.sidebar.checkbox("Legacy NPX triangle markers (disabled; S/R reversals control triangles)", value=False, key="sb_mark_npx_cross")
 
 # S/R Reversal Indicator on NTD panels
 st.sidebar.subheader("S/R Reversal Indicator (NTD)")
@@ -274,22 +274,22 @@ show_sr_reversal_ntd = st.sidebar.checkbox(
 )
 sr_rev_zone = st.sidebar.slider(
     "S/R reversal zone strength",
-    0.40, 0.95, 0.65, 0.05,
+    0.40, 0.95, 0.80, 0.05,
     key="sb_sr_rev_zone"
 )
 sr_rev_lookback = st.sidebar.slider(
     "S/R reversal touch lookback (bars)",
-    2, 20, 5, 1,
+    2, 30, 8, 1,
     key="sb_sr_rev_lookback"
 )
 sr_rev_confirm = st.sidebar.slider(
     "S/R reversal confirmation bars",
-    1, 5, 2, 1,
+    1, 6, 3, 1,
     key="sb_sr_rev_confirm"
 )
 sr_rev_smooth = st.sidebar.slider(
     "S/R reversal index smoothing",
-    1, 20, 4, 1,
+    1, 30, 8, 1,
     key="sb_sr_rev_smooth"
 )
 
@@ -907,29 +907,105 @@ def overlay_hma_reversal_on_ntd(ax, price: pd.Series, hma: pd.Series, lookback: 
     except Exception:
         pass
 
+def _apply_signal_cooldown(mask: pd.Series, cooldown_bars: int = 12) -> pd.Series:
+    """
+    Keep only the first signal in each cooldown window. This prevents a single
+    reversal from printing repeated triangles on several follow-through bars.
+    """
+    s = pd.Series(mask, copy=True).fillna(False).astype(bool)
+    if s.empty:
+        return s
+    try:
+        cd = max(0, int(cooldown_bars))
+    except Exception:
+        cd = 12
+    if cd <= 0:
+        return s
+
+    out = pd.Series(False, index=s.index)
+    last_i = -10**9
+    for i, val in enumerate(s.to_numpy(dtype=bool)):
+        if val and (i - last_i > cd):
+            out.iloc[i] = True
+            last_i = i
+    return out
+
+
 def _ntd_buy_sell_opportunity_masks(ntd: pd.Series,
                                     low_thr: float = -0.75,
-                                    high_thr: float = 0.75):
+                                    high_thr: float = 0.75,
+                                    lookback: int = 10,
+                                    confirm_bars: int = 3,
+                                    cooldown_bars: int = 14):
     """
-    NTD opportunity rules:
-      - BUY opportunity: NTD crosses upward through the lower opportunity level.
-      - SELL opportunity: NTD crosses downward through the upper opportunity level.
+    Less-noisy NTD reversal rules:
+      - BUY: NTD recently made a lower-zone extreme, then turns up for the
+        confirmation window.
+      - SELL: NTD recently made an upper-zone extreme, then turns down for the
+        confirmation window.
+
+    These masks are kept for compatibility, but the displayed green/red
+    triangles are now drawn by the S/R reversal indicator so triangles only
+    appear when price actually reverses from support/resistance.
     """
     n = _coerce_1d_series(ntd).astype(float)
-    if n.dropna().shape[0] < 2:
+    if n.dropna().shape[0] < max(4, confirm_bars + 2):
         idx = n.index if len(n) else pd.Index([])
         return pd.Series(False, index=idx), pd.Series(False, index=idx)
 
-    dn = n.diff()
-    buy = (n.shift(1) < low_thr) & (n >= low_thr) & (dn > 0)
-    sell = (n.shift(1) > high_thr) & (n <= high_thr) & (dn < 0)
+    try:
+        lb = max(4, int(lookback))
+    except Exception:
+        lb = 10
+    try:
+        cb = max(2, int(confirm_bars))
+    except Exception:
+        cb = 3
+
+    buy = pd.Series(False, index=n.index)
+    sell = pd.Series(False, index=n.index)
+    vals = n.to_numpy(dtype=float)
+
+    for i in range(len(vals)):
+        if i < max(lb, cb + 1):
+            continue
+        if not np.isfinite(vals[i]):
+            continue
+
+        recent = vals[max(0, i - lb):i + 1]
+        if not np.isfinite(recent).any():
+            continue
+
+        # Confirmation requires a real turn, not just a threshold touch.
+        confirm_slice = vals[i - cb:i + 1]
+        if len(confirm_slice) < cb + 1 or not np.all(np.isfinite(confirm_slice)):
+            continue
+        deltas = np.diff(confirm_slice)
+
+        recent_min = float(np.nanmin(recent))
+        recent_max = float(np.nanmax(recent))
+        prev_val = vals[i - cb]
+
+        buy_turn = (recent_min <= low_thr) and np.all(deltas > 0) and (vals[i] > prev_val)
+        sell_turn = (recent_max >= high_thr) and np.all(deltas < 0) and (vals[i] < prev_val)
+
+        # Prefer the first bar after the extreme begins to reverse.
+        if buy_turn:
+            buy.iloc[i] = True
+        if sell_turn:
+            sell.iloc[i] = True
+
+    buy = _apply_signal_cooldown(buy, cooldown_bars=cooldown_bars)
+    sell = _apply_signal_cooldown(sell, cooldown_bars=cooldown_bars)
     return buy.fillna(False), sell.fillna(False)
+
 
 # ========= NPX ↔ NTD overlay =========
 def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = True):
     """
-    Plot smoothed NPX on the NTD panel. Green/red triangles are restricted to
-    actual NTD buy/sell opportunities only, not every NPX↔NTD cross.
+    Plot smoothed NPX on the NTD panel without printing ordinary cross triangles.
+    Green/red triangles on the NTD panel are now reserved for confirmed
+    support/resistance reversals only.
     """
     npx = _coerce_1d_series(npx).astype(float)
     ntd = _coerce_1d_series(ntd).astype(float)
@@ -940,23 +1016,9 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = 
     if npx.dropna().empty:
         return
 
-    ax.plot(npx.index, npx.values, "-", linewidth=1.6, color="tab:gray", alpha=0.95,
+    ax.plot(npx.index, npx.values, "-", linewidth=1.6, color="tab:gray", alpha=0.80,
             label="Smoothed NPX")
 
-    if mark_crosses and not ntd.dropna().empty:
-        try:
-            buy_mask, sell_mask = _ntd_buy_sell_opportunity_masks(ntd)
-            buy_idx = list(buy_mask[buy_mask].index)
-            sell_idx = list(sell_mask[sell_mask].index)
-
-            if len(buy_idx):
-                ax.scatter(buy_idx, ntd.loc[buy_idx], marker="^", s=85,
-                           color="tab:green", zorder=9, label="NTD BUY opportunity")
-            if len(sell_idx):
-                ax.scatter(sell_idx, ntd.loc[sell_idx], marker="v", s=85,
-                           color="tab:red", zorder=9, label="NTD SELL opportunity")
-        except Exception:
-            pass
 
 # ========= NTD price-chart triangle overlays remain removed; NTD-panel triangles are opportunity-only =========
 
@@ -1004,15 +1066,24 @@ def sr_reversal_opportunity_masks(price: pd.Series,
                                   confirm_bars: int = 2,
                                   smooth_span: int = 4):
     """
-    BUY rule:
-      - the price-chart trendline is upward,
-      - price recently touched/approached support or the S/R index was in the support zone,
-      - price and S/R index have turned upward for the confirmation window.
+    Confirmed, lower-noise support/resistance reversal rules.
 
-    SELL rule:
+    BUY appears only when:
+      - the price-chart trendline is upward,
+      - price recently touched the support zone,
+      - price formed a local low and then closed higher for the confirmation
+        window,
+      - the S/R Reversal Index also turned upward from the support zone.
+
+    SELL appears only when:
       - the price-chart trendline is downward,
-      - price recently touched/approached resistance or the S/R index was in the resistance zone,
-      - price and S/R index have turned downward for the confirmation window.
+      - price recently touched the resistance zone,
+      - price formed a local high and then closed lower for the confirmation
+        window,
+      - the S/R Reversal Index also turned downward from the resistance zone.
+
+    The function applies a cooldown so one reversal prints one triangle instead
+    of repeated triangles on each follow-through bar.
     """
     p = _coerce_1d_series(price).astype(float)
     sup = _coerce_1d_series(support).reindex(p.index).ffill().bfill()
@@ -1028,21 +1099,25 @@ def sr_reversal_opportunity_masks(price: pd.Series,
     except Exception:
         slope = np.nan
 
-    if p.dropna().shape[0] < 3 or not np.isfinite(slope):
+    if p.dropna().shape[0] < 6 or not np.isfinite(slope):
         return buy, sell, sri
 
     try:
-        lb = max(2, int(lookback))
+        lb = max(5, int(lookback))
     except Exception:
-        lb = 5
+        lb = 6
     try:
-        cb = max(1, int(confirm_bars))
+        cb = max(2, int(confirm_bars))
     except Exception:
         cb = 2
     try:
         z = float(zone)
     except Exception:
         z = 0.65
+    try:
+        px = max(0.0, float(prox))
+    except Exception:
+        px = 0.0025
 
     uptrend = slope >= 0.0
     downtrend = slope < 0.0
@@ -1052,48 +1127,91 @@ def sr_reversal_opportunity_masks(price: pd.Series,
     resvals = res.to_numpy(dtype=float)
     srivals = sri.to_numpy(dtype=float)
 
-    for i in range(1, len(idx)):
-        if not np.all(np.isfinite([pvals[i], pvals[i-1], srivals[i], srivals[i-1], supvals[i], resvals[i]])):
+    # Minimum bounce/rejection as a fraction of the recent S/R channel width.
+    # This avoids plotting triangles for tiny wiggles at the level.
+    min_channel_move = 0.10
+
+    for i in range(len(idx)):
+        if i < max(lb, cb + 2):
+            continue
+        if not np.all(np.isfinite([pvals[i], srivals[i], supvals[i], resvals[i]])):
             continue
 
         start_recent = max(0, i - lb)
-        recent_p = pvals[start_recent:i+1]
-        recent_sup = supvals[start_recent:i+1]
-        recent_res = resvals[start_recent:i+1]
-        recent_sri = srivals[start_recent:i+1]
+        recent_p = pvals[start_recent:i + 1]
+        recent_sup = supvals[start_recent:i + 1]
+        recent_res = resvals[start_recent:i + 1]
+        recent_sri = srivals[start_recent:i + 1]
 
-        recent_support_touch = False
-        recent_resistance_touch = False
-        if np.isfinite(recent_p).any() and np.isfinite(recent_sup).any():
-            recent_support_touch = bool(np.nanmin(recent_p - recent_sup * (1.0 + prox)) <= 0.0)
-        if np.isfinite(recent_p).any() and np.isfinite(recent_res).any():
-            recent_resistance_touch = bool(np.nanmax(recent_p - recent_res * (1.0 - prox)) >= 0.0)
-
-        recent_support_zone = bool(np.nanmin(recent_sri) <= -z) if np.isfinite(recent_sri).any() else False
-        recent_resistance_zone = bool(np.nanmax(recent_sri) >= z) if np.isfinite(recent_sri).any() else False
-
-        start_confirm = max(1, i - cb + 1)
-        price_deltas = np.diff(pvals[start_confirm-1:i+1])
-        sri_deltas = np.diff(srivals[start_confirm-1:i+1])
-        if len(price_deltas) < cb or len(sri_deltas) < cb:
+        if not (np.isfinite(recent_p).any() and np.isfinite(recent_sup).any() and np.isfinite(recent_res).any()):
             continue
 
-        price_turn_up = bool(np.all(price_deltas > 0))
-        price_turn_down = bool(np.all(price_deltas < 0))
-        sri_turn_up = bool(np.all(sri_deltas > 0))
-        sri_turn_down = bool(np.all(sri_deltas < 0))
+        channel_width = float(np.nanmedian(recent_res - recent_sup))
+        if not np.isfinite(channel_width) or channel_width <= 0:
+            channel_width = max(abs(float(pvals[i])) * 0.0005, 1e-9)
+        min_bounce = channel_width * min_channel_move
 
-        raw_buy = uptrend and (recent_support_touch or recent_support_zone) and price_turn_up and sri_turn_up
-        raw_sell = downtrend and (recent_resistance_touch or recent_resistance_zone) and price_turn_down and sri_turn_down
+        low_pos = int(np.nanargmin(recent_p))
+        high_pos = int(np.nanargmax(recent_p))
+        low_val = float(recent_p[low_pos])
+        high_val = float(recent_p[high_pos])
+        sup_at_low = float(recent_sup[low_pos]) if np.isfinite(recent_sup[low_pos]) else np.nan
+        res_at_high = float(recent_res[high_pos]) if np.isfinite(recent_res[high_pos]) else np.nan
+
+        # The touch must happen before the current bar so the marker represents
+        # a reversal after the touch, not the touch itself.
+        support_was_touched = (
+            np.isfinite(low_val) and np.isfinite(sup_at_low)
+            and low_pos < len(recent_p) - 1
+            and low_val <= sup_at_low * (1.0 + px)
+        )
+        resistance_was_touched = (
+            np.isfinite(high_val) and np.isfinite(res_at_high)
+            and high_pos < len(recent_p) - 1
+            and high_val >= res_at_high * (1.0 - px)
+        )
+
+        # Confirmation by price action.
+        confirm_prices = pvals[i - cb:i + 1]
+        confirm_sri = srivals[i - cb:i + 1]
+        if len(confirm_prices) < cb + 1 or len(confirm_sri) < cb + 1:
+            continue
+        if not (np.all(np.isfinite(confirm_prices)) and np.all(np.isfinite(confirm_sri))):
+            continue
+
+        price_deltas = np.diff(confirm_prices)
+        sri_deltas = np.diff(confirm_sri)
+
+        price_reversed_up = np.all(price_deltas > 0) and (pvals[i] - low_val >= min_bounce)
+        price_reversed_down = np.all(price_deltas < 0) and (high_val - pvals[i] >= min_bounce)
+
+        sri_recent_min = float(np.nanmin(recent_sri)) if np.isfinite(recent_sri).any() else np.nan
+        sri_recent_max = float(np.nanmax(recent_sri)) if np.isfinite(recent_sri).any() else np.nan
+
+        sri_reversed_up = (
+            np.isfinite(sri_recent_min)
+            and sri_recent_min <= -z
+            and np.all(sri_deltas > 0)
+            and srivals[i] > srivals[i - cb]
+        )
+        sri_reversed_down = (
+            np.isfinite(sri_recent_max)
+            and sri_recent_max >= z
+            and np.all(sri_deltas < 0)
+            and srivals[i] < srivals[i - cb]
+        )
+
+        raw_buy = uptrend and support_was_touched and price_reversed_up and sri_reversed_up
+        raw_sell = downtrend and resistance_was_touched and price_reversed_down and sri_reversed_down
 
         if raw_buy:
             buy.iloc[i] = True
         if raw_sell:
             sell.iloc[i] = True
 
-    # Fire once at the reversal start, not on every follow-through bar.
-    buy = buy & (~buy.shift(1, fill_value=False))
-    sell = sell & (~sell.shift(1, fill_value=False))
+    cooldown = max(lb * 2, cb * 4, 12)
+    buy = _apply_signal_cooldown(buy, cooldown_bars=cooldown)
+    sell = _apply_signal_cooldown(sell, cooldown_bars=cooldown)
 
     return buy.fillna(False), sell.fillna(False), sri
 
