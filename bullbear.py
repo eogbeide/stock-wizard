@@ -94,6 +94,57 @@ def _safe_last_float(obj) -> float:
     s = _coerce_1d_series(obj).dropna()
     return float(s.iloc[-1]) if len(s) else float("nan")
 
+def _flatten_yf_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize yfinance output so the rest of the app can rely on simple
+    OHLCV column names even when yfinance returns a MultiIndex.
+    """
+    if df is None:
+        return pd.DataFrame()
+    df = df.copy()
+    if isinstance(df.columns, pd.MultiIndex):
+        price_fields = {"Open", "High", "Low", "Close", "Adj Close", "Volume"}
+        for level in range(df.columns.nlevels):
+            vals = pd.Index(df.columns.get_level_values(level))
+            if any(v in price_fields for v in vals):
+                other_levels = [i for i in range(df.columns.nlevels) if i != level]
+                for other in other_levels:
+                    unique_vals = pd.Index(df.columns.get_level_values(other)).dropna().unique()
+                    if len(unique_vals) == 1:
+                        try:
+                            df = df.xs(unique_vals[0], axis=1, level=other)
+                        except Exception:
+                            pass
+                if isinstance(df.columns, pd.MultiIndex):
+                    df.columns = df.columns.get_level_values(level)
+                break
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = ["_".join(str(x) for x in col if str(x) != "") for col in df.columns]
+    return df
+
+def _download_yf(ticker: str, **kwargs) -> pd.DataFrame:
+    kwargs.setdefault("progress", False)
+    df = yf.download(ticker, **kwargs)
+    return _flatten_yf_columns(df)
+
+def _to_pacific_index(obj):
+    if obj is None or not isinstance(obj.index, pd.DatetimeIndex):
+        return obj
+    obj = obj.copy()
+    if obj.index.tz is None:
+        obj.index = obj.index.tz_localize(PACIFIC)
+    else:
+        obj.index = obj.index.tz_convert(PACIFIC)
+    return obj
+
+def _close_from_yf_frame(df: pd.DataFrame) -> pd.Series:
+    if df is None or df.empty:
+        return pd.Series(dtype=float)
+    if "Close" in df.columns:
+        return _coerce_1d_series(df["Close"])
+    return _coerce_1d_series(df)
+
+
 def fmt_pct(x, digits: int = 1) -> str:
     try:
         xv = float(x)
@@ -301,41 +352,42 @@ else:
 # ---------- Data fetchers ----------
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
-    s = (yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
-         .asfreq("D").fillna(method="ffill"))
-    try:
-        s = s.tz_localize(PACIFIC)
-    except TypeError:
-        s = s.tz_convert(PACIFIC)
-    return s
+    df = _download_yf(ticker, start="2018-01-01", end=pd.to_datetime("today"))
+    s = _close_from_yf_frame(df).dropna().sort_index()
+    if s.empty:
+        return s
+    s = s.asfreq("D").ffill().dropna()
+    return _to_pacific_index(s)
 
 @st.cache_data(ttl=120)
 def fetch_hist_max(ticker: str) -> pd.Series:
-    df = yf.download(ticker, period="max")[['Close']].dropna()
-    s = df['Close'].asfreq("D").fillna(method="ffill")
-    try:
-        s = s.tz_localize(PACIFIC)
-    except TypeError:
-        s = s.tz_convert(PACIFIC)
-    return s
+    df = _download_yf(ticker, period="max")
+    s = _close_from_yf_frame(df).dropna().sort_index()
+    if s.empty:
+        return s
+    s = s.asfreq("D").ffill().dropna()
+    return _to_pacific_index(s)
 
 @st.cache_data(ttl=120)
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
-    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Open','High','Low','Close']].dropna()
-    try:
-        df = df.tz_localize(PACIFIC)
-    except TypeError:
-        df = df.tz_convert(PACIFIC)
-    return df
+    df = _download_yf(ticker, start="2018-01-01", end=pd.to_datetime("today"))
+    cols = [c for c in ["Open", "High", "Low", "Close"] if c in df.columns]
+    if len(cols) < 4:
+        return pd.DataFrame(columns=["Open", "High", "Low", "Close"])
+    out = df[["Open", "High", "Low", "Close"]].apply(pd.to_numeric, errors="coerce").dropna().sort_index()
+    return _to_pacific_index(out)
 
 @st.cache_data(ttl=120)
 def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
-    df = yf.download(ticker, period=period, interval="5m")
-    try:
-        df = df.tz_localize('UTC')
-    except TypeError:
-        pass
-    return df.tz_convert(PACIFIC)
+    df = _download_yf(ticker, period=period, interval="5m")
+    if df is None or df.empty:
+        return pd.DataFrame()
+    df = df.sort_index()
+    if isinstance(df.index, pd.DatetimeIndex):
+        if df.index.tz is None:
+            df.index = df.index.tz_localize("UTC")
+        df.index = df.index.tz_convert(PACIFIC)
+    return df
 
 @st.cache_data(ttl=120)
 def compute_sarimax_forecast(series_like):
@@ -1996,7 +2048,7 @@ with tab3:
     if not st.session_state.run_all:
         st.info("Run Tab 1 first.")
     else:
-        df3 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
+        df3 = pd.DataFrame({'Close': _close_from_yf_frame(_download_yf(st.session_state.ticker, period=bb_period)).dropna()})
         df3['PctChange'] = df3['Close'].pct_change()
         df3['Bull'] = df3['PctChange'] > 0
         bull = int(df3['Bull'].sum())
@@ -2045,7 +2097,7 @@ with tab4:
         ax.legend(); st.pyplot(fig)
 
         st.markdown("---")
-        df0 = yf.download(st.session_state.ticker, period=bb_period)[['Close']].dropna()
+        df0 = pd.DataFrame({'Close': _close_from_yf_frame(_download_yf(st.session_state.ticker, period=bb_period)).dropna()})
         df0['PctChange'] = df0['Close'].pct_change()
         df0['Bull'] = df0['PctChange'] > 0
         df0['MA30'] = df0['Close'].rolling(30, min_periods=1).mean()
