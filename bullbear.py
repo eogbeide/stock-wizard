@@ -76,6 +76,127 @@ def _safe_last_float(obj) -> float:
     s = _coerce_1d_series(obj).dropna()
     return float(s.iloc[-1]) if len(s) else float("nan")
 
+def _flatten_yfinance_columns(df: pd.DataFrame, ticker: str = None) -> pd.DataFrame:
+    """
+    yfinance can return either flat columns (Close, High, ...)
+    or MultiIndex columns. Normalize that shape so the rest of
+    the app can safely select OHLC columns.
+    """
+    if df is None or not isinstance(df, pd.DataFrame) or df.empty:
+        return pd.DataFrame() if df is None else df
+
+    out = df.copy()
+
+    if isinstance(out.columns, pd.MultiIndex):
+        # If one level contains the requested ticker, select that slice first.
+        if ticker:
+            ticker_str = str(ticker)
+            for level in range(out.columns.nlevels):
+                vals = [str(v) for v in out.columns.get_level_values(level)]
+                if ticker_str in vals:
+                    try:
+                        out = out.xs(ticker, axis=1, level=level, drop_level=True)
+                        break
+                    except Exception:
+                        pass
+
+        # If MultiIndex remains, prefer the level containing OHLC names.
+        if isinstance(out.columns, pd.MultiIndex):
+            ohlc_names = {"Open", "High", "Low", "Close", "Adj Close", "Volume"}
+            picked = False
+            for level in range(out.columns.nlevels):
+                vals = [str(v) for v in out.columns.get_level_values(level)]
+                if any(v in ohlc_names for v in vals):
+                    out.columns = out.columns.get_level_values(level)
+                    picked = True
+                    break
+            if not picked:
+                out.columns = [
+                    "_".join(str(part) for part in col if str(part) not in ("", "None"))
+                    for col in out.columns.to_flat_index()
+                ]
+
+    out.columns = [str(c) for c in out.columns]
+    return out
+
+
+def _get_close_series_from_yf(df: pd.DataFrame, ticker: str = None) -> pd.Series:
+    df = _flatten_yfinance_columns(df, ticker=ticker)
+    if df is None or df.empty:
+        return pd.Series(dtype=float)
+
+    if "Close" in df.columns:
+        s = df["Close"]
+    elif "Adj Close" in df.columns:
+        s = df["Adj Close"]
+    else:
+        # Fall back to the first numeric column rather than crashing.
+        numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+        if not numeric_cols:
+            return pd.Series(dtype=float)
+        s = df[numeric_cols[0]]
+
+    return pd.to_numeric(_coerce_1d_series(s), errors="coerce").dropna()
+
+
+def _get_ohlc_from_yf(df: pd.DataFrame, ticker: str = None) -> pd.DataFrame:
+    df = _flatten_yfinance_columns(df, ticker=ticker)
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["Open", "High", "Low", "Close"])
+
+    cols = ["Open", "High", "Low", "Close"]
+    available = [c for c in cols if c in df.columns]
+    if "Close" not in available:
+        close = _get_close_series_from_yf(df, ticker=ticker)
+        if close.empty:
+            return pd.DataFrame(columns=cols)
+        return pd.DataFrame({"Open": close, "High": close, "Low": close, "Close": close})
+
+    out = df[available].copy()
+    for col in cols:
+        if col not in out.columns:
+            out[col] = out["Close"]
+
+    out = out[cols].apply(pd.to_numeric, errors="coerce").dropna(how="all")
+    return out.dropna(subset=["Close"])
+
+
+def _to_pacific_index(obj):
+    """
+    Convert a Series/DataFrame DatetimeIndex to US/Pacific safely.
+    Avoids tz_localize/tz_convert TypeErrors when the index is already
+    aware, naive, empty, or non-datetime.
+    """
+    if obj is None:
+        return obj
+
+    out = obj.copy()
+    if not isinstance(out.index, pd.DatetimeIndex):
+        out.index = pd.to_datetime(out.index, errors="coerce")
+        out = out.loc[out.index.notna()]
+
+    if isinstance(out.index, pd.DatetimeIndex):
+        if out.index.tz is None:
+            out.index = out.index.tz_localize(PACIFIC)
+        else:
+            out.index = out.index.tz_convert(PACIFIC)
+
+    return out
+
+
+def _daily_ffill_close(s: pd.Series) -> pd.Series:
+    """
+    Daily frequency close series with forward fill. Uses .ffill()
+    instead of deprecated/removed fillna(method="ffill").
+    """
+    s = _coerce_1d_series(s).dropna().sort_index()
+    if s.empty:
+        return pd.Series(dtype=float)
+
+    s = _to_pacific_index(s)
+    return s.asfreq("D").ffill().dropna()
+
+
 def fmt_pct(x, digits: int = 1) -> str:
     try:
         xv = float(x)
@@ -273,33 +394,59 @@ else:
 # Cache TTL = 120s
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
-    s = (yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
-         .asfreq("D").fillna(method="ffill"))
-    try: s = s.tz_localize(PACIFIC)
-    except TypeError: s = s.tz_convert(PACIFIC)
-    return s
+    raw = yf.download(
+        ticker,
+        start="2018-01-01",
+        end=pd.to_datetime("today"),
+        auto_adjust=False,
+        progress=False
+    )
+    close = _get_close_series_from_yf(raw, ticker=ticker)
+    return _daily_ffill_close(close)
+
 
 @st.cache_data(ttl=120)
 def fetch_hist_max(ticker: str) -> pd.Series:
-    df = yf.download(ticker, period="max")[['Close']].dropna()
-    s = df['Close'].asfreq("D").fillna(method="ffill")
-    try: s = s.tz_localize(PACIFIC)
-    except TypeError: s = s.tz_convert(PACIFIC)
-    return s
+    raw = yf.download(
+        ticker,
+        period="max",
+        auto_adjust=False,
+        progress=False
+    )
+    close = _get_close_series_from_yf(raw, ticker=ticker)
+    return _daily_ffill_close(close)
+
 
 @st.cache_data(ttl=120)
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
-    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Open','High','Low','Close']].dropna()
-    try: df = df.tz_localize(PACIFIC)
-    except TypeError: df = df.tz_convert(PACIFIC)
-    return df
+    raw = yf.download(
+        ticker,
+        start="2018-01-01",
+        end=pd.to_datetime("today"),
+        auto_adjust=False,
+        progress=False
+    )
+    df = _get_ohlc_from_yf(raw, ticker=ticker)
+    return _to_pacific_index(df)
+
 
 @st.cache_data(ttl=120)
 def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
-    df = yf.download(ticker, period=period, interval="5m")
-    try: df = df.tz_localize('UTC')
-    except TypeError: pass
-    return df.tz_convert(PACIFIC)
+    raw = yf.download(
+        ticker,
+        period=period,
+        interval="5m",
+        auto_adjust=False,
+        progress=False
+    )
+    df = _get_ohlc_from_yf(raw, ticker=ticker)
+    if raw is not None and isinstance(raw, pd.DataFrame):
+        flat = _flatten_yfinance_columns(raw, ticker=ticker)
+        if "Volume" in flat.columns:
+            df["Volume"] = pd.to_numeric(flat["Volume"], errors="coerce").reindex(df.index)
+
+    return _to_pacific_index(df)
+
 
 @st.cache_data(ttl=120)
 def compute_sarimax_forecast(series_like):
