@@ -319,45 +319,127 @@ else:
     ]
 
 # --- Cache helpers (TTL = 120 seconds) ---
+def _flatten_yf_columns(df: pd.DataFrame, ticker: str = None) -> pd.DataFrame:
+    """
+    yfinance can return either flat columns (Close, High, ...)
+    or MultiIndex columns (Price/Ticker). This normalizes the result
+    so the rest of the app always sees ordinary OHLCV column names.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy()
+    if isinstance(out.columns, pd.MultiIndex):
+        wanted = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
+        if ticker is not None:
+            try:
+                lvl_values = [str(x).upper() for x in out.columns.get_level_values(-1)]
+                if str(ticker).upper() in lvl_values:
+                    out = out.xs(ticker, axis=1, level=-1, drop_level=True)
+            except Exception:
+                pass
+        if isinstance(out.columns, pd.MultiIndex):
+            # Prefer the level containing OHLCV names, then drop any ticker level.
+            for level in range(out.columns.nlevels):
+                vals = set(map(str, out.columns.get_level_values(level)))
+                if any(c in vals for c in wanted):
+                    try:
+                        if out.columns.nlevels == 2:
+                            other_level = 1 - level
+                            first_other = out.columns.get_level_values(other_level)[0]
+                            out = out.xs(first_other, axis=1, level=other_level, drop_level=True)
+                        else:
+                            out.columns = out.columns.get_level_values(level)
+                        break
+                    except Exception:
+                        out.columns = ["_".join(map(str, c)).strip("_") for c in out.columns.to_flat_index()]
+                        break
+    out.columns = [str(c) for c in out.columns]
+    return out
+
+def _ensure_pacific_index(obj):
+    if obj is None or obj.empty:
+        return obj
+    out = obj.copy()
+    if not isinstance(out.index, pd.DatetimeIndex):
+        out.index = pd.to_datetime(out.index, errors="coerce")
+        out = out.loc[out.index.notna()]
+    try:
+        if out.index.tz is None:
+            out.index = out.index.tz_localize(PACIFIC)
+        else:
+            out.index = out.index.tz_convert(PACIFIC)
+    except TypeError:
+        out.index = out.index.tz_convert(PACIFIC)
+    return out
+
+def _close_series_from_yf(df: pd.DataFrame, ticker: str = None) -> pd.Series:
+    df = _flatten_yf_columns(df, ticker=ticker)
+    if df.empty:
+        return pd.Series(dtype=float)
+    if "Close" in df.columns:
+        s = df["Close"]
+    elif "Adj Close" in df.columns:
+        s = df["Adj Close"]
+    else:
+        s = _coerce_1d_series(df)
+    s = _coerce_1d_series(s).dropna()
+    s = _ensure_pacific_index(s)
+    return s.sort_index()
+
+def _ohlc_from_yf(df: pd.DataFrame, ticker: str = None) -> pd.DataFrame:
+    df = _flatten_yf_columns(df, ticker=ticker)
+    needed = ["Open", "High", "Low", "Close"]
+    if df.empty:
+        return pd.DataFrame(columns=needed)
+    missing = [c for c in needed if c not in df.columns]
+    if missing and "Adj Close" in df.columns and "Close" not in df.columns:
+        df["Close"] = df["Adj Close"]
+        missing = [c for c in needed if c not in df.columns]
+    if missing:
+        return pd.DataFrame(columns=needed)
+    out = df[needed].apply(pd.to_numeric, errors="coerce").dropna()
+    out = _ensure_pacific_index(out)
+    return out.sort_index()
+
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
-    s = (
-        yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
-        .asfreq("D").ffill()
-    )
-    try:
-        s = s.tz_localize(PACIFIC)
-    except TypeError:
-        s = s.tz_convert(PACIFIC)
-    return s
+    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"),
+                     progress=False, auto_adjust=False)
+    s = _close_series_from_yf(df, ticker=ticker)
+    if s.empty:
+        return s
+    return s.asfreq("D").ffill().dropna()
 
 @st.cache_data(ttl=120)
 def fetch_hist_max(ticker: str) -> pd.Series:
-    df = yf.download(ticker, period="max")[['Close']].dropna()
-    s = df['Close'].asfreq("D").ffill()
-    try:
-        s = s.tz_localize(PACIFIC)
-    except TypeError:
-        s = s.tz_convert(PACIFIC)
-    return s
+    df = yf.download(ticker, period="max", progress=False, auto_adjust=False)
+    s = _close_series_from_yf(df, ticker=ticker)
+    if s.empty:
+        return s
+    return s.asfreq("D").ffill().dropna()
 
 @st.cache_data(ttl=120)
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
-    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Open','High','Low','Close']].dropna()
-    try:
-        df = df.tz_localize(PACIFIC)
-    except TypeError:
-        df = df.tz_convert(PACIFIC)
-    return df
+    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"),
+                     progress=False, auto_adjust=False)
+    return _ohlc_from_yf(df, ticker=ticker)
 
 @st.cache_data(ttl=120)
 def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
-    df = yf.download(ticker, period=period, interval="5m")
+    df = yf.download(ticker, period=period, interval="5m",
+                     progress=False, auto_adjust=False)
+    out = _flatten_yf_columns(df, ticker=ticker)
+    if out.empty:
+        return pd.DataFrame()
+    if not isinstance(out.index, pd.DatetimeIndex):
+        out.index = pd.to_datetime(out.index, errors="coerce")
+        out = out.loc[out.index.notna()]
     try:
-        df = df.tz_localize('UTC')
+        if out.index.tz is None:
+            out.index = out.index.tz_localize("UTC")
     except TypeError:
         pass
-    return df.tz_convert(PACIFIC)
+    return out.tz_convert(PACIFIC).sort_index()
 
 @st.cache_data(ttl=120)
 def compute_sarimax_forecast(series_like):
@@ -994,9 +1076,9 @@ def elliott_conf_signal(price_now: float, fc_vals: pd.Series, conf: float = EW_C
 def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
                         fc_vals: pd.Series, threshold: float, prox: float):
     try:
-        last_close = float(hc.iloc[-1])
-        res = float(res_h.iloc[-1])
-        sup = float(sup_h.iloc[-1])
+        last_close = _safe_last_float(hc)
+        res = _safe_last_float(res_h)
+        sup = _safe_last_float(sup_h)
     except Exception:
         return None
     if not np.all(np.isfinite([last_close, res, sup])) or res <= sup:
@@ -1413,8 +1495,8 @@ with tab1:
                 ax.plot(bb_up_d_show.index, bb_up_d_show.values, ":", linewidth=1.0)
                 ax.plot(bb_lo_d_show.index, bb_lo_d_show.values, ":", linewidth=1.0)
                 try:
-                    last_pct = float(bb_pctb_d_show.dropna().iloc[-1])
-                    last_nbb = float(bb_nbb_d_show.dropna().iloc[-1])
+                    last_pct = _safe_last_float(bb_pctb_d_show.dropna())
+                    last_nbb = _safe_last_float(bb_nbb_d_show.dropna())
                     ax.text(0.99, 0.02, f"NBB {last_nbb:+.2f}  |  %B {fmt_pct(last_pct, digits=0)}",
                             transform=ax.transAxes, ha="right", va="bottom",
                             fontsize=9, color="black",
@@ -1443,7 +1525,7 @@ with tab1:
                 for lbl, y in piv.items():
                     ax.text(x1, y, f" {lbl} = {fmt_price_val(y)}", va="center")
             if len(res30_show) and len(sup30_show):
-                r30_last = float(res30_show.iloc[-1]); s30_last = float(sup30_show.iloc[-1])
+                r30_last = _safe_last_float(res30_show); s30_last = _safe_last_float(sup30_show)
                 ax.text(df_show.index[-1], r30_last, f"  30R = {fmt_price_val(r30_last)}", va="bottom")
                 ax.text(df_show.index[-1], s30_last, f"  30S = {fmt_price_val(s30_last)}", va="top")
 
@@ -1464,7 +1546,7 @@ with tab1:
             if show_hma and not hma_d_show.dropna().empty:
                 cross_d = detect_last_crossover(df_show, hma_d_show)
                 if cross_d is not None and cross_d["time"] is not None and (not use_adx_filter or adx_ok_d):
-                    ts = cross_d["time"]; px_here = float(df_show.loc[ts])
+                    ts = cross_d["time"]; px_here = _safe_last_float(pd.Series([df_show.loc[ts]]))
                     if cross_d["side"] == "BUY" and np.isfinite(p_up) and p_up >= hma_conf:
                         annotate_crossover(ax, ts, px_here, "BUY", hma_conf)
                         st.success(f"**HMA BUY** @ {fmt_price_val(px_here)} — P(up)={fmt_pct(p_up)} ≥ {fmt_pct(hma_conf)} | ADX {adx_last_d:.1f}")
@@ -1573,7 +1655,7 @@ with tab1:
 
                 res_val = sup_val = px_val = np.nan
                 try:
-                    res_val = float(res_h.iloc[-1]); sup_val = float(sup_h.iloc[-1]); px_val  = float(hc.iloc[-1])
+                    res_val = _safe_last_float(res_h); sup_val = _safe_last_float(sup_h); px_val  = _safe_last_float(hc)
                 except Exception:
                     pass
 
@@ -1589,8 +1671,8 @@ with tab1:
                 if np.isfinite(px_val):
                     nbb_txt = ""
                     try:
-                        last_pct = float(bb_pctb_h.dropna().iloc[-1]) if show_bbands else np.nan
-                        last_nbb = float(bb_nbb_h.dropna().iloc[-1]) if show_bbands else np.nan
+                        last_pct = _safe_last_float(bb_pctb_h.dropna()) if show_bbands else np.nan
+                        last_nbb = _safe_last_float(bb_nbb_h.dropna()) if show_bbands else np.nan
                         if np.isfinite(last_nbb) and np.isfinite(last_pct):
                             nbb_txt = f"  |  NBB {last_nbb:+.2f}  •  %B {fmt_pct(last_pct, digits=0)}"
                     except Exception:
@@ -1652,7 +1734,7 @@ with tab1:
                 if show_hma and not hma_h.dropna().empty:
                     cross_h = detect_last_crossover(hc, hma_h)
                     if cross_h is not None and cross_h["time"] is not None and (not use_adx_filter or adx_ok_h):
-                        ts = cross_h["time"]; px_here = float(hc.loc[ts])
+                        ts = cross_h["time"]; px_here = _safe_last_float(pd.Series([hc.loc[ts]]))
                         if cross_h["side"] == "BUY" and np.isfinite(p_up) and p_up >= hma_conf:
                             annotate_crossover(ax2, ts, px_here, "BUY", hma_conf)
                             st.success(f"**HMA BUY** @ {fmt_price_val(px_here)} — P(up)={fmt_pct(p_up)} ≥ {fmt_pct(hma_conf)} | ADX {adx_last_h:.1f}")
@@ -1695,7 +1777,7 @@ with tab1:
                     ax2v.plot(vol.index, vol, linewidth=1.0, color="tab:blue")
                     ax2v.plot(v_mid.index, v_mid, ":", linewidth=1.6, label=f"Mid-line ({slope_lb_hourly}-roll)")
                     if v_mid.notna().any():
-                        last_mid = float(v_mid.dropna().iloc[-1])
+                        last_mid = _safe_last_float(v_mid.dropna())
                         ax2v.hlines(last_mid, xmin=vol.index[0], xmax=vol.index[-1], linestyles="dotted", linewidth=1.0)
                         label_on_left(ax2v, last_mid, f"Mid {last_mid:,.0f}", color="black")
                     if not v_trend.empty:
@@ -1981,8 +2063,8 @@ with tab6:
         else:
             res_roll = s.rolling(252, min_periods=1).max()
             sup_roll = s.rolling(252, min_periods=1).min()
-            res_last = float(res_roll.iloc[-1]) if len(res_roll) else np.nan
-            sup_last = float(sup_roll.iloc[-1]) if len(sup_roll) else np.nan
+            res_last = _safe_last_float(res_roll) if len(res_roll) else np.nan
+            sup_last = _safe_last_float(sup_roll) if len(sup_roll) else np.nan
             yhat_all, m_all = slope_line(s, lookback=len(s))
             fig, ax = plt.subplots(figsize=(14,5))
             ax.set_title(f"{sym} — Last {years} Years — Price + 252d S/R + Trend")
