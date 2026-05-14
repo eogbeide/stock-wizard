@@ -308,7 +308,7 @@ if mode == "Stock":
 else:
     universe = [
         'EURUSD=X','EURJPY=X','GBPUSD=X','USDJPY=X','AUDUSD=X','NZDUSD=X',
-        'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X','AUDJPY=X',
+        'HKDJPY=X','USDCAD=X','USDCNY=X','USDCHF=X','EURGBP=X',
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','EURCAD=X'
     ]
 
@@ -645,7 +645,7 @@ def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "T
     x = np.arange(len(s), dtype=float)
     m, b = np.polyfit(x, s.values, 1)
     yhat = m * x + b
-    color = "tab:green" if m >= 0 else "tab:red"
+    color = "tab:green"
     ax.plot(s.index, yhat, "-", linewidth=2.4, color=color, label=f"{label_prefix} ({fmt_slope(m)}/bar)")
     return m
 
@@ -1387,9 +1387,9 @@ with tab1:
                     ax.scatter(psar_d_df.index[dn_mask], psar_d_df["PSAR"][dn_mask],
                                s=15, color="tab:red", zorder=6)
             if not yhat_d_show.empty:
-                ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2, label=f"Daily Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
+                ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2, color="tab:green", label=f"Daily Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
             if not yhat_ema_show.empty:
-                ax.plot(yhat_ema_show.index, yhat_ema_show.values, "-", linewidth=2, label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
+                ax.plot(yhat_ema_show.index, yhat_ema_show.values, "-", linewidth=2, color="tab:green", label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
             if piv and len(df_show) > 0:
                 x0, x1 = df_show.index[0], df_show.index[-1]
                 for lbl, y in piv.items():
@@ -1494,7 +1494,7 @@ with tab1:
 
                 ax2.plot(hc.index, hc, label="Intraday")
                 ax2.plot(hc.index, he, "--", label="20 EMA")
-                ax2.plot(hc.index, trend_h, "--", label=f"Trend (m={fmt_slope(slope_h)}/bar)", linewidth=2)
+                ax2.plot(hc.index, trend_h, "--", color="tab:green", label=f"Trend (m={fmt_slope(slope_h)}/bar)", linewidth=2)
                 if show_hma and not hma_h.dropna().empty:
                     ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
                 if show_bbands and not bb_up_h.dropna().empty and not bb_lo_h.dropna().empty:
@@ -1541,7 +1541,7 @@ with tab1:
                              bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
                 if not yhat_h.empty:
-                    ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2, label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
+                    ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2, color="tab:green", label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
                 ax2.text(0.01, 0.02, f"Slope: {fmt_slope(slope_h)}/bar",
                          transform=ax2.transAxes, ha="left", va="bottom", fontsize=9, color="black",
@@ -1574,16 +1574,35 @@ with tab1:
                                              threshold=signal_threshold, prox=sr_prox_pct)
                 if signal is not None and np.isfinite(px_val):
                     if not use_adx_filter or adx_ok_h:
-                        if signal["side"] == "BUY":
+                        pips_txt = _diff_text(sup_val, res_val, sel) if np.isfinite(sup_val) and np.isfinite(res_val) else ""
+                        try:
+                            green_trend_up = float(slope_h) >= 0.0
+                        except Exception:
+                            green_trend_up = False
+
+                        if green_trend_up:
+                            close_price = res_val
+                            close_label = "Sell Price"
                             conf_tag = f"↑{fmt_pct(p_up)}" if np.isfinite(p_up) else "↑n/a"
-                            near_txt = f"Near support {fmt_price_val(sup_val)}"
-                            pips_txt = _diff_text(sup_val, res_val, sel) if np.isfinite(sup_val) and np.isfinite(res_val) else ""
-                            st.success(f"**Profit Alert:** **BUY** @ {fmt_price_val(signal['level'])} — {near_txt} with {conf_tag} • {pips_txt} | ADX {adx_last_h:.1f}")
                         else:
+                            close_price = sup_val
+                            close_label = "Buy Price"
                             conf_tag = f"↓{fmt_pct(p_dn)}" if np.isfinite(p_dn) else "↓n/a"
+
+                        if signal["side"] == "BUY":
+                            near_txt = f"Near support {fmt_price_val(sup_val)}"
+                            st.success(
+                                f"**Profit Alert:** **CLOSE** @ {fmt_price_val(close_price)} — "
+                                f"{close_label} {fmt_price_val(close_price)}; {near_txt} with {conf_tag} "
+                                f"• {pips_txt} | ADX {adx_last_h:.1f}"
+                            )
+                        else:
                             near_txt = f"Near resistance {fmt_price_val(res_val)}"
-                            pips_txt = _diff_text(sup_val, res_val, sel) if np.isfinite(sup_val) and np.isfinite(res_val) else ""
-                            st.error(f"**SELL** @ {fmt_price_val(signal['level'])} — {near_txt} with {conf_tag} • {pips_txt} | ADX {adx_last_h:.1f}")
+                            st.error(
+                                f"**CLOSE** @ {fmt_price_val(close_price)} — "
+                                f"{close_label} {fmt_price_val(close_price)}; {near_txt} with {conf_tag} "
+                                f"• {pips_txt} | ADX {adx_last_h:.1f}"
+                            )
                     else:
                         st.info(f"Near S/R signal gated off: ADX {adx_last_h:.1f} < {adx_min}")
 
@@ -1735,7 +1754,7 @@ with tab4:
         ax.plot(df3m.index, ma30_3m, label="30 MA")
         ax.plot(res3m.index, res3m, ":", label="Resistance")
         ax.plot(sup3m.index, sup3m, ":", label="Support")
-        ax.plot(df3m.index, trend3m, "--", label="Trend")
+        ax.plot(df3m.index, trend3m, "--", color="tab:green", label="Trend")
         ax.set_xlabel("Date (PST)")
         ax.legend()
         st.pyplot(fig)
@@ -1901,7 +1920,7 @@ with tab6:
                 label_on_left(ax, res_last, f"R {fmt_price_val(res_last)}", color="tab:red")
                 label_on_left(ax, sup_last, f"S {fmt_price_val(sup_last)}", color="tab:green")
             if not yhat_all.empty:
-                ax.plot(yhat_all.index, yhat_all.values, "--", linewidth=2, label=f"Trend (m={fmt_slope(m_all)}/bar)")
+                ax.plot(yhat_all.index, yhat_all.values, "--", linewidth=2, color="tab:green", label=f"Trend (m={fmt_slope(m_all)}/bar)")
                 ax.text(0.01, 0.02, f"Slope: {fmt_slope(m_all)}/bar",
                         transform=ax.transAxes, ha="left", va="bottom",
                         fontsize=9, color="black",
