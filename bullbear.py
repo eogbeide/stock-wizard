@@ -640,15 +640,16 @@ def shade_npo_regions(ax, npo: pd.Series):
     return
 
 def draw_trend_direction_line(ax, series_like: pd.Series, label_prefix: str = "Trend"):
+    """
+    Compute the trend slope without drawing the thick green/red trend line on price charts.
+    The return value is kept for compatibility with the rest of the dashboard.
+    """
     s = _coerce_1d_series(series_like).dropna()
     if s.shape[0] < 2:
         return np.nan
     x = np.arange(len(s), dtype=float)
-    m, b = np.polyfit(x, s.values, 1)
-    yhat = m * x + b
-    color = "tab:green" if m >= 0 else "tab:red"
-    ax.plot(s.index, yhat, "-", linewidth=2.4, color=color, label=f"{label_prefix} ({fmt_slope(m)}/bar)")
-    return m
+    m, _ = np.polyfit(x, s.values, 1)
+    return float(m)
 
 # ---- Supertrend (hourly overlay) ----
 def _true_range(df: pd.DataFrame):
@@ -1649,8 +1650,8 @@ with tab1:
                     pass
 
                 if np.isfinite(res_val) and np.isfinite(sup_val):
-                    ax2.hlines(res_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance")
-                    ax2.hlines(sup_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
+                    # Support/resistance values are kept as left labels only.
+                    # The thick green/red horizontal price-chart lines were removed to reduce noise.
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
@@ -2035,8 +2036,8 @@ with tab6:
             ax.set_title(f"{sym} — Last {years} Years — Price + 252d S/R + Trend")
             ax.plot(s.index, s.values, label="Close")
             if np.isfinite(res_last) and np.isfinite(sup_last):
-                ax.hlines(res_last, xmin=s.index[0], xmax=s.index[-1], colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance (252d)")
-                ax.hlines(sup_last, xmin=s.index[0], xmax=s.index[-1], colors="tab:green", linestyles="-", linewidth=1.6, label="Support (252d)")
+                # Support/resistance values are kept as left labels only.
+                # The thick green/red horizontal price-chart lines were removed to reduce noise.
                 label_on_left(ax, res_last, f"R {fmt_price_val(res_last)}", color="tab:red")
                 label_on_left(ax, sup_last, f"S {fmt_price_val(sup_last)}", color="tab:green")
             if not yhat_all.empty:
