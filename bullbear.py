@@ -5,8 +5,8 @@
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
 # (NEW) Purple triangles for NTD crosses: ▲ Buy at -0.75 upward cross, ▼ Sell at +0.75 downward cross
 #       — shown on both NTD panels and the price charts
-# (NEW) Red/Green NPX↔NTD cross triangles mirrored onto PRICE charts at the same timestamps as NTD panel crosses
-#       — with slight vertical offsets only if they would overlap purple markers (timestamps remain identical)
+# (UPDATED) Removed hourly Momentum chart and removed red/green NPX↔NTD cross triangles from PRICE charts to reduce noise.
+# (UPDATED) BUY near-support green ribbon now starts with Profit Alert.
 
 import streamlit as st
 import pandas as pd
@@ -203,11 +203,6 @@ slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 1
 # NEW: Hourly S/R window
 st.sidebar.subheader("Hourly Support/Resistance Window")
 sr_lb_hourly = st.sidebar.slider("Hourly S/R lookback (bars)", 20, 240, 60, 5, key="sb_sr_lb_hourly")
-
-# Hourly Momentum
-st.sidebar.subheader("Hourly Momentum")
-show_mom_hourly = st.sidebar.checkbox("Show hourly momentum (ROC%)", value=True, key="sb_show_mom_hourly")
-mom_lb_hourly   = st.sidebar.slider("Momentum lookback (bars)", 3, 120, 12, 1, key="sb_mom_lb_hourly")
 
 # Hourly Indicator Panel
 st.sidebar.subheader("Hourly Indicator Panel")
@@ -1533,12 +1528,6 @@ with tab1:
             if not ntd_d_show.dropna().empty:
                 overlay_ntd_triangles_on_price(ax, ntd_d_show, df_show, low_thr=-0.75, high_thr=0.75)
 
-            # === NEW: Red/Green NPX↔NTD crosses mirrored on DAILY PRICE (aligned, no overlap with purple) ===
-            if not ntd_d_show.dropna().empty:
-                npx_for_price_show = npx_d_for_price.reindex(df_show.index)
-                overlay_npx_ntd_crosses_on_price(ax, df_show, npx_for_price_show, ntd_d_show,
-                                                 low_thr=-0.75, high_thr=0.75, y_offset_ratio=0.006, size=120)
-
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
 
@@ -1721,7 +1710,7 @@ with tab1:
                             conf_tag = f"↑{fmt_pct(p_up)}" if np.isfinite(p_up) else "↑n/a"
                             near_txt = f"Near support {fmt_price_val(sup_val)}"
                             pips_txt = _diff_text(sup_val, res_val, sel) if np.isfinite(sup_val) and np.isfinite(res_val) else ""
-                            st.success(f"**BUY** @ {fmt_price_val(signal['level'])} — {near_txt} with {conf_tag} • {pips_txt} | ADX {adx_last_h:.1f}")
+                            st.success(f"**Profit Alert:** **BUY** @ {fmt_price_val(signal['level'])} — {near_txt} with {conf_tag} • {pips_txt} | ADX {adx_last_h:.1f}")
                         else:
                             conf_tag = f"↓{fmt_pct(p_dn)}" if np.isfinite(p_dn) else "↓n/a"
                             near_txt = f"Near resistance {fmt_price_val(res_val)}"
@@ -1754,11 +1743,6 @@ with tab1:
                 # === Purple triangles on HOURLY PRICE for NTD threshold crosses ===
                 if not ntd_h.dropna().empty:
                     overlay_ntd_triangles_on_price(ax2, ntd_h, hc, low_thr=-0.75, high_thr=0.75)
-
-                # === NEW: Red/Green NPX↔NTD crosses mirrored on HOURLY PRICE (aligned, no overlap with purple) ===
-                if not ntd_h.dropna().empty:
-                    overlay_npx_ntd_crosses_on_price(ax2, hc, npx_h_for_price, ntd_h,
-                                                     low_thr=-0.75, high_thr=0.75, y_offset_ratio=0.006, size=120)
 
                 ax2.set_xlabel("Time (PST)")
                 ax2.legend(loc="lower left", framealpha=0.5)
@@ -1826,25 +1810,6 @@ with tab1:
                     ax2r.legend(loc="lower left", framealpha=0.5)
                     ax2r.set_xlabel("Time (PST)")
                     st.pyplot(fig2r)
-
-                # Momentum panel
-                if show_mom_hourly:
-                    roc = compute_roc(hc, n=mom_lb_hourly)
-                    res_m = roc.rolling(60, min_periods=1).max()
-                    sup_m = roc.rolling(60, min_periods=1).min()
-                    fig2m, ax2m = plt.subplots(figsize=(14,2.8))
-                    ax2m.set_title(f"Momentum (ROC% over {mom_lb_hourly} bars)")
-                    ax2m.plot(roc.index, roc, label=f"ROC%({mom_lb_hourly})")
-                    yhat_m, m_m = slope_line(roc, slope_lb_hourly)
-                    if not yhat_m.empty:
-                        ax2m.plot(yhat_m.index, yhat_m.values, "--", linewidth=2, label=f"Trend {slope_lb_hourly} ({fmt_slope(m_m)}%/bar)")
-                    ax2m.plot(res_m.index, res_m, ":", label="Mom Resistance")
-                    ax2m.plot(sup_m.index, sup_m, ":", label="Mom Support")
-                    ax2m.axhline(0, linestyle="--", linewidth=1)
-                    ax2m.set_xlabel("Time (PST)")
-                    ax2m.legend(loc="lower left", framealpha=0.5)
-                    ax2m.set_xlim(xlim_price)
-                    st.pyplot(fig2m)
 
         if mode == "Forex" and show_fx_news:
             st.subheader("Recent Forex News (Yahoo Finance)")
