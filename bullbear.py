@@ -1,6 +1,6 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
-# (UPDATED) NTD panels now use a normalized MACD overlay instead of MACD/NPX by default.
+# (UPDATED) Removed MACD from NTD panels; NTD panels now use a smoothed NPX price overlay.
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
 # (UPDATED) Removed hourly Momentum chart, red/green directional PSAR price overlays, and NTD-cross triangles.
@@ -258,18 +258,11 @@ show_ntd  = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd
 ntd_window= st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
 shade_ntd = st.sidebar.checkbox("Shade NTD (Daily & Hourly: green=up, red=down)", value=True, key="sb_ntd_shade")
 
-# MACD overlay for NTD panels
-st.sidebar.subheader("MACD Overlay (NTD Panels)")
-show_macd_ntd = st.sidebar.checkbox("Show MACD overlay on NTD panels", value=True, key="sb_show_macd_ntd")
-macd_fast     = st.sidebar.slider("MACD fast EMA", 3, 30, 12, 1, key="sb_macd_fast")
-macd_slow     = st.sidebar.slider("MACD slow EMA", 8, 80, 26, 1, key="sb_macd_slow")
-macd_signal   = st.sidebar.slider("MACD signal EMA", 2, 30, 9, 1, key="sb_macd_signal")
-macd_norm_win = st.sidebar.slider("MACD normalization window", 30, 600, 120, 10, key="sb_macd_norm_win")
-macd_min_hist = st.sidebar.slider("MACD min histogram strength", 0.00, 0.90, 0.05, 0.05, key="sb_macd_min_hist")
-
-# Legacy NPX overlay is kept optional but disabled by default because it was noisy for day trading.
-show_npx_ntd   = st.sidebar.checkbox("Show legacy NPX overlay on NTD panels", value=False, key="sb_show_npx_ntd")
-mark_npx_cross = st.sidebar.checkbox("Mark legacy NPX crosses", value=False, key="sb_mark_npx_cross")
+# Smoothed NPX overlay for NTD panels
+st.sidebar.subheader("Smoothed NPX Overlay (NTD Panels)")
+show_npx_ntd   = st.sidebar.checkbox("Show smoothed NPX overlay on NTD panels", value=True, key="sb_show_npx_ntd")
+npx_smooth_span = st.sidebar.slider("NPX smoothing EMA span", 2, 60, 9, 1, key="sb_npx_smooth_span")
+mark_npx_cross = st.sidebar.checkbox("Mark NTD buy/sell opportunities on NTD panels", value=True, key="sb_mark_npx_cross")
 
 # Ichimoku / Kijun
 st.sidebar.subheader("Normalized Ichimoku (EW panels) + Kijun on price")
@@ -562,28 +555,6 @@ def compute_nrsi(close: pd.Series, period: int = 14) -> pd.Series:
     nrsi = ((rsi - 50.0) / 50.0).clip(-1.0, 1.0)
     return nrsi.reindex(rsi.index)
 
-# ---- Normalized MACD (price-based) ----
-def compute_nmacd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9,
-                  norm_win: int = 240):
-    s = _coerce_1d_series(close).astype(float)
-    if s.empty:
-        return (pd.Series(index=s.index, dtype=float),)*3
-    ema_fast = s.ewm(span=int(fast), adjust=False).mean()
-    ema_slow = s.ewm(span=int(slow), adjust=False).mean()
-    macd = ema_fast - ema_slow
-    sig  = macd.ewm(span=int(signal), adjust=False).mean()
-    hist = macd - sig
-    minp = max(10, norm_win//10)
-    def _norm(x):
-        m = x.rolling(norm_win, min_periods=minp).mean()
-        sd = x.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
-        z = (x - m) / sd
-        return np.tanh(z / 2.0)
-    nmacd = _norm(macd)
-    nsignal = _norm(sig)
-    nhist = nmacd - nsignal
-    return nmacd.reindex(s.index), nsignal.reindex(s.index), nhist.reindex(s.index)
-
 # ---- Normalized Volume (z-score → tanh) ----
 def compute_nvol(volume: pd.Series, norm_win: int = 240) -> pd.Series:
     v = _coerce_1d_series(volume).astype(float)
@@ -648,49 +619,14 @@ def compute_normalized_price(close: pd.Series, window: int = 60) -> pd.Series:
     npx = np.tanh(z / 2.0)
     return npx.reindex(s.index)
 
-def compute_normalized_macd_for_ntd(close: pd.Series,
-                                    fast: int = 12,
-                                    slow: int = 26,
-                                    signal: int = 9,
-                                    norm_win: int = 120):
-    """
-    Standard MACD adapted for the normalized NTD panel.
 
-    The calculation uses the common trader setup:
-      - MACD line = EMA(fast) - EMA(slow)
-      - Signal line = EMA(MACD, signal)
-      - Histogram = MACD - Signal
-
-    To make it readable on the NTD panel, MACD and its signal are normalized
-    with a rolling standard deviation and compressed to [-1, +1]. The histogram
-    is the normalized MACD minus the normalized signal.
-    """
-    s = _coerce_1d_series(close).astype(float)
-    idx = s.index
+def smooth_npx(npx: pd.Series, span: int = 9) -> pd.Series:
+    """Smooth NPX for cleaner intraday reading on the NTD panel."""
+    s = _coerce_1d_series(npx).astype(float)
     if s.empty:
-        empty = pd.Series(index=idx, dtype=float)
-        return empty, empty, empty
-
-    fast = int(max(1, fast))
-    slow = int(max(fast + 1, slow))
-    signal = int(max(1, signal))
-    norm_win = int(max(10, norm_win))
-
-    ema_fast = s.ewm(span=fast, adjust=False).mean()
-    ema_slow = s.ewm(span=slow, adjust=False).mean()
-    macd_raw = ema_fast - ema_slow
-    signal_raw = macd_raw.ewm(span=signal, adjust=False).mean()
-
-    minp = max(10, norm_win // 4)
-    scale = macd_raw.rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
-    ret_scale = s.diff().rolling(norm_win, min_periods=minp).std().replace(0, np.nan)
-    scale = scale.fillna(ret_scale).replace(0, np.nan)
-
-    macd_norm = np.tanh((macd_raw / scale) / 2.0).replace([np.inf, -np.inf], np.nan).reindex(idx)
-    signal_norm = np.tanh((signal_raw / scale) / 2.0).replace([np.inf, -np.inf], np.nan).reindex(idx)
-    hist_norm = (macd_norm - signal_norm).reindex(idx).clip(-1.0, 1.0)
-
-    return macd_norm, signal_norm, hist_norm
+        return pd.Series(index=s.index, dtype=float)
+    span = int(max(1, span))
+    return s.ewm(span=span, adjust=False, min_periods=1).mean().clip(-1.0, 1.0).reindex(s.index)
 
 def shade_ntd_regions(ax, ntd: pd.Series):
     if ntd is None or ntd.empty:
@@ -963,11 +899,11 @@ def _ntd_buy_sell_opportunity_masks(ntd: pd.Series,
 # ========= NPX ↔ NTD overlay =========
 def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = True):
     """
-    Plot NPX on the NTD panel. Green/red triangles are restricted to actual
-    NTD buy/sell opportunities only, not every NPX↔NTD cross.
+    Plot smoothed NPX on the NTD panel. Green/red triangles are restricted to
+    actual NTD buy/sell opportunities only, not every NPX↔NTD cross.
     """
-    npx = _coerce_1d_series(npx)
-    ntd = _coerce_1d_series(ntd)
+    npx = _coerce_1d_series(npx).astype(float)
+    ntd = _coerce_1d_series(ntd).astype(float)
     idx = ntd.index.union(npx.index)
     npx = npx.reindex(idx)
     ntd = ntd.reindex(idx)
@@ -975,7 +911,8 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = 
     if npx.dropna().empty:
         return
 
-    ax.plot(npx.index, npx.values, "-", linewidth=1.2, color="tab:gray", alpha=0.9, label="NPX (Norm Price)")
+    ax.plot(npx.index, npx.values, "-", linewidth=1.6, color="tab:gray", alpha=0.95,
+            label="Smoothed NPX")
 
     if mark_crosses and not ntd.dropna().empty:
         try:
@@ -991,63 +928,6 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = 
                            color="tab:red", zorder=9, label="NTD SELL opportunity")
         except Exception:
             pass
-
-def overlay_macd_on_ntd(ax,
-                        macd_line: pd.Series,
-                        macd_signal_line: pd.Series,
-                        macd_hist: pd.Series,
-                        price_trend_slope: float,
-                        min_hist_strength: float = 0.05):
-    """
-    Plot normalized MACD on the NTD panel and mark only actionable opportunities
-    that agree with the price-chart trendline:
-      - BUY: MACD crosses above signal while the price trendline slopes upward.
-      - SELL: MACD crosses below signal while the price trendline slopes downward.
-
-    MACD is a widely used day-trading momentum indicator, so this replaces the
-    experimental MACD overlay.
-    """
-    m = _coerce_1d_series(macd_line).astype(float)
-    sig = _coerce_1d_series(macd_signal_line).reindex(m.index).astype(float)
-    hist = _coerce_1d_series(macd_hist).reindex(m.index).astype(float)
-
-    if m.dropna().empty or sig.dropna().empty:
-        return
-
-    ax.plot(m.index, m.values, "-", linewidth=1.4, color="tab:purple", alpha=0.95, label="MACD")
-    ax.plot(sig.index, sig.values, "--", linewidth=1.2, color="tab:orange", alpha=0.90, label="MACD signal")
-    if not hist.dropna().empty:
-        ax.plot(hist.index, hist.values, ":", linewidth=1.0, color="tab:gray", alpha=0.75, label="MACD hist")
-
-    ok = m.notna() & sig.notna()
-    if ok.sum() < 2:
-        return
-
-    m2 = m[ok]
-    sig2 = sig[ok]
-    hist2 = hist.reindex(m2.index).fillna(0.0)
-    above = m2 > sig2
-    cross_up = above & (~above.shift(1).fillna(False))
-    cross_dn = (~above) & (above.shift(1).fillna(False))
-
-    try:
-        trend_up = float(price_trend_slope) >= 0.0
-    except Exception:
-        trend_up = False
-    trend_down = not trend_up
-
-    min_hist_strength = float(max(0.0, min_hist_strength))
-    buy_mask = cross_up & trend_up & (hist2 >= min_hist_strength)
-    sell_mask = cross_dn & trend_down & (hist2 <= -min_hist_strength)
-
-    if buy_mask.any():
-        idx = list(buy_mask[buy_mask].index)
-        ax.scatter(idx, m2.loc[idx], marker="^", s=95, color="tab:green", zorder=11,
-                   label="MACD BUY opportunity")
-    if sell_mask.any():
-        idx = list(sell_mask[sell_mask].index)
-        ax.scatter(idx, m2.loc[idx], marker="v", s=95, color="tab:red", zorder=11,
-                   label="MACD SELL opportunity")
 
 # ========= NTD price-chart triangle overlays remain removed; NTD-panel triangles are opportunity-only =========
 
@@ -1473,13 +1353,10 @@ with tab1:
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
-            # NTD / MACD / optional legacy NPX
+            # NTD + smoothed NPX overlay
             ntd_d = compute_normalized_trend(df, window=ntd_window)
-            macd_d_full, macd_sig_d_full, macd_hist_d_full = compute_normalized_macd_for_ntd(
-                df,
-                fast=macd_fast, slow=macd_slow, signal=macd_signal, norm_win=macd_norm_win
-            )
-            npx_d_full = compute_normalized_price(df, window=ntd_window) if show_npx_ntd else pd.Series(index=df.index, dtype=float)
+            npx_d_raw = compute_normalized_price(df, window=ntd_window)
+            npx_d_full = smooth_npx(npx_d_raw, span=npx_smooth_span) if show_npx_ntd else pd.Series(index=df.index, dtype=float)
 
             # Ichimoku Kijun price-chart line removed by request.
             kijun_d = pd.Series(index=df.index, dtype=float)
@@ -1499,9 +1376,6 @@ with tab1:
             yhat_d_show = yhat_d.reindex(df_show.index) if not yhat_d.empty else yhat_d
             yhat_ema_show = yhat_ema30.reindex(df_show.index) if not yhat_ema30.empty else yhat_ema30
             ntd_d_show  = ntd_d.reindex(df_show.index)
-            macd_d_show = macd_d_full.reindex(df_show.index)
-            macd_sig_d_show = macd_sig_d_full.reindex(df_show.index)
-            macd_hist_d_show = macd_hist_d_full.reindex(df_show.index)
             npx_d_show  = npx_d_full.reindex(df_show.index)
             bb_mid_d_show = bb_mid_d.reindex(df_show.index)
             bb_up_d_show  = bb_up_d.reindex(df_show.index)
@@ -1596,7 +1470,7 @@ with tab1:
                 st.info(f"BB Divergence gated off: ADX {adx_last_d:.1f} < {adx_min}")
 
             # --- DAILY INDICATOR PANEL ---
-            axdw.set_title("Daily Indicator Panel — NTD + MACD + Trend")
+            axdw.set_title("Daily Indicator Panel — NTD + Smoothed NPX + Trend")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw, ntd_d_show)
             if show_ntd and not ntd_d_show.dropna().empty:
@@ -1606,12 +1480,6 @@ with tab1:
                     axdw.plot(ntd_trend_d.index, ntd_trend_d.values, "--", linewidth=2,
                               label=f"NTD Trend {slope_lb_daily} ({fmt_slope(ntd_m_d)}/bar)")
 
-            if show_macd_ntd and not macd_d_show.dropna().empty and not macd_sig_d_show.dropna().empty:
-                overlay_macd_on_ntd(
-                    axdw, macd_d_show, macd_sig_d_show, macd_hist_d_show,
-                    price_trend_slope=m_d,
-                    min_hist_strength=macd_min_hist
-                )
             if show_npx_ntd and not npx_d_show.dropna().empty and not ntd_d_show.dropna().empty:
                 overlay_npx_on_ntd(axdw, npx_d_show, ntd_d_show, mark_crosses=mark_npx_cross)
             if show_hma_rev_ntd and not hma_d_show.dropna().empty and not df_show.dropna().empty:
@@ -1647,12 +1515,10 @@ with tab1:
                 psar_h_df = compute_psar_from_ohlc(intraday, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
                 psar_h_df = psar_h_df.reindex(hc.index)
 
-                # NTD + MACD for the hourly indicator panel
+                # NTD + smoothed NPX for the hourly indicator panel
                 ntd_h = compute_normalized_trend(hc, window=ntd_window)
-                macd_h, macd_sig_h, macd_hist_h = compute_normalized_macd_for_ntd(
-                    hc,
-                    fast=macd_fast, slow=macd_slow, signal=macd_signal, norm_win=macd_norm_win
-                )
+                npx_h_raw = compute_normalized_price(hc, window=ntd_window)
+                npx_h = smooth_npx(npx_h_raw, span=npx_smooth_span) if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
 
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
                 r2_h = regression_r2(hc, slope_lb_hourly)
@@ -1834,23 +1700,17 @@ with tab1:
                     ax2v.legend(loc="lower left", framealpha=0.5)
                     st.pyplot(fig2v)
 
-                # === Hourly Indicator Panel: NTD + MACD + S↔R channel ===
+                # === Hourly Indicator Panel: NTD + Smoothed NPX + S↔R channel ===
                 if show_nrsi:
                     ntd_trend_h, ntd_m_h = slope_line(ntd_h, slope_lb_hourly)
-                    npx_h = compute_normalized_price(hc, window=ntd_window) if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
+                    npx_h = npx_h.reindex(hc.index) if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
-                    ax2r.set_title(f"Hourly Indicator Panel — NTD + MACD + Trend (win={ntd_window})")
+                    ax2r.set_title(f"Hourly Indicator Panel — NTD + Smoothed NPX + Trend (win={ntd_window})")
                     if shade_ntd and not ntd_h.dropna().empty:
                         shade_ntd_regions(ax2r, ntd_h)
                     if show_ntd_channel and np.isfinite(res_val) and np.isfinite(sup_val):
                         overlay_inrange_on_ntd(ax2r, hc, sup_h, res_h)
                     ax2r.plot(ntd_h.index, ntd_h, "-", linewidth=1.6, label="NTD")
-                    if show_macd_ntd and not macd_h.dropna().empty and not macd_sig_h.dropna().empty:
-                        overlay_macd_on_ntd(
-                            ax2r, macd_h, macd_sig_h, macd_hist_h,
-                            price_trend_slope=m_h,
-                            min_hist_strength=macd_min_hist
-                        )
                     if show_npx_ntd and not npx_h.dropna().empty and not ntd_h.dropna().empty:
                         overlay_npx_on_ntd(ax2r, npx_h, ntd_h, mark_crosses=mark_npx_cross)
                     if not ntd_trend_h.empty:
