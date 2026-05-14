@@ -4,6 +4,8 @@
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
 # (UPDATED) Removed hourly Momentum chart, red/green directional PSAR price overlays, and NTD-cross triangles.
+# (UPDATED) Removed Ichimoku Kijun and Supertrend lines from price charts.
+# (UPDATED) Fibonacci lines are shown on price charts by default.
 # (UPDATED) BUY near-support green ribbon now starts with Profit Alert.
 
 import streamlit as st
@@ -193,7 +195,7 @@ daily_view = st.sidebar.selectbox(
     key="sb_daily_view"
 )
 
-show_fibs = st.sidebar.checkbox("Show Fibonacci (hourly only)", value=False, key="sb_show_fibs")
+show_fibs = st.sidebar.checkbox("Show Fibonacci lines on price charts", value=True, key="sb_show_fibs")
 
 slope_lb_daily   = st.sidebar.slider("Daily slope lookback (bars)",   10, 360, 90, 10, key="sb_slope_lb_daily")
 slope_lb_hourly  = st.sidebar.slider("Hourly slope lookback (bars)",  12, 480, 120,  6, key="sb_slope_lb_hourly")
@@ -1319,14 +1321,8 @@ with tab1:
             npx_d_for_price = compute_normalized_price(df, window=ntd_window)  # for price overlay
             npx_d_full = compute_normalized_price(df, window=ntd_window) if show_npx_ntd else pd.Series(index=df.index, dtype=float)
 
-            # Kijun
+            # Ichimoku Kijun price-chart line removed by request.
             kijun_d = pd.Series(index=df.index, dtype=float)
-            if df_ohlc is not None and not df_ohlc.empty and show_ichi:
-                _, kijun_d, _, _, _ = ichimoku_lines(
-                    df_ohlc["High"], df_ohlc["Low"], df_ohlc["Close"],
-                    conv=ichi_conv, base=ichi_base, span_b=ichi_spanb, shift_cloud=False
-                )
-                kijun_d = kijun_d.ffill().bfill()
 
             # BBands (Daily)
             bb_mid_d, bb_up_d, bb_lo_d, bb_pctb_d, bb_nbb_d = compute_bbands(df, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
@@ -1344,7 +1340,6 @@ with tab1:
             yhat_ema_show = yhat_ema30.reindex(df_show.index) if not yhat_ema30.empty else yhat_ema30
             ntd_d_show  = ntd_d.reindex(df_show.index)
             npx_d_show  = npx_d_full.reindex(df_show.index)
-            kijun_d_show = kijun_d.reindex(df_show.index).ffill().bfill()
             bb_mid_d_show = bb_mid_d.reindex(df_show.index)
             bb_up_d_show  = bb_up_d.reindex(df_show.index)
             bb_lo_d_show  = bb_lo_d.reindex(df_show.index)
@@ -1367,9 +1362,6 @@ with tab1:
             ax.plot(sup30_show, ":", label="30 Support")
             if show_hma and not hma_d_show.dropna().empty:
                 ax.plot(hma_d_show.index, hma_d_show.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
-            if show_ichi and not kijun_d_show.dropna().empty:
-                ax.plot(kijun_d_show.index, kijun_d_show.values, "-", linewidth=1.8, color="black",
-                        label=f"Ichimoku Kijun ({ichi_base})")
             if show_bbands and not bb_up_d_show.dropna().empty and not bb_lo_d_show.dropna().empty:
                 ax.fill_between(df_show.index, bb_lo_d_show, bb_up_d_show, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
                 ax.plot(bb_mid_d_show.index, bb_mid_d_show.values, "-", linewidth=1.1,
@@ -1404,6 +1396,13 @@ with tab1:
                     ax.hlines(y, xmin=x0, xmax=x1, linestyles="dashed", linewidth=1.0)
                 for lbl, y in piv.items():
                     ax.text(x1, y, f" {lbl} = {fmt_price_val(y)}", va="center")
+            if show_fibs and len(df_show) > 0:
+                fibs_d = fibonacci_levels(df_show)
+                for lbl, y in fibs_d.items():
+                    ax.hlines(y, xmin=df_show.index[0], xmax=df_show.index[-1],
+                              linestyles="dotted", linewidth=1.0, alpha=0.9)
+                for lbl, y in fibs_d.items():
+                    ax.text(df_show.index[-1], y, f" Fib {lbl}", va="center", fontsize=8)
             if len(res30_show) and len(sup30_show):
                 r30_last = _safe_last_float(res30_show); s30_last = _safe_last_float(sup30_show)
                 ax.text(df_show.index[-1], r30_last, f"  30R = {fmt_price_val(r30_last)}", va="bottom")
@@ -1470,16 +1469,9 @@ with tab1:
                 res_h = hc.rolling(sr_lb_hourly, min_periods=1).max()
                 sup_h = hc.rolling(sr_lb_hourly, min_periods=1).min()
 
-                st_intraday = compute_supertrend(intraday, atr_period=atr_period, atr_mult=atr_mult)
-                st_line_intr = st_intraday["ST"].reindex(hc.index) if "ST" in st_intraday else pd.Series(index=hc.index, dtype=float)
-
+                # Supertrend and Ichimoku Kijun price-chart lines removed by request.
+                st_line_intr = pd.Series(index=hc.index, dtype=float)
                 kj_h = pd.Series(index=hc.index, dtype=float)
-                if {'High','Low','Close'}.issubset(intraday.columns) and show_ichi:
-                    _, kj_h, _, _, _ = ichimoku_lines(
-                        intraday["High"], intraday["Low"], intraday["Close"],
-                        conv=ichi_conv, base=ichi_base, span_b=ichi_spanb, shift_cloud=False
-                    )
-                    kj_h = kj_h.reindex(hc.index).ffill().bfill()
 
                 bb_mid_h, bb_up_h, bb_lo_h, bb_pctb_h, bb_nbb_h = compute_bbands(hc, window=bb_win, mult=bb_mult, use_ema=bb_use_ema)
                 hma_h = compute_hma(hc, period=hma_period)
@@ -1505,8 +1497,6 @@ with tab1:
                 ax2.plot(hc.index, trend_h, "--", label=f"Trend (m={fmt_slope(slope_h)}/bar)", linewidth=2)
                 if show_hma and not hma_h.dropna().empty:
                     ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
-                if show_ichi and not kj_h.dropna().empty:
-                    ax2.plot(kj_h.index, kj_h.values, "-", linewidth=1.8, color="black", label=f"Ichimoku Kijun ({ichi_base})")
                 if show_bbands and not bb_up_h.dropna().empty and not bb_lo_h.dropna().empty:
                     ax2.fill_between(hc.index, bb_lo_h, bb_up_h, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
                     ax2.plot(bb_mid_h.index, bb_mid_h.values, "-", linewidth=1.1, label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
@@ -1550,8 +1540,6 @@ with tab1:
                              fontsize=11, fontweight="bold",
                              bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
-                if not st_line_intr.dropna().empty:
-                    ax2.plot(st_line_intr.index, st_line_intr.values, "-", label=f"Supertrend ({atr_period},{atr_mult})")
                 if not yhat_h.empty:
                     ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2, label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
@@ -1569,9 +1557,10 @@ with tab1:
                 if show_fibs and not hc.empty:
                     fibs_h = fibonacci_levels(hc)
                     for lbl, y in fibs_h.items():
-                        ax2.hlines(y, xmin=hc.index[0], xmax=hc.index[-1], linestyles="dotted", linewidth=1)
+                        ax2.hlines(y, xmin=hc.index[0], xmax=hc.index[-1],
+                                   linestyles="dotted", linewidth=1.0, alpha=0.9)
                     for lbl, y in fibs_h.items():
-                        ax2.text(hc.index[-1], y, f" {lbl}", va="center")
+                        ax2.text(hc.index[-1], y, f" Fib {lbl}", va="center", fontsize=8)
 
                 if mode == "Forex" and show_fx_news and not hc.empty:
                     fx_news = fetch_yf_news(sel, window_days=news_window_days)
