@@ -7,6 +7,7 @@
 # (UPDATED) Removed Ichimoku Kijun and Supertrend lines from price charts.
 # (UPDATED) Fibonacci lines are shown on price charts by default.
 # (UPDATED) BUY near-support green ribbon now starts with Profit Alert.
+# (UPDATED) NTD-panel green/red triangles now appear only for NTD buy/sell opportunities.
 
 import streamlit as st
 import pandas as pd
@@ -867,42 +868,76 @@ def detect_hma_reversal_masks(price: pd.Series, hma: pd.Series, lookback: int = 
     return buy_rev, sell_rev
 
 def overlay_hma_reversal_on_ntd(ax, price: pd.Series, hma: pd.Series, lookback: int = 3,
-                                y_up: float = 0.95, y_dn: float = -0.95, label_prefix: str = "HMA REV", period: int = 55):
+                                y_up: float = 0.95, y_dn: float = -0.95,
+                                label_prefix: str = "HMA REV", period: int = 55):
+    """
+    HMA reversal markers are intentionally NOT triangles so the only green/red
+    triangles on the NTD panel are the actual NTD buy/sell opportunity markers.
+    """
     try:
         buy_rev, sell_rev = detect_hma_reversal_masks(price, hma, lookback=lookback)
         idx_up = list(buy_rev[buy_rev].index)
         idx_dn = list(sell_rev[sell_rev].index)
         if len(idx_up):
-            ax.scatter(idx_up, [y_up]*len(idx_up), marker="^", s=70, color="tab:green",
+            ax.scatter(idx_up, [y_up]*len(idx_up), marker="s", s=60, color="tab:green",
                        zorder=8, label=f"HMA({period}) ↑ REV")
         if len(idx_dn):
-            ax.scatter(idx_dn, [y_dn]*len(idx_dn), marker="v", s=70, color="tab:red",
+            ax.scatter(idx_dn, [y_dn]*len(idx_dn), marker="D", s=60, color="tab:red",
                        zorder=8, label=f"HMA({period}) ↓ REV")
     except Exception:
         pass
 
+def _ntd_buy_sell_opportunity_masks(ntd: pd.Series,
+                                    low_thr: float = -0.75,
+                                    high_thr: float = 0.75):
+    """
+    NTD opportunity rules:
+      - BUY opportunity: NTD crosses upward through the lower opportunity level.
+      - SELL opportunity: NTD crosses downward through the upper opportunity level.
+    """
+    n = _coerce_1d_series(ntd).astype(float)
+    if n.dropna().shape[0] < 2:
+        idx = n.index if len(n) else pd.Index([])
+        return pd.Series(False, index=idx), pd.Series(False, index=idx)
+
+    dn = n.diff()
+    buy = (n.shift(1) < low_thr) & (n >= low_thr) & (dn > 0)
+    sell = (n.shift(1) > high_thr) & (n <= high_thr) & (dn < 0)
+    return buy.fillna(False), sell.fillna(False)
+
 # ========= NPX ↔ NTD overlay =========
 def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = True):
+    """
+    Plot NPX on the NTD panel. Green/red triangles are restricted to actual
+    NTD buy/sell opportunities only, not every NPX↔NTD cross.
+    """
     npx = _coerce_1d_series(npx)
     ntd = _coerce_1d_series(ntd)
     idx = ntd.index.union(npx.index)
-    npx = npx.reindex(idx); ntd = ntd.reindex(idx)
+    npx = npx.reindex(idx)
+    ntd = ntd.reindex(idx)
+
     if npx.dropna().empty:
         return
+
     ax.plot(npx.index, npx.values, "-", linewidth=1.2, color="tab:gray", alpha=0.9, label="NPX (Norm Price)")
+
     if mark_crosses and not ntd.dropna().empty:
-        up_mask, dn_mask = _cross_series(npx, ntd)
         try:
-            up_idx = list(up_mask[up_mask].index)
-            dn_idx = list(dn_mask[dn_mask].index)
-            if len(up_idx):
-                ax.scatter(up_idx, ntd.loc[up_idx], marker="^", s=65, color="tab:green", zorder=9, label="Price↑NTD")
-            if len(dn_idx):
-                ax.scatter(dn_idx, ntd.loc[dn_idx], marker="v", s=65, color="tab:red", zorder=9, label="Price↓NTD")
+            buy_mask, sell_mask = _ntd_buy_sell_opportunity_masks(ntd)
+            buy_idx = list(buy_mask[buy_mask].index)
+            sell_idx = list(sell_mask[sell_mask].index)
+
+            if len(buy_idx):
+                ax.scatter(buy_idx, ntd.loc[buy_idx], marker="^", s=85,
+                           color="tab:green", zorder=9, label="NTD BUY opportunity")
+            if len(sell_idx):
+                ax.scatter(sell_idx, ntd.loc[sell_idx], marker="v", s=85,
+                           color="tab:red", zorder=9, label="NTD SELL opportunity")
         except Exception:
             pass
 
-# ========= NTD threshold crossing price/panel triangles removed =========
+# ========= NTD price-chart triangle overlays remain removed; NTD-panel triangles are opportunity-only =========
 
 # ========= Sessions =========
 NY_TZ   = pytz.timezone("America/New_York")
@@ -1069,10 +1104,10 @@ def overlay_inrange_on_ntd(ax, price: pd.Series, sup: pd.Series, res: pd.Series)
     enter_from_above = (state.shift(1) ==  1) & (state == 0)
     if enter_from_below.any():
         ax.scatter(price.index[enter_from_below], [0.92]*int(enter_from_below.sum()),
-                   marker="^", s=60, color="tab:green", zorder=7, label="Enter from S")
+                   marker="o", s=45, color="tab:green", zorder=7, label="Enter from S")
     if enter_from_above.any():
         ax.scatter(price.index[enter_from_above], [0.92]*int(enter_from_above.sum()),
-                   marker="v", s=60, color="tab:orange", zorder=7, label="Enter from R")
+                   marker="o", s=45, color="tab:orange", zorder=7, label="Enter from R")
     lbl = None; col = "black"
     last = state.dropna().iloc[-1] if state.dropna().shape[0] else np.nan
     if np.isfinite(last):
