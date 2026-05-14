@@ -1,6 +1,6 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
-# (NEW) Normalized Price (NPX) plotted on NTD panels + crossing markers
+# (UPDATED) NTD panels now use a day-trading momentum overlay (DTM) instead of NPX by default.
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
 # (UPDATED) Removed hourly Momentum chart, red/green directional PSAR price overlays, and NTD-cross triangles.
@@ -257,8 +257,19 @@ st.sidebar.subheader("Normalized Trend (NTD panels — Daily & Hourly)")
 show_ntd  = st.sidebar.checkbox("Show NTD overlay", value=True, key="sb_show_ntd")
 ntd_window= st.sidebar.slider("NTD slope window", 10, 300, 60, 5, key="sb_ntd_win")
 shade_ntd = st.sidebar.checkbox("Shade NTD (Daily & Hourly: green=up, red=down)", value=True, key="sb_ntd_shade")
-show_npx_ntd   = st.sidebar.checkbox("Overlay normalized price (NPX) on NTD panels", value=True, key="sb_show_npx_ntd")
-mark_npx_cross = st.sidebar.checkbox("Mark NPX↔NTD crosses (▲/▼)", value=True, key="sb_mark_npx_cross")
+
+# Day-trade momentum overlay for NTD panels
+st.sidebar.subheader("Day-Trade Momentum Overlay (NTD Panels)")
+show_dtm_ntd = st.sidebar.checkbox("Show DTM overlay on NTD panels", value=True, key="sb_show_dtm_ntd")
+dtm_fast     = st.sidebar.slider("DTM fast EMA", 3, 30, 8, 1, key="sb_dtm_fast")
+dtm_slow     = st.sidebar.slider("DTM slow EMA", 8, 80, 21, 1, key="sb_dtm_slow")
+dtm_signal   = st.sidebar.slider("DTM signal EMA", 2, 30, 5, 1, key="sb_dtm_signal")
+dtm_atr      = st.sidebar.slider("DTM ATR/vol normalization", 5, 60, 14, 1, key="sb_dtm_atr")
+dtm_min_abs  = st.sidebar.slider("DTM min strength", 0.00, 0.90, 0.10, 0.05, key="sb_dtm_min_abs")
+
+# Legacy NPX overlay is kept optional but disabled by default because it was noisy for day trading.
+show_npx_ntd   = st.sidebar.checkbox("Show legacy NPX overlay on NTD panels", value=False, key="sb_show_npx_ntd")
+mark_npx_cross = st.sidebar.checkbox("Mark legacy NPX crosses", value=False, key="sb_mark_npx_cross")
 
 # Ichimoku / Kijun
 st.sidebar.subheader("Normalized Ichimoku (EW panels) + Kijun on price")
@@ -637,6 +648,57 @@ def compute_normalized_price(close: pd.Series, window: int = 60) -> pd.Series:
     npx = np.tanh(z / 2.0)
     return npx.reindex(s.index)
 
+def compute_daytrade_momentum(close: pd.Series,
+                              high: pd.Series = None,
+                              low: pd.Series = None,
+                              fast: int = 8,
+                              slow: int = 21,
+                              signal: int = 5,
+                              atr_period: int = 14):
+    """
+    Day-Trade Momentum (DTM):
+      - Fast EMA minus slow EMA, normalized by intraday volatility/ATR.
+      - Values are compressed to [-1, +1] with tanh so it can live on the NTD panel.
+      - The signal line is a short EMA of the normalized momentum.
+
+    This is more useful than NPX for day trading because it responds to directional
+    price acceleration while still respecting the price chart's trend context.
+    """
+    s = _coerce_1d_series(close).astype(float)
+    idx = s.index
+    if s.empty:
+        empty = pd.Series(index=idx, dtype=float)
+        return empty, empty, empty
+
+    fast = int(max(1, fast))
+    slow = int(max(fast + 1, slow))
+    signal = int(max(1, signal))
+    atr_period = int(max(1, atr_period))
+
+    ema_fast = s.ewm(span=fast, adjust=False).mean()
+    ema_slow = s.ewm(span=slow, adjust=False).mean()
+    raw = ema_fast - ema_slow
+
+    if high is not None and low is not None:
+        try:
+            h = _coerce_1d_series(high).reindex(idx).astype(float)
+            l = _coerce_1d_series(low).reindex(idx).astype(float)
+            tr1 = (h - l).abs()
+            tr2 = (h - s.shift(1)).abs()
+            tr3 = (l - s.shift(1)).abs()
+            tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+            denom = tr.ewm(alpha=1/atr_period, adjust=False).mean()
+        except Exception:
+            denom = s.diff().abs().ewm(alpha=1/atr_period, adjust=False).mean()
+    else:
+        denom = s.diff().abs().ewm(alpha=1/atr_period, adjust=False).mean()
+
+    denom = denom.replace(0, np.nan)
+    normalized = np.tanh((raw / denom) / 2.0).replace([np.inf, -np.inf], np.nan).reindex(idx)
+    signal_line = normalized.ewm(span=signal, adjust=False).mean().reindex(idx)
+    hist = (normalized - signal_line).reindex(idx)
+    return normalized, signal_line, hist
+
 def shade_ntd_regions(ax, ntd: pd.Series):
     if ntd is None or ntd.empty:
         return
@@ -936,6 +998,53 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = 
                            color="tab:red", zorder=9, label="NTD SELL opportunity")
         except Exception:
             pass
+
+def overlay_daytrade_momentum_on_ntd(ax,
+                                     dtm: pd.Series,
+                                     dtm_signal_line: pd.Series,
+                                     price_trend_slope: float,
+                                     min_strength: float = 0.10):
+    """
+    Plot DTM and mark only actionable DTM opportunities that agree with the
+    price-chart trendline:
+      - BUY: DTM crosses above its signal while the price trendline slopes upward.
+      - SELL: DTM crosses below its signal while the price trendline slopes downward.
+    """
+    m = _coerce_1d_series(dtm).astype(float)
+    sig = _coerce_1d_series(dtm_signal_line).reindex(m.index).astype(float)
+    if m.dropna().empty or sig.dropna().empty:
+        return
+
+    ax.plot(m.index, m.values, "-", linewidth=1.4, color="tab:purple", alpha=0.95, label="DTM momentum")
+    ax.plot(sig.index, sig.values, "--", linewidth=1.2, color="tab:orange", alpha=0.90, label="DTM signal")
+
+    ok = m.notna() & sig.notna()
+    if ok.sum() < 2:
+        return
+    m2 = m[ok]
+    sig2 = sig[ok]
+    above = m2 > sig2
+    cross_up = above & (~above.shift(1).fillna(False))
+    cross_dn = (~above) & (above.shift(1).fillna(False))
+
+    try:
+        trend_up = float(price_trend_slope) >= 0.0
+    except Exception:
+        trend_up = False
+    trend_down = not trend_up
+
+    min_strength = float(max(0.0, min_strength))
+    buy_mask = cross_up & trend_up & (m2 >= min_strength)
+    sell_mask = cross_dn & trend_down & (m2 <= -min_strength)
+
+    if buy_mask.any():
+        idx = list(buy_mask[buy_mask].index)
+        ax.scatter(idx, m2.loc[idx], marker="^", s=95, color="tab:green", zorder=11,
+                   label="DTM BUY opportunity")
+    if sell_mask.any():
+        idx = list(sell_mask[sell_mask].index)
+        ax.scatter(idx, m2.loc[idx], marker="v", s=95, color="tab:red", zorder=11,
+                   label="DTM SELL opportunity")
 
 # ========= NTD price-chart triangle overlays remain removed; NTD-panel triangles are opportunity-only =========
 
@@ -1361,9 +1470,14 @@ with tab1:
             yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
-            # NTD/NPX for markers
-            ntd_d = compute_normalized_trend(df, window=ntd_window)  # compute regardless of show flag (needed for markers)
-            npx_d_for_price = compute_normalized_price(df, window=ntd_window)  # for price overlay
+            # NTD / DTM / optional legacy NPX
+            ntd_d = compute_normalized_trend(df, window=ntd_window)
+            dtm_d_full, dtm_sig_d_full, dtm_hist_d_full = compute_daytrade_momentum(
+                df,
+                high=df_ohlc["High"] if df_ohlc is not None and not df_ohlc.empty and "High" in df_ohlc else None,
+                low=df_ohlc["Low"] if df_ohlc is not None and not df_ohlc.empty and "Low" in df_ohlc else None,
+                fast=dtm_fast, slow=dtm_slow, signal=dtm_signal, atr_period=dtm_atr
+            )
             npx_d_full = compute_normalized_price(df, window=ntd_window) if show_npx_ntd else pd.Series(index=df.index, dtype=float)
 
             # Ichimoku Kijun price-chart line removed by request.
@@ -1384,6 +1498,8 @@ with tab1:
             yhat_d_show = yhat_d.reindex(df_show.index) if not yhat_d.empty else yhat_d
             yhat_ema_show = yhat_ema30.reindex(df_show.index) if not yhat_ema30.empty else yhat_ema30
             ntd_d_show  = ntd_d.reindex(df_show.index)
+            dtm_d_show = dtm_d_full.reindex(df_show.index)
+            dtm_sig_d_show = dtm_sig_d_full.reindex(df_show.index)
             npx_d_show  = npx_d_full.reindex(df_show.index)
             bb_mid_d_show = bb_mid_d.reindex(df_show.index)
             bb_up_d_show  = bb_up_d.reindex(df_show.index)
@@ -1478,7 +1594,7 @@ with tab1:
                 st.info(f"BB Divergence gated off: ADX {adx_last_d:.1f} < {adx_min}")
 
             # --- DAILY INDICATOR PANEL ---
-            axdw.set_title("Daily Indicator Panel — NTD + NPX (Normalized Price) + Trend")
+            axdw.set_title("Daily Indicator Panel — NTD + DTM (Day-Trade Momentum) + Trend")
             if show_ntd and shade_ntd and not ntd_d_show.dropna().empty:
                 shade_ntd_regions(axdw, ntd_d_show)
             if show_ntd and not ntd_d_show.dropna().empty:
@@ -1488,6 +1604,12 @@ with tab1:
                     axdw.plot(ntd_trend_d.index, ntd_trend_d.values, "--", linewidth=2,
                               label=f"NTD Trend {slope_lb_daily} ({fmt_slope(ntd_m_d)}/bar)")
 
+            if show_dtm_ntd and not dtm_d_show.dropna().empty and not dtm_sig_d_show.dropna().empty:
+                overlay_daytrade_momentum_on_ntd(
+                    axdw, dtm_d_show, dtm_sig_d_show,
+                    price_trend_slope=m_d,
+                    min_strength=dtm_min_abs
+                )
             if show_npx_ntd and not npx_d_show.dropna().empty and not ntd_d_show.dropna().empty:
                 overlay_npx_on_ntd(axdw, npx_d_show, ntd_d_show, mark_crosses=mark_npx_cross)
             if show_hma_rev_ntd and not hma_d_show.dropna().empty and not df_show.dropna().empty:
@@ -1523,9 +1645,14 @@ with tab1:
                 psar_h_df = compute_psar_from_ohlc(intraday, step=psar_step, max_step=psar_max) if show_psar else pd.DataFrame()
                 psar_h_df = psar_h_df.reindex(hc.index)
 
-                # NTD + NPX for markers (hourly)
+                # NTD + day-trade momentum for the hourly indicator panel
                 ntd_h = compute_normalized_trend(hc, window=ntd_window)
-                npx_h_for_price = compute_normalized_price(hc, window=ntd_window)
+                dtm_h, dtm_sig_h, dtm_hist_h = compute_daytrade_momentum(
+                    hc,
+                    high=intraday["High"] if "High" in intraday else None,
+                    low=intraday["Low"] if "Low" in intraday else None,
+                    fast=dtm_fast, slow=dtm_slow, signal=dtm_signal, atr_period=dtm_atr
+                )
 
                 yhat_h, m_h = slope_line(hc, slope_lb_hourly)
                 r2_h = regression_r2(hc, slope_lb_hourly)
@@ -1707,17 +1834,23 @@ with tab1:
                     ax2v.legend(loc="lower left", framealpha=0.5)
                     st.pyplot(fig2v)
 
-                # === Hourly Indicator Panel: NTD + NPX + S↔R channel ===
+                # === Hourly Indicator Panel: NTD + DTM + S↔R channel ===
                 if show_nrsi:
                     ntd_trend_h, ntd_m_h = slope_line(ntd_h, slope_lb_hourly)
                     npx_h = compute_normalized_price(hc, window=ntd_window) if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
-                    ax2r.set_title(f"Hourly Indicator Panel — NTD + NPX (Normalized Price) + Trend (win={ntd_window})")
+                    ax2r.set_title(f"Hourly Indicator Panel — NTD + DTM (Day-Trade Momentum) + Trend (win={ntd_window})")
                     if shade_ntd and not ntd_h.dropna().empty:
                         shade_ntd_regions(ax2r, ntd_h)
                     if show_ntd_channel and np.isfinite(res_val) and np.isfinite(sup_val):
                         overlay_inrange_on_ntd(ax2r, hc, sup_h, res_h)
                     ax2r.plot(ntd_h.index, ntd_h, "-", linewidth=1.6, label="NTD")
+                    if show_dtm_ntd and not dtm_h.dropna().empty and not dtm_sig_h.dropna().empty:
+                        overlay_daytrade_momentum_on_ntd(
+                            ax2r, dtm_h, dtm_sig_h,
+                            price_trend_slope=m_h,
+                            min_strength=dtm_min_abs
+                        )
                     if show_npx_ntd and not npx_h.dropna().empty and not ntd_h.dropna().empty:
                         overlay_npx_on_ntd(ax2r, npx_h, ntd_h, mark_crosses=mark_npx_cross)
                     if not ntd_trend_h.empty:
