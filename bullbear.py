@@ -302,7 +302,7 @@ else:
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
     s = (yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
-         .asfreq("D").fillna(method="ffill"))
+         .asfreq("D").ffill())
     try:
         s = s.tz_localize(PACIFIC)
     except TypeError:
@@ -312,7 +312,7 @@ def fetch_hist(ticker: str) -> pd.Series:
 @st.cache_data(ttl=120)
 def fetch_hist_max(ticker: str) -> pd.Series:
     df = yf.download(ticker, period="max")[['Close']].dropna()
-    s = df['Close'].asfreq("D").fillna(method="ffill")
+    s = df['Close'].asfreq("D").ffill()
     try:
         s = s.tz_localize(PACIFIC)
     except TypeError:
@@ -1354,173 +1354,6 @@ def annotate_trade_plan_on_price(ax, trend_slope: float, support_val: float, res
         label_on_right(ax, resistance_val, f"▼ SELL @{fmt_price_val(resistance_val)}", color="tab:red", fontsize=9)
         label_on_right(ax, support_val, f"🎯 TAKE PROFIT @{fmt_price_val(support_val)}", color="tab:blue", fontsize=9)
 
-
-
-# ========= -0.75 S/R Reversal Crosser Scanner =========
-def _last_sr_low_reversal_setup(sri: pd.Series,
-                                threshold: float = -0.75,
-                                recent_bars: int = 15,
-                                confirm_bars: int = 2,
-                                current_must_be_below: bool = True):
-    """
-    Finds the most recent daily S/R Reversal Index setup where the line was
-    below the threshold and has started reversing upward.
-
-    A valid setup requires:
-      - the S/R Reversal Index recently reached/breached threshold,
-      - the latest confirmed move is upward for `confirm_bars`,
-      - the event happened within `recent_bars`,
-      - optionally, the current S/R Reversal Index is still below threshold.
-    """
-    s = _coerce_1d_series(sri).dropna().astype(float)
-    if s.shape[0] < max(4, int(confirm_bars) + 2):
-        return None
-
-    try:
-        thr = float(threshold)
-    except Exception:
-        thr = -0.75
-    try:
-        rb = max(1, int(recent_bars))
-    except Exception:
-        rb = 15
-    try:
-        cb = max(1, int(confirm_bars))
-    except Exception:
-        cb = 2
-
-    current_val = float(s.iloc[-1])
-    if current_must_be_below and not (np.isfinite(current_val) and current_val <= thr):
-        return None
-
-    vals = s.to_numpy(dtype=float)
-    event_idx = None
-
-    # Search backwards for the newest confirmed upward turn from/below threshold.
-    for i in range(len(vals) - 1, cb - 1, -1):
-        bars_since = (len(vals) - 1) - i
-        if bars_since > rb:
-            break
-
-        segment = vals[i - cb:i + 1]
-        if len(segment) < cb + 1 or not np.all(np.isfinite(segment)):
-            continue
-
-        deltas = np.diff(segment)
-        if not np.all(deltas > 0):
-            continue
-
-        recent_start = max(0, i - max(rb, cb * 2))
-        recent_slice = vals[recent_start:i + 1]
-        if not np.isfinite(recent_slice).any():
-            continue
-
-        recent_min = float(np.nanmin(recent_slice))
-        # Reversal must come from the support-side zone.
-        if recent_min <= thr and vals[i] <= thr:
-            event_idx = i
-            break
-
-    if event_idx is None:
-        return None
-
-    event_time = s.index[event_idx]
-    bars_since = (len(s) - 1) - event_idx
-    recent_window = s.iloc[max(0, event_idx - rb):event_idx + 1]
-
-    return {
-        "event_time": event_time,
-        "bars_since": int(bars_since),
-        "event_value": float(s.iloc[event_idx]),
-        "current_value": current_val,
-        "recent_min": float(recent_window.min()) if not recent_window.empty else np.nan,
-    }
-
-
-@st.cache_data(ttl=120, show_spinner=False)
-def scan_symbol_sr_low_crosser_daily(symbol: str,
-                                     threshold: float = -0.75,
-                                     recent_bars: int = 15,
-                                     confirm_bars: int = 2,
-                                     sr_window: int = 30,
-                                     slope_lookback: int = 90,
-                                     smooth_span: int = 8):
-    """
-    Returns one scanner row for the -0.75 SR Crossers tab, or None.
-    Daily chart only.
-    """
-    try:
-        price = fetch_hist(symbol)
-        price = _coerce_1d_series(price).dropna()
-        if price.empty or price.shape[0] < max(40, int(sr_window) + 5):
-            return None
-
-        try:
-            srw = max(2, int(sr_window))
-        except Exception:
-            srw = 30
-
-        resistance = price.rolling(srw, min_periods=1).max()
-        support = price.rolling(srw, min_periods=1).min()
-        sri = compute_sr_reversal_index(price, support, resistance, smooth_span=smooth_span).dropna()
-
-        setup = _last_sr_low_reversal_setup(
-            sri,
-            threshold=threshold,
-            recent_bars=recent_bars,
-            confirm_bars=confirm_bars,
-            current_must_be_below=True,
-        )
-        if setup is None:
-            return None
-
-        _, trend_slope = slope_line(price, slope_lookback)
-        trend = "Upward" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward"
-
-        return {
-            "Symbol": symbol,
-            "Trend": trend,
-            "Bars Since Reversal": setup["bars_since"],
-            "Reversal Time": setup["event_time"],
-            "S/R Rev @ Reversal": setup["event_value"],
-            "Current S/R Rev": setup["current_value"],
-            "Recent Min S/R Rev": setup["recent_min"],
-            "Last Close": _safe_last_float(price),
-            "Trend Slope": float(trend_slope) if np.isfinite(trend_slope) else np.nan,
-        }
-    except Exception:
-        return None
-
-
-def _format_sr_low_crosser_table(rows):
-    if not rows:
-        return pd.DataFrame(columns=[
-            "Symbol", "Trend", "Bars Since Reversal", "Reversal Time",
-            "S/R Rev @ Reversal", "Current S/R Rev", "Recent Min S/R Rev",
-            "Last Close", "Trend Slope"
-        ])
-
-    df = pd.DataFrame(rows)
-    if "Reversal Time" in df.columns:
-        try:
-            df["Reversal Time"] = pd.to_datetime(df["Reversal Time"]).dt.strftime("%Y-%m-%d")
-        except Exception:
-            pass
-
-    for col in ["S/R Rev @ Reversal", "Current S/R Rev", "Recent Min S/R Rev", "Last Close", "Trend Slope"]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce").round(4)
-
-    if "Bars Since Reversal" in df.columns:
-        df["Bars Since Reversal"] = pd.to_numeric(df["Bars Since Reversal"], errors="coerce").astype("Int64")
-
-    sort_cols = [c for c in ["Bars Since Reversal", "Current S/R Rev", "Symbol"] if c in df.columns]
-    if sort_cols:
-        asc = [True, True, True][:len(sort_cols)]
-        df = df.sort_values(sort_cols, ascending=asc).reset_index(drop=True)
-
-    return df
-
 # ---------- Session state init ----------
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -1530,14 +1363,13 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
     "NTD -0.75 Scanner",
-    "Long-Term History",
-    "-0.75 SR Crossers"
+    "Long-Term History"
 ])
 # ---------- SHARED HOURLY RENDERER (Stock & Forex use this) ----------
 def render_hourly_views(sel: str,
@@ -2415,87 +2247,3 @@ with tab6:
             ax.set_xlabel("Date (PST)"); ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
-
-
-# --- Tab 7: -0.75 SR Crossers ---
-with tab7:
-    st.header("-0.75 SR Crossers")
-    st.caption(
-        "Daily chart scan for symbols where the S/R Reversal line on the NTD panel "
-        "is still below -0.75 and has recently turned upward from that support-side zone."
-    )
-
-    col_a, col_b, col_c, col_d = st.columns(4)
-    with col_a:
-        sr75_recent_bars = st.slider(
-            "Recent reversal window (daily bars)",
-            3, 60, 15, 1,
-            key="sr75_recent_bars"
-        )
-    with col_b:
-        sr75_confirm_bars = st.slider(
-            "Upward confirmation bars",
-            1, 6, 2, 1,
-            key="sr75_confirm_bars"
-        )
-    with col_c:
-        sr75_threshold = st.slider(
-            "S/R Reversal threshold",
-            -0.95, -0.40, -0.75, 0.05,
-            key="sr75_threshold"
-        )
-    with col_d:
-        sr75_sr_window = st.slider(
-            "Daily S/R window",
-            10, 120, 30, 5,
-            key="sr75_sr_window"
-        )
-
-    st.write(
-        "The scan is grouped by the daily price trendline direction. "
-        "**Upward trend** means the daily price trendline slope is green/up; "
-        "**Downward trend** means it is red/down."
-    )
-
-    run_sr75_scan = st.button("Run -0.75 SR Crosser Scan", key="btn_sr75_scan")
-    auto_sr75_scan = st.checkbox("Auto-run scan when opening this tab", value=True, key="auto_sr75_scan")
-
-    if run_sr75_scan or auto_sr75_scan:
-        rows = []
-        progress = st.progress(0)
-        status = st.empty()
-
-        for i, sym in enumerate(universe):
-            status.caption(f"Scanning {sym}...")
-            row = scan_symbol_sr_low_crosser_daily(
-                sym,
-                threshold=sr75_threshold,
-                recent_bars=sr75_recent_bars,
-                confirm_bars=sr75_confirm_bars,
-                sr_window=sr75_sr_window,
-                slope_lookback=slope_lb_daily,
-                smooth_span=sr_rev_smooth,
-            )
-            if row is not None:
-                rows.append(row)
-            progress.progress((i + 1) / max(len(universe), 1))
-
-        status.empty()
-        progress.empty()
-
-        all_df = _format_sr_low_crosser_table(rows)
-
-        up_df = all_df[all_df["Trend"] == "Upward"].reset_index(drop=True) if not all_df.empty else all_df.copy()
-        down_df = all_df[all_df["Trend"] == "Downward"].reset_index(drop=True) if not all_df.empty else all_df.copy()
-
-        st.subheader("Upward Trend")
-        if up_df.empty:
-            st.info("No symbols currently match the -0.75 S/R reversal setup in an upward daily trend.")
-        else:
-            st.dataframe(up_df, use_container_width=True, hide_index=True)
-
-        st.subheader("Downward Trend")
-        if down_df.empty:
-            st.info("No symbols currently match the -0.75 S/R reversal setup in a downward daily trend.")
-        else:
-            st.dataframe(down_df, use_container_width=True, hide_index=True)
