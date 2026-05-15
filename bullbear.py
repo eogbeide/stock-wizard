@@ -10,7 +10,7 @@
 # (UPDATED) BUY near-support green ribbon now starts with Profit Alert.
 # (UPDATED) NTD-panel green/red triangles now appear only for NTD buy/sell opportunities.
 # (NEW) S/R Reversal Crosses tab separates Daily/Hourly and Upward/Downward zero-line crosses.
-# (NEW) -0.75 SR Crossers tab finds daily S/R Reversal line support-zone upward reversals grouped by trend.
+# (NEW) -0.75 SR Crossers tab finds daily S/R Reversal line support-zone upward reversals and current below-threshold symbols grouped by trend.
 
 import streamlit as st
 import pandas as pd
@@ -1570,6 +1570,95 @@ def _render_minus075_sr_table(title: str, rows: list):
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
+@st.cache_data(ttl=120, show_spinner=False)
+def minus075_sr_below_info_daily(symbol: str,
+                                 smooth_span: int = 8,
+                                 threshold: float = -0.75,
+                                 slope_lookback: int = 90):
+    """
+    Daily-only scanner row for symbols where the S/R Reversal line is currently
+    below the selected support-side threshold, regardless of whether a confirmed
+    upward reversal has already happened.
+    """
+    try:
+        close = fetch_hist(symbol)
+        if close is None or close.empty:
+            return None
+        close = _coerce_1d_series(close).dropna()
+        if close.shape[0] < max(35, int(slope_lookback) // 2):
+            return None
+
+        support = close.rolling(30, min_periods=1).min()
+        resistance = close.rolling(30, min_periods=1).max()
+        sri = compute_sr_reversal_index(
+            price=close,
+            support=support,
+            resistance=resistance,
+            smooth_span=int(smooth_span),
+        ).dropna()
+
+        if sri.empty:
+            return None
+
+        current_value = _safe_last_float(sri)
+        try:
+            th = float(threshold)
+        except Exception:
+            th = -0.75
+
+        if not np.isfinite(current_value) or current_value > th:
+            return None
+
+        below_mask = sri <= th
+        bars_below = 0
+        for val in reversed(below_mask.to_numpy(dtype=bool)):
+            if val:
+                bars_below += 1
+            else:
+                break
+
+        first_below_time = None
+        if bars_below > 0:
+            first_below_time = sri.index[-bars_below]
+
+        _, trend_slope = slope_line(close, int(slope_lookback))
+        trend_group = "Upward Trend" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward Trend"
+
+        recent_window = sri.iloc[-min(len(sri), 20):]
+        recent_min = _safe_last_float(recent_window.min()) if len(recent_window) else np.nan
+
+        return {
+            "Symbol": symbol,
+            "Trend Group": trend_group,
+            "Bars Below Threshold": int(bars_below),
+            "First Below Date": first_below_time,
+            "Current S/R Reversal": current_value,
+            "Recent Minimum": recent_min,
+            "Last Close": _safe_last_float(close),
+            "Trend Slope": trend_slope,
+        }
+    except Exception:
+        return None
+
+
+def _render_minus075_below_table(title: str, rows: list):
+    st.subheader(title)
+    if not rows:
+        st.info("No symbols found.")
+        return
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values(["Current S/R Reversal", "Symbol"], ascending=[True, True])
+        for col in ["Current S/R Reversal", "Recent Minimum", "Last Close", "Trend Slope"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        if "First Below Date" in df.columns:
+            df["First Below Date"] = df["First Below Date"].astype(str)
+        if "Trend Group" in df.columns:
+            df = df.drop(columns=["Trend Group"])
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+
 # ========= Sessions =========
 NY_TZ   = pytz.timezone("America/New_York")
 LDN_TZ  = pytz.timezone("Europe/London")
@@ -2742,8 +2831,9 @@ with tab7:
 with tab8:
     st.header("-0.75 SR Crossers")
     st.caption(
-        "Daily-only scan for symbols where the **S/R Reversal line** on the NTD panel is currently below **-0.75** "
-        "and has recently turned upward from that support-side zone. Results are grouped by the daily price trendline."
+        "Daily-only scan for the **S/R Reversal line** on the NTD panel. "
+        "The first section shows confirmed upward reversals from the support-side zone. "
+        "The second section shows all symbols whose S/R Reversal line is currently below the selected threshold."
     )
 
     c1, c2, c3, c4 = st.columns(4)
@@ -2775,14 +2865,16 @@ with tab8:
     run_minus075_scan = st.button("Scan -0.75 SR Crossers", key="btn_minus075_sr_scan")
 
     if run_minus075_scan:
-        upward_trend_rows = []
-        downward_trend_rows = []
+        reversal_upward_trend_rows = []
+        reversal_downward_trend_rows = []
+        below_upward_trend_rows = []
+        below_downward_trend_rows = []
 
-        progress = st.progress(0, text="Scanning daily -0.75 S/R reversals...")
+        progress = st.progress(0, text="Scanning daily -0.75 S/R reversals and below-threshold symbols...")
         total_steps = max(1, len(universe))
 
         for i, sym in enumerate(universe, start=1):
-            row = minus075_sr_crosser_info_daily(
+            reversal_row = minus075_sr_crosser_info_daily(
                 sym,
                 smooth_span=int(minus075_smooth),
                 recent_bars=int(minus075_recent),
@@ -2790,20 +2882,41 @@ with tab8:
                 threshold=float(minus075_threshold),
                 slope_lookback=int(slope_lb_daily),
             )
-            if row is not None:
-                if row.get("Trend Group") == "Upward Trend":
-                    upward_trend_rows.append(row)
+            if reversal_row is not None:
+                if reversal_row.get("Trend Group") == "Upward Trend":
+                    reversal_upward_trend_rows.append(reversal_row)
                 else:
-                    downward_trend_rows.append(row)
+                    reversal_downward_trend_rows.append(reversal_row)
+
+            below_row = minus075_sr_below_info_daily(
+                sym,
+                smooth_span=int(minus075_smooth),
+                threshold=float(minus075_threshold),
+                slope_lookback=int(slope_lb_daily),
+            )
+            if below_row is not None:
+                if below_row.get("Trend Group") == "Upward Trend":
+                    below_upward_trend_rows.append(below_row)
+                else:
+                    below_downward_trend_rows.append(below_row)
 
             progress.progress(min(1.0, i / total_steps), text=f"Scanning daily: {sym}")
 
         progress.empty()
 
-        _render_minus075_sr_table("Upward Trend", upward_trend_rows)
-        _render_minus075_sr_table("Downward Trend", downward_trend_rows)
+        st.markdown("### Recently Reversed Upward from the -0.75 Zone")
+        _render_minus075_sr_table("Upward Trend", reversal_upward_trend_rows)
+        _render_minus075_sr_table("Downward Trend", reversal_downward_trend_rows)
 
-        total_found = len(upward_trend_rows) + len(downward_trend_rows)
-        st.caption(f"Total -0.75 S/R crossers found: {total_found}")
+        st.markdown("### Currently Below the -0.75 Zone")
+        _render_minus075_below_table("Upward Trend", below_upward_trend_rows)
+        _render_minus075_below_table("Downward Trend", below_downward_trend_rows)
+
+        total_reversal = len(reversal_upward_trend_rows) + len(reversal_downward_trend_rows)
+        total_below = len(below_upward_trend_rows) + len(below_downward_trend_rows)
+        st.caption(
+            f"Total recent upward reversals found: {total_reversal} • "
+            f"Total currently below threshold found: {total_below}"
+        )
     else:
         st.info("Click **Scan -0.75 SR Crossers** to build the grouped daily tables.")
