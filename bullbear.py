@@ -9,6 +9,7 @@
 # (UPDATED) Fibonacci lines are shown on price charts by default.
 # (UPDATED) BUY near-support green ribbon now starts with Profit Alert.
 # (UPDATED) NTD-panel green/red triangles now appear only for NTD buy/sell opportunities.
+# (NEW) S/R Reversal Crosses tab scans Daily and Hourly symbols for recent 0.0-line crosses.
 
 import streamlit as st
 import pandas as pd
@@ -1614,6 +1615,116 @@ def _has_volume_to_plot(vol: pd.Series) -> bool:
     vmax = float(np.nanmax(arr)); vmin = float(np.nanmin(arr))
     return (np.isfinite(vmax) and vmax > 0.0) or (np.isfinite(vmin) and vmin < 0.0)
 
+
+
+# ========= S/R Reversal 0.0 Cross Scanner =========
+def latest_zero_cross_info(line: pd.Series, recent_bars: int = 12):
+    """
+    Return the most recent 0.0-line cross for a normalized indicator line.
+
+    Direction:
+      - Upward: previous value was <= 0 and current value is > 0
+      - Downward: previous value was >= 0 and current value is < 0
+    """
+    s = _coerce_1d_series(line).replace([np.inf, -np.inf], np.nan).dropna()
+    if s.shape[0] < 2:
+        return None
+
+    try:
+        max_bars = max(0, int(recent_bars))
+    except Exception:
+        max_bars = 12
+
+    events = []
+    vals = s.to_numpy(dtype=float)
+    for i in range(1, len(vals)):
+        prev_v = vals[i - 1]
+        curr_v = vals[i]
+        if not (np.isfinite(prev_v) and np.isfinite(curr_v)):
+            continue
+        if prev_v <= 0.0 and curr_v > 0.0:
+            events.append((i, "Upward"))
+        elif prev_v >= 0.0 and curr_v < 0.0:
+            events.append((i, "Downward"))
+
+    if not events:
+        return None
+
+    pos, direction = events[-1]
+    bars_since = int(len(s) - 1 - pos)
+    if bars_since > max_bars:
+        return None
+
+    return {
+        "direction": direction,
+        "bars_since": bars_since,
+        "time": s.index[pos],
+        "value": float(s.iloc[pos]),
+        "current_value": float(s.iloc[-1]),
+    }
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def sr_reversal_cross_scan_symbol(symbol: str,
+                                  timeframe: str,
+                                  hourly_period: str,
+                                  daily_sr_window: int,
+                                  hourly_sr_window: int,
+                                  smooth_span: int,
+                                  recent_bars: int):
+    """
+    Build the same S/R Reversal line used by the NTD panel and report whether
+    it recently crossed the 0.0 line.
+    """
+    try:
+        tf = str(timeframe)
+        if tf == "Daily":
+            df = fetch_hist_ohlc(symbol)
+            if df is None or df.empty or "Close" not in df.columns:
+                return None
+            close = _coerce_1d_series(df["Close"]).dropna()
+            if close.empty:
+                return None
+            win = max(2, int(daily_sr_window))
+            support = close.rolling(win, min_periods=1).min()
+            resistance = close.rolling(win, min_periods=1).max()
+        else:
+            df = fetch_intraday(symbol, period=hourly_period)
+            if df is None or df.empty or "Close" not in df.columns:
+                return None
+            close = _coerce_1d_series(df["Close"]).ffill().dropna()
+            if close.empty:
+                return None
+            win = max(2, int(hourly_sr_window))
+            support = close.rolling(win, min_periods=1).min()
+            resistance = close.rolling(win, min_periods=1).max()
+
+        sri = compute_sr_reversal_index(
+            price=close,
+            support=support,
+            resistance=resistance,
+            smooth_span=smooth_span,
+        )
+
+        info = latest_zero_cross_info(sri, recent_bars=recent_bars)
+        if info is None:
+            return None
+
+        last_close = _safe_last_float(close)
+        return {
+            "Symbol": symbol,
+            "Chart": tf,
+            "Cross Direction": info["direction"],
+            "Bars Since Cross": info["bars_since"],
+            "Cross Time": info["time"],
+            "S/R Reversal @ Cross": info["value"],
+            "Current S/R Reversal": info["current_value"],
+            "Last Close": last_close,
+        }
+    except Exception:
+        return None
+
+
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -1623,12 +1734,13 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
     "NTD -0.5 Scanner",
+    "S/R Reversal Crosses",
     "Long-Term History"
 ])
 
@@ -2284,8 +2396,120 @@ with tab5:
                 vch["Kijun"] = vch["Kijun"].map(lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a")
                 st.dataframe(vch[["Symbol","Timestamp","Close","Kijun"]].reset_index(drop=True), use_container_width=True)
 
-# --- Tab 6: Long-Term History (unchanged) ---
+
+# --- Tab 6: S/R Reversal Crosses ---
 with tab6:
+    st.header("S/R Reversal Crosses")
+    st.caption(
+        "Scans the selected universe for symbols where the **S/R Reversal line** "
+        "on the NTD panel recently crossed the **0.0** line. "
+        "The scan reports direction and bars since the latest cross."
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    scan_daily_crosses = c1.checkbox("Scan Daily", value=True, key="sr_cross_scan_daily")
+    scan_hourly_crosses = c2.checkbox("Scan Hourly", value=True, key="sr_cross_scan_hourly")
+    recent_daily_bars = c3.slider("Recent daily bars", 1, 60, 10, 1, key="sr_cross_recent_daily")
+    recent_hourly_bars = c4.slider("Recent hourly bars", 1, 240, 24, 1, key="sr_cross_recent_hourly")
+
+    c5, c6, c7 = st.columns(3)
+    scanner_hour_range = c5.selectbox(
+        "Hourly lookback for scan:",
+        ["24h", "48h", "96h"],
+        index=["24h", "48h", "96h"].index(st.session_state.get("hour_range", "48h"))
+        if st.session_state.get("hour_range", "48h") in ["24h", "48h", "96h"] else 1,
+        key="sr_cross_hour_range",
+    )
+    scanner_daily_sr_window = c6.slider(
+        "Daily S/R window",
+        5, 240, 30, 5,
+        key="sr_cross_daily_sr_window",
+    )
+    scanner_smooth = c7.slider(
+        "S/R line smoothing",
+        1, 30, int(sr_rev_smooth), 1,
+        key="sr_cross_smooth",
+    )
+
+    scanner_period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
+    scanner_hourly_period = scanner_period_map.get(scanner_hour_range, "2d")
+
+    run_sr_cross_scan = st.button("Run S/R Reversal Cross Scan", key="btn_sr_reversal_cross_scan")
+
+    if run_sr_cross_scan:
+        rows = []
+        progress = st.progress(0)
+        total_work = len(universe) * int(scan_daily_crosses) + len(universe) * int(scan_hourly_crosses)
+        total_work = max(1, total_work)
+        done = 0
+
+        for sym_scan in universe:
+            if scan_daily_crosses:
+                row = sr_reversal_cross_scan_symbol(
+                    symbol=sym_scan,
+                    timeframe="Daily",
+                    hourly_period=scanner_hourly_period,
+                    daily_sr_window=scanner_daily_sr_window,
+                    hourly_sr_window=sr_lb_hourly,
+                    smooth_span=scanner_smooth,
+                    recent_bars=recent_daily_bars,
+                )
+                if row is not None:
+                    rows.append(row)
+                done += 1
+                progress.progress(min(1.0, done / total_work))
+
+            if scan_hourly_crosses:
+                row = sr_reversal_cross_scan_symbol(
+                    symbol=sym_scan,
+                    timeframe="Hourly",
+                    hourly_period=scanner_hourly_period,
+                    daily_sr_window=scanner_daily_sr_window,
+                    hourly_sr_window=sr_lb_hourly,
+                    smooth_span=scanner_smooth,
+                    recent_bars=recent_hourly_bars,
+                )
+                if row is not None:
+                    rows.append(row)
+                done += 1
+                progress.progress(min(1.0, done / total_work))
+
+        progress.empty()
+
+        if rows:
+            scan_df = pd.DataFrame(rows)
+            scan_df["Cross Time"] = pd.to_datetime(scan_df["Cross Time"], errors="coerce")
+            scan_df = scan_df.sort_values(
+                ["Bars Since Cross", "Chart", "Symbol"],
+                ascending=[True, True, True],
+            ).reset_index(drop=True)
+
+            display_df = scan_df.copy()
+            display_df["Cross Time"] = display_df["Cross Time"].apply(
+                lambda x: x.strftime("%Y-%m-%d %H:%M %Z") if pd.notna(x) else ""
+            )
+            for col in ["S/R Reversal @ Cross", "Current S/R Reversal"]:
+                display_df[col] = display_df[col].map(lambda v: f"{v:+.3f}" if np.isfinite(v) else "n/a")
+            display_df["Last Close"] = display_df["Last Close"].map(
+                lambda v: fmt_price_val(v) if np.isfinite(v) else "n/a"
+            )
+
+            st.dataframe(display_df, use_container_width=True)
+            st.download_button(
+                "Download scan results as CSV",
+                data=scan_df.to_csv(index=False).encode("utf-8"),
+                file_name="sr_reversal_cross_scan.csv",
+                mime="text/csv",
+                key="download_sr_reversal_cross_scan",
+            )
+        else:
+            st.info("No recent S/R Reversal 0.0-line crosses found for the selected scan settings.")
+    else:
+        st.info("Click **Run S/R Reversal Cross Scan** to scan the current symbol universe.")
+
+
+# --- Tab 7: Long-Term History (unchanged) ---
+with tab7:
     st.header("Long-Term History — Price with S/R & Trend")
     default_idx = 0
     if st.session_state.get("ticker") in universe:
