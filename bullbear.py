@@ -299,43 +299,177 @@ else:
         'USDHKD=X','EURHKD=X','GBPHKD=X','GBPJPY=X','CNHJPY=X','AUDJPY=X'
     ]
 # ---------- Data fetchers ----------
+def _flatten_yf_columns(df: pd.DataFrame, ticker: str = None) -> pd.DataFrame:
+    """
+    Normalize yfinance output so downstream code always sees ordinary OHLCV
+    column names. yfinance may return flat columns or MultiIndex columns,
+    depending on version and ticker count.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    out = df.copy()
+    if isinstance(out.columns, pd.MultiIndex):
+        wanted = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
+
+        # If a ticker level exists, select the requested ticker first.
+        if ticker is not None:
+            ticker_upper = str(ticker).upper()
+            for level in range(out.columns.nlevels):
+                try:
+                    vals = [str(v).upper() for v in out.columns.get_level_values(level)]
+                    if ticker_upper in vals:
+                        out = out.xs(ticker, axis=1, level=level, drop_level=True)
+                        break
+                except Exception:
+                    pass
+
+        # If still MultiIndex, keep the level that contains OHLCV names.
+        if isinstance(out.columns, pd.MultiIndex):
+            for level in range(out.columns.nlevels):
+                vals = set(map(str, out.columns.get_level_values(level)))
+                if any(c in vals for c in wanted):
+                    try:
+                        out.columns = out.columns.get_level_values(level)
+                    except Exception:
+                        out.columns = ["_".join(map(str, c)).strip("_") for c in out.columns.to_flat_index()]
+                    break
+
+    out.columns = [str(c) for c in out.columns]
+    return out
+
+
+def _ensure_datetime_index(obj):
+    if obj is None or getattr(obj, "empty", True):
+        return obj
+
+    out = obj.copy()
+    if not isinstance(out.index, pd.DatetimeIndex):
+        out.index = pd.to_datetime(out.index, errors="coerce")
+        out = out.loc[out.index.notna()]
+    return out
+
+
+def _ensure_pacific_index(obj):
+    if obj is None or getattr(obj, "empty", True):
+        return obj
+
+    out = _ensure_datetime_index(obj)
+    if out is None or getattr(out, "empty", True):
+        return out
+
+    try:
+        if out.index.tz is None:
+            out.index = out.index.tz_localize(PACIFIC)
+        else:
+            out.index = out.index.tz_convert(PACIFIC)
+    except TypeError:
+        out.index = out.index.tz_convert(PACIFIC)
+    return out.sort_index()
+
+
+def _close_series_from_yf(df: pd.DataFrame, ticker: str = None) -> pd.Series:
+    df = _flatten_yf_columns(df, ticker=ticker)
+    if df.empty:
+        return pd.Series(dtype=float)
+
+    if "Close" in df.columns:
+        s = df["Close"]
+    elif "Adj Close" in df.columns:
+        s = df["Adj Close"]
+    else:
+        s = _coerce_1d_series(df)
+
+    s = _coerce_1d_series(s).dropna()
+    s = _ensure_pacific_index(s)
+    return s.sort_index() if s is not None else pd.Series(dtype=float)
+
+
+def _ohlc_from_yf(df: pd.DataFrame, ticker: str = None) -> pd.DataFrame:
+    df = _flatten_yf_columns(df, ticker=ticker)
+    needed = ["Open", "High", "Low", "Close"]
+
+    if df.empty:
+        return pd.DataFrame(columns=needed)
+
+    if "Close" not in df.columns and "Adj Close" in df.columns:
+        df["Close"] = df["Adj Close"]
+
+    missing = [c for c in needed if c not in df.columns]
+    if missing:
+        return pd.DataFrame(columns=needed)
+
+    out = df[needed].apply(pd.to_numeric, errors="coerce").dropna()
+    out = _ensure_pacific_index(out)
+    return out.sort_index() if out is not None else pd.DataFrame(columns=needed)
+
+
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
-    s = (yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))['Close']
-         .asfreq("D").fillna(method="ffill"))
-    try:
-        s = s.tz_localize(PACIFIC)
-    except TypeError:
-        s = s.tz_convert(PACIFIC)
-    return s
+    df = yf.download(
+        ticker,
+        start="2018-01-01",
+        end=pd.to_datetime("today"),
+        progress=False,
+        auto_adjust=False,
+    )
+    s = _close_series_from_yf(df, ticker=ticker)
+    if s.empty:
+        return s
+    return s.asfreq("D").ffill().dropna()
+
 
 @st.cache_data(ttl=120)
 def fetch_hist_max(ticker: str) -> pd.Series:
-    df = yf.download(ticker, period="max")[['Close']].dropna()
-    s = df['Close'].asfreq("D").fillna(method="ffill")
-    try:
-        s = s.tz_localize(PACIFIC)
-    except TypeError:
-        s = s.tz_convert(PACIFIC)
-    return s
+    df = yf.download(
+        ticker,
+        period="max",
+        progress=False,
+        auto_adjust=False,
+    )
+    s = _close_series_from_yf(df, ticker=ticker)
+    if s.empty:
+        return s
+    return s.asfreq("D").ffill().dropna()
+
 
 @st.cache_data(ttl=120)
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
-    df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"))[['Open','High','Low','Close']].dropna()
-    try:
-        df = df.tz_localize(PACIFIC)
-    except TypeError:
-        df = df.tz_convert(PACIFIC)
-    return df
+    df = yf.download(
+        ticker,
+        start="2018-01-01",
+        end=pd.to_datetime("today"),
+        progress=False,
+        auto_adjust=False,
+    )
+    return _ohlc_from_yf(df, ticker=ticker)
+
 
 @st.cache_data(ttl=120)
 def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
-    df = yf.download(ticker, period=period, interval="5m")
+    df = yf.download(
+        ticker,
+        period=period,
+        interval="5m",
+        progress=False,
+        auto_adjust=False,
+    )
+    out = _flatten_yf_columns(df, ticker=ticker)
+    if out.empty:
+        return pd.DataFrame()
+
+    out = _ensure_datetime_index(out)
+    if out is None or out.empty:
+        return pd.DataFrame()
+
     try:
-        df = df.tz_localize('UTC')
+        if out.index.tz is None:
+            out.index = out.index.tz_localize("UTC")
     except TypeError:
         pass
-    return df.tz_convert(PACIFIC)
+
+    return out.tz_convert(PACIFIC).sort_index()
+
 
 @st.cache_data(ttl=120)
 def compute_sarimax_forecast(series_like):
@@ -1354,224 +1488,6 @@ def annotate_trade_plan_on_price(ax, trend_slope: float, support_val: float, res
         label_on_right(ax, resistance_val, f"▼ SELL @{fmt_price_val(resistance_val)}", color="tab:red", fontsize=9)
         label_on_right(ax, support_val, f"🎯 TAKE PROFIT @{fmt_price_val(support_val)}", color="tab:blue", fontsize=9)
 
-
-# ========= HMA Cross scanner helpers =========
-def _last_hma_cross_up_info(price: pd.Series, hma: pd.Series, max_bars_since: int = 20):
-    """
-    Return the latest upward price/HMA cross.
-
-    Upward cross:
-      - previous close <= previous HMA
-      - current close > current HMA
-    """
-    p = _coerce_1d_series(price).astype(float)
-    h = _coerce_1d_series(hma).reindex(p.index).astype(float)
-    ok = p.notna() & h.notna()
-    if ok.sum() < 2:
-        return None
-
-    p = p[ok]
-    h = h[ok]
-    above = p > h
-    cross_up = above & (~above.shift(1).fillna(False))
-
-    if not cross_up.any():
-        return None
-
-    try:
-        max_bars = max(0, int(max_bars_since))
-    except Exception:
-        max_bars = 20
-
-    cross_positions = np.where(cross_up.to_numpy(dtype=bool))[0]
-    if len(cross_positions) == 0:
-        return None
-
-    last_pos = int(cross_positions[-1])
-    bars_since = (len(p) - 1) - last_pos
-    if bars_since > max_bars:
-        return None
-
-    return {
-        "bar_pos": last_pos,
-        "time": p.index[last_pos],
-        "bars_since": int(bars_since),
-        "price_at_cross": float(p.iloc[last_pos]),
-        "hma_at_cross": float(h.iloc[last_pos]),
-        "current_price": float(p.iloc[-1]),
-        "current_hma": float(h.iloc[-1]),
-    }
-
-
-def _support_reversal_before_cross(price: pd.Series,
-                                   support: pd.Series,
-                                   cross_time,
-                                   lookback: int = 10,
-                                   prox: float = 0.0025,
-                                   confirm_bars: int = 2):
-    """
-    Confirm that price recently touched the 30-support zone, then reversed upward
-    before or into the HMA cross bar.
-    """
-    p = _coerce_1d_series(price).astype(float)
-    sup = _coerce_1d_series(support).reindex(p.index).ffill().bfill().astype(float)
-
-    if p.empty or cross_time not in p.index:
-        return None
-
-    try:
-        lb = max(3, int(lookback))
-    except Exception:
-        lb = 10
-    try:
-        cb = max(1, int(confirm_bars))
-    except Exception:
-        cb = 2
-    try:
-        px = max(0.0, float(prox))
-    except Exception:
-        px = 0.0025
-
-    cross_pos = p.index.get_loc(cross_time)
-    if isinstance(cross_pos, slice) or isinstance(cross_pos, np.ndarray):
-        try:
-            cross_pos = int(np.asarray(cross_pos).ravel()[-1])
-        except Exception:
-            return None
-    cross_pos = int(cross_pos)
-
-    start = max(0, cross_pos - lb)
-    p_win = p.iloc[start:cross_pos + 1]
-    sup_win = sup.iloc[start:cross_pos + 1]
-    ok = p_win.notna() & sup_win.notna()
-    if ok.sum() < max(2, cb + 1):
-        return None
-
-    p_win = p_win[ok]
-    sup_win = sup_win[ok]
-
-    touch_mask = p_win <= sup_win * (1.0 + px)
-    if not touch_mask.any():
-        return None
-
-    # Use the most recent support touch before/at the cross.
-    touch_time = touch_mask[touch_mask].index[-1]
-    touch_price = float(p.loc[touch_time])
-    touch_support = float(sup.loc[touch_time])
-    cross_price = float(p.iloc[cross_pos])
-    cross_support = float(sup.iloc[cross_pos])
-
-    if not np.all(np.isfinite([touch_price, touch_support, cross_price, cross_support])):
-        return None
-
-    # Confirmation: the final confirmation window into the cross is rising.
-    confirm_slice = p.iloc[max(0, cross_pos - cb):cross_pos + 1].dropna()
-    if len(confirm_slice) < cb + 1:
-        return None
-    if not np.all(np.diff(confirm_slice.to_numpy(dtype=float)) > 0):
-        return None
-
-    # Require actual bounce from support, not only a tiny wiggle.
-    recent_width = float((p_win.max() - p_win.min())) if len(p_win) else np.nan
-    min_bounce = max(abs(cross_price) * 0.0005, recent_width * 0.05 if np.isfinite(recent_width) else 0.0)
-    if cross_price <= touch_price + min_bounce:
-        return None
-
-    return {
-        "touch_time": touch_time,
-        "touch_price": touch_price,
-        "support_at_touch": touch_support,
-        "support_at_cross": cross_support,
-    }
-
-
-@st.cache_data(ttl=120, show_spinner=False)
-def hma_cross_from_support_info_daily(symbol: str,
-                                      trend_lookback: int = 90,
-                                      hma_len: int = 55,
-                                      support_window: int = 30,
-                                      recent_bars: int = 20,
-                                      reversal_lookback: int = 12,
-                                      support_prox: float = 0.0025,
-                                      confirm_bars: int = 2):
-    """
-    Daily scanner row for HMA Cross tab.
-
-    Criteria:
-      1. Daily price trendline slope is upward/flat.
-      2. Price recently reversed upward from the 30-support line.
-      3. Price recently crossed upward through HMA(55).
-    """
-    try:
-        close = fetch_hist(symbol)
-        if close is None or close.empty:
-            return None
-
-        close = _coerce_1d_series(close).dropna()
-        if close.shape[0] < max(int(hma_len) + 5, int(support_window) + 5, 40):
-            return None
-
-        _, trend_slope = slope_line(close, int(trend_lookback))
-        if not np.isfinite(trend_slope) or trend_slope < 0.0:
-            return None
-
-        support = close.rolling(int(support_window), min_periods=1).min()
-        hma = compute_hma(close, period=int(hma_len))
-
-        cross = _last_hma_cross_up_info(close, hma, max_bars_since=int(recent_bars))
-        if cross is None:
-            return None
-
-        rev = _support_reversal_before_cross(
-            price=close,
-            support=support,
-            cross_time=cross["time"],
-            lookback=int(reversal_lookback),
-            prox=float(support_prox),
-            confirm_bars=int(confirm_bars),
-        )
-        if rev is None:
-            return None
-
-        return {
-            "Symbol": symbol,
-            "Bars Since HMA Cross": cross["bars_since"],
-            "HMA Cross Date": cross["time"],
-            "Support Touch Date": rev["touch_time"],
-            "Touch Price": rev["touch_price"],
-            "Support at Touch": rev["support_at_touch"],
-            "Price at Cross": cross["price_at_cross"],
-            "HMA at Cross": cross["hma_at_cross"],
-            "Last Close": _safe_last_float(close),
-            "Current 30 Support": _safe_last_float(support),
-            "Current HMA(55)": _safe_last_float(hma),
-            "Trend Slope": float(trend_slope),
-        }
-    except Exception:
-        return None
-
-
-def _render_hma_cross_table(rows: list):
-    if not rows:
-        st.info("No symbols currently match the HMA Cross criteria.")
-        return
-
-    df = pd.DataFrame(rows)
-    if not df.empty:
-        df = df.sort_values(["Bars Since HMA Cross", "Symbol"], ascending=[True, True])
-        for col in [
-            "Touch Price", "Support at Touch", "Price at Cross", "HMA at Cross",
-            "Last Close", "Current 30 Support", "Current HMA(55)", "Trend Slope"
-        ]:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-        for col in ["HMA Cross Date", "Support Touch Date"]:
-            if col in df.columns:
-                df[col] = df[col].astype(str)
-
-    st.dataframe(df, use_container_width=True, hide_index=True)
-
-
 # ---------- Session state init ----------
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -1581,14 +1497,13 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
     "NTD -0.75 Scanner",
-    "Long-Term History",
-    "HMA Cross"
+    "Long-Term History"
 ])
 # ---------- SHARED HOURLY RENDERER (Stock & Forex use this) ----------
 def render_hourly_views(sel: str,
@@ -2466,82 +2381,3 @@ with tab6:
             ax.set_xlabel("Date (PST)"); ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
-
-
-# --- Tab 7: HMA Cross scanner ---
-with tab7:
-    st.header("HMA Cross")
-    st.caption(
-        "Daily scan for symbols where the trendline is upward, price has reversed upward from the 30-support line, "
-        "and price recently crossed upward through HMA(55). Results are sorted by the fewest bars since the HMA cross."
-    )
-
-    h1, h2, h3, h4 = st.columns(4)
-    with h1:
-        hma_cross_recent_bars = st.slider(
-            "Recent HMA cross window (daily bars)",
-            1, 90, 20, 1,
-            key="hma_cross_recent_bars"
-        )
-    with h2:
-        hma_support_reversal_lookback = st.slider(
-            "Support reversal lookback (daily bars)",
-            3, 60, 12, 1,
-            key="hma_support_reversal_lookback"
-        )
-    with h3:
-        hma_support_proximity_pct = st.slider(
-            "Support touch proximity (%)",
-            0.05, 2.00, 0.25, 0.05,
-            key="hma_support_proximity_pct"
-        ) / 100.0
-    with h4:
-        hma_cross_confirm_bars = st.slider(
-            "Reversal confirmation bars",
-            1, 6, 2, 1,
-            key="hma_cross_confirm_bars"
-        )
-
-    h5, h6 = st.columns(2)
-    with h5:
-        hma_cross_trend_lookback = st.slider(
-            "Trendline lookback (daily bars)",
-            10, 360, int(slope_lb_daily), 10,
-            key="hma_cross_trend_lookback"
-        )
-    with h6:
-        hma_cross_support_window = st.slider(
-            "Support window (daily bars)",
-            10, 120, 30, 1,
-            key="hma_cross_support_window"
-        )
-
-    run_hma_cross_scan = st.button("Scan HMA Cross", key="btn_hma_cross_scan")
-
-    if run_hma_cross_scan:
-        hma_rows = []
-        progress = st.progress(0, text="Scanning HMA Cross candidates...")
-        total_steps = max(1, len(universe))
-
-        for i, sym in enumerate(universe, start=1):
-            row = hma_cross_from_support_info_daily(
-                sym,
-                trend_lookback=int(hma_cross_trend_lookback),
-                hma_len=55,
-                support_window=int(hma_cross_support_window),
-                recent_bars=int(hma_cross_recent_bars),
-                reversal_lookback=int(hma_support_reversal_lookback),
-                support_prox=float(hma_support_proximity_pct),
-                confirm_bars=int(hma_cross_confirm_bars),
-            )
-            if row is not None:
-                hma_rows.append(row)
-            progress.progress(min(1.0, i / total_steps), text=f"Scanning: {sym}")
-
-        progress.empty()
-        st.subheader("Upward Trend + 30 Support Reversal + HMA(55) Cross Up")
-        _render_hma_cross_table(hma_rows)
-        st.caption(f"Total HMA Cross candidates found: {len(hma_rows)}")
-    else:
-        st.info("Click **Scan HMA Cross** to find symbols matching the upward trend + support reversal + HMA(55) cross-up setup.")
-
