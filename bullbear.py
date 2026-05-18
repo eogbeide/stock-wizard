@@ -2006,6 +2006,223 @@ def _has_volume_to_plot(vol: pd.Series) -> bool:
     vmax = float(np.nanmax(arr)); vmin = float(np.nanmin(arr))
     return (np.isfinite(vmax) and vmax > 0.0) or (np.isfinite(vmin) and vmin < 0.0)
 
+
+# ========= HMA Cross scanner helpers =========
+def _last_hma_up_cross_info(price: pd.Series, hma: pd.Series, max_bars_since: int = 20):
+    """
+    Return the most recent upward price-vs-HMA cross.
+
+    Upward cross:
+      - previous close <= previous HMA
+      - current close > current HMA
+    """
+    p = _coerce_1d_series(price).astype(float)
+    h = _coerce_1d_series(hma).reindex(p.index).astype(float)
+    ok = p.notna() & h.notna()
+    if ok.sum() < 2:
+        return None
+
+    p = p[ok]
+    h = h[ok]
+    prev_p = p.shift(1)
+    prev_h = h.shift(1)
+    cross_up = (prev_p <= prev_h) & (p > h)
+    cross_up = cross_up.fillna(False)
+
+    if not cross_up.any():
+        return None
+
+    cross_indices = list(cross_up[cross_up].index)
+    cross_time = cross_indices[-1]
+    cross_pos = p.index.get_loc(cross_time)
+    bars_since = (len(p) - 1) - int(cross_pos)
+
+    try:
+        max_bars = max(0, int(max_bars_since))
+    except Exception:
+        max_bars = 20
+
+    if bars_since > max_bars:
+        return None
+
+    return {
+        "cross_time": cross_time,
+        "cross_bar_index": int(cross_pos),
+        "bars_since": int(bars_since),
+        "price_at_cross": float(p.loc[cross_time]),
+        "hma_at_cross": float(h.loc[cross_time]),
+        "current_price": float(p.iloc[-1]),
+        "current_hma": float(h.iloc[-1]),
+    }
+
+
+def _support_reversal_before_or_near_cross(price: pd.Series,
+                                           support: pd.Series,
+                                           cross_time,
+                                           lookback: int = 20,
+                                           prox: float = 0.0025,
+                                           confirm_bars: int = 2):
+    """
+    Confirm price recently reversed upward from the 30-support line before or
+    near the HMA cross.
+
+    A match requires:
+      - a support touch within the lookback window ending at the HMA cross,
+      - the touch happens before the cross/current confirmation point,
+      - price is above the touched support after the reversal,
+      - recent closes into the cross are rising for the confirmation window.
+    """
+    p = _coerce_1d_series(price).astype(float).dropna()
+    sup = _coerce_1d_series(support).reindex(p.index).ffill().bfill()
+    if p.empty or sup.empty or cross_time not in p.index:
+        return None
+
+    try:
+        lb = max(3, int(lookback))
+    except Exception:
+        lb = 20
+    try:
+        cb = max(1, int(confirm_bars))
+    except Exception:
+        cb = 2
+    try:
+        px = max(0.0, float(prox))
+    except Exception:
+        px = 0.0025
+
+    cross_pos = int(p.index.get_loc(cross_time))
+    start = max(0, cross_pos - lb)
+    end = cross_pos + 1
+
+    win_p = p.iloc[start:end]
+    win_sup = sup.iloc[start:end]
+    if win_p.shape[0] < max(3, cb + 1):
+        return None
+
+    touch_mask = win_p <= win_sup * (1.0 + px)
+    if not touch_mask.any():
+        return None
+
+    touch_times = list(touch_mask[touch_mask].index)
+    touch_time = touch_times[-1]
+    touch_pos_full = int(p.index.get_loc(touch_time))
+
+    # The support touch must precede the cross; otherwise this is a touch, not a reversal.
+    if touch_pos_full >= cross_pos:
+        return None
+
+    touch_price = float(p.loc[touch_time])
+    touch_support = float(sup.loc[touch_time])
+    cross_price = float(p.loc[cross_time])
+
+    if not np.all(np.isfinite([touch_price, touch_support, cross_price])):
+        return None
+
+    recent_confirm = p.iloc[max(0, cross_pos - cb):cross_pos + 1]
+    if recent_confirm.shape[0] < cb + 1:
+        return None
+    deltas = recent_confirm.diff().dropna()
+    if deltas.empty or not (deltas > 0).all():
+        return None
+
+    channel_move = max(abs(touch_support) * 0.0005, 1e-9)
+    if cross_price <= touch_price + channel_move:
+        return None
+
+    return {
+        "support_touch_time": touch_time,
+        "bars_from_touch_to_cross": int(cross_pos - touch_pos_full),
+        "support_at_touch": touch_support,
+        "price_at_touch": touch_price,
+        "bounce_amount": float(cross_price - touch_price),
+    }
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def hma_cross_info_daily(symbol: str,
+                         hma_period_fixed: int = 55,
+                         slope_lookback: int = 90,
+                         recent_cross_bars: int = 20,
+                         support_lookback: int = 30,
+                         support_reversal_lookback: int = 20,
+                         support_prox: float = 0.0025,
+                         support_confirm_bars: int = 2):
+    """
+    Daily scanner row for symbols where:
+      - trendline slope is upward,
+      - price recently reversed upward from the 30-support line,
+      - price recently crossed upward through HMA(55).
+    """
+    try:
+        close = fetch_hist(symbol)
+        if close is None or close.empty:
+            return None
+        close = _coerce_1d_series(close).dropna()
+        if close.shape[0] < max(int(hma_period_fixed) + 5, int(slope_lookback) // 2, int(support_lookback) + 5):
+            return None
+
+        _, trend_slope = slope_line(close, int(slope_lookback))
+        if not np.isfinite(trend_slope) or trend_slope < 0:
+            return None
+
+        hma = compute_hma(close, period=int(hma_period_fixed))
+        cross = _last_hma_up_cross_info(hma=hma, price=close, max_bars_since=int(recent_cross_bars))
+        if cross is None:
+            return None
+
+        support = close.rolling(int(max(2, support_lookback)), min_periods=1).min()
+        reversal = _support_reversal_before_or_near_cross(
+            price=close,
+            support=support,
+            cross_time=cross["cross_time"],
+            lookback=int(support_reversal_lookback),
+            prox=float(support_prox),
+            confirm_bars=int(support_confirm_bars),
+        )
+        if reversal is None:
+            return None
+
+        current_support = _safe_last_float(support)
+        return {
+            "Symbol": symbol,
+            "Bars Since HMA Cross": int(cross["bars_since"]),
+            "HMA Cross Time": cross["cross_time"],
+            "Support Touch Time": reversal["support_touch_time"],
+            "Bars Touch → Cross": int(reversal["bars_from_touch_to_cross"]),
+            "Price at Cross": float(cross["price_at_cross"]),
+            "HMA at Cross": float(cross["hma_at_cross"]),
+            "Current Price": float(cross["current_price"]),
+            "Current HMA": float(cross["current_hma"]),
+            "Current 30 Support": float(current_support) if np.isfinite(current_support) else np.nan,
+            "Support at Touch": float(reversal["support_at_touch"]),
+            "Bounce from Touch": float(reversal["bounce_amount"]),
+            "Trend Slope": float(trend_slope),
+        }
+    except Exception:
+        return None
+
+
+def _render_hma_cross_table(rows: list):
+    if not rows:
+        st.info("No symbols matched the HMA Cross setup.")
+        return
+
+    df = pd.DataFrame(rows)
+    df = df.sort_values(["Bars Since HMA Cross", "Symbol"], ascending=[True, True])
+
+    for col in [
+        "Price at Cross", "HMA at Cross", "Current Price", "Current HMA",
+        "Current 30 Support", "Support at Touch", "Bounce from Touch", "Trend Slope"
+    ]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    for col in ["HMA Cross Time", "Support Touch Time"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str)
+
+    st.dataframe(df.reset_index(drop=True), use_container_width=True, hide_index=True)
+
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -2015,7 +2232,7 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -2023,7 +2240,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8 = st.tabs([
     "NTD -0.5 Scanner",
     "Long-Term History",
     "S/R Reversal Crosses",
-    "-0.75 SR Crossers"
+    "-0.75 SR Crossers",
+    "HMA Cross"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -2920,3 +3138,71 @@ with tab8:
         )
     else:
         st.info("Click **Scan -0.75 SR Crossers** to build the grouped daily tables.")
+
+
+# --- Tab 9: HMA Cross ---
+with tab9:
+    st.header("HMA Cross")
+    st.caption(
+        "Daily-only scan for symbols where the trendline is upward, price has reversed upward from the "
+        "30-support line, and price recently crossed upward through the HMA(55). Results are sorted by "
+        "the lowest number of bars since the HMA cross."
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        hma_cross_recent = st.slider(
+            "Recent HMA cross window (daily bars)",
+            1, 90, 20, 1,
+            key="hma_cross_recent_bars"
+        )
+    with c2:
+        hma_support_reversal_lookback = st.slider(
+            "Support reversal lookback (daily bars)",
+            3, 90, 20, 1,
+            key="hma_support_reversal_lookback"
+        )
+    with c3:
+        hma_support_confirm = st.slider(
+            "Rising confirmation bars",
+            1, 6, 2, 1,
+            key="hma_support_confirm"
+        )
+    with c4:
+        hma_support_prox = st.slider(
+            "30-support proximity (%)",
+            0.05, 2.00, 0.35, 0.05,
+            key="hma_support_prox_pct"
+        ) / 100.0
+
+    run_hma_cross_scan = st.button("Scan HMA Cross", key="btn_hma_cross_scan")
+
+    if run_hma_cross_scan:
+        hma_rows = []
+        progress = st.progress(0, text="Scanning daily HMA Cross setups...")
+        total_steps = max(1, len(universe))
+
+        for i, sym in enumerate(universe, start=1):
+            row = hma_cross_info_daily(
+                symbol=sym,
+                hma_period_fixed=55,
+                slope_lookback=int(slope_lb_daily),
+                recent_cross_bars=int(hma_cross_recent),
+                support_lookback=30,
+                support_reversal_lookback=int(hma_support_reversal_lookback),
+                support_prox=float(hma_support_prox),
+                support_confirm_bars=int(hma_support_confirm),
+            )
+            if row is not None:
+                hma_rows.append(row)
+
+            progress.progress(min(1.0, i / total_steps), text=f"Scanning daily: {sym}")
+
+        progress.empty()
+
+        st.subheader("Daily HMA(55) Upward Cross after 30-Support Reversal")
+        _render_hma_cross_table(hma_rows)
+        st.caption(f"Total HMA Cross setups found: {len(hma_rows)}")
+    else:
+        st.info("Click **Scan HMA Cross** to build the daily setup table.")
+
