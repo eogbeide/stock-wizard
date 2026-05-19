@@ -11,6 +11,7 @@
 # (UPDATED) NTD-panel green/red triangles now appear only for NTD buy/sell opportunities.
 # (NEW) S/R Reversal Crosses tab separates Daily/Hourly and Upward/Downward zero-line crosses.
 # (NEW) -0.75 SR Crossers tab finds daily S/R Reversal line support-zone upward reversals and current below-threshold symbols grouped by trend.
+# (NEW) 30 EMA Cross tab finds recent price crosses of the 30EMA aligned with trend direction.
 
 import streamlit as st
 import pandas as pd
@@ -2223,6 +2224,168 @@ def _render_hma_cross_table(rows: list):
 
     st.dataframe(df.reset_index(drop=True), use_container_width=True, hide_index=True)
 
+# ========= 30 EMA Cross scanner helpers =========
+def _last_ema_cross_info(price: pd.Series,
+                         ema: pd.Series,
+                         direction: str = "up",
+                         max_bars_since: int = 20):
+    """
+    Find the latest price/EMA cross.
+
+    direction="up":
+      previous price <= previous EMA and current price > current EMA
+
+    direction="down":
+      previous price >= previous EMA and current price < current EMA
+    """
+    p = _coerce_1d_series(price).replace([np.inf, -np.inf], np.nan).dropna()
+    e = _coerce_1d_series(ema).replace([np.inf, -np.inf], np.nan).reindex(p.index)
+    ok = p.notna() & e.notna()
+    p = p[ok]
+    e = e[ok]
+
+    if p.shape[0] < 2:
+        return None
+
+    try:
+        max_bars = max(0, int(max_bars_since))
+    except Exception:
+        max_bars = 20
+
+    direction = str(direction).lower().strip()
+    pvals = p.to_numpy(dtype=float)
+    evals = e.to_numpy(dtype=float)
+    idx = p.index
+
+    events = []
+    for i in range(1, len(pvals)):
+        prev_p, curr_p = pvals[i - 1], pvals[i]
+        prev_e, curr_e = evals[i - 1], evals[i]
+        if not np.all(np.isfinite([prev_p, curr_p, prev_e, curr_e])):
+            continue
+
+        crossed_up = prev_p <= prev_e and curr_p > curr_e
+        crossed_down = prev_p >= prev_e and curr_p < curr_e
+
+        if direction == "up" and crossed_up:
+            events.append({
+                "cross_time": idx[i],
+                "bar_index": i,
+                "direction": "Upward",
+                "price_at_cross": float(curr_p),
+                "ema_at_cross": float(curr_e),
+            })
+        elif direction == "down" and crossed_down:
+            events.append({
+                "cross_time": idx[i],
+                "bar_index": i,
+                "direction": "Downward",
+                "price_at_cross": float(curr_p),
+                "ema_at_cross": float(curr_e),
+            })
+
+    if not events:
+        return None
+
+    ev = events[-1]
+    bars_since = (len(p) - 1) - int(ev["bar_index"])
+    if bars_since > max_bars:
+        return None
+
+    ev["bars_since"] = int(bars_since)
+    ev["current_price"] = float(pvals[-1])
+    ev["current_ema"] = float(evals[-1])
+    return ev
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def ema30_cross_info_daily(symbol: str,
+                           ema_span: int = 30,
+                           slope_lookback: int = 90,
+                           recent_cross_bars: int = 20):
+    """
+    Daily scanner row for symbols where:
+      - price recently crossed above the 30EMA while trendline is upward, or
+      - price recently crossed below the 30EMA while trendline is downward.
+    """
+    try:
+        close = fetch_hist(symbol)
+        if close is None or close.empty:
+            return None
+
+        close = _coerce_1d_series(close).dropna()
+        ema_span = int(max(2, ema_span))
+        slope_lookback = int(max(2, slope_lookback))
+        recent_cross_bars = int(max(0, recent_cross_bars))
+
+        if close.shape[0] < max(ema_span + 3, min(slope_lookback, 30)):
+            return None
+
+        _, trend_slope = slope_line(close, slope_lookback)
+        if not np.isfinite(trend_slope):
+            return None
+
+        trend_direction = "Upward" if trend_slope >= 0.0 else "Downward"
+        ema = close.ewm(span=ema_span, adjust=False, min_periods=1).mean()
+
+        if trend_direction == "Upward":
+            cross = _last_ema_cross_info(
+                price=close,
+                ema=ema,
+                direction="up",
+                max_bars_since=recent_cross_bars,
+            )
+            group = "Upward Trend — Price Crossed Above 30EMA"
+        else:
+            cross = _last_ema_cross_info(
+                price=close,
+                ema=ema,
+                direction="down",
+                max_bars_since=recent_cross_bars,
+            )
+            group = "Downward Trend — Price Crossed Below 30EMA"
+
+        if cross is None:
+            return None
+
+        return {
+            "Symbol": symbol,
+            "Group": group,
+            "Trend Direction": trend_direction,
+            "EMA Cross Direction": cross["direction"],
+            "Bars Since EMA Cross": int(cross["bars_since"]),
+            "EMA Cross Time": cross["cross_time"],
+            "Price at Cross": float(cross["price_at_cross"]),
+            "EMA at Cross": float(cross["ema_at_cross"]),
+            "Current Price": float(cross["current_price"]),
+            "Current 30EMA": float(cross["current_ema"]),
+            "Trend Slope": float(trend_slope),
+        }
+    except Exception:
+        return None
+
+
+def _render_ema30_cross_table(title: str, rows: list):
+    st.subheader(title)
+    if not rows:
+        st.info("No recent 30EMA crosses found.")
+        return
+
+    df = pd.DataFrame(rows)
+    if "Group" in df.columns:
+        df = df.drop(columns=["Group"])
+    df = df.sort_values(["Bars Since EMA Cross", "Symbol"], ascending=[True, True])
+
+    for col in ["Price at Cross", "EMA at Cross", "Current Price", "Current 30EMA", "Trend Slope"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    if "EMA Cross Time" in df.columns:
+        df["EMA Cross Time"] = df["EMA Cross Time"].astype(str)
+
+    st.dataframe(df.reset_index(drop=True), use_container_width=True, hide_index=True)
+
+
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -2232,7 +2395,7 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -2241,7 +2404,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "Long-Term History",
     "S/R Reversal Crosses",
     "-0.75 SR Crossers",
-    "HMA Cross"
+    "HMA Cross",
+    "30 EMA Cross"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -3205,3 +3369,62 @@ with tab9:
         st.caption(f"Total HMA Cross setups found: {len(hma_rows)}")
     else:
         st.info("Click **Scan HMA Cross** to build the daily setup table.")
+
+# --- Tab 10: 30 EMA Cross ---
+with tab10:
+    st.header("30 EMA Cross")
+    st.caption(
+        "Daily scan for symbols where price recently crossed the 30EMA in the same direction as the "
+        "price trendline. Upward trend symbols must have crossed above the 30EMA; downward trend symbols "
+        "must have crossed below the 30EMA. Tables are sorted by the lowest number of bars since cross."
+    )
+
+    c1, c2 = st.columns(2)
+    with c1:
+        ema_cross_recent = st.slider(
+            "Recent EMA cross window (daily bars)",
+            1, 90, 20, 1,
+            key="ema30_cross_recent_bars"
+        )
+    with c2:
+        ema_cross_span = st.slider(
+            "EMA span",
+            5, 120, 30, 1,
+            key="ema30_cross_span"
+        )
+
+    run_ema30_cross_scan = st.button("Scan 30 EMA Cross", key="btn_ema30_cross_scan")
+
+    if run_ema30_cross_scan:
+        ema_up_rows = []
+        ema_down_rows = []
+        progress = st.progress(0, text="Scanning daily 30EMA crosses...")
+        total_steps = max(1, len(universe))
+
+        for i, sym in enumerate(universe, start=1):
+            row = ema30_cross_info_daily(
+                symbol=sym,
+                ema_span=int(ema_cross_span),
+                slope_lookback=int(slope_lb_daily),
+                recent_cross_bars=int(ema_cross_recent),
+            )
+            if row is not None:
+                if row.get("Trend Direction") == "Upward" and row.get("EMA Cross Direction") == "Upward":
+                    ema_up_rows.append(row)
+                elif row.get("Trend Direction") == "Downward" and row.get("EMA Cross Direction") == "Downward":
+                    ema_down_rows.append(row)
+
+            progress.progress(min(1.0, i / total_steps), text=f"Scanning daily: {sym}")
+
+        progress.empty()
+
+        _render_ema30_cross_table("Upward Trend — Price Crossed Above 30EMA", ema_up_rows)
+        _render_ema30_cross_table("Downward Trend — Price Crossed Below 30EMA", ema_down_rows)
+        st.caption(
+            f"Upward 30EMA crosses found: {len(ema_up_rows)} • "
+            f"Downward 30EMA crosses found: {len(ema_down_rows)}"
+        )
+    else:
+        st.info("Click **Scan 30 EMA Cross** to build the daily EMA cross tables.")
+
+
