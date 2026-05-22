@@ -11,6 +11,7 @@
 # (UPDATED) NTD-panel green/red triangles now appear only for NTD buy/sell opportunities.
 # (NEW) S/R Reversal Crosses tab separates Daily/Hourly and Upward/Downward zero-line crosses.
 # (NEW) -0.75 SR Crossers tab finds daily S/R Reversal line support-zone upward reversals and current below-threshold symbols grouped by trend.
+# (NEW) Green Triangle Pick tab scans daily/hourly NTD support-reversal BUY triangles aligned with upward trend.
 
 import streamlit as st
 import pandas as pd
@@ -2223,6 +2224,195 @@ def _render_hma_cross_table(rows: list):
 
     st.dataframe(df.reset_index(drop=True), use_container_width=True, hide_index=True)
 
+# ========= Green Triangle Pick scanner helpers =========
+def _last_true_signal_info(mask_like: pd.Series, max_bars_since: int = 20):
+    """
+    Return the latest True signal from a boolean mask if it is recent enough.
+    Used to find the most recent green NTD-panel BUY/support-reversal triangle.
+    """
+    s = pd.Series(mask_like).fillna(False).astype(bool)
+    if s.empty or not s.any():
+        return None
+    try:
+        max_bars = max(0, int(max_bars_since))
+    except Exception:
+        max_bars = 20
+
+    true_positions = np.flatnonzero(s.to_numpy(dtype=bool))
+    if len(true_positions) == 0:
+        return None
+
+    pos = int(true_positions[-1])
+    bars_since = (len(s) - 1) - pos
+    if bars_since > max_bars:
+        return None
+
+    return {
+        "signal_time": s.index[pos],
+        "bar_index": pos,
+        "bars_since": int(bars_since),
+    }
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def green_triangle_pick_info_daily(symbol: str,
+                                   slope_lookback: int = 90,
+                                   recent_bars: int = 20,
+                                   support_window: int = 30,
+                                   sr_prox: float = 0.0025,
+                                   sr_zone: float = 0.80,
+                                   sr_lookback: int = 8,
+                                   sr_confirm: int = 3,
+                                   sr_smooth: int = 8):
+    """
+    Daily scanner row for symbols where the price-chart trendline is upward
+    and the NTD chart recently printed a green BUY/support-reversal triangle.
+    """
+    try:
+        close = fetch_hist(symbol)
+        if close is None or close.empty:
+            return None
+
+        close = _coerce_1d_series(close).dropna()
+        if close.shape[0] < max(10, int(support_window) + 2, int(sr_lookback) + int(sr_confirm) + 3):
+            return None
+
+        _, trend_slope = slope_line(close, int(slope_lookback))
+        if not np.isfinite(trend_slope) or trend_slope < 0.0:
+            return None
+
+        win = max(2, int(support_window))
+        support = close.rolling(win, min_periods=1).min()
+        resistance = close.rolling(win, min_periods=1).max()
+
+        buy_mask, _, sri = sr_reversal_opportunity_masks(
+            price=close,
+            support=support,
+            resistance=resistance,
+            trend_slope=float(trend_slope),
+            prox=float(sr_prox),
+            zone=float(sr_zone),
+            lookback=int(sr_lookback),
+            confirm_bars=int(sr_confirm),
+            smooth_span=int(sr_smooth),
+        )
+
+        sig = _last_true_signal_info(buy_mask, max_bars_since=int(recent_bars))
+        if sig is None:
+            return None
+
+        last_price = _safe_last_float(close)
+        last_support = _safe_last_float(support)
+        last_resistance = _safe_last_float(resistance)
+        last_sri = _safe_last_float(sri)
+
+        return {
+            "Symbol": symbol,
+            "Chart": "Daily",
+            "Bars Since Triangle": int(sig["bars_since"]),
+            "Triangle Time": sig["signal_time"],
+            "Trend Direction": "Upward",
+            "Trend Slope": float(trend_slope),
+            "Current Price": float(last_price) if np.isfinite(last_price) else np.nan,
+            "Current Support": float(last_support) if np.isfinite(last_support) else np.nan,
+            "Current Resistance": float(last_resistance) if np.isfinite(last_resistance) else np.nan,
+            "Current S/R Reversal": float(last_sri) if np.isfinite(last_sri) else np.nan,
+        }
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def green_triangle_pick_info_hourly(symbol: str,
+                                    period: str = "2d",
+                                    slope_lookback: int = 120,
+                                    recent_bars: int = 48,
+                                    support_window: int = 60,
+                                    sr_prox: float = 0.0025,
+                                    sr_zone: float = 0.80,
+                                    sr_lookback: int = 8,
+                                    sr_confirm: int = 3,
+                                    sr_smooth: int = 8):
+    """
+    Hourly/intraday scanner row for symbols where the intraday price-chart
+    trendline is upward and the NTD chart recently printed a green
+    BUY/support-reversal triangle.
+    """
+    try:
+        df = fetch_intraday(symbol, period=period)
+        if df is None or df.empty or "Close" not in df.columns:
+            return None
+
+        close = _coerce_1d_series(df["Close"]).ffill().dropna()
+        if close.shape[0] < max(10, int(support_window) + 2, int(sr_lookback) + int(sr_confirm) + 3):
+            return None
+
+        _, trend_slope = slope_line(close, int(slope_lookback))
+        if not np.isfinite(trend_slope) or trend_slope < 0.0:
+            return None
+
+        win = max(2, int(support_window))
+        support = close.rolling(win, min_periods=1).min()
+        resistance = close.rolling(win, min_periods=1).max()
+
+        buy_mask, _, sri = sr_reversal_opportunity_masks(
+            price=close,
+            support=support,
+            resistance=resistance,
+            trend_slope=float(trend_slope),
+            prox=float(sr_prox),
+            zone=float(sr_zone),
+            lookback=int(sr_lookback),
+            confirm_bars=int(sr_confirm),
+            smooth_span=int(sr_smooth),
+        )
+
+        sig = _last_true_signal_info(buy_mask, max_bars_since=int(recent_bars))
+        if sig is None:
+            return None
+
+        last_price = _safe_last_float(close)
+        last_support = _safe_last_float(support)
+        last_resistance = _safe_last_float(resistance)
+        last_sri = _safe_last_float(sri)
+
+        return {
+            "Symbol": symbol,
+            "Chart": "Hourly",
+            "Bars Since Triangle": int(sig["bars_since"]),
+            "Triangle Time": sig["signal_time"],
+            "Trend Direction": "Upward",
+            "Trend Slope": float(trend_slope),
+            "Current Price": float(last_price) if np.isfinite(last_price) else np.nan,
+            "Current Support": float(last_support) if np.isfinite(last_support) else np.nan,
+            "Current Resistance": float(last_resistance) if np.isfinite(last_resistance) else np.nan,
+            "Current S/R Reversal": float(last_sri) if np.isfinite(last_sri) else np.nan,
+        }
+    except Exception:
+        return None
+
+
+def _render_green_triangle_pick_table(title: str, rows: list):
+    st.subheader(title)
+    if not rows:
+        st.info("No recent green BUY/support-reversal triangles found.")
+        return
+
+    df = pd.DataFrame(rows)
+    df = df.sort_values(["Bars Since Triangle", "Symbol"], ascending=[True, True])
+
+    for col in [
+        "Trend Slope", "Current Price", "Current Support",
+        "Current Resistance", "Current S/R Reversal"
+    ]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    if "Triangle Time" in df.columns:
+        df["Triangle Time"] = df["Triangle Time"].astype(str)
+
+    st.dataframe(df.reset_index(drop=True), use_container_width=True, hide_index=True)
+
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -2232,7 +2422,7 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -2241,7 +2431,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "Long-Term History",
     "S/R Reversal Crosses",
     "-0.75 SR Crossers",
-    "HMA Cross"
+    "HMA Cross",
+    "Green Triangle Pick"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -3205,3 +3396,126 @@ with tab9:
         st.caption(f"Total HMA Cross setups found: {len(hma_rows)}")
     else:
         st.info("Click **Scan HMA Cross** to build the daily setup table.")
+
+# --- Tab 10: Green Triangle Pick ---
+with tab10:
+    st.header("Green Triangle Pick")
+    st.caption(
+        "Scans daily and hourly/intraday charts separately for symbols where the NTD chart recently "
+        "printed a green BUY/support-reversal triangle while the price trendline is upward. Results "
+        "are sorted by the lowest number of bars since the triangle appeared."
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        green_daily_recent = st.slider(
+            "Recent daily triangle window (bars)",
+            1, 120, 30, 1,
+            key="green_triangle_daily_recent_bars"
+        )
+    with c2:
+        green_hourly_recent = st.slider(
+            "Recent hourly/intraday triangle window (bars)",
+            1, 240, 60, 1,
+            key="green_triangle_hourly_recent_bars"
+        )
+    with c3:
+        green_hourly_period_label = st.selectbox(
+            "Hourly lookback",
+            ["24h", "48h", "96h"],
+            index=1,
+            key="green_triangle_hourly_period"
+        )
+    with c4:
+        green_support_window_daily = st.slider(
+            "Daily support window",
+            10, 120, 30, 5,
+            key="green_triangle_daily_support_window"
+        )
+
+    c5, c6, c7, c8 = st.columns(4)
+    with c5:
+        green_support_window_hourly = st.slider(
+            "Hourly support window",
+            20, 240, int(sr_lb_hourly), 5,
+            key="green_triangle_hourly_support_window"
+        )
+    with c6:
+        green_sr_zone = st.slider(
+            "S/R reversal zone strength",
+            0.40, 0.95, float(sr_rev_zone), 0.05,
+            key="green_triangle_sr_zone"
+        )
+    with c7:
+        green_sr_confirm = st.slider(
+            "S/R reversal confirmation bars",
+            1, 6, int(sr_rev_confirm), 1,
+            key="green_triangle_sr_confirm"
+        )
+    with c8:
+        green_sr_lookback = st.slider(
+            "S/R reversal touch lookback",
+            2, 30, int(sr_rev_lookback), 1,
+            key="green_triangle_sr_lookback"
+        )
+
+    run_green_triangle_scan = st.button("Scan Green Triangle Pick", key="btn_green_triangle_pick_scan")
+
+    if run_green_triangle_scan:
+        hourly_period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
+        hourly_period = hourly_period_map.get(green_hourly_period_label, "2d")
+
+        daily_rows = []
+        hourly_rows = []
+
+        total_steps = max(1, len(universe) * 2)
+        done_steps = 0
+        progress = st.progress(0, text="Scanning daily green NTD triangles...")
+
+        for sym in universe:
+            row = green_triangle_pick_info_daily(
+                symbol=sym,
+                slope_lookback=int(slope_lb_daily),
+                recent_bars=int(green_daily_recent),
+                support_window=int(green_support_window_daily),
+                sr_prox=float(sr_prox_pct),
+                sr_zone=float(green_sr_zone),
+                sr_lookback=int(green_sr_lookback),
+                sr_confirm=int(green_sr_confirm),
+                sr_smooth=int(sr_rev_smooth),
+            )
+            if row is not None:
+                daily_rows.append(row)
+
+            done_steps += 1
+            progress.progress(min(1.0, done_steps / total_steps), text=f"Scanning daily: {sym}")
+
+        for sym in universe:
+            row = green_triangle_pick_info_hourly(
+                symbol=sym,
+                period=hourly_period,
+                slope_lookback=int(slope_lb_hourly),
+                recent_bars=int(green_hourly_recent),
+                support_window=int(green_support_window_hourly),
+                sr_prox=float(sr_prox_pct),
+                sr_zone=float(green_sr_zone),
+                sr_lookback=int(green_sr_lookback),
+                sr_confirm=int(green_sr_confirm),
+                sr_smooth=int(sr_rev_smooth),
+            )
+            if row is not None:
+                hourly_rows.append(row)
+
+            done_steps += 1
+            progress.progress(min(1.0, done_steps / total_steps), text=f"Scanning hourly: {sym}")
+
+        progress.empty()
+
+        _render_green_triangle_pick_table("Daily — Upward Trend with Recent Green BUY/Support-Reversal Triangle", daily_rows)
+        _render_green_triangle_pick_table("Hourly — Upward Trend with Recent Green BUY/Support-Reversal Triangle", hourly_rows)
+        st.caption(
+            f"Daily green triangle picks found: {len(daily_rows)} • "
+            f"Hourly green triangle picks found: {len(hourly_rows)}"
+        )
+    else:
+        st.info("Click **Scan Green Triangle Pick** to build the daily and hourly green-triangle tables.")
