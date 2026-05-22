@@ -9,8 +9,9 @@
 # (UPDATED) Fibonacci lines are shown on price charts by default.
 # (UPDATED) BUY near-support green ribbon now starts with Profit Alert.
 # (UPDATED) NTD-panel green/red triangles now appear only for NTD buy/sell opportunities.
+# (NEW) S/R Reversal Crosses tab separates Daily/Hourly and Upward/Downward zero-line crosses.
+# (NEW) -0.75 SR Crossers tab finds daily S/R Reversal line support-zone upward reversals and current below-threshold symbols grouped by trend.
 
-# (NEW) Green Triangle Pick tab finds recent NTD-panel BUY/support-reversal triangles aligned with upward trend.
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -1268,6 +1269,396 @@ def overlay_sr_reversal_indicator_on_ntd(ax,
         ax.scatter(idx_sell, y_sell.values, marker="v", s=120, color="tab:red", zorder=12,
                    label="SELL: resistance reversal")
 
+
+# ========= S/R Reversal zero-line scanner helpers =========
+def _last_zero_cross_info(line_like: pd.Series, max_bars_since: int = 20):
+    """
+    Return the latest zero-line cross for a normalized indicator.
+
+    Direction:
+      - Upward: previous value < 0 and current value >= 0
+      - Downward: previous value > 0 and current value <= 0
+    """
+    s = _coerce_1d_series(line_like).replace([np.inf, -np.inf], np.nan).dropna()
+    if s.shape[0] < 2:
+        return None
+    try:
+        max_bars = max(0, int(max_bars_since))
+    except Exception:
+        max_bars = 20
+
+    vals = s.to_numpy(dtype=float)
+    idx = s.index
+    events = []
+    for i in range(1, len(vals)):
+        prev_v = vals[i - 1]
+        curr_v = vals[i]
+        if not np.all(np.isfinite([prev_v, curr_v])):
+            continue
+        if prev_v < 0.0 and curr_v >= 0.0:
+            events.append({
+                "direction": "Upward",
+                "bar_index": i,
+                "time": idx[i],
+                "value_at_cross": float(curr_v),
+            })
+        elif prev_v > 0.0 and curr_v <= 0.0:
+            events.append({
+                "direction": "Downward",
+                "bar_index": i,
+                "time": idx[i],
+                "value_at_cross": float(curr_v),
+            })
+
+    if not events:
+        return None
+
+    ev = events[-1]
+    bars_since = (len(s) - 1) - int(ev["bar_index"])
+    if bars_since > max_bars:
+        return None
+
+    ev["bars_since"] = int(bars_since)
+    ev["current_value"] = float(vals[-1])
+    return ev
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def sr_reversal_cross_info_daily(symbol: str, smooth_span: int = 8, recent_bars: int = 20):
+    """
+    Scan one symbol's Daily S/R Reversal line for a recent zero-line cross.
+    Daily S/R uses the same 30-bar support/resistance window used in the
+    daily price chart.
+    """
+    try:
+        close = fetch_hist(symbol)
+        if close is None or close.empty:
+            return None
+        close = _coerce_1d_series(close).dropna()
+        if close.shape[0] < 5:
+            return None
+        support = close.rolling(30, min_periods=1).min()
+        resistance = close.rolling(30, min_periods=1).max()
+        sri = compute_sr_reversal_index(
+            price=close,
+            support=support,
+            resistance=resistance,
+            smooth_span=int(smooth_span),
+        )
+        ev = _last_zero_cross_info(sri, max_bars_since=int(recent_bars))
+        if ev is None:
+            return None
+        return {
+            "Symbol": symbol,
+            "Chart": "Daily",
+            "Direction": ev["direction"],
+            "Bars Since Cross": ev["bars_since"],
+            "Cross Time": ev["time"],
+            "Value at Cross": ev["value_at_cross"],
+            "Current S/R Reversal": ev["current_value"],
+            "Last Close": _safe_last_float(close),
+        }
+    except Exception:
+        return None
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def sr_reversal_cross_info_hourly(symbol: str, period: str = "1d",
+                                  sr_window: int = 60,
+                                  smooth_span: int = 8,
+                                  recent_bars: int = 24):
+    """
+    Scan one symbol's Hourly/5-minute intraday S/R Reversal line for a recent
+    zero-line cross. The app's intraday chart uses 5-minute bars, so "Hourly"
+    here follows the existing hourly/intraday chart data source.
+    """
+    try:
+        df = fetch_intraday(symbol, period=period)
+        if df is None or df.empty or "Close" not in df.columns:
+            return None
+        close = _coerce_1d_series(df["Close"]).ffill().dropna()
+        if close.shape[0] < 5:
+            return None
+        win = max(2, int(sr_window))
+        support = close.rolling(win, min_periods=1).min()
+        resistance = close.rolling(win, min_periods=1).max()
+        sri = compute_sr_reversal_index(
+            price=close,
+            support=support,
+            resistance=resistance,
+            smooth_span=int(smooth_span),
+        )
+        ev = _last_zero_cross_info(sri, max_bars_since=int(recent_bars))
+        if ev is None:
+            return None
+        return {
+            "Symbol": symbol,
+            "Chart": "Hourly",
+            "Direction": ev["direction"],
+            "Bars Since Cross": ev["bars_since"],
+            "Cross Time": ev["time"],
+            "Value at Cross": ev["value_at_cross"],
+            "Current S/R Reversal": ev["current_value"],
+            "Last Close": _safe_last_float(close),
+        }
+    except Exception:
+        return None
+
+
+def _render_sr_cross_table(title: str, rows: list):
+    st.subheader(title)
+    if not rows:
+        st.info("No recent crosses found.")
+        return
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values(["Bars Since Cross", "Symbol"], ascending=[True, True])
+        for col in ["Value at Cross", "Current S/R Reversal", "Last Close"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        if "Cross Time" in df.columns:
+            df["Cross Time"] = df["Cross Time"].astype(str)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+def _last_minus075_support_reversal_info(sri: pd.Series,
+                                         threshold: float = -0.75,
+                                         recent_bars: int = 20,
+                                         confirm_bars: int = 3):
+    """
+    Find the most recent daily S/R Reversal line support-zone reversal.
+
+    A match requires:
+      - current S/R Reversal value is still below the threshold,
+      - the line recently traded at/below the threshold,
+      - the recent low occurred before the current bar,
+      - the line has been rising through the confirmation window.
+    """
+    s = _coerce_1d_series(sri).dropna()
+    if s.shape[0] < max(5, int(confirm_bars) + 2):
+        return None
+
+    try:
+        th = float(threshold)
+    except Exception:
+        th = -0.75
+    try:
+        rb = max(2, int(recent_bars))
+    except Exception:
+        rb = 20
+    try:
+        cb = max(1, int(confirm_bars))
+    except Exception:
+        cb = 3
+
+    vals = s.to_numpy(dtype=float)
+    idx = s.index
+
+    current_value = float(vals[-1])
+    if not np.isfinite(current_value) or current_value > th:
+        return None
+
+    start = max(0, len(vals) - rb - 1)
+    recent_vals = vals[start:]
+    if recent_vals.size < max(3, cb + 1) or not np.isfinite(recent_vals).any():
+        return None
+
+    recent_min_pos = int(np.nanargmin(recent_vals))
+    recent_min_abs = start + recent_min_pos
+    recent_min = float(vals[recent_min_abs])
+
+    # It must have visited the -0.75 support zone and started reversing after that low.
+    if not np.isfinite(recent_min) or recent_min > th:
+        return None
+    if recent_min_abs >= len(vals) - 1:
+        return None
+
+    bars_since_reversal = (len(vals) - 1) - recent_min_abs
+    if bars_since_reversal > rb:
+        return None
+
+    # Confirmation: the latest values are rising and above the recent low.
+    confirm_start = max(0, len(vals) - cb - 1)
+    confirm_slice = vals[confirm_start:]
+    if confirm_slice.size < cb + 1 or not np.all(np.isfinite(confirm_slice)):
+        return None
+    deltas = np.diff(confirm_slice)
+    if not np.all(deltas > 0):
+        return None
+    if current_value <= recent_min:
+        return None
+
+    return {
+        "bars_since_reversal": int(bars_since_reversal),
+        "reversal_time": idx[recent_min_abs],
+        "current_value": current_value,
+        "recent_min": recent_min,
+        "value_change_since_reversal": current_value - recent_min,
+    }
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def minus075_sr_crosser_info_daily(symbol: str,
+                                   smooth_span: int = 8,
+                                   recent_bars: int = 20,
+                                   confirm_bars: int = 3,
+                                   threshold: float = -0.75,
+                                   slope_lookback: int = 90):
+    """
+    Daily-only scanner row for symbols where the S/R Reversal line is below
+    -0.75 and has recently turned upward from that support-side zone.
+    """
+    try:
+        close = fetch_hist(symbol)
+        if close is None or close.empty:
+            return None
+        close = _coerce_1d_series(close).dropna()
+        if close.shape[0] < max(35, int(slope_lookback) // 2):
+            return None
+
+        support = close.rolling(30, min_periods=1).min()
+        resistance = close.rolling(30, min_periods=1).max()
+        sri = compute_sr_reversal_index(
+            price=close,
+            support=support,
+            resistance=resistance,
+            smooth_span=int(smooth_span),
+        )
+
+        ev = _last_minus075_support_reversal_info(
+            sri,
+            threshold=float(threshold),
+            recent_bars=int(recent_bars),
+            confirm_bars=int(confirm_bars),
+        )
+        if ev is None:
+            return None
+
+        _, trend_slope = slope_line(close, int(slope_lookback))
+        trend_group = "Upward Trend" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward Trend"
+
+        return {
+            "Symbol": symbol,
+            "Trend Group": trend_group,
+            "Bars Since Reversal": ev["bars_since_reversal"],
+            "Reversal Date": ev["reversal_time"],
+            "Current S/R Reversal": ev["current_value"],
+            "Recent Minimum": ev["recent_min"],
+            "Change Since Reversal": ev["value_change_since_reversal"],
+            "Last Close": _safe_last_float(close),
+            "Trend Slope": trend_slope,
+        }
+    except Exception:
+        return None
+
+
+def _render_minus075_sr_table(title: str, rows: list):
+    st.subheader(title)
+    if not rows:
+        st.info("No symbols found.")
+        return
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values(["Bars Since Reversal", "Symbol"], ascending=[True, True])
+        for col in ["Current S/R Reversal", "Recent Minimum", "Change Since Reversal", "Last Close", "Trend Slope"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        if "Reversal Date" in df.columns:
+            df["Reversal Date"] = df["Reversal Date"].astype(str)
+        if "Trend Group" in df.columns:
+            df = df.drop(columns=["Trend Group"])
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def minus075_sr_below_info_daily(symbol: str,
+                                 smooth_span: int = 8,
+                                 threshold: float = -0.75,
+                                 slope_lookback: int = 90):
+    """
+    Daily-only scanner row for symbols where the S/R Reversal line is currently
+    below the selected support-side threshold, regardless of whether a confirmed
+    upward reversal has already happened.
+    """
+    try:
+        close = fetch_hist(symbol)
+        if close is None or close.empty:
+            return None
+        close = _coerce_1d_series(close).dropna()
+        if close.shape[0] < max(35, int(slope_lookback) // 2):
+            return None
+
+        support = close.rolling(30, min_periods=1).min()
+        resistance = close.rolling(30, min_periods=1).max()
+        sri = compute_sr_reversal_index(
+            price=close,
+            support=support,
+            resistance=resistance,
+            smooth_span=int(smooth_span),
+        ).dropna()
+
+        if sri.empty:
+            return None
+
+        current_value = _safe_last_float(sri)
+        try:
+            th = float(threshold)
+        except Exception:
+            th = -0.75
+
+        if not np.isfinite(current_value) or current_value > th:
+            return None
+
+        below_mask = sri <= th
+        bars_below = 0
+        for val in reversed(below_mask.to_numpy(dtype=bool)):
+            if val:
+                bars_below += 1
+            else:
+                break
+
+        first_below_time = None
+        if bars_below > 0:
+            first_below_time = sri.index[-bars_below]
+
+        _, trend_slope = slope_line(close, int(slope_lookback))
+        trend_group = "Upward Trend" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward Trend"
+
+        recent_window = sri.iloc[-min(len(sri), 20):]
+        recent_min = _safe_last_float(recent_window.min()) if len(recent_window) else np.nan
+
+        return {
+            "Symbol": symbol,
+            "Trend Group": trend_group,
+            "Bars Below Threshold": int(bars_below),
+            "First Below Date": first_below_time,
+            "Current S/R Reversal": current_value,
+            "Recent Minimum": recent_min,
+            "Last Close": _safe_last_float(close),
+            "Trend Slope": trend_slope,
+        }
+    except Exception:
+        return None
+
+
+def _render_minus075_below_table(title: str, rows: list):
+    st.subheader(title)
+    if not rows:
+        st.info("No symbols found.")
+        return
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values(["Current S/R Reversal", "Symbol"], ascending=[True, True])
+        for col in ["Current S/R Reversal", "Recent Minimum", "Last Close", "Trend Slope"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        if "First Below Date" in df.columns:
+            df["First Below Date"] = df["First Below Date"].astype(str)
+        if "Trend Group" in df.columns:
+            df = df.drop(columns=["Trend Group"])
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+
 # ========= Sessions =========
 NY_TZ   = pytz.timezone("America/New_York")
 LDN_TZ  = pytz.timezone("Europe/London")
@@ -1616,192 +2007,219 @@ def _has_volume_to_plot(vol: pd.Series) -> bool:
     return (np.isfinite(vmax) and vmax > 0.0) or (np.isfinite(vmin) and vmin < 0.0)
 
 
-# ========= Green Triangle Pick scanner helpers =========
-def _last_true_signal_info(mask_like: pd.Series, max_bars_since: int = 20):
+# ========= HMA Cross scanner helpers =========
+def _last_hma_up_cross_info(price: pd.Series, hma: pd.Series, max_bars_since: int = 20):
     """
-    Return the latest True signal from a boolean mask if it is recent enough.
-    Used to find the most recent green NTD-panel BUY/support-reversal triangle.
+    Return the most recent upward price-vs-HMA cross.
+
+    Upward cross:
+      - previous close <= previous HMA
+      - current close > current HMA
     """
-    s = pd.Series(mask_like).fillna(False).astype(bool)
-    if s.empty or not s.any():
+    p = _coerce_1d_series(price).astype(float)
+    h = _coerce_1d_series(hma).reindex(p.index).astype(float)
+    ok = p.notna() & h.notna()
+    if ok.sum() < 2:
         return None
+
+    p = p[ok]
+    h = h[ok]
+    prev_p = p.shift(1)
+    prev_h = h.shift(1)
+    cross_up = (prev_p <= prev_h) & (p > h)
+    cross_up = cross_up.fillna(False)
+
+    if not cross_up.any():
+        return None
+
+    cross_indices = list(cross_up[cross_up].index)
+    cross_time = cross_indices[-1]
+    cross_pos = p.index.get_loc(cross_time)
+    bars_since = (len(p) - 1) - int(cross_pos)
+
     try:
         max_bars = max(0, int(max_bars_since))
     except Exception:
         max_bars = 20
 
-    true_positions = np.flatnonzero(s.to_numpy(dtype=bool))
-    if len(true_positions) == 0:
-        return None
-
-    pos = int(true_positions[-1])
-    bars_since = (len(s) - 1) - pos
     if bars_since > max_bars:
         return None
 
     return {
-        "signal_time": s.index[pos],
-        "bar_index": pos,
+        "cross_time": cross_time,
+        "cross_bar_index": int(cross_pos),
         "bars_since": int(bars_since),
+        "price_at_cross": float(p.loc[cross_time]),
+        "hma_at_cross": float(h.loc[cross_time]),
+        "current_price": float(p.iloc[-1]),
+        "current_hma": float(h.iloc[-1]),
+    }
+
+
+def _support_reversal_before_or_near_cross(price: pd.Series,
+                                           support: pd.Series,
+                                           cross_time,
+                                           lookback: int = 20,
+                                           prox: float = 0.0025,
+                                           confirm_bars: int = 2):
+    """
+    Confirm price recently reversed upward from the 30-support line before or
+    near the HMA cross.
+
+    A match requires:
+      - a support touch within the lookback window ending at the HMA cross,
+      - the touch happens before the cross/current confirmation point,
+      - price is above the touched support after the reversal,
+      - recent closes into the cross are rising for the confirmation window.
+    """
+    p = _coerce_1d_series(price).astype(float).dropna()
+    sup = _coerce_1d_series(support).reindex(p.index).ffill().bfill()
+    if p.empty or sup.empty or cross_time not in p.index:
+        return None
+
+    try:
+        lb = max(3, int(lookback))
+    except Exception:
+        lb = 20
+    try:
+        cb = max(1, int(confirm_bars))
+    except Exception:
+        cb = 2
+    try:
+        px = max(0.0, float(prox))
+    except Exception:
+        px = 0.0025
+
+    cross_pos = int(p.index.get_loc(cross_time))
+    start = max(0, cross_pos - lb)
+    end = cross_pos + 1
+
+    win_p = p.iloc[start:end]
+    win_sup = sup.iloc[start:end]
+    if win_p.shape[0] < max(3, cb + 1):
+        return None
+
+    touch_mask = win_p <= win_sup * (1.0 + px)
+    if not touch_mask.any():
+        return None
+
+    touch_times = list(touch_mask[touch_mask].index)
+    touch_time = touch_times[-1]
+    touch_pos_full = int(p.index.get_loc(touch_time))
+
+    # The support touch must precede the cross; otherwise this is a touch, not a reversal.
+    if touch_pos_full >= cross_pos:
+        return None
+
+    touch_price = float(p.loc[touch_time])
+    touch_support = float(sup.loc[touch_time])
+    cross_price = float(p.loc[cross_time])
+
+    if not np.all(np.isfinite([touch_price, touch_support, cross_price])):
+        return None
+
+    recent_confirm = p.iloc[max(0, cross_pos - cb):cross_pos + 1]
+    if recent_confirm.shape[0] < cb + 1:
+        return None
+    deltas = recent_confirm.diff().dropna()
+    if deltas.empty or not (deltas > 0).all():
+        return None
+
+    channel_move = max(abs(touch_support) * 0.0005, 1e-9)
+    if cross_price <= touch_price + channel_move:
+        return None
+
+    return {
+        "support_touch_time": touch_time,
+        "bars_from_touch_to_cross": int(cross_pos - touch_pos_full),
+        "support_at_touch": touch_support,
+        "price_at_touch": touch_price,
+        "bounce_amount": float(cross_price - touch_price),
     }
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def green_triangle_pick_info_daily(symbol: str,
-                                   slope_lookback: int = 90,
-                                   recent_bars: int = 20,
-                                   support_window: int = 30,
-                                   sr_prox: float = 0.0025,
-                                   sr_zone: float = 0.80,
-                                   sr_lookback: int = 8,
-                                   sr_confirm: int = 3,
-                                   sr_smooth: int = 8):
+def hma_cross_info_daily(symbol: str,
+                         hma_period_fixed: int = 55,
+                         slope_lookback: int = 90,
+                         recent_cross_bars: int = 20,
+                         support_lookback: int = 30,
+                         support_reversal_lookback: int = 20,
+                         support_prox: float = 0.0025,
+                         support_confirm_bars: int = 2):
     """
-    Daily scanner row for symbols where the price-chart trendline is upward
-    and the NTD chart recently printed a green BUY/support-reversal triangle.
+    Daily scanner row for symbols where:
+      - trendline slope is upward,
+      - price recently reversed upward from the 30-support line,
+      - price recently crossed upward through HMA(55).
     """
     try:
         close = fetch_hist(symbol)
         if close is None or close.empty:
             return None
-
         close = _coerce_1d_series(close).dropna()
-        if close.shape[0] < max(10, int(support_window) + 2, int(sr_lookback) + int(sr_confirm) + 3):
+        if close.shape[0] < max(int(hma_period_fixed) + 5, int(slope_lookback) // 2, int(support_lookback) + 5):
             return None
 
         _, trend_slope = slope_line(close, int(slope_lookback))
-        if not np.isfinite(trend_slope) or trend_slope < 0.0:
+        if not np.isfinite(trend_slope) or trend_slope < 0:
             return None
 
-        win = max(2, int(support_window))
-        support = close.rolling(win, min_periods=1).min()
-        resistance = close.rolling(win, min_periods=1).max()
+        hma = compute_hma(close, period=int(hma_period_fixed))
+        cross = _last_hma_up_cross_info(hma=hma, price=close, max_bars_since=int(recent_cross_bars))
+        if cross is None:
+            return None
 
-        buy_mask, _, sri = sr_reversal_opportunity_masks(
+        support = close.rolling(int(max(2, support_lookback)), min_periods=1).min()
+        reversal = _support_reversal_before_or_near_cross(
             price=close,
             support=support,
-            resistance=resistance,
-            trend_slope=float(trend_slope),
-            prox=float(sr_prox),
-            zone=float(sr_zone),
-            lookback=int(sr_lookback),
-            confirm_bars=int(sr_confirm),
-            smooth_span=int(sr_smooth),
+            cross_time=cross["cross_time"],
+            lookback=int(support_reversal_lookback),
+            prox=float(support_prox),
+            confirm_bars=int(support_confirm_bars),
         )
-
-        sig = _last_true_signal_info(buy_mask, max_bars_since=int(recent_bars))
-        if sig is None:
+        if reversal is None:
             return None
 
-        last_price = _safe_last_float(close)
-        last_support = _safe_last_float(support)
-        last_resistance = _safe_last_float(resistance)
-        last_sri = _safe_last_float(sri)
-
+        current_support = _safe_last_float(support)
         return {
             "Symbol": symbol,
-            "Chart": "Daily",
-            "Bars Since Triangle": int(sig["bars_since"]),
-            "Triangle Time": sig["signal_time"],
-            "Trend Direction": "Upward",
+            "Bars Since HMA Cross": int(cross["bars_since"]),
+            "HMA Cross Time": cross["cross_time"],
+            "Support Touch Time": reversal["support_touch_time"],
+            "Bars Touch → Cross": int(reversal["bars_from_touch_to_cross"]),
+            "Price at Cross": float(cross["price_at_cross"]),
+            "HMA at Cross": float(cross["hma_at_cross"]),
+            "Current Price": float(cross["current_price"]),
+            "Current HMA": float(cross["current_hma"]),
+            "Current 30 Support": float(current_support) if np.isfinite(current_support) else np.nan,
+            "Support at Touch": float(reversal["support_at_touch"]),
+            "Bounce from Touch": float(reversal["bounce_amount"]),
             "Trend Slope": float(trend_slope),
-            "Current Price": float(last_price) if np.isfinite(last_price) else np.nan,
-            "Current Support": float(last_support) if np.isfinite(last_support) else np.nan,
-            "Current Resistance": float(last_resistance) if np.isfinite(last_resistance) else np.nan,
-            "Current S/R Reversal": float(last_sri) if np.isfinite(last_sri) else np.nan,
         }
     except Exception:
         return None
 
 
-@st.cache_data(ttl=120, show_spinner=False)
-def green_triangle_pick_info_hourly(symbol: str,
-                                    period: str = "2d",
-                                    slope_lookback: int = 120,
-                                    recent_bars: int = 48,
-                                    support_window: int = 60,
-                                    sr_prox: float = 0.0025,
-                                    sr_zone: float = 0.80,
-                                    sr_lookback: int = 8,
-                                    sr_confirm: int = 3,
-                                    sr_smooth: int = 8):
-    """
-    Hourly/intraday scanner row for symbols where the intraday price-chart
-    trendline is upward and the NTD chart recently printed a green
-    BUY/support-reversal triangle.
-    """
-    try:
-        df = fetch_intraday(symbol, period=period)
-        if df is None or df.empty or "Close" not in df.columns:
-            return None
-
-        close = _coerce_1d_series(df["Close"]).ffill().dropna()
-        if close.shape[0] < max(10, int(support_window) + 2, int(sr_lookback) + int(sr_confirm) + 3):
-            return None
-
-        _, trend_slope = slope_line(close, int(slope_lookback))
-        if not np.isfinite(trend_slope) or trend_slope < 0.0:
-            return None
-
-        win = max(2, int(support_window))
-        support = close.rolling(win, min_periods=1).min()
-        resistance = close.rolling(win, min_periods=1).max()
-
-        buy_mask, _, sri = sr_reversal_opportunity_masks(
-            price=close,
-            support=support,
-            resistance=resistance,
-            trend_slope=float(trend_slope),
-            prox=float(sr_prox),
-            zone=float(sr_zone),
-            lookback=int(sr_lookback),
-            confirm_bars=int(sr_confirm),
-            smooth_span=int(sr_smooth),
-        )
-
-        sig = _last_true_signal_info(buy_mask, max_bars_since=int(recent_bars))
-        if sig is None:
-            return None
-
-        last_price = _safe_last_float(close)
-        last_support = _safe_last_float(support)
-        last_resistance = _safe_last_float(resistance)
-        last_sri = _safe_last_float(sri)
-
-        return {
-            "Symbol": symbol,
-            "Chart": "Hourly",
-            "Bars Since Triangle": int(sig["bars_since"]),
-            "Triangle Time": sig["signal_time"],
-            "Trend Direction": "Upward",
-            "Trend Slope": float(trend_slope),
-            "Current Price": float(last_price) if np.isfinite(last_price) else np.nan,
-            "Current Support": float(last_support) if np.isfinite(last_support) else np.nan,
-            "Current Resistance": float(last_resistance) if np.isfinite(last_resistance) else np.nan,
-            "Current S/R Reversal": float(last_sri) if np.isfinite(last_sri) else np.nan,
-        }
-    except Exception:
-        return None
-
-
-def _render_green_triangle_pick_table(title: str, rows: list):
-    st.subheader(title)
+def _render_hma_cross_table(rows: list):
     if not rows:
-        st.info("No recent green BUY/support-reversal triangles found.")
+        st.info("No symbols matched the HMA Cross setup.")
         return
 
     df = pd.DataFrame(rows)
-    df = df.sort_values(["Bars Since Triangle", "Symbol"], ascending=[True, True])
+    df = df.sort_values(["Bars Since HMA Cross", "Symbol"], ascending=[True, True])
 
     for col in [
-        "Trend Slope", "Current Price", "Current Support",
-        "Current Resistance", "Current S/R Reversal"
+        "Price at Cross", "HMA at Cross", "Current Price", "Current HMA",
+        "Current 30 Support", "Support at Touch", "Bounce from Touch", "Trend Slope"
     ]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    if "Triangle Time" in df.columns:
-        df["Triangle Time"] = df["Triangle Time"].astype(str)
+    for col in ["HMA Cross Time", "Support Touch Time"]:
+        if col in df.columns:
+            df[col] = df[col].astype(str)
 
     st.dataframe(df.reset_index(drop=True), use_container_width=True, hide_index=True)
 
@@ -1814,14 +2232,16 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
     "Metrics",
     "NTD -0.5 Scanner",
     "Long-Term History",
-    "Green Triangle Pick"
+    "S/R Reversal Crosses",
+    "-0.75 SR Crossers",
+    "HMA Cross"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -1874,9 +2294,11 @@ with tab1:
 
         # ----- Daily -----
         if chart in ("Daily","Both"):
+            ema30 = df.ewm(span=30).mean()
             res30 = df.rolling(30, min_periods=1).max()
             sup30 = df.rolling(30, min_periods=1).min()
             yhat_d, m_d = slope_line(df, slope_lb_daily)
+            yhat_ema30, m_ema30 = slope_line(ema30, slope_lb_daily)
             piv = current_daily_pivots(df_ohlc)
 
             # NTD + smoothed NPX overlay
@@ -1896,9 +2318,11 @@ with tab1:
             adx_ok_d, adx_last_d = _adx_pass(adx_d_show, adx_min) if use_adx_filter else (True, _safe_last_float(adx_d_show))
 
             df_show     = subset_by_daily_view(df, daily_view)
+            ema30_show  = ema30.reindex(df_show.index)
             res30_show  = res30.reindex(df_show.index)
             sup30_show  = sup30.reindex(df_show.index)
             yhat_d_show = yhat_d.reindex(df_show.index) if not yhat_d.empty else yhat_d
+            yhat_ema_show = yhat_ema30.reindex(df_show.index) if not yhat_ema30.empty else yhat_ema30
             ntd_d_show  = ntd_d.reindex(df_show.index)
             npx_d_show  = npx_d_full.reindex(df_show.index)
             bb_mid_d_show = bb_mid_d.reindex(df_show.index)
@@ -1916,8 +2340,9 @@ with tab1:
             fig, (ax, axdw) = plt.subplots(2, 1, sharex=True, figsize=(14, 8), gridspec_kw={"height_ratios": [3.2, 1.3]})
             plt.subplots_adjust(hspace=0.05, top=0.92, right=0.93)
 
-            ax.set_title(f"{sel} Daily — {daily_view} — History, 30 S/R, Slope, Pivots  |  ADX {adx_last_d:.1f}")
+            ax.set_title(f"{sel} Daily — {daily_view} — History, 30 EMA, 30 S/R, Slope, Pivots  |  ADX {adx_last_d:.1f}")
             ax.plot(df_show, label="History")
+            ax.plot(ema30_show, "--", label="30 EMA")
             ax.plot(res30_show, ":", label="30 Resistance")
             ax.plot(sup30_show, ":", label="30 Support")
             if show_hma and not hma_d_show.dropna().empty:
@@ -1948,6 +2373,8 @@ with tab1:
                                s=15, color="tab:red", zorder=6)
             if not yhat_d_show.empty:
                 ax.plot(yhat_d_show.index, yhat_d_show.values, "-", linewidth=2, color=trend_color_for_slope(m_d), label=f"Daily Slope {slope_lb_daily} ({fmt_slope(m_d)}/bar)")
+            if not yhat_ema_show.empty:
+                ax.plot(yhat_ema_show.index, yhat_ema_show.values, "-", linewidth=2, color=trend_color_for_slope(m_ema30), label=f"EMA30 Slope {slope_lb_daily} ({fmt_slope(m_ema30)}/bar)")
             if piv and len(df_show) > 0:
                 x0, x1 = df_show.index[0], df_show.index[-1]
                 for lbl, y in piv.items():
@@ -2521,127 +2948,260 @@ with tab6:
             ax.set_xlabel("Date (PST)"); ax.set_ylabel("Price"); ax.legend(loc="lower left", framealpha=0.5)
             st.pyplot(fig)
 
-
-# --- Tab 7: Green Triangle Pick ---
+# --- Tab 7: S/R Reversal zero-line cross scanner ---
 with tab7:
-    st.header("Green Triangle Pick")
+    st.header("S/R Reversal Crosses")
     st.caption(
-        "Scans daily and hourly/intraday charts separately for symbols where the NTD chart recently "
-        "printed a green BUY/support-reversal triangle while the price trendline is upward. Results "
-        "are sorted by the lowest number of bars since the triangle appeared."
+        "Lists symbols where the **S/R Reversal line** on the NTD panel has recently crossed the **0.0** line. "
+        "Daily and Hourly results are separated, with Upward crosses shown above Downward crosses."
+    )
+
+    period_map_sr = {"24h": "1d", "48h": "2d", "96h": "4d"}
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        sr_cross_daily_recent = st.slider(
+            "Daily recent window (bars)",
+            1, 60, 20, 1,
+            key="sr_cross_daily_recent"
+        )
+    with c2:
+        sr_cross_hourly_recent = st.slider(
+            "Hourly recent window (bars)",
+            1, 120, 36, 1,
+            key="sr_cross_hourly_recent"
+        )
+    with c3:
+        sr_cross_hour_range = st.selectbox(
+            "Hourly lookback:",
+            ["24h", "48h", "96h"],
+            index=0,
+            key="sr_cross_hour_range"
+        )
+    with c4:
+        sr_cross_smooth = st.slider(
+            "S/R line smoothing",
+            1, 30, int(sr_rev_smooth), 1,
+            key="sr_cross_smooth"
+        )
+
+    run_sr_cross_scan = st.button("Scan S/R Reversal Crosses", key="btn_sr_cross_scan")
+
+    if run_sr_cross_scan:
+        scan_period = period_map_sr[sr_cross_hour_range]
+        daily_up_rows = []
+        daily_down_rows = []
+        hourly_up_rows = []
+        hourly_down_rows = []
+
+        progress = st.progress(0, text="Scanning S/R Reversal crosses...")
+        total_steps = max(1, len(universe) * 2)
+        step_count = 0
+
+        for sym in universe:
+            row = sr_reversal_cross_info_daily(
+                sym,
+                smooth_span=int(sr_cross_smooth),
+                recent_bars=int(sr_cross_daily_recent),
+            )
+            if row is not None:
+                if row.get("Direction") == "Upward":
+                    daily_up_rows.append(row)
+                elif row.get("Direction") == "Downward":
+                    daily_down_rows.append(row)
+
+            step_count += 1
+            progress.progress(min(1.0, step_count / total_steps), text=f"Scanning daily: {sym}")
+
+            row = sr_reversal_cross_info_hourly(
+                sym,
+                period=scan_period,
+                sr_window=int(sr_lb_hourly),
+                smooth_span=int(sr_cross_smooth),
+                recent_bars=int(sr_cross_hourly_recent),
+            )
+            if row is not None:
+                if row.get("Direction") == "Upward":
+                    hourly_up_rows.append(row)
+                elif row.get("Direction") == "Downward":
+                    hourly_down_rows.append(row)
+
+            step_count += 1
+            progress.progress(min(1.0, step_count / total_steps), text=f"Scanning hourly: {sym}")
+
+        progress.empty()
+
+        st.markdown("### Daily")
+        _render_sr_cross_table("Daily — Upward crosses", daily_up_rows)
+        _render_sr_cross_table("Daily — Downward crosses", daily_down_rows)
+
+        st.markdown("### Hourly")
+        _render_sr_cross_table("Hourly — Upward crosses", hourly_up_rows)
+        _render_sr_cross_table("Hourly — Downward crosses", hourly_down_rows)
+
+        total_found = len(daily_up_rows) + len(daily_down_rows) + len(hourly_up_rows) + len(hourly_down_rows)
+        st.caption(f"Total recent crosses found: {total_found}")
+    else:
+        st.info("Click **Scan S/R Reversal Crosses** to build the four separate tables.")
+
+
+
+# --- Tab 8: -0.75 SR Crossers ---
+with tab8:
+    st.header("-0.75 SR Crossers")
+    st.caption(
+        "Daily-only scan for the **S/R Reversal line** on the NTD panel. "
+        "The first section shows confirmed upward reversals from the support-side zone. "
+        "The second section shows all symbols whose S/R Reversal line is currently below the selected threshold."
     )
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        green_daily_recent = st.slider(
-            "Recent daily triangle window (bars)",
-            1, 120, 30, 1,
-            key="green_triangle_daily_recent_bars"
+        minus075_recent = st.slider(
+            "Recent reversal window (daily bars)",
+            2, 90, 20, 1,
+            key="minus075_sr_recent"
         )
     with c2:
-        green_hourly_recent = st.slider(
-            "Recent hourly/intraday triangle window (bars)",
-            1, 240, 60, 1,
-            key="green_triangle_hourly_recent_bars"
+        minus075_confirm = st.slider(
+            "Rising confirmation bars",
+            1, 10, 3, 1,
+            key="minus075_sr_confirm"
         )
     with c3:
-        green_hourly_period_label = st.selectbox(
-            "Hourly lookback",
-            ["24h", "48h", "96h"],
-            index=1,
-            key="green_triangle_hourly_period"
+        minus075_smooth = st.slider(
+            "S/R line smoothing",
+            1, 30, int(sr_rev_smooth), 1,
+            key="minus075_sr_smooth"
         )
     with c4:
-        green_support_window_daily = st.slider(
-            "Daily support window",
-            10, 120, 30, 5,
-            key="green_triangle_daily_support_window"
+        minus075_threshold = st.slider(
+            "S/R threshold",
+            -0.95, -0.50, -0.75, 0.05,
+            key="minus075_sr_threshold"
         )
 
-    c5, c6, c7, c8 = st.columns(4)
-    with c5:
-        green_support_window_hourly = st.slider(
-            "Hourly support window",
-            20, 240, int(sr_lb_hourly), 5,
-            key="green_triangle_hourly_support_window"
-        )
-    with c6:
-        green_sr_zone = st.slider(
-            "S/R reversal zone strength",
-            0.40, 0.95, float(sr_rev_zone), 0.05,
-            key="green_triangle_sr_zone"
-        )
-    with c7:
-        green_sr_confirm = st.slider(
-            "S/R reversal confirmation bars",
-            1, 6, int(sr_rev_confirm), 1,
-            key="green_triangle_sr_confirm"
-        )
-    with c8:
-        green_sr_lookback = st.slider(
-            "S/R reversal touch lookback",
-            2, 30, int(sr_rev_lookback), 1,
-            key="green_triangle_sr_lookback"
-        )
+    run_minus075_scan = st.button("Scan -0.75 SR Crossers", key="btn_minus075_sr_scan")
 
-    run_green_triangle_scan = st.button("Scan Green Triangle Pick", key="btn_green_triangle_pick_scan")
+    if run_minus075_scan:
+        reversal_upward_trend_rows = []
+        reversal_downward_trend_rows = []
+        below_upward_trend_rows = []
+        below_downward_trend_rows = []
 
-    if run_green_triangle_scan:
-        hourly_period_map = {"24h": "1d", "48h": "2d", "96h": "4d"}
-        hourly_period = hourly_period_map.get(green_hourly_period_label, "2d")
+        progress = st.progress(0, text="Scanning daily -0.75 S/R reversals and below-threshold symbols...")
+        total_steps = max(1, len(universe))
 
-        daily_rows = []
-        hourly_rows = []
-
-        total_steps = max(1, len(universe) * 2)
-        done_steps = 0
-        progress = st.progress(0, text="Scanning daily green NTD triangles...")
-
-        for sym in universe:
-            row = green_triangle_pick_info_daily(
-                symbol=sym,
+        for i, sym in enumerate(universe, start=1):
+            reversal_row = minus075_sr_crosser_info_daily(
+                sym,
+                smooth_span=int(minus075_smooth),
+                recent_bars=int(minus075_recent),
+                confirm_bars=int(minus075_confirm),
+                threshold=float(minus075_threshold),
                 slope_lookback=int(slope_lb_daily),
-                recent_bars=int(green_daily_recent),
-                support_window=int(green_support_window_daily),
-                sr_prox=float(sr_prox_pct),
-                sr_zone=float(green_sr_zone),
-                sr_lookback=int(green_sr_lookback),
-                sr_confirm=int(green_sr_confirm),
-                sr_smooth=int(sr_rev_smooth),
             )
-            if row is not None:
-                daily_rows.append(row)
+            if reversal_row is not None:
+                if reversal_row.get("Trend Group") == "Upward Trend":
+                    reversal_upward_trend_rows.append(reversal_row)
+                else:
+                    reversal_downward_trend_rows.append(reversal_row)
 
-            done_steps += 1
-            progress.progress(min(1.0, done_steps / total_steps), text=f"Scanning daily: {sym}")
-
-        for sym in universe:
-            row = green_triangle_pick_info_hourly(
-                symbol=sym,
-                period=hourly_period,
-                slope_lookback=int(slope_lb_hourly),
-                recent_bars=int(green_hourly_recent),
-                support_window=int(green_support_window_hourly),
-                sr_prox=float(sr_prox_pct),
-                sr_zone=float(green_sr_zone),
-                sr_lookback=int(green_sr_lookback),
-                sr_confirm=int(green_sr_confirm),
-                sr_smooth=int(sr_rev_smooth),
+            below_row = minus075_sr_below_info_daily(
+                sym,
+                smooth_span=int(minus075_smooth),
+                threshold=float(minus075_threshold),
+                slope_lookback=int(slope_lb_daily),
             )
-            if row is not None:
-                hourly_rows.append(row)
+            if below_row is not None:
+                if below_row.get("Trend Group") == "Upward Trend":
+                    below_upward_trend_rows.append(below_row)
+                else:
+                    below_downward_trend_rows.append(below_row)
 
-            done_steps += 1
-            progress.progress(min(1.0, done_steps / total_steps), text=f"Scanning hourly: {sym}")
+            progress.progress(min(1.0, i / total_steps), text=f"Scanning daily: {sym}")
 
         progress.empty()
 
-        _render_green_triangle_pick_table("Daily — Upward Trend with Recent Green BUY/Support-Reversal Triangle", daily_rows)
-        _render_green_triangle_pick_table("Hourly — Upward Trend with Recent Green BUY/Support-Reversal Triangle", hourly_rows)
+        st.markdown("### Recently Reversed Upward from the -0.75 Zone")
+        _render_minus075_sr_table("Upward Trend", reversal_upward_trend_rows)
+        _render_minus075_sr_table("Downward Trend", reversal_downward_trend_rows)
+
+        st.markdown("### Currently Below the -0.75 Zone")
+        _render_minus075_below_table("Upward Trend", below_upward_trend_rows)
+        _render_minus075_below_table("Downward Trend", below_downward_trend_rows)
+
+        total_reversal = len(reversal_upward_trend_rows) + len(reversal_downward_trend_rows)
+        total_below = len(below_upward_trend_rows) + len(below_downward_trend_rows)
         st.caption(
-            f"Daily green triangle picks found: {len(daily_rows)} • "
-            f"Hourly green triangle picks found: {len(hourly_rows)}"
+            f"Total recent upward reversals found: {total_reversal} • "
+            f"Total currently below threshold found: {total_below}"
         )
     else:
-        st.info("Click **Scan Green Triangle Pick** to build the daily and hourly green-triangle tables.")
+        st.info("Click **Scan -0.75 SR Crossers** to build the grouped daily tables.")
 
+
+# --- Tab 9: HMA Cross ---
+with tab9:
+    st.header("HMA Cross")
+    st.caption(
+        "Daily-only scan for symbols where the trendline is upward, price has reversed upward from the "
+        "30-support line, and price recently crossed upward through the HMA(55). Results are sorted by "
+        "the lowest number of bars since the HMA cross."
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        hma_cross_recent = st.slider(
+            "Recent HMA cross window (daily bars)",
+            1, 90, 20, 1,
+            key="hma_cross_recent_bars"
+        )
+    with c2:
+        hma_support_reversal_lookback = st.slider(
+            "Support reversal lookback (daily bars)",
+            3, 90, 20, 1,
+            key="hma_support_reversal_lookback"
+        )
+    with c3:
+        hma_support_confirm = st.slider(
+            "Rising confirmation bars",
+            1, 6, 2, 1,
+            key="hma_support_confirm"
+        )
+    with c4:
+        hma_support_prox = st.slider(
+            "30-support proximity (%)",
+            0.05, 2.00, 0.35, 0.05,
+            key="hma_support_prox_pct"
+        ) / 100.0
+
+    run_hma_cross_scan = st.button("Scan HMA Cross", key="btn_hma_cross_scan")
+
+    if run_hma_cross_scan:
+        hma_rows = []
+        progress = st.progress(0, text="Scanning daily HMA Cross setups...")
+        total_steps = max(1, len(universe))
+
+        for i, sym in enumerate(universe, start=1):
+            row = hma_cross_info_daily(
+                symbol=sym,
+                hma_period_fixed=55,
+                slope_lookback=int(slope_lb_daily),
+                recent_cross_bars=int(hma_cross_recent),
+                support_lookback=30,
+                support_reversal_lookback=int(hma_support_reversal_lookback),
+                support_prox=float(hma_support_prox),
+                support_confirm_bars=int(hma_support_confirm),
+            )
+            if row is not None:
+                hma_rows.append(row)
+
+            progress.progress(min(1.0, i / total_steps), text=f"Scanning daily: {sym}")
+
+        progress.empty()
+
+        st.subheader("Daily HMA(55) Upward Cross after 30-Support Reversal")
+        _render_hma_cross_table(hma_rows)
+        st.caption(f"Total HMA Cross setups found: {len(hma_rows)}")
+    else:
+        st.info("Click **Scan HMA Cross** to build the daily setup table.")
