@@ -12,6 +12,7 @@
 # (NEW) S/R Reversal Crosses tab separates Daily/Hourly and Upward/Downward zero-line crosses.
 # (NEW) -0.75 SR Crossers tab finds daily S/R Reversal line support-zone upward reversals and current below-threshold symbols grouped by trend.
 # (NEW) Green Triangle Pick tab scans daily/hourly NTD support-reversal BUY triangles aligned with upward trend.
+# (UPDATED) Trade State gating: buy/profit alerts require recent NTD S/R support-reversal turn from the lower zone.
 
 import streamlit as st
 import pandas as pd
@@ -2254,6 +2255,255 @@ def _last_true_signal_info(mask_like: pd.Series, max_bars_since: int = 20):
     }
 
 
+
+def _recent_sr_signal_context(sri: pd.Series,
+                              signal_mask: pd.Series,
+                              max_bars_since: int = 12,
+                              zone_threshold: float = -0.50,
+                              lookback: int = 10):
+    """
+    Context for the latest S/R Reversal signal on the NTD panel.
+
+    For BUY/support reversals, ok=True means the latest green triangle is recent
+    and the S/R Reversal line recently turned up from the lower zone
+    (default: at/below -0.50; also records whether it reached -0.75).
+    """
+    sig = _last_true_signal_info(signal_mask, max_bars_since=max_bars_since)
+    result = {
+        "ok": False,
+        "signal": sig,
+        "bars_since": np.nan,
+        "signal_time": None,
+        "value_at_signal": np.nan,
+        "recent_extreme": np.nan,
+        "from_below_minus_050": False,
+        "from_below_minus_075": False,
+        "zone_label": "No recent signal",
+    }
+    if sig is None:
+        return result
+
+    s = _coerce_1d_series(sri).replace([np.inf, -np.inf], np.nan)
+    if s.empty:
+        return result
+
+    pos = int(sig.get("bar_index", len(s) - 1))
+    pos = max(0, min(pos, len(s) - 1))
+    try:
+        lb = max(1, int(lookback))
+    except Exception:
+        lb = 10
+
+    window = s.iloc[max(0, pos - lb):pos + 1].dropna()
+    value_at_signal = _safe_last_float(pd.Series([s.iloc[pos]], index=[s.index[pos]]))
+    recent_extreme = float(window.min()) if len(window) else np.nan
+
+    below_050 = np.isfinite(recent_extreme) and recent_extreme <= -0.50
+    below_075 = np.isfinite(recent_extreme) and recent_extreme <= -0.75
+    try:
+        th = float(zone_threshold)
+    except Exception:
+        th = -0.50
+
+    if below_075:
+        zone_label = "Turned up from below -0.75"
+    elif below_050:
+        zone_label = "Turned up from below -0.50"
+    elif np.isfinite(value_at_signal) and value_at_signal < 0:
+        zone_label = "Turned up below 0.00"
+    elif np.isfinite(value_at_signal):
+        zone_label = "Turned up above 0.00"
+    else:
+        zone_label = "Recent signal"
+
+    result.update({
+        "ok": bool(np.isfinite(recent_extreme) and recent_extreme <= th),
+        "bars_since": int(sig["bars_since"]),
+        "signal_time": sig["signal_time"],
+        "value_at_signal": float(value_at_signal) if np.isfinite(value_at_signal) else np.nan,
+        "recent_extreme": float(recent_extreme) if np.isfinite(recent_extreme) else np.nan,
+        "from_below_minus_050": bool(below_050),
+        "from_below_minus_075": bool(below_075),
+        "zone_label": zone_label,
+    })
+    return result
+
+
+def _trade_state_from_sr_context(price: pd.Series,
+                                 support: pd.Series,
+                                 resistance: pd.Series,
+                                 trend_slope: float,
+                                 ntd: pd.Series,
+                                 sri: pd.Series,
+                                 buy_context: dict,
+                                 sell_context: dict = None,
+                                 prox: float = 0.0025):
+    """
+    Classify the current chart into WAIT / BUY SETUP / BUY CONFIRMED /
+    SELL SETUP / SELL CONFIRMED using price trend plus the NTD-panel
+    S/R Reversal line.
+    """
+    sell_context = sell_context or {}
+    px = _safe_last_float(price)
+    sup = _safe_last_float(support)
+    res = _safe_last_float(resistance)
+    ntd_last = _safe_last_float(ntd)
+    sri_last = _safe_last_float(sri)
+
+    try:
+        slope = float(trend_slope)
+    except Exception:
+        slope = np.nan
+
+    try:
+        p = max(0.0, float(prox))
+    except Exception:
+        p = 0.0025
+
+    trend_up = np.isfinite(slope) and slope >= 0.0
+    trend_down = np.isfinite(slope) and slope < 0.0
+    near_support = np.all(np.isfinite([px, sup])) and px <= sup * (1.0 + p)
+    near_resistance = np.all(np.isfinite([px, res])) and px >= res * (1.0 - p)
+
+    if trend_up and bool(buy_context.get("ok", False)):
+        state = "BUY CONFIRMED"
+        detail = (
+            f"Upward price trend and recent green NTD support-reversal triangle "
+            f"({buy_context.get('zone_label', 'lower-zone turn')}; "
+            f"{buy_context.get('bars_since', 'n/a')} bars ago)."
+        )
+        level = "success"
+    elif trend_up and near_support and (not np.isfinite(sri_last) or sri_last <= 0.0):
+        state = "BUY SETUP"
+        detail = "Upward price trend and price is near support, but a fresh green NTD support-reversal triangle is still needed."
+        level = "warning"
+    elif trend_down and bool(sell_context.get("ok", False)):
+        state = "SELL CONFIRMED"
+        detail = (
+            f"Downward price trend and recent red NTD resistance-reversal triangle "
+            f"({sell_context.get('bars_since', 'n/a')} bars ago)."
+        )
+        level = "error"
+    elif trend_down and near_resistance and (not np.isfinite(sri_last) or sri_last >= 0.0):
+        state = "SELL SETUP"
+        detail = "Downward price trend and price is near resistance, but a fresh red NTD resistance-reversal triangle is still needed."
+        level = "warning"
+    else:
+        state = "WAIT"
+        if trend_up:
+            detail = "Price trend is upward, but NTD/S/R reversal confirmation is not aligned yet."
+        elif trend_down:
+            detail = "Price trend is downward, but price/S/R reversal confirmation is not aligned yet."
+        else:
+            detail = "Trend direction is unclear."
+        level = "info"
+
+    return {
+        "state": state,
+        "detail": detail,
+        "level": level,
+        "trend_direction": "Upward" if trend_up else ("Downward" if trend_down else "Unclear"),
+        "near_support": bool(near_support),
+        "near_resistance": bool(near_resistance),
+        "ntd_last": float(ntd_last) if np.isfinite(ntd_last) else np.nan,
+        "sri_last": float(sri_last) if np.isfinite(sri_last) else np.nan,
+    }
+
+
+def render_trade_state_banner(trade_state: dict):
+    if not isinstance(trade_state, dict):
+        return
+    msg = (
+        f"**Trade State: {trade_state.get('state', 'WAIT')}** — "
+        f"{trade_state.get('detail', '')} "
+        f"| Trend: {trade_state.get('trend_direction', 'n/a')} "
+        f"| NTD {fmt_slope(trade_state.get('ntd_last', np.nan))} "
+        f"| S/R Rev {fmt_slope(trade_state.get('sri_last', np.nan))}"
+    )
+    level = trade_state.get("level", "info")
+    if level == "success":
+        st.success(msg)
+    elif level == "warning":
+        st.warning(msg)
+    elif level == "error":
+        st.error(msg)
+    else:
+        st.info(msg)
+
+
+def _green_triangle_context(price: pd.Series,
+                            support: pd.Series,
+                            resistance: pd.Series,
+                            sri: pd.Series,
+                            sig: dict) -> dict:
+    """
+    Extra scanner columns for green NTD support-reversal triangles.
+    Shows where the S/R Reversal line was when the triangle printed and
+    whether price remains above support.
+    """
+    p = _coerce_1d_series(price).astype(float)
+    sup = _coerce_1d_series(support).reindex(p.index).ffill().bfill()
+    res = _coerce_1d_series(resistance).reindex(p.index).ffill().bfill()
+    sr = _coerce_1d_series(sri).reindex(p.index)
+
+    out = {
+        "Triangle S/R Reversal": np.nan,
+        "Triangle Zone": "n/a",
+        "Triangle Below 0.00": False,
+        "Triangle Below -0.50": False,
+        "Triangle Below -0.75": False,
+        "Recent S/R Low Before Triangle": np.nan,
+        "Price Above Support": False,
+        "Distance Above Support": np.nan,
+        "Support at Triangle": np.nan,
+        "Price at Triangle": np.nan,
+    }
+    if not isinstance(sig, dict) or p.empty:
+        return out
+
+    pos = int(sig.get("bar_index", len(p) - 1))
+    pos = max(0, min(pos, len(p) - 1))
+    ts = p.index[pos]
+
+    tri_sri = _safe_last_float(pd.Series([sr.iloc[pos]], index=[ts])) if len(sr) else np.nan
+    tri_price = _safe_last_float(pd.Series([p.iloc[pos]], index=[ts])) if len(p) else np.nan
+    tri_sup = _safe_last_float(pd.Series([sup.iloc[pos]], index=[ts])) if len(sup) else np.nan
+
+    sr_window = sr.iloc[max(0, pos - 10):pos + 1].dropna()
+    recent_low = float(sr_window.min()) if len(sr_window) else np.nan
+
+    last_price = _safe_last_float(p)
+    last_support = _safe_last_float(sup)
+    price_above_support = np.all(np.isfinite([last_price, last_support])) and last_price >= last_support
+    dist_above_support = last_price - last_support if price_above_support else np.nan
+
+    basis = recent_low if np.isfinite(recent_low) else tri_sri
+    if np.isfinite(basis) and basis <= -0.75:
+        zone = "Below -0.75"
+    elif np.isfinite(basis) and basis <= -0.50:
+        zone = "Below -0.50"
+    elif np.isfinite(tri_sri) and tri_sri < 0:
+        zone = "Below 0.00"
+    elif np.isfinite(tri_sri):
+        zone = "Above 0.00"
+    else:
+        zone = "n/a"
+
+    out.update({
+        "Triangle S/R Reversal": float(tri_sri) if np.isfinite(tri_sri) else np.nan,
+        "Triangle Zone": zone,
+        "Triangle Below 0.00": bool(np.isfinite(basis) and basis < 0.0),
+        "Triangle Below -0.50": bool(np.isfinite(basis) and basis <= -0.50),
+        "Triangle Below -0.75": bool(np.isfinite(basis) and basis <= -0.75),
+        "Recent S/R Low Before Triangle": float(recent_low) if np.isfinite(recent_low) else np.nan,
+        "Price Above Support": bool(price_above_support),
+        "Distance Above Support": float(dist_above_support) if np.isfinite(dist_above_support) else np.nan,
+        "Support at Triangle": float(tri_sup) if np.isfinite(tri_sup) else np.nan,
+        "Price at Triangle": float(tri_price) if np.isfinite(tri_price) else np.nan,
+    })
+    return out
+
+
 @st.cache_data(ttl=120, show_spinner=False)
 def green_triangle_pick_info_daily(symbol: str,
                                    slope_lookback: int = 90,
@@ -2305,6 +2555,7 @@ def green_triangle_pick_info_daily(symbol: str,
         last_support = _safe_last_float(support)
         last_resistance = _safe_last_float(resistance)
         last_sri = _safe_last_float(sri)
+        triangle_context = _green_triangle_context(close, support, resistance, sri, sig)
 
         return {
             "Symbol": symbol,
@@ -2317,6 +2568,7 @@ def green_triangle_pick_info_daily(symbol: str,
             "Current Support": float(last_support) if np.isfinite(last_support) else np.nan,
             "Current Resistance": float(last_resistance) if np.isfinite(last_resistance) else np.nan,
             "Current S/R Reversal": float(last_sri) if np.isfinite(last_sri) else np.nan,
+            **triangle_context,
         }
     except Exception:
         return None
@@ -2375,6 +2627,7 @@ def green_triangle_pick_info_hourly(symbol: str,
         last_support = _safe_last_float(support)
         last_resistance = _safe_last_float(resistance)
         last_sri = _safe_last_float(sri)
+        triangle_context = _green_triangle_context(close, support, resistance, sri, sig)
 
         return {
             "Symbol": symbol,
@@ -2387,6 +2640,7 @@ def green_triangle_pick_info_hourly(symbol: str,
             "Current Support": float(last_support) if np.isfinite(last_support) else np.nan,
             "Current Resistance": float(last_resistance) if np.isfinite(last_resistance) else np.nan,
             "Current S/R Reversal": float(last_sri) if np.isfinite(last_sri) else np.nan,
+            **triangle_context,
         }
     except Exception:
         return None
@@ -2403,7 +2657,9 @@ def _render_green_triangle_pick_table(title: str, rows: list):
 
     for col in [
         "Trend Slope", "Current Price", "Current Support",
-        "Current Resistance", "Current S/R Reversal"
+        "Current Resistance", "Current S/R Reversal",
+        "Triangle S/R Reversal", "Recent S/R Low Before Triangle",
+        "Distance Above Support", "Support at Triangle", "Price at Triangle"
     ]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce")
@@ -2714,6 +2970,52 @@ with tab1:
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
+                trade_buy_mask = pd.Series(False, index=hc.index)
+                trade_sell_mask = pd.Series(False, index=hc.index)
+                trade_sri = pd.Series(index=hc.index, dtype=float)
+                trade_buy_context = {"ok": False}
+                trade_sell_context = {"ok": False}
+                try:
+                    trade_buy_mask, trade_sell_mask, trade_sri = sr_reversal_opportunity_masks(
+                        price=hc,
+                        support=sup_h,
+                        resistance=res_h,
+                        trend_slope=float(m_h),
+                        prox=float(sr_prox_pct),
+                        zone=float(sr_rev_zone),
+                        lookback=int(sr_rev_lookback),
+                        confirm_bars=int(sr_rev_confirm),
+                        smooth_span=int(sr_rev_smooth),
+                    )
+                    trade_buy_context = _recent_sr_signal_context(
+                        trade_sri,
+                        trade_buy_mask,
+                        max_bars_since=max(6, int(sr_rev_lookback) * 2),
+                        zone_threshold=-0.50,
+                        lookback=max(6, int(sr_rev_lookback)),
+                    )
+                    trade_sell_context = _recent_sr_signal_context(
+                        -trade_sri,
+                        trade_sell_mask,
+                        max_bars_since=max(6, int(sr_rev_lookback) * 2),
+                        zone_threshold=-0.50,
+                        lookback=max(6, int(sr_rev_lookback)),
+                    )
+                    trade_state = _trade_state_from_sr_context(
+                        price=hc,
+                        support=sup_h,
+                        resistance=res_h,
+                        trend_slope=float(m_h),
+                        ntd=ntd_h,
+                        sri=trade_sri,
+                        buy_context=trade_buy_context,
+                        sell_context=trade_sell_context,
+                        prox=float(sr_prox_pct),
+                    )
+                    render_trade_state_banner(trade_state)
+                except Exception:
+                    trade_state = {"state": "WAIT", "detail": "Trade-state calculation unavailable.", "level": "info"}
+
                 instr_txt = format_trade_instruction(slope_h, sup_val, res_val, px_val, sel)
                 ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)} — {instr_txt}  |  ADX {adx_last_h:.1f}")
 
@@ -2782,11 +3084,20 @@ with tab1:
 
                         if signal["side"] == "BUY":
                             near_txt = f"Near support {fmt_price_val(sup_val)}"
-                            st.success(
-                                f"**Profit Alert:** **CLOSE** @ {fmt_price_val(close_price)} — "
-                                f"{close_label} {fmt_price_val(close_price)}; {near_txt} with {conf_tag} "
-                                f"• {pips_txt} | ADX {adx_last_h:.1f}"
-                            )
+                            buy_alert_confirmed = bool(green_trend_up and trade_buy_context.get("ok", False))
+                            if buy_alert_confirmed:
+                                st.success(
+                                    f"**Profit Alert:** **CLOSE** @ {fmt_price_val(close_price)} — "
+                                    f"{close_label} {fmt_price_val(close_price)}; {near_txt} with {conf_tag} "
+                                    f"• {pips_txt} | ADX {adx_last_h:.1f} "
+                                    f"| NTD S/R turn: {trade_buy_context.get('zone_label', 'confirmed')}"
+                                )
+                            else:
+                                st.info(
+                                    f"**BUY SETUP / WAIT:** {near_txt}, but Profit Alert is gated until "
+                                    f"the price trendline is upward **and** the NTD S/R Reversal line prints "
+                                    f"a recent green support-reversal triangle from below -0.50/-0.75."
+                                )
                         else:
                             near_txt = f"Near resistance {fmt_price_val(res_val)}"
                             st.error(
@@ -3403,7 +3714,8 @@ with tab10:
     st.caption(
         "Scans daily and hourly/intraday charts separately for symbols where the NTD chart recently "
         "printed a green BUY/support-reversal triangle while the price trendline is upward. Results "
-        "are sorted by the lowest number of bars since the triangle appeared."
+        "are sorted by the lowest number of bars since the triangle appeared and include the S/R "
+        "Reversal zone where the triangle formed plus whether price remains above support."
     )
 
     c1, c2, c3, c4 = st.columns(4)
