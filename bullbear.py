@@ -12,6 +12,7 @@
 # (NEW) S/R Reversal Crosses tab separates Daily/Hourly and Upward/Downward zero-line crosses.
 # (NEW) -0.75 SR Crossers tab finds daily S/R Reversal line support-zone upward reversals and current below-threshold symbols grouped by trend.
 # (NEW) Green Triangle Pick tab scans daily/hourly NTD support-reversal BUY triangles aligned with upward trend.
+# (NEW) 30 EMA Picks tab scans daily/hourly 30EMA upward crosses grouped by upward trendline and upward slopeline.
 # (UPDATED) Trade State gating: buy/profit alerts require recent NTD S/R support-reversal turn from the lower zone.
 
 import streamlit as st
@@ -2669,6 +2670,210 @@ def _render_green_triangle_pick_table(title: str, rows: list):
 
     st.dataframe(df.reset_index(drop=True), use_container_width=True, hide_index=True)
 
+
+# ========= 30 EMA Picks scanner helpers =========
+def _last_price_ema_cross_up_info(price: pd.Series,
+                                  ema: pd.Series,
+                                  max_bars_since: int = 20):
+    """
+    Return the most recent upward price cross through an EMA line.
+
+    Upward cross:
+      - previous price <= previous EMA
+      - current price > current EMA
+    """
+    p = _coerce_1d_series(price).astype(float)
+    e = _coerce_1d_series(ema).reindex(p.index).astype(float)
+    mask = p.notna() & e.notna()
+    if mask.sum() < 2:
+        return None
+
+    p = p[mask]
+    e = e[mask]
+    above = p > e
+    cross_up = above & (~above.shift(1).fillna(False))
+    if not cross_up.any():
+        return None
+
+    cross_time = cross_up[cross_up].index[-1]
+    cross_pos = p.index.get_loc(cross_time)
+    bars_since = (len(p) - 1) - int(cross_pos)
+
+    try:
+        max_bars = max(0, int(max_bars_since))
+    except Exception:
+        max_bars = 20
+    if bars_since > max_bars:
+        return None
+
+    return {
+        "cross_time": cross_time,
+        "bars_since": int(bars_since),
+        "price_at_cross": float(p.iloc[cross_pos]),
+        "ema_at_cross": float(e.iloc[cross_pos]),
+        "current_price": float(p.iloc[-1]),
+        "current_ema": float(e.iloc[-1]),
+    }
+
+
+def _ema_pick_row(symbol: str,
+                  chart_label: str,
+                  close: pd.Series,
+                  trend_slope: float,
+                  slope_line_slope: float,
+                  cross_info: dict,
+                  matched_by: str):
+    """
+    Format one 30 EMA pick scanner row.
+    """
+    if cross_info is None:
+        return None
+
+    try:
+        trend_direction = "Upward" if float(trend_slope) >= 0 else "Downward"
+    except Exception:
+        trend_direction = "n/a"
+
+    try:
+        slope_direction = "Upward" if float(slope_line_slope) >= 0 else "Downward"
+    except Exception:
+        slope_direction = "n/a"
+
+    return {
+        "Symbol": symbol,
+        "Chart": chart_label,
+        "Matched By": matched_by,
+        "Bars Since EMA Cross": int(cross_info["bars_since"]),
+        "Cross Time": cross_info["cross_time"],
+        "Current Price": float(cross_info["current_price"]),
+        "Current 30 EMA": float(cross_info["current_ema"]),
+        "Price at Cross": float(cross_info["price_at_cross"]),
+        "30 EMA at Cross": float(cross_info["ema_at_cross"]),
+        "Trend Direction": trend_direction,
+        "Trend Slope": float(trend_slope) if np.isfinite(trend_slope) else np.nan,
+        "Slope Direction": slope_direction,
+        "Slope Line Slope": float(slope_line_slope) if np.isfinite(slope_line_slope) else np.nan,
+    }
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def ema30_pick_info_daily(symbol: str,
+                          recent_cross_bars: int = 20,
+                          trend_lookback: int = 252,
+                          slope_lookback: int = 90):
+    """
+    Daily 30 EMA pick scanner.
+
+    Returns two possible rows:
+      - Trendline Upward: price recently crossed above 30EMA and the trendline is upward.
+      - Slopeline Upward: price recently crossed above 30EMA and the configured slopeline is upward.
+    """
+    try:
+        close = fetch_hist(symbol)
+        if close is None or close.empty:
+            return []
+
+        close = _coerce_1d_series(close).dropna()
+        if close.shape[0] < 35:
+            return []
+
+        ema30 = close.ewm(span=30, adjust=False).mean()
+        cross = _last_price_ema_cross_up_info(close, ema30, max_bars_since=int(recent_cross_bars))
+        if cross is None:
+            return []
+
+        trend_lb = max(2, min(int(trend_lookback), len(close)))
+        slope_lb = max(2, min(int(slope_lookback), len(close)))
+        _, trend_slope = slope_line(close, trend_lb)
+        _, slope_line_slope = slope_line(close, slope_lb)
+
+        rows = []
+        if np.isfinite(trend_slope) and trend_slope >= 0.0:
+            row = _ema_pick_row(symbol, "Daily", close, trend_slope, slope_line_slope, cross, "Trendline Upward")
+            if row is not None:
+                rows.append(row)
+        if np.isfinite(slope_line_slope) and slope_line_slope >= 0.0:
+            row = _ema_pick_row(symbol, "Daily", close, trend_slope, slope_line_slope, cross, "Slopeline Upward")
+            if row is not None:
+                rows.append(row)
+
+        return rows
+    except Exception:
+        return []
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def ema30_pick_info_hourly(symbol: str,
+                           period: str = "2d",
+                           recent_cross_bars: int = 24,
+                           slope_lookback: int = 120):
+    """
+    Hourly/intraday 30 EMA pick scanner using the app's 5-minute intraday data.
+
+    Returns two possible rows:
+      - Trendline Upward: price recently crossed above 30EMA and the full intraday trendline is upward.
+      - Slopeline Upward: price recently crossed above 30EMA and the configured slopeline is upward.
+    """
+    try:
+        df = fetch_intraday(symbol, period=period)
+        if df is None or df.empty or "Close" not in df.columns:
+            return []
+
+        close = _coerce_1d_series(df["Close"]).ffill().dropna()
+        if close.shape[0] < 35:
+            return []
+
+        ema30 = close.ewm(span=30, adjust=False).mean()
+        cross = _last_price_ema_cross_up_info(close, ema30, max_bars_since=int(recent_cross_bars))
+        if cross is None:
+            return []
+
+        x = np.arange(len(close), dtype=float)
+        try:
+            trend_slope, _ = np.polyfit(x, close.to_numpy(dtype=float), 1)
+            trend_slope = float(trend_slope)
+        except Exception:
+            trend_slope = np.nan
+
+        slope_lb = max(2, min(int(slope_lookback), len(close)))
+        _, slope_line_slope = slope_line(close, slope_lb)
+
+        rows = []
+        if np.isfinite(trend_slope) and trend_slope >= 0.0:
+            row = _ema_pick_row(symbol, "Hourly", close, trend_slope, slope_line_slope, cross, "Trendline Upward")
+            if row is not None:
+                rows.append(row)
+        if np.isfinite(slope_line_slope) and slope_line_slope >= 0.0:
+            row = _ema_pick_row(symbol, "Hourly", close, trend_slope, slope_line_slope, cross, "Slopeline Upward")
+            if row is not None:
+                rows.append(row)
+
+        return rows
+    except Exception:
+        return []
+
+
+def _render_ema30_pick_table(title: str, rows: list):
+    st.subheader(title)
+    if not rows:
+        st.info("No recent 30 EMA upward crosses found.")
+        return
+
+    df = pd.DataFrame(rows)
+    df = df.sort_values(["Bars Since EMA Cross", "Symbol"], ascending=[True, True])
+
+    for col in [
+        "Current Price", "Current 30 EMA", "Price at Cross", "30 EMA at Cross",
+        "Trend Slope", "Slope Line Slope"
+    ]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    if "Cross Time" in df.columns:
+        df["Cross Time"] = df["Cross Time"].astype(str)
+
+    st.dataframe(df.reset_index(drop=True), use_container_width=True, hide_index=True)
+
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -2678,7 +2883,7 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -2688,7 +2893,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
     "S/R Reversal Crosses",
     "-0.75 SR Crossers",
     "HMA Cross",
-    "Green Triangle Pick"
+    "Green Triangle Pick",
+    "30 EMA Picks"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -3831,3 +4037,117 @@ with tab10:
         )
     else:
         st.info("Click **Scan Green Triangle Pick** to build the daily and hourly green-triangle tables.")
+
+
+# --- Tab 11: 30 EMA Picks ---
+with tab11:
+    st.header("30 EMA Picks")
+    st.caption(
+        "Scans Daily and Hourly charts for symbols where price recently crossed **above** the 30 EMA. "
+        "Results are grouped by whether the price-chart trendline is upward and whether the configured "
+        "slopeline is upward. Tables are sorted by the fewest bars since the EMA cross."
+    )
+
+    st.markdown("### Scanner settings")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        ema30_daily_recent = st.slider(
+            "Recent daily cross window (bars)",
+            1, 120, 20, 1,
+            key="ema30_pick_daily_recent_bars"
+        )
+    with c2:
+        ema30_hourly_recent = st.slider(
+            "Recent hourly cross window (5m bars)",
+            1, 240, 36, 1,
+            key="ema30_pick_hourly_recent_bars"
+        )
+    with c3:
+        ema30_daily_trend_lb = st.slider(
+            "Daily trendline lookback (bars)",
+            30, 1000, 252, 10,
+            key="ema30_pick_daily_trend_lb"
+        )
+    with c4:
+        ema30_hour_period_label = st.selectbox(
+            "Hourly lookback period",
+            ["1d", "2d", "4d"],
+            index=1,
+            key="ema30_pick_hourly_period"
+        )
+
+    c5, c6 = st.columns(2)
+    with c5:
+        ema30_daily_slope_lb = st.slider(
+            "Daily slopeline lookback (bars)",
+            10, 360, int(slope_lb_daily), 10,
+            key="ema30_pick_daily_slope_lb"
+        )
+    with c6:
+        ema30_hourly_slope_lb = st.slider(
+            "Hourly slopeline lookback (5m bars)",
+            12, 480, int(slope_lb_hourly), 6,
+            key="ema30_pick_hourly_slope_lb"
+        )
+
+    run_ema30_pick_scan = st.button("Scan 30 EMA Picks", key="btn_ema30_pick_scan")
+
+    if run_ema30_pick_scan:
+        daily_trend_rows = []
+        daily_slope_rows = []
+        hourly_trend_rows = []
+        hourly_slope_rows = []
+
+        progress = st.progress(0, text="Scanning Daily and Hourly 30 EMA picks...")
+        total_steps = max(1, len(universe) * 2)
+        step_count = 0
+
+        for sym in universe:
+            rows = ema30_pick_info_daily(
+                symbol=sym,
+                recent_cross_bars=int(ema30_daily_recent),
+                trend_lookback=int(ema30_daily_trend_lb),
+                slope_lookback=int(ema30_daily_slope_lb),
+            )
+            for row in rows:
+                if row.get("Matched By") == "Trendline Upward":
+                    daily_trend_rows.append(row)
+                elif row.get("Matched By") == "Slopeline Upward":
+                    daily_slope_rows.append(row)
+            step_count += 1
+            progress.progress(min(1.0, step_count / total_steps), text=f"Scanning daily: {sym}")
+
+        for sym in universe:
+            rows = ema30_pick_info_hourly(
+                symbol=sym,
+                period=ema30_hour_period_label,
+                recent_cross_bars=int(ema30_hourly_recent),
+                slope_lookback=int(ema30_hourly_slope_lb),
+            )
+            for row in rows:
+                if row.get("Matched By") == "Trendline Upward":
+                    hourly_trend_rows.append(row)
+                elif row.get("Matched By") == "Slopeline Upward":
+                    hourly_slope_rows.append(row)
+            step_count += 1
+            progress.progress(min(1.0, step_count / total_steps), text=f"Scanning hourly: {sym}")
+
+        progress.empty()
+
+        st.markdown("## Daily Chart")
+        _render_ema30_pick_table("Daily — Price Crossed Above 30 EMA + Trendline Upward", daily_trend_rows)
+        _render_ema30_pick_table("Daily — Price Crossed Above 30 EMA + Slopeline Upward", daily_slope_rows)
+
+        st.markdown("## Hourly Chart")
+        _render_ema30_pick_table("Hourly — Price Crossed Above 30 EMA + Trendline Upward", hourly_trend_rows)
+        _render_ema30_pick_table("Hourly — Price Crossed Above 30 EMA + Slopeline Upward", hourly_slope_rows)
+
+        st.caption(
+            f"Daily trendline picks: {len(daily_trend_rows)} • "
+            f"Daily slopeline picks: {len(daily_slope_rows)} • "
+            f"Hourly trendline picks: {len(hourly_trend_rows)} • "
+            f"Hourly slopeline picks: {len(hourly_slope_rows)}"
+        )
+    else:
+        st.info("Click **Scan 30 EMA Picks** to build the daily and hourly EMA-cross tables.")
+
