@@ -13,6 +13,7 @@
 # (NEW) -0.75 SR Crossers tab finds daily S/R Reversal line support-zone upward reversals and current below-threshold symbols grouped by trend.
 # (NEW) Green Triangle Pick tab scans daily/hourly NTD support-reversal BUY triangles aligned with upward trend.
 # (UPDATED) Trade State gating: buy/profit alerts require recent NTD S/R support-reversal turn from the lower zone.
+# (FIXED) S/R -0.5 Cross now uses tab11, matching the 11 defined Streamlit tabs and avoiding tab12 NameError.
 
 # (NEW) S/R -0.5 Cross tab finds daily S/R Reversal Index upward crosses through -0.5 and 0.0.
 
@@ -3921,8 +3922,8 @@ with tab10:
         st.info("Click **Scan Green Triangle Pick** to build the daily and hourly green-triangle tables.")
 
 
-# --- Tab 12: S/R -0.5 Cross ---
-with tab12:
+# --- Tab 11: S/R -0.5 Cross ---
+with tab11:
     st.header("S/R -0.5 Cross")
     st.caption(
         "Daily-chart scan for symbols where the **S/R Reversal Index** on the NTD chart "
