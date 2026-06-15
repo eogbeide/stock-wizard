@@ -1,4 +1,5 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
+# (FIXED) S/R -0.5 Cross tab includes missing 0.0 upward-cross helper and table renderer.
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (UPDATED) Removed MACD from NTD panels; NTD panels now use a smoothed NPX price overlay.
 # (UPDATED) NTD panels are less noisy: green/red triangles now appear only after confirmed S/R reversals.
@@ -1666,6 +1667,85 @@ def _render_minus075_below_table(title: str, rows: list):
 
 
 
+def _last_threshold_up_cross_after_reversal_info(line_like: pd.Series,
+                                                threshold: float = -0.75,
+                                                recent_bars: int = 20,
+                                                confirm_bars: int = 2):
+    """
+    Return the latest upward cross through a support-side threshold after the
+    line previously traded below that threshold and is now rising.
+
+    Used for S/R Reversal Index cases where the line was below -0.75, reversed,
+    crossed back above -0.75, and is still moving upward.
+    """
+    s = _coerce_1d_series(line_like).replace([np.inf, -np.inf], np.nan).dropna()
+    if s.shape[0] < max(4, int(confirm_bars) + 2):
+        return None
+
+    try:
+        th = float(threshold)
+    except Exception:
+        th = -0.75
+    try:
+        rb = max(1, int(recent_bars))
+    except Exception:
+        rb = 20
+    try:
+        cb = max(1, int(confirm_bars))
+    except Exception:
+        cb = 2
+
+    vals = s.to_numpy(dtype=float)
+    idx = s.index
+    events = []
+
+    for i in range(1, len(vals)):
+        prev_v = vals[i - 1]
+        curr_v = vals[i]
+        if not np.all(np.isfinite([prev_v, curr_v])):
+            continue
+        if prev_v < th and curr_v >= th:
+            lookback_start = max(0, i - max(rb, cb + 2))
+            prior_vals = vals[lookback_start:i + 1]
+            if not np.isfinite(prior_vals).any():
+                continue
+            recent_min = float(np.nanmin(prior_vals))
+            if not np.isfinite(recent_min) or recent_min >= th:
+                continue
+            events.append({
+                "bar_index": i,
+                "time": idx[i],
+                "value_at_cross": float(curr_v),
+                "recent_min": recent_min,
+            })
+
+    if not events:
+        return None
+
+    ev = events[-1]
+    bars_since = (len(s) - 1) - int(ev["bar_index"])
+    if bars_since > rb:
+        return None
+
+    current_value = float(vals[-1])
+    if not np.isfinite(current_value) or current_value < th:
+        return None
+
+    confirm_start = max(0, len(vals) - cb - 1)
+    confirm_slice = vals[confirm_start:]
+    if confirm_slice.size < cb + 1 or not np.all(np.isfinite(confirm_slice)):
+        return None
+    deltas = np.diff(confirm_slice)
+    if not np.all(deltas > 0):
+        return None
+
+    ev["bars_since"] = int(bars_since)
+    ev["current_value"] = current_value
+    ev["change_since_cross"] = current_value - float(ev["value_at_cross"])
+    return ev
+
+
+
 @st.cache_data(ttl=120, show_spinner=False)
 def sr_minus05_cross_daily_upward_threshold_info(symbol: str,
                                                  smooth_span: int = 8,
@@ -1747,6 +1827,75 @@ def _render_sr_minus05_threshold_upward_table(title: str, rows: list, empty_text
         if "Cross Time" in df.columns:
             df["Cross Time"] = df["Cross Time"].astype(str)
     st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+def sr_cross_daily_upward_zero_info(symbol: str,
+                                    smooth_span: int = 8,
+                                    recent_bars: int = 30,
+                                    slope_lookback: int = 90):
+    """
+    Daily S/R Cross scanner row for symbols where the S/R Reversal Index has
+    recently crossed the 0.0 line upward.
+    """
+    try:
+        row = sr_reversal_cross_info_daily(
+            symbol,
+            smooth_span=int(smooth_span),
+            recent_bars=int(recent_bars),
+        )
+        if row is None or row.get("Direction") != "Upward":
+            return None
+
+        close = fetch_hist(symbol)
+        close = _coerce_1d_series(close).dropna()
+        _, trend_slope = slope_line(close, int(slope_lookback))
+        trend_direction = "Upward" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward"
+
+        return {
+            "Symbol": symbol,
+            "Bars Since Cross": int(row.get("Bars Since Cross", 0)),
+            "Cross Time": row.get("Cross Time"),
+            "Value at Cross": row.get("Value at Cross"),
+            "Current S/R Reversal": row.get("Current S/R Reversal"),
+            "Last Close": row.get("Last Close"),
+            "Trend Direction": trend_direction,
+            "Trend Slope": trend_slope,
+        }
+    except Exception:
+        return None
+
+
+def _render_sr_cross_daily_threshold_table(title: str, rows: list):
+    st.subheader(title)
+    if not rows:
+        st.info("No symbols found.")
+        return
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values(["Current S/R Reversal", "Symbol"], ascending=[True, True])
+        for col in ["Current S/R Reversal", "Last Close", "Trend Slope"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        if "First Below Date" in df.columns:
+            df["First Below Date"] = df["First Below Date"].astype(str)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+def _render_sr_cross_daily_upward_table(title: str, rows: list):
+    st.subheader(title)
+    if not rows:
+        st.info("No recent upward 0.0 crosses found.")
+        return
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values(["Bars Since Cross", "Symbol"], ascending=[True, True])
+        for col in ["Value at Cross", "Current S/R Reversal", "Last Close", "Trend Slope"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        if "Cross Time" in df.columns:
+            df["Cross Time"] = df["Cross Time"].astype(str)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
 
 
 # ========= Sessions =========
