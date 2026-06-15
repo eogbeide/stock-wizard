@@ -1,5 +1,4 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
-# (FIXED) S/R -0.5 Cross tab includes missing 0.0 upward-cross helper and table renderer.
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (UPDATED) Removed MACD from NTD panels; NTD panels now use a smoothed NPX price overlay.
 # (UPDATED) NTD panels are less noisy: green/red triangles now appear only after confirmed S/R reversals.
@@ -13,10 +12,10 @@
 # (NEW) S/R Reversal Crosses tab separates Daily/Hourly and Upward/Downward zero-line crosses.
 # (NEW) -0.75 SR Crossers tab finds daily S/R Reversal line support-zone upward reversals and current below-threshold symbols grouped by trend.
 # (NEW) Green Triangle Pick tab scans daily/hourly NTD support-reversal BUY triangles aligned with upward trend.
+# (NEW) S/R Cross tab scans daily S/R Reversal Index below -0.75 and recent upward 0.0 crosses.
+# (UPDATED) S/R Reversal Crosses tab includes a daily -0.75 upward-cross table after support-zone reversal.
 # (UPDATED) Trade State gating: buy/profit alerts require recent NTD S/R support-reversal turn from the lower zone.
-# (FIXED) S/R -0.5 Cross now uses tab11, matching the 11 defined Streamlit tabs and avoiding tab12 NameError.
-
-# (NEW) S/R -0.5 Cross tab finds daily S/R Reversal Index upward crosses through -0.5 and 0.0.
+# (NEW) S/R -0.5 Cross tab scans daily upward crosses through -0.5 and 0.0 on the S/R Reversal Index.
 
 import streamlit as st
 import pandas as pd
@@ -44,6 +43,20 @@ st.markdown("""
   @media (max-width: 600px) {
     .css-18e3th9 { transform: none !important; visibility: visible !important; width: 100% !important; position: relative !important; margin-bottom: 1rem; }
     .css-1v3fvcr { margin-left: 0 !important; }
+  }
+</style>
+""", unsafe_allow_html=True)
+
+
+# --- Wrapped tabs CSS for better UX when many tabs are present ---
+st.markdown("""
+<style>
+  div[data-testid="stTabs"] div[role="tablist"] {
+    flex-wrap: wrap;
+    gap: 0.15rem 0.35rem;
+  }
+  div[data-testid="stTabs"] button[role="tab"] {
+    flex: 0 0 auto;
   }
 </style>
 """, unsafe_allow_html=True)
@@ -1427,6 +1440,164 @@ def _render_sr_cross_table(title: str, rows: list):
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
+def _last_threshold_up_cross_after_reversal_info(line_like: pd.Series,
+                                                threshold: float = -0.75,
+                                                recent_bars: int = 20,
+                                                confirm_bars: int = 2):
+    """
+    Return the latest upward cross through a support-side threshold after the
+    line previously traded below that threshold and is now rising.
+
+    Used for S/R Reversal Index cases where the line was below -0.75, reversed,
+    crossed back above -0.75, and is still moving upward.
+    """
+    s = _coerce_1d_series(line_like).replace([np.inf, -np.inf], np.nan).dropna()
+    if s.shape[0] < max(4, int(confirm_bars) + 2):
+        return None
+
+    try:
+        th = float(threshold)
+    except Exception:
+        th = -0.75
+    try:
+        rb = max(1, int(recent_bars))
+    except Exception:
+        rb = 20
+    try:
+        cb = max(1, int(confirm_bars))
+    except Exception:
+        cb = 2
+
+    vals = s.to_numpy(dtype=float)
+    idx = s.index
+    events = []
+
+    for i in range(1, len(vals)):
+        prev_v = vals[i - 1]
+        curr_v = vals[i]
+        if not np.all(np.isfinite([prev_v, curr_v])):
+            continue
+        if prev_v < th and curr_v >= th:
+            lookback_start = max(0, i - max(rb, cb + 2))
+            prior_vals = vals[lookback_start:i + 1]
+            if not np.isfinite(prior_vals).any():
+                continue
+            recent_min = float(np.nanmin(prior_vals))
+            if not np.isfinite(recent_min) or recent_min >= th:
+                continue
+            events.append({
+                "bar_index": i,
+                "time": idx[i],
+                "value_at_cross": float(curr_v),
+                "recent_min": recent_min,
+            })
+
+    if not events:
+        return None
+
+    ev = events[-1]
+    bars_since = (len(s) - 1) - int(ev["bar_index"])
+    if bars_since > rb:
+        return None
+
+    current_value = float(vals[-1])
+    if not np.isfinite(current_value) or current_value < th:
+        return None
+
+    confirm_start = max(0, len(vals) - cb - 1)
+    confirm_slice = vals[confirm_start:]
+    if confirm_slice.size < cb + 1 or not np.all(np.isfinite(confirm_slice)):
+        return None
+    deltas = np.diff(confirm_slice)
+    if not np.all(deltas > 0):
+        return None
+
+    ev["bars_since"] = int(bars_since)
+    ev["current_value"] = current_value
+    ev["change_since_cross"] = current_value - float(ev["value_at_cross"])
+    return ev
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def sr_reversal_minus075_up_cross_info_daily(symbol: str,
+                                             smooth_span: int = 8,
+                                             recent_bars: int = 20,
+                                             confirm_bars: int = 2,
+                                             threshold: float = -0.75,
+                                             slope_lookback: int = 90):
+    """
+    Daily scanner row for symbols where the S/R Reversal Index was below the
+    support-side threshold, recently crossed upward through it, and is still
+    rising.
+    """
+    try:
+        close = fetch_hist(symbol)
+        if close is None or close.empty:
+            return None
+        close = _coerce_1d_series(close).dropna()
+        if close.shape[0] < max(35, int(slope_lookback) // 2):
+            return None
+
+        support = close.rolling(30, min_periods=1).min()
+        resistance = close.rolling(30, min_periods=1).max()
+        sri = compute_sr_reversal_index(
+            price=close,
+            support=support,
+            resistance=resistance,
+            smooth_span=int(smooth_span),
+        )
+
+        ev = _last_threshold_up_cross_after_reversal_info(
+            sri,
+            threshold=float(threshold),
+            recent_bars=int(recent_bars),
+            confirm_bars=int(confirm_bars),
+        )
+        if ev is None:
+            return None
+
+        _, trend_slope = slope_line(close, int(slope_lookback))
+        trend_direction = "Upward" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward"
+
+        return {
+            "Symbol": symbol,
+            "Bars Since -0.75 Cross": ev["bars_since"],
+            "Cross Date": ev["time"],
+            "Value at Cross": ev["value_at_cross"],
+            "Current S/R Reversal": ev["current_value"],
+            "Recent Minimum Below -0.75": ev["recent_min"],
+            "Change Since Cross": ev["change_since_cross"],
+            "Trend Direction": trend_direction,
+            "Trend Slope": trend_slope,
+            "Last Close": _safe_last_float(close),
+        }
+    except Exception:
+        return None
+
+
+def _render_minus075_up_cross_table(title: str, rows: list):
+    st.subheader(title)
+    if not rows:
+        st.info("No recent upward -0.75 crosses found.")
+        return
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values(["Bars Since -0.75 Cross", "Symbol"], ascending=[True, True])
+        for col in [
+            "Value at Cross",
+            "Current S/R Reversal",
+            "Recent Minimum Below -0.75",
+            "Change Since Cross",
+            "Trend Slope",
+            "Last Close",
+        ]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        if "Cross Date" in df.columns:
+            df["Cross Date"] = df["Cross Date"].astype(str)
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+
 def _last_minus075_support_reversal_info(sri: pd.Series,
                                          threshold: float = -0.75,
                                          recent_bars: int = 20,
@@ -1666,104 +1837,21 @@ def _render_minus075_below_table(title: str, rows: list):
 
 
 
-
-def _last_threshold_up_cross_after_reversal_info(line_like: pd.Series,
-                                                threshold: float = -0.75,
-                                                recent_bars: int = 20,
-                                                confirm_bars: int = 2):
-    """
-    Return the latest upward cross through a support-side threshold after the
-    line previously traded below that threshold and is now rising.
-
-    Used for S/R Reversal Index cases where the line was below -0.75, reversed,
-    crossed back above -0.75, and is still moving upward.
-    """
-    s = _coerce_1d_series(line_like).replace([np.inf, -np.inf], np.nan).dropna()
-    if s.shape[0] < max(4, int(confirm_bars) + 2):
-        return None
-
-    try:
-        th = float(threshold)
-    except Exception:
-        th = -0.75
-    try:
-        rb = max(1, int(recent_bars))
-    except Exception:
-        rb = 20
-    try:
-        cb = max(1, int(confirm_bars))
-    except Exception:
-        cb = 2
-
-    vals = s.to_numpy(dtype=float)
-    idx = s.index
-    events = []
-
-    for i in range(1, len(vals)):
-        prev_v = vals[i - 1]
-        curr_v = vals[i]
-        if not np.all(np.isfinite([prev_v, curr_v])):
-            continue
-        if prev_v < th and curr_v >= th:
-            lookback_start = max(0, i - max(rb, cb + 2))
-            prior_vals = vals[lookback_start:i + 1]
-            if not np.isfinite(prior_vals).any():
-                continue
-            recent_min = float(np.nanmin(prior_vals))
-            if not np.isfinite(recent_min) or recent_min >= th:
-                continue
-            events.append({
-                "bar_index": i,
-                "time": idx[i],
-                "value_at_cross": float(curr_v),
-                "recent_min": recent_min,
-            })
-
-    if not events:
-        return None
-
-    ev = events[-1]
-    bars_since = (len(s) - 1) - int(ev["bar_index"])
-    if bars_since > rb:
-        return None
-
-    current_value = float(vals[-1])
-    if not np.isfinite(current_value) or current_value < th:
-        return None
-
-    confirm_start = max(0, len(vals) - cb - 1)
-    confirm_slice = vals[confirm_start:]
-    if confirm_slice.size < cb + 1 or not np.all(np.isfinite(confirm_slice)):
-        return None
-    deltas = np.diff(confirm_slice)
-    if not np.all(deltas > 0):
-        return None
-
-    ev["bars_since"] = int(bars_since)
-    ev["current_value"] = current_value
-    ev["change_since_cross"] = current_value - float(ev["value_at_cross"])
-    return ev
-
-
-
 @st.cache_data(ttl=120, show_spinner=False)
-def sr_minus05_cross_daily_upward_threshold_info(symbol: str,
-                                                 smooth_span: int = 8,
-                                                 threshold: float = -0.50,
-                                                 recent_bars: int = 30,
-                                                 confirm_bars: int = 2,
-                                                 slope_lookback: int = 90):
+def sr_cross_daily_below_threshold_info(symbol: str,
+                                        smooth_span: int = 8,
+                                        threshold: float = -0.75,
+                                        slope_lookback: int = 90):
     """
-    Daily S/R -0.5 Cross scanner row for symbols where the S/R Reversal Index
-    recently crossed upward through a selected threshold after being below it,
-    and is still rising.
+    Daily S/R Cross scanner row for symbols where the S/R Reversal Index is
+    currently below the selected support-side threshold.
     """
     try:
         close = fetch_hist(symbol)
         if close is None or close.empty:
             return None
         close = _coerce_1d_series(close).dropna()
-        if close.shape[0] < max(35, int(slope_lookback) // 2):
+        if close.shape[0] < 35:
             return None
 
         support = close.rolling(30, min_periods=1).min()
@@ -1773,29 +1861,33 @@ def sr_minus05_cross_daily_upward_threshold_info(symbol: str,
             support=support,
             resistance=resistance,
             smooth_span=int(smooth_span),
-        )
+        ).dropna()
 
-        ev = _last_threshold_up_cross_after_reversal_info(
-            sri,
-            threshold=float(threshold),
-            recent_bars=int(recent_bars),
-            confirm_bars=int(confirm_bars),
-        )
-        if ev is None:
+        if sri.empty:
             return None
 
+        current_value = _safe_last_float(sri)
+        th = float(threshold)
+        if not np.isfinite(current_value) or current_value > th:
+            return None
+
+        below_mask = (sri <= th)
+        bars_below = 0
+        for val in reversed(below_mask.to_numpy(dtype=bool)):
+            if val:
+                bars_below += 1
+            else:
+                break
+
+        first_below_time = sri.index[-bars_below] if bars_below > 0 else None
         _, trend_slope = slope_line(close, int(slope_lookback))
         trend_direction = "Upward" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward"
 
         return {
             "Symbol": symbol,
-            "Threshold": float(threshold),
-            "Bars Since Cross": int(ev["bars_since"]),
-            "Cross Time": ev["time"],
-            "Value at Cross": float(ev["value_at_cross"]),
-            "Current S/R Reversal": float(ev["current_value"]),
-            "Recent Minimum Below Threshold": float(ev["recent_min"]),
-            "Change Since Cross": float(ev["change_since_cross"]),
+            "Current S/R Reversal": current_value,
+            "Bars Below -0.75": int(bars_below),
+            "First Below Date": first_below_time,
             "Last Close": _safe_last_float(close),
             "Trend Direction": trend_direction,
             "Trend Slope": trend_slope,
@@ -1804,31 +1896,7 @@ def sr_minus05_cross_daily_upward_threshold_info(symbol: str,
         return None
 
 
-def _render_sr_minus05_threshold_upward_table(title: str, rows: list, empty_text: str = "No recent upward crosses found."):
-    st.subheader(title)
-    if not rows:
-        st.info(empty_text)
-        return
-
-    df = pd.DataFrame(rows)
-    if not df.empty:
-        df = df.sort_values(["Bars Since Cross", "Symbol"], ascending=[True, True])
-        for col in [
-            "Threshold",
-            "Value at Cross",
-            "Current S/R Reversal",
-            "Recent Minimum Below Threshold",
-            "Change Since Cross",
-            "Last Close",
-            "Trend Slope",
-        ]:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-        if "Cross Time" in df.columns:
-            df["Cross Time"] = df["Cross Time"].astype(str)
-    st.dataframe(df, use_container_width=True, hide_index=True)
-
-
+@st.cache_data(ttl=120, show_spinner=False)
 def sr_cross_daily_upward_zero_info(symbol: str,
                                     smooth_span: int = 8,
                                     recent_bars: int = 30,
@@ -1896,6 +1964,159 @@ def _render_sr_cross_daily_upward_table(title: str, rows: list):
             df["Cross Time"] = df["Cross Time"].astype(str)
     st.dataframe(df, use_container_width=True, hide_index=True)
 
+
+def _last_level_up_cross_info(line_like: pd.Series,
+                              level: float = -0.5,
+                              max_bars_since: int = 30,
+                              require_current_above: bool = True):
+    """
+    Return the latest upward cross through an arbitrary S/R Reversal level.
+
+    Upward cross definition:
+      previous value < level and current value >= level.
+    """
+    s = _coerce_1d_series(line_like).replace([np.inf, -np.inf], np.nan).dropna()
+    if s.shape[0] < 2:
+        return None
+
+    try:
+        lvl = float(level)
+    except Exception:
+        lvl = -0.5
+    try:
+        max_bars = max(0, int(max_bars_since))
+    except Exception:
+        max_bars = 30
+
+    vals = s.to_numpy(dtype=float)
+    idx = s.index
+    events = []
+
+    for i in range(1, len(vals)):
+        prev_v = vals[i - 1]
+        curr_v = vals[i]
+        if not np.all(np.isfinite([prev_v, curr_v])):
+            continue
+        if prev_v < lvl and curr_v >= lvl:
+            events.append({
+                "bar_index": i,
+                "time": idx[i],
+                "value_at_cross": float(curr_v),
+                "previous_value": float(prev_v),
+            })
+
+    if not events:
+        return None
+
+    ev = events[-1]
+    bars_since = (len(s) - 1) - int(ev["bar_index"])
+    if bars_since > max_bars:
+        return None
+
+    current_value = float(vals[-1])
+    if require_current_above and (not np.isfinite(current_value) or current_value < lvl):
+        return None
+
+    current_slope = np.nan
+    try:
+        recent = s.iloc[-min(8, len(s)):].dropna()
+        if len(recent) >= 2:
+            x = np.arange(len(recent), dtype=float)
+            current_slope = float(np.polyfit(x, recent.to_numpy(dtype=float), 1)[0])
+    except Exception:
+        current_slope = np.nan
+
+    ev["bars_since"] = int(bars_since)
+    ev["current_value"] = current_value
+    ev["current_slope"] = current_slope
+    ev["current_direction"] = "Upward" if np.isfinite(current_slope) and current_slope >= 0 else "Downward"
+    ev["level"] = lvl
+    return ev
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def sr_reversal_level_up_cross_info_daily(symbol: str,
+                                          level: float = -0.5,
+                                          smooth_span: int = 8,
+                                          recent_bars: int = 30,
+                                          slope_lookback: int = 90):
+    """
+    Daily scanner row for symbols where the S/R Reversal Index recently crossed
+    upward through the requested level on the NTD chart.
+    """
+    try:
+        close = fetch_hist(symbol)
+        if close is None or close.empty:
+            return None
+        close = _coerce_1d_series(close).dropna()
+        if close.shape[0] < max(35, int(slope_lookback) // 2):
+            return None
+
+        support = close.rolling(30, min_periods=1).min()
+        resistance = close.rolling(30, min_periods=1).max()
+        sri = compute_sr_reversal_index(
+            price=close,
+            support=support,
+            resistance=resistance,
+            smooth_span=int(smooth_span),
+        ).dropna()
+
+        if sri.empty:
+            return None
+
+        ev = _last_level_up_cross_info(
+            sri,
+            level=float(level),
+            max_bars_since=int(recent_bars),
+            require_current_above=True,
+        )
+        if ev is None:
+            return None
+
+        _, trend_slope = slope_line(close, int(slope_lookback))
+        trend_direction = "Upward" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward"
+        level_label = f"{float(level):.2f}"
+
+        return {
+            "Symbol": symbol,
+            "Cross Level": level_label,
+            "Bars Since Cross": ev["bars_since"],
+            "Cross Time": ev["time"],
+            "Previous S/R Reversal": ev["previous_value"],
+            "Value at Cross": ev["value_at_cross"],
+            "Current S/R Reversal": ev["current_value"],
+            "Current S/R Direction": ev["current_direction"],
+            "Current S/R Slope": ev["current_slope"],
+            "Trend Direction": trend_direction,
+            "Trend Slope": trend_slope,
+            "Last Close": _safe_last_float(close),
+        }
+    except Exception:
+        return None
+
+
+def _render_sr_level_up_cross_table(title: str, rows: list, empty_text: str):
+    st.subheader(title)
+    if not rows:
+        st.info(empty_text)
+        return
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        df = df.sort_values(["Bars Since Cross", "Symbol"], ascending=[True, True])
+        for col in [
+            "Previous S/R Reversal",
+            "Value at Cross",
+            "Current S/R Reversal",
+            "Current S/R Slope",
+            "Trend Slope",
+            "Last Close",
+        ]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        if "Cross Time" in df.columns:
+            df["Cross Time"] = df["Cross Time"].astype(str)
+    st.dataframe(df, use_container_width=True, hide_index=True)
 
 
 # ========= Sessions =========
@@ -2915,7 +3136,7 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -2926,6 +3147,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11 = st.tabs([
     "-0.75 SR Crossers",
     "HMA Cross",
     "Green Triangle Pick",
+    "S/R Cross",
     "S/R -0.5 Cross"
 ])
 
@@ -3693,7 +3915,8 @@ with tab7:
     st.header("S/R Reversal Crosses")
     st.caption(
         "Lists symbols where the **S/R Reversal line** on the NTD panel has recently crossed the **0.0** line. "
-        "Daily and Hourly results are separated, with Upward crosses shown above Downward crosses."
+        "Daily and Hourly results are separated, with Upward crosses shown above Downward crosses. "
+        "A third Daily table also shows symbols that were below **-0.75**, crossed back above **-0.75**, and are still rising."
     )
 
     period_map_sr = {"24h": "1d", "48h": "2d", "96h": "4d"}
@@ -3730,6 +3953,7 @@ with tab7:
         scan_period = period_map_sr[sr_cross_hour_range]
         daily_up_rows = []
         daily_down_rows = []
+        daily_minus075_up_rows = []
         hourly_up_rows = []
         hourly_down_rows = []
 
@@ -3748,6 +3972,17 @@ with tab7:
                     daily_up_rows.append(row)
                 elif row.get("Direction") == "Downward":
                     daily_down_rows.append(row)
+
+            minus075_row = sr_reversal_minus075_up_cross_info_daily(
+                sym,
+                smooth_span=int(sr_cross_smooth),
+                recent_bars=int(sr_cross_daily_recent),
+                confirm_bars=2,
+                threshold=-0.75,
+                slope_lookback=int(slope_lb_daily),
+            )
+            if minus075_row is not None:
+                daily_minus075_up_rows.append(minus075_row)
 
             step_count += 1
             progress.progress(min(1.0, step_count / total_steps), text=f"Scanning daily: {sym}")
@@ -3771,17 +4006,24 @@ with tab7:
         progress.empty()
 
         st.markdown("### Daily")
-        _render_sr_cross_table("Daily — Upward crosses", daily_up_rows)
-        _render_sr_cross_table("Daily — Downward crosses", daily_down_rows)
+        _render_sr_cross_table("Daily — Upward 0.0 crosses", daily_up_rows)
+        _render_sr_cross_table("Daily — Downward 0.0 crosses", daily_down_rows)
+        _render_minus075_up_cross_table("Daily — Reversed from below -0.75 and crossed upward", daily_minus075_up_rows)
 
         st.markdown("### Hourly")
         _render_sr_cross_table("Hourly — Upward crosses", hourly_up_rows)
         _render_sr_cross_table("Hourly — Downward crosses", hourly_down_rows)
 
-        total_found = len(daily_up_rows) + len(daily_down_rows) + len(hourly_up_rows) + len(hourly_down_rows)
+        total_found = (
+            len(daily_up_rows)
+            + len(daily_down_rows)
+            + len(daily_minus075_up_rows)
+            + len(hourly_up_rows)
+            + len(hourly_down_rows)
+        )
         st.caption(f"Total recent crosses found: {total_found}")
     else:
-        st.info("Click **Scan S/R Reversal Crosses** to build the four separate tables.")
+        st.info("Click **Scan S/R Reversal Crosses** to build the Daily/Hourly cross tables.")
 
 
 
@@ -4071,56 +4313,152 @@ with tab10:
         st.info("Click **Scan Green Triangle Pick** to build the daily and hourly green-triangle tables.")
 
 
-# --- Tab 11: S/R -0.5 Cross ---
+# --- Tab 11: S/R Cross ---
 with tab11:
-    st.header("S/R -0.5 Cross")
+    st.header("S/R Cross")
     st.caption(
-        "Daily-chart scan for symbols where the **S/R Reversal Index** on the NTD chart "
-        "has recently crossed **-0.5** upward, and separately where it has recently crossed "
-        "**0.0** upward. Both tables are sorted by bars since cross."
+        "Daily-chart scan for symbols where the **S/R Reversal Index** on the NTD chart is either "
+        "below the selected support-side threshold or has recently crossed the **0.0** line upward."
     )
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        sr_minus05_recent = st.slider(
-            "Recent cross window (daily bars)",
-            1, 120, 30, 1,
-            key="sr_minus05_cross_recent"
+        sr_cross_daily_only_threshold = st.slider(
+            "Below-threshold level",
+            -0.95, -0.25, -0.75, 0.05,
+            key="sr_cross_daily_only_threshold"
         )
     with c2:
-        sr_minus05_confirm = st.slider(
-            "Rising confirmation bars",
-            1, 10, 2, 1,
-            key="sr_minus05_cross_confirm"
+        sr_cross_daily_only_recent = st.slider(
+            "Recent upward 0.0 cross window (daily bars)",
+            1, 120, 30, 1,
+            key="sr_cross_daily_only_recent"
         )
     with c3:
-        sr_minus05_smooth = st.slider(
+        sr_cross_daily_only_smooth = st.slider(
             "S/R Reversal smoothing",
             1, 30, int(sr_rev_smooth), 1,
-            key="sr_minus05_cross_smooth"
+            key="sr_cross_daily_only_smooth"
         )
 
-    run_sr_minus05_scan = st.button("Scan S/R -0.5 Cross", key="btn_sr_minus05_cross_scan")
+    run_sr_cross_daily_only = st.button("Scan S/R Cross", key="btn_sr_cross_daily_only_scan")
 
-    if run_sr_minus05_scan:
-        minus05_rows = []
-        zero_rows = []
+    if run_sr_cross_daily_only:
+        below_rows = []
+        upward_rows = []
 
-        progress = st.progress(0, text="Scanning daily S/R -0.5 and 0.0 upward crosses...")
+        progress = st.progress(0, text="Scanning daily S/R Cross setup...")
         total_steps = max(1, len(universe) * 2)
         step_count = 0
 
         for sym in universe:
-            minus05_row = sr_minus05_cross_daily_upward_threshold_info(
+            below_row = sr_cross_daily_below_threshold_info(
                 sym,
-                smooth_span=int(sr_minus05_smooth),
-                threshold=-0.50,
-                recent_bars=int(sr_minus05_recent),
-                confirm_bars=int(sr_minus05_confirm),
+                smooth_span=int(sr_cross_daily_only_smooth),
+                threshold=float(sr_cross_daily_only_threshold),
+                slope_lookback=int(slope_lb_daily),
+            )
+            if below_row is not None:
+                below_rows.append(below_row)
+
+            step_count += 1
+            progress.progress(
+                min(1.0, step_count / total_steps),
+                text=f"Scanning below-threshold S/R Reversal: {sym}"
+            )
+
+            up_row = sr_cross_daily_upward_zero_info(
+                sym,
+                smooth_span=int(sr_cross_daily_only_smooth),
+                recent_bars=int(sr_cross_daily_only_recent),
+                slope_lookback=int(slope_lb_daily),
+            )
+            if up_row is not None:
+                upward_rows.append(up_row)
+
+            step_count += 1
+            progress.progress(
+                min(1.0, step_count / total_steps),
+                text=f"Scanning upward 0.0 S/R Reversal crosses: {sym}"
+            )
+
+        progress.empty()
+
+        st.markdown("### Daily S/R Reversal Index Below Threshold")
+        _render_sr_cross_daily_threshold_table(
+            f"Current S/R Reversal Index below {float(sr_cross_daily_only_threshold):.2f}",
+            below_rows
+        )
+
+        st.markdown("### Daily S/R Reversal Index Recently Crossed 0.0 Upward")
+        _render_sr_cross_daily_upward_table(
+            "Recent upward 0.0 crosses — sorted by bars since cross",
+            upward_rows
+        )
+
+        st.caption(
+            f"Below-threshold symbols found: {len(below_rows)} • "
+            f"Recent upward 0.0 crosses found: {len(upward_rows)}"
+        )
+    else:
+        st.info("Click **Scan S/R Cross** to build the daily S/R Cross tables.")
+
+# --- Tab 12: S/R -0.5 Cross ---
+with tab12:
+    st.header("S/R -0.5 Cross")
+    st.caption(
+        "Daily-chart scan for symbols where the **S/R Reversal Index** on the NTD chart recently crossed "
+        "**-0.5 upward** and where it recently crossed **0.0 upward**. Results are sorted by the number "
+        "of bars since the cross, lowest to highest."
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        sr_minus05_cross_recent = st.slider(
+            "Recent -0.5 upward cross window (daily bars)",
+            1, 120, 30, 1,
+            key="sr_minus05_cross_recent"
+        )
+    with c2:
+        sr_minus05_zero_cross_recent = st.slider(
+            "Recent 0.0 upward cross window (daily bars)",
+            1, 120, 30, 1,
+            key="sr_minus05_zero_cross_recent"
+        )
+    with c3:
+        sr_minus05_cross_smooth = st.slider(
+            "S/R Reversal smoothing",
+            1, 30, int(sr_rev_smooth), 1,
+            key="sr_minus05_cross_smooth"
+        )
+    with c4:
+        sr_minus05_show_only_current_up = st.checkbox(
+            "Only show rows still sloping upward",
+            value=False,
+            key="sr_minus05_show_only_current_up"
+        )
+
+    run_sr_minus05_cross = st.button("Scan S/R -0.5 Cross", key="btn_sr_minus05_cross_scan")
+
+    if run_sr_minus05_cross:
+        minus05_rows = []
+        zero_rows = []
+
+        progress = st.progress(0, text="Scanning daily S/R -0.5 Cross setup...")
+        total_steps = max(1, len(universe) * 2)
+        step_count = 0
+
+        for sym in universe:
+            minus05_row = sr_reversal_level_up_cross_info_daily(
+                sym,
+                level=-0.5,
+                smooth_span=int(sr_minus05_cross_smooth),
+                recent_bars=int(sr_minus05_cross_recent),
                 slope_lookback=int(slope_lb_daily),
             )
             if minus05_row is not None:
-                minus05_rows.append(minus05_row)
+                if (not sr_minus05_show_only_current_up) or minus05_row.get("Current S/R Direction") == "Upward":
+                    minus05_rows.append(minus05_row)
 
             step_count += 1
             progress.progress(
@@ -4128,14 +4466,16 @@ with tab11:
                 text=f"Scanning upward -0.5 S/R Reversal crosses: {sym}"
             )
 
-            zero_row = sr_cross_daily_upward_zero_info(
+            zero_row = sr_reversal_level_up_cross_info_daily(
                 sym,
-                smooth_span=int(sr_minus05_smooth),
-                recent_bars=int(sr_minus05_recent),
+                level=0.0,
+                smooth_span=int(sr_minus05_cross_smooth),
+                recent_bars=int(sr_minus05_zero_cross_recent),
                 slope_lookback=int(slope_lb_daily),
             )
             if zero_row is not None:
-                zero_rows.append(zero_row)
+                if (not sr_minus05_show_only_current_up) or zero_row.get("Current S/R Direction") == "Upward":
+                    zero_rows.append(zero_row)
 
             step_count += 1
             progress.progress(
@@ -4146,16 +4486,17 @@ with tab11:
         progress.empty()
 
         st.markdown("### Daily S/R Reversal Index Recently Crossed -0.5 Upward")
-        _render_sr_minus05_threshold_upward_table(
+        _render_sr_level_up_cross_table(
             "Recent upward -0.5 crosses — sorted by bars since cross",
             minus05_rows,
-            empty_text="No recent upward -0.5 crosses found."
+            "No recent upward -0.5 crosses found."
         )
 
         st.markdown("### Daily S/R Reversal Index Recently Crossed 0.0 Upward")
-        _render_sr_cross_daily_upward_table(
+        _render_sr_level_up_cross_table(
             "Recent upward 0.0 crosses — sorted by bars since cross",
-            zero_rows
+            zero_rows,
+            "No recent upward 0.0 crosses found."
         )
 
         st.caption(
@@ -4163,5 +4504,4 @@ with tab11:
             f"Recent upward 0.0 crosses found: {len(zero_rows)}"
         )
     else:
-        st.info("Click **Scan S/R -0.5 Cross** to build the daily -0.5 and 0.0 cross tables.")
-
+        st.info("Click **Scan S/R -0.5 Cross** to build the daily upward-cross tables.")
