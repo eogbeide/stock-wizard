@@ -16,6 +16,7 @@
 # (UPDATED) S/R Reversal Crosses tab includes a daily -0.75 upward-cross table after support-zone reversal.
 # (UPDATED) Trade State gating: buy/profit alerts require recent NTD S/R support-reversal turn from the lower zone.
 # (NEW) S/R -0.5 Cross tab scans daily upward crosses through -0.5 and 0.0 on the S/R Reversal Index.
+# (UPDATED) S/R Cross tab adds an Actionable S/R Long Picks ranking table with trade status, setup quality, support/resistance, and reward/risk.
 
 import streamlit as st
 import pandas as pd
@@ -2117,6 +2118,311 @@ def _render_sr_level_up_cross_table(title: str, rows: list, empty_text: str):
         if "Cross Time" in df.columns:
             df["Cross Time"] = df["Cross Time"].astype(str)
     st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+def _sr_reversal_zone_label(value: float) -> str:
+    """Human-readable location of the S/R Reversal Index."""
+    try:
+        v = float(value)
+    except Exception:
+        return "n/a"
+    if not np.isfinite(v):
+        return "n/a"
+    if v < -0.75:
+        return "Below -0.75"
+    if v < -0.50:
+        return "-0.75 to -0.50"
+    if v < 0.0:
+        return "-0.50 to 0.00"
+    return "Above 0.00"
+
+
+def _safe_pct_distance(numerator: float, denominator: float) -> float:
+    try:
+        n = float(numerator)
+        d = float(denominator)
+    except Exception:
+        return float("nan")
+    if not np.isfinite(n) or not np.isfinite(d) or d == 0:
+        return float("nan")
+    return float(n / abs(d) * 100.0)
+
+
+def _trade_status_sort_rank(status: str) -> int:
+    order = {
+        "BUY CONFIRMED": 0,
+        "BUY SETUP": 1,
+        "EARLY BUY SETUP": 2,
+        "BUY CONFIRMATION PENDING": 3,
+        "LATE BUY / WAIT PULLBACK": 4,
+        "WATCH": 5,
+        "WEAK CONFIRMATION": 6,
+        "AVOID": 7,
+    }
+    return order.get(str(status), 99)
+
+
+def _first_valid_bars_since(*values) -> float:
+    valid = []
+    for value in values:
+        try:
+            v = float(value)
+            if np.isfinite(v):
+                valid.append(v)
+        except Exception:
+            pass
+    return min(valid) if valid else float("nan")
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def actionable_sr_long_pick_daily(symbol: str,
+                                  smooth_span: int = 8,
+                                  recent_bars: int = 30,
+                                  slope_lookback: int = 90,
+                                  sr_window: int = 30):
+    """
+    Build one actionable daily long-candidate row from the S/R Reversal Index.
+
+    A symbol is returned when it is either:
+      - currently below -0.75, or
+      - recently crossed upward through -0.75, -0.50, or 0.00.
+
+    The row includes trade status, setup quality, support/resistance distances,
+    reward/risk, and a suggested action.
+    """
+    try:
+        close = fetch_hist(symbol)
+        if close is None or close.empty:
+            return None
+        close = _coerce_1d_series(close).dropna()
+        if close.shape[0] < max(40, int(sr_window) + 5, int(slope_lookback) // 2):
+            return None
+
+        sr_window = int(max(5, sr_window))
+        support = close.rolling(sr_window, min_periods=1).min()
+        resistance = close.rolling(sr_window, min_periods=1).max()
+        sri = compute_sr_reversal_index(
+            price=close,
+            support=support,
+            resistance=resistance,
+            smooth_span=int(smooth_span),
+        ).dropna()
+        if sri.empty:
+            return None
+
+        current_sri = _safe_last_float(sri)
+        last_close = _safe_last_float(close)
+        current_support = _safe_last_float(support)
+        current_resistance = _safe_last_float(resistance)
+        if not np.isfinite(current_sri) or not np.isfinite(last_close):
+            return None
+
+        _, trend_slope = slope_line(close, int(slope_lookback))
+        trend_direction = "Upward" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward"
+
+        sri_recent = sri.iloc[-min(8, len(sri)):].dropna()
+        sri_slope = float("nan")
+        if len(sri_recent) >= 2:
+            x = np.arange(len(sri_recent), dtype=float)
+            sri_slope = float(np.polyfit(x, sri_recent.to_numpy(dtype=float), 1)[0])
+        reversal_direction = "Rising" if np.isfinite(sri_slope) and sri_slope >= 0 else "Falling"
+
+        ev_m075 = _last_level_up_cross_info(sri, level=-0.75, max_bars_since=int(recent_bars), require_current_above=True)
+        ev_m050 = _last_level_up_cross_info(sri, level=-0.50, max_bars_since=int(recent_bars), require_current_above=True)
+        ev_000 = _last_level_up_cross_info(sri, level=0.00, max_bars_since=int(recent_bars), require_current_above=True)
+
+        currently_below_m075 = bool(current_sri < -0.75)
+        has_recent_cross = ev_m075 is not None or ev_m050 is not None or ev_000 is not None
+        if not currently_below_m075 and not has_recent_cross:
+            return None
+
+        bars_m075 = ev_m075["bars_since"] if ev_m075 is not None else np.nan
+        bars_m050 = ev_m050["bars_since"] if ev_m050 is not None else np.nan
+        bars_000 = ev_000["bars_since"] if ev_000 is not None else np.nan
+        nearest_bars = _first_valid_bars_since(bars_000, bars_m050, bars_m075)
+
+        price_above_support = bool(np.isfinite(current_support) and last_close >= current_support)
+        price_below_resistance = bool(np.isfinite(current_resistance) and last_close <= current_resistance)
+
+        risk = last_close - current_support if np.all(np.isfinite([last_close, current_support])) else np.nan
+        reward = current_resistance - last_close if np.all(np.isfinite([last_close, current_resistance])) else np.nan
+        if np.isfinite(risk) and risk > 0 and np.isfinite(reward):
+            reward_risk = float(reward / risk)
+        else:
+            reward_risk = np.nan
+
+        dist_support_pct = _safe_pct_distance(last_close - current_support, last_close)
+        dist_resist_pct = _safe_pct_distance(current_resistance - last_close, last_close)
+
+        if trend_direction != "Upward":
+            if ev_000 is not None or ev_m050 is not None or ev_m075 is not None:
+                trade_status = "WEAK CONFIRMATION"
+                suggested_action = "Avoid until trend turns upward"
+            else:
+                trade_status = "AVOID"
+                suggested_action = "Avoid"
+        elif ev_000 is not None:
+            if ev_000["bars_since"] <= max(10, int(recent_bars) // 3) and reversal_direction == "Rising" and price_above_support:
+                trade_status = "BUY CONFIRMED"
+                suggested_action = "Buy pullback/hold above support"
+            else:
+                trade_status = "LATE BUY / WAIT PULLBACK"
+                suggested_action = "Wait for pullback or fresh support hold"
+        elif ev_m050 is not None and reversal_direction == "Rising":
+            trade_status = "BUY SETUP"
+            suggested_action = "Watch for 0.0 cross confirmation"
+        elif ev_m075 is not None and reversal_direction == "Rising":
+            trade_status = "EARLY BUY SETUP"
+            suggested_action = "Early watch; wait for -0.5/0.0 confirmation"
+        elif currently_below_m075 and reversal_direction == "Rising":
+            trade_status = "BUY CONFIRMATION PENDING"
+            suggested_action = "Watch for -0.75 upward cross"
+        elif currently_below_m075:
+            trade_status = "WATCH"
+            suggested_action = "Oversold watch; wait for turn upward"
+        else:
+            trade_status = "WATCH"
+            suggested_action = "Monitor"
+
+        score = 0.0
+        if trend_direction == "Upward":
+            score += 25
+        if reversal_direction == "Rising":
+            score += 20
+        if ev_000 is not None:
+            score += 25
+        elif ev_m050 is not None:
+            score += 18
+        elif ev_m075 is not None:
+            score += 12
+        elif currently_below_m075:
+            score += 8
+        if price_above_support:
+            score += 10
+        if np.isfinite(reward_risk) and reward_risk >= 1.5:
+            score += 10
+        elif np.isfinite(reward_risk) and reward_risk >= 1.0:
+            score += 5
+        if np.isfinite(nearest_bars):
+            if nearest_bars <= 5:
+                score += 10
+            elif nearest_bars <= 15:
+                score += 5
+            elif nearest_bars > max(20, int(recent_bars) * 0.75):
+                score -= 10
+        if trade_status in ("WEAK CONFIRMATION", "AVOID"):
+            score = min(score, 35)
+        setup_quality = int(max(0, min(100, round(score))))
+
+        return {
+            "Symbol": symbol,
+            "Trade Status": trade_status,
+            "Setup Quality": setup_quality,
+            "Current Zone": _sr_reversal_zone_label(current_sri),
+            "Reversal Direction": reversal_direction,
+            "Current S/R Reversal": current_sri,
+            "Bars Since -0.75 Cross": bars_m075,
+            "Bars Since -0.50 Cross": bars_m050,
+            "Bars Since 0.00 Cross": bars_000,
+            "Trend Direction": trend_direction,
+            "Trend Slope": trend_slope,
+            "Last Close": last_close,
+            "Support": current_support,
+            "Resistance": current_resistance,
+            "Price Above Support": price_above_support,
+            "Distance to Support %": dist_support_pct,
+            "Distance to Resistance %": dist_resist_pct,
+            "Reward/Risk": reward_risk,
+            "Suggested Action": suggested_action,
+            "Sort Rank": _trade_status_sort_rank(trade_status),
+            "Nearest Bars Since Cross": nearest_bars,
+        }
+    except Exception:
+        return None
+
+
+def _render_actionable_sr_long_picks_table(title: str, rows: list):
+    st.subheader(title)
+    if not rows:
+        st.info("No actionable S/R long candidates found.")
+        return
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        st.info("No actionable S/R long candidates found.")
+        return
+
+    sort_cols = ["Sort Rank", "Setup Quality", "Nearest Bars Since Cross", "Symbol"]
+    ascending = [True, False, True, True]
+    existing_sort_cols = [c for c in sort_cols if c in df.columns]
+    existing_ascending = [ascending[sort_cols.index(c)] for c in existing_sort_cols]
+    if existing_sort_cols:
+        df = df.sort_values(existing_sort_cols, ascending=existing_ascending, na_position="last")
+
+    for col in [
+        "Current S/R Reversal",
+        "Trend Slope",
+        "Last Close",
+        "Support",
+        "Resistance",
+        "Distance to Support %",
+        "Distance to Resistance %",
+        "Reward/Risk",
+        "Nearest Bars Since Cross",
+    ]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    for col in ["Bars Since -0.75 Cross", "Bars Since -0.50 Cross", "Bars Since 0.00 Cross"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    display_cols = [
+        "Symbol",
+        "Trade Status",
+        "Setup Quality",
+        "Current Zone",
+        "Reversal Direction",
+        "Current S/R Reversal",
+        "Bars Since -0.75 Cross",
+        "Bars Since -0.50 Cross",
+        "Bars Since 0.00 Cross",
+        "Trend Direction",
+        "Trend Slope",
+        "Last Close",
+        "Support",
+        "Resistance",
+        "Price Above Support",
+        "Distance to Support %",
+        "Distance to Resistance %",
+        "Reward/Risk",
+        "Suggested Action",
+    ]
+    display_cols = [c for c in display_cols if c in df.columns]
+    df_display = df[display_cols].reset_index(drop=True)
+
+    st.dataframe(
+        df_display,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "Setup Quality": st.column_config.ProgressColumn(
+                "Setup Quality",
+                help="0–100 ranking based on trend alignment, S/R reversal timing, support hold, and reward/risk.",
+                min_value=0,
+                max_value=100,
+                format="%d",
+            ),
+            "Distance to Support %": st.column_config.NumberColumn("Distance to Support %", format="%.2f%%"),
+            "Distance to Resistance %": st.column_config.NumberColumn("Distance to Resistance %", format="%.2f%%"),
+            "Reward/Risk": st.column_config.NumberColumn("Reward/Risk", format="%.2f"),
+            "Current S/R Reversal": st.column_config.NumberColumn("Current S/R Reversal", format="%.4f"),
+            "Trend Slope": st.column_config.NumberColumn("Trend Slope", format="%.5f"),
+            "Last Close": st.column_config.NumberColumn("Last Close", format="%.5f"),
+            "Support": st.column_config.NumberColumn("Support", format="%.5f"),
+            "Resistance": st.column_config.NumberColumn("Resistance", format="%.5f"),
+        },
+    )
 
 
 # ========= Sessions =========
@@ -4318,10 +4624,12 @@ with tab11:
     st.header("S/R Cross")
     st.caption(
         "Daily-chart scan for symbols where the **S/R Reversal Index** on the NTD chart is either "
-        "below the selected support-side threshold or has recently crossed the **0.0** line upward."
+        "below the selected support-side threshold or has recently crossed the **0.0** line upward. "
+        "The Actionable S/R Long Picks table ranks the same scan into trade-ready candidates with "
+        "status, setup quality, support/resistance, and reward/risk."
     )
 
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
         sr_cross_daily_only_threshold = st.slider(
             "Below-threshold level",
@@ -4330,7 +4638,7 @@ with tab11:
         )
     with c2:
         sr_cross_daily_only_recent = st.slider(
-            "Recent upward 0.0 cross window (daily bars)",
+            "Recent upward cross window (daily bars)",
             1, 120, 30, 1,
             key="sr_cross_daily_only_recent"
         )
@@ -4340,18 +4648,41 @@ with tab11:
             1, 30, int(sr_rev_smooth), 1,
             key="sr_cross_daily_only_smooth"
         )
+    with c4:
+        sr_cross_daily_only_sr_window = st.slider(
+            "Support/Resistance lookback",
+            10, 120, 30, 5,
+            key="sr_cross_daily_only_sr_window"
+        )
 
     run_sr_cross_daily_only = st.button("Scan S/R Cross", key="btn_sr_cross_daily_only_scan")
 
     if run_sr_cross_daily_only:
+        actionable_rows = []
         below_rows = []
         upward_rows = []
 
         progress = st.progress(0, text="Scanning daily S/R Cross setup...")
-        total_steps = max(1, len(universe) * 2)
+        total_steps = max(1, len(universe) * 3)
         step_count = 0
 
         for sym in universe:
+            action_row = actionable_sr_long_pick_daily(
+                sym,
+                smooth_span=int(sr_cross_daily_only_smooth),
+                recent_bars=int(sr_cross_daily_only_recent),
+                slope_lookback=int(slope_lb_daily),
+                sr_window=int(sr_cross_daily_only_sr_window),
+            )
+            if action_row is not None:
+                actionable_rows.append(action_row)
+
+            step_count += 1
+            progress.progress(
+                min(1.0, step_count / total_steps),
+                text=f"Building actionable S/R long candidate: {sym}"
+            )
+
             below_row = sr_cross_daily_below_threshold_info(
                 sym,
                 smooth_span=int(sr_cross_daily_only_smooth),
@@ -4384,6 +4715,16 @@ with tab11:
 
         progress.empty()
 
+        st.markdown("### Actionable S/R Long Picks")
+        st.caption(
+            "Ranks daily long candidates by trade status, setup quality, cross timing, trend alignment, "
+            "support hold, and reward/risk. Use this as a candidate list, then confirm on the chart."
+        )
+        _render_actionable_sr_long_picks_table(
+            "Actionable S/R Long Picks — ranked by status and setup quality",
+            actionable_rows
+        )
+
         st.markdown("### Daily S/R Reversal Index Below Threshold")
         _render_sr_cross_daily_threshold_table(
             f"Current S/R Reversal Index below {float(sr_cross_daily_only_threshold):.2f}",
@@ -4397,11 +4738,12 @@ with tab11:
         )
 
         st.caption(
+            f"Actionable candidates found: {len(actionable_rows)} • "
             f"Below-threshold symbols found: {len(below_rows)} • "
             f"Recent upward 0.0 crosses found: {len(upward_rows)}"
         )
     else:
-        st.info("Click **Scan S/R Cross** to build the daily S/R Cross tables.")
+        st.info("Click **Scan S/R Cross** to build the actionable daily S/R Cross tables.")
 
 # --- Tab 12: S/R -0.5 Cross ---
 with tab12:
