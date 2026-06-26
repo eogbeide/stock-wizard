@@ -18,6 +18,7 @@
 # (NEW) S/R -0.5 Cross tab scans daily upward crosses through -0.5 and 0.0 on the S/R Reversal Index.
 
 # (UPDATED) S/R scanner tables include support/EMA pullback quality columns.
+# (NEW) EMA Divergence tab scans daily/hourly recent upward price crosses above the 30 EMA.
 
 import streamlit as st
 import pandas as pd
@@ -3420,6 +3421,107 @@ def _render_green_triangle_pick_table(title: str, rows: list):
 
     st.dataframe(df.reset_index(drop=True), use_container_width=True, hide_index=True)
 
+
+def ema30_up_cross_info(symbol: str,
+                        timeframe: str = "daily",
+                        recent_bars: int = 20,
+                        trend_lookback: int = 90,
+                        period: str = "1d") -> dict:
+    """
+    Return a scanner row when price recently crossed upward through the 30 EMA.
+
+    timeframe="daily" uses fetch_hist(symbol).
+    timeframe="hourly" uses fetch_intraday(symbol, period=period)["Close"].
+    """
+    try:
+        if str(timeframe).lower() == "hourly":
+            data = fetch_intraday(symbol, period=period)
+            if data is None or data.empty or "Close" not in data.columns:
+                return None
+            close = _coerce_1d_series(data["Close"]).dropna()
+            slope_lb = int(trend_lookback)
+        else:
+            close = fetch_hist(symbol)
+            close = _coerce_1d_series(close).dropna()
+            slope_lb = int(trend_lookback)
+
+        if close is None or close.empty or close.shape[0] < max(35, int(recent_bars) + 3):
+            return None
+
+        ema30 = close.ewm(span=30, adjust=False, min_periods=1).mean()
+        cross_up = (close.shift(1) <= ema30.shift(1)) & (close > ema30)
+        cross_points = close[cross_up.fillna(False)]
+        if cross_points.empty:
+            return None
+
+        last_cross_time = cross_points.index[-1]
+        bars_since = int(close.index.get_loc(last_cross_time))
+        bars_since = int(len(close) - 1 - bars_since)
+        if bars_since < 0 or bars_since > int(recent_bars):
+            return None
+
+        trend_line, trend_slope = slope_line(close, lookback=slope_lb)
+        trend_direction = "Upward" if np.isfinite(trend_slope) and float(trend_slope) >= 0 else "Downward"
+
+        current_price = _safe_last_float(close)
+        current_ema30 = _safe_last_float(ema30)
+        price_at_cross = float(close.loc[last_cross_time])
+        ema_at_cross = float(ema30.loc[last_cross_time])
+        dist_pct = (
+            (current_price - current_ema30) / current_ema30 * 100.0
+            if np.isfinite(current_price) and np.isfinite(current_ema30) and current_ema30 != 0
+            else float("nan")
+        )
+
+        if len(close.dropna()) >= 2:
+            recent_price_slope = float(close.diff().rolling(5, min_periods=1).mean().dropna().iloc[-1])
+        else:
+            recent_price_slope = float("nan")
+        slope_direction = "Upward" if np.isfinite(recent_price_slope) and recent_price_slope >= 0 else "Downward"
+
+        return {
+            "Symbol": symbol,
+            "Timeframe": "Hourly" if str(timeframe).lower() == "hourly" else "Daily",
+            "Bars Since EMA Cross": bars_since,
+            "Cross Time": last_cross_time,
+            "Price at Cross": price_at_cross,
+            "30 EMA at Cross": ema_at_cross,
+            "Last Close": current_price,
+            "Current 30 EMA": current_ema30,
+            "Distance Above 30 EMA %": dist_pct,
+            "Trend Direction": trend_direction,
+            "Trend Slope": float(trend_slope) if np.isfinite(trend_slope) else float("nan"),
+            "Short Slope Direction": slope_direction,
+            "Short Price Slope": recent_price_slope,
+        }
+    except Exception:
+        return None
+
+
+def _render_ema_divergence_table(title: str, rows: list):
+    st.subheader(title)
+    if not rows:
+        st.info("No recent upward 30 EMA crosses found.")
+        return
+
+    df = pd.DataFrame(rows)
+    sort_cols = [c for c in ["Bars Since EMA Cross", "Symbol"] if c in df.columns]
+    if sort_cols:
+        df = df.sort_values(sort_cols, ascending=[True] * len(sort_cols))
+
+    if "Cross Time" in df.columns:
+        df["Cross Time"] = df["Cross Time"].astype(str)
+
+    for col in [
+        "Price at Cross", "30 EMA at Cross", "Last Close", "Current 30 EMA",
+        "Distance Above 30 EMA %", "Trend Slope", "Short Price Slope"
+    ]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    st.dataframe(df.reset_index(drop=True), use_container_width=True, hide_index=True)
+
+
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -3429,7 +3531,7 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -3441,7 +3543,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12 = st.t
     "HMA Cross",
     "Green Triangle Pick",
     "S/R Cross",
-    "S/R -0.5 Cross"
+    "S/R -0.5 Cross",
+    "EMA Divergence"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -4802,4 +4905,108 @@ with tab12:
         )
     else:
         st.info("Click **Scan S/R -0.5 Cross** to build the daily upward-cross tables.")
+
+# --- Tab 13: EMA Divergence ---
+with tab13:
+    st.header("EMA Divergence")
+    st.caption(
+        "Daily and intraday scan for symbols where price has recently crossed **upward** through the **30 EMA**. "
+        "Rows are sorted by **Bars Since EMA Cross** in ascending order so the newest crosses appear first."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        ema_div_daily_recent = st.slider(
+            "Daily recent cross window (bars)",
+            1, 120, 30, 1,
+            key="ema_div_daily_recent"
+        )
+    with c2:
+        ema_div_hourly_recent = st.slider(
+            "Hourly recent cross window (bars)",
+            1, 240, 60, 1,
+            key="ema_div_hourly_recent"
+        )
+    with c3:
+        ema_div_hour_range = st.selectbox(
+            "Hourly lookback:",
+            ["24h", "48h", "96h"],
+            index=1,
+            key="ema_div_hour_range"
+        )
+
+    c4, c5 = st.columns(2)
+    with c4:
+        ema_div_daily_trend_lb = st.slider(
+            "Daily trendline lookback (bars)",
+            10, 360, int(slope_lb_daily), 10,
+            key="ema_div_daily_trend_lb"
+        )
+    with c5:
+        ema_div_hourly_trend_lb = st.slider(
+            "Hourly trendline lookback (bars)",
+            12, 480, int(slope_lb_hourly), 6,
+            key="ema_div_hourly_trend_lb"
+        )
+
+    ema_div_only_uptrend = st.checkbox(
+        "Show only symbols with upward trendline",
+        value=False,
+        key="ema_div_only_uptrend"
+    )
+
+    run_ema_div_scan = st.button("Scan EMA Divergence", key="btn_ema_div_scan")
+
+    if run_ema_div_scan:
+        daily_rows = []
+        hourly_rows = []
+        period_map_ema_div = {"24h": "1d", "48h": "2d", "96h": "4d"}
+        intraday_period = period_map_ema_div.get(ema_div_hour_range, "2d")
+
+        progress = st.progress(0, text="Scanning EMA Divergence...")
+        total_steps = max(1, len(universe) * 2)
+        step_count = 0
+
+        for sym in universe:
+            daily_row = ema30_up_cross_info(
+                sym,
+                timeframe="daily",
+                recent_bars=int(ema_div_daily_recent),
+                trend_lookback=int(ema_div_daily_trend_lb),
+            )
+            if daily_row is not None:
+                if not ema_div_only_uptrend or daily_row.get("Trend Direction") == "Upward":
+                    daily_rows.append(daily_row)
+
+            step_count += 1
+            progress.progress(min(1.0, step_count / total_steps), text=f"Scanning daily EMA crosses: {sym}")
+
+            hourly_row = ema30_up_cross_info(
+                sym,
+                timeframe="hourly",
+                recent_bars=int(ema_div_hourly_recent),
+                trend_lookback=int(ema_div_hourly_trend_lb),
+                period=intraday_period,
+            )
+            if hourly_row is not None:
+                if not ema_div_only_uptrend or hourly_row.get("Trend Direction") == "Upward":
+                    hourly_rows.append(hourly_row)
+
+            step_count += 1
+            progress.progress(min(1.0, step_count / total_steps), text=f"Scanning hourly EMA crosses: {sym}")
+
+        progress.empty()
+
+        st.markdown("### Daily Chart")
+        _render_ema_divergence_table("Daily — Recent upward 30 EMA crosses", daily_rows)
+
+        st.markdown("### Hourly Chart")
+        _render_ema_divergence_table("Hourly — Recent upward 30 EMA crosses", hourly_rows)
+
+        st.caption(
+            f"Daily upward 30 EMA crosses found: {len(daily_rows)} • "
+            f"Hourly upward 30 EMA crosses found: {len(hourly_rows)}"
+        )
+    else:
+        st.info("Click **Scan EMA Divergence** to build the Daily and Hourly 30 EMA upward-cross tables.")
 
