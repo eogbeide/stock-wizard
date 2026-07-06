@@ -5,6 +5,7 @@
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
 # (UPDATED) Intraday/daily OHLC data is regularized across market-closure gaps to prevent visual trend breaks.
+# (UPDATED) Intraday charts use compressed real-trading-bar axes so weekend/market-closure gaps are removed.
 # (UPDATED) Removed hourly Momentum chart, red/green directional PSAR price overlays, and NTD-cross triangles.
 # (UPDATED) Removed Ichimoku Kijun and Supertrend lines from price charts.
 # (UPDATED) Fibonacci lines are shown on price charts by default.
@@ -613,8 +614,9 @@ def fetch_hist_max(ticker: str) -> pd.Series:
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
     df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"),
                      progress=False, auto_adjust=False)
-    ohlc = _ohlc_from_yf(df, ticker=ticker)
-    return _regularize_ohlc_for_market_closures(ohlc, freq="D") if not ohlc.empty else ohlc
+    # Keep only real trading bars. Do NOT calendar-fill weekends/market closures:
+    # charts use compressed bar-number axes to remove closure gaps visually.
+    return _ohlc_from_yf(df, ticker=ticker)
 
 @st.cache_data(ttl=120)
 def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
@@ -632,7 +634,9 @@ def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
     except TypeError:
         pass
     out = out.tz_convert(PACIFIC).sort_index()
-    return _regularize_ohlc_for_market_closures(out, freq="5min")
+    # Keep only real 5-minute trading bars. Weekend/holiday/market-closure time is
+    # removed visually by _enable_compressed_time_axis() instead of being filled.
+    return out
 
 @st.cache_data(ttl=120)
 def compute_sarimax_forecast(series_like):
