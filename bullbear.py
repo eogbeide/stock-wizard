@@ -4,6 +4,7 @@
 # (UPDATED) NTD panels are less noisy: green/red triangles now appear only after confirmed S/R reversals.
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
+# (UPDATED) Intraday/daily OHLC data is regularized across market-closure gaps to prevent visual trend breaks.
 # (UPDATED) Removed hourly Momentum chart, red/green directional PSAR price overlays, and NTD-cross triangles.
 # (UPDATED) Removed Ichimoku Kijun and Supertrend lines from price charts.
 # (UPDATED) Fibonacci lines are shown on price charts by default.
@@ -463,6 +464,56 @@ def _ohlc_from_yf(df: pd.DataFrame, ticker: str = None) -> pd.DataFrame:
     out = _ensure_pacific_index(out)
     return out.sort_index()
 
+def _regularize_ohlc_for_market_closures(df: pd.DataFrame, freq: str) -> pd.DataFrame:
+    """
+    Fill missing calendar/intraday bars caused by market closures so plotted
+    price, EMA, support/resistance, and trend lines do not visually break.
+    Missing bars are carried forward with zero volume, preserving the last
+    tradable price while avoiding artificial gaps in Matplotlib line charts.
+    """
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy().sort_index()
+    out = _ensure_pacific_index(out)
+    if out is None or out.empty or not isinstance(out.index, pd.DatetimeIndex):
+        return pd.DataFrame()
+
+    # Remove duplicate timestamps before reindexing.
+    out = out[~out.index.duplicated(keep="last")]
+
+    try:
+        full_index = pd.date_range(out.index.min(), out.index.max(), freq=freq, tz=out.index.tz)
+    except Exception:
+        return out
+
+    if len(full_index) <= len(out.index):
+        return out
+
+    out = out.reindex(full_index)
+
+    if "Close" in out.columns:
+        out["Close"] = pd.to_numeric(out["Close"], errors="coerce").ffill().bfill()
+
+    if "Adj Close" in out.columns:
+        out["Adj Close"] = pd.to_numeric(out["Adj Close"], errors="coerce").ffill().bfill()
+
+    close_fill = out["Close"] if "Close" in out.columns else None
+    for col in ["Open", "High", "Low"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+            if close_fill is not None:
+                out[col] = out[col].fillna(close_fill)
+            out[col] = out[col].ffill().bfill()
+
+    if "Volume" in out.columns:
+        out["Volume"] = pd.to_numeric(out["Volume"], errors="coerce").fillna(0.0)
+
+    for col in out.columns:
+        if col not in ["Open", "High", "Low", "Close", "Adj Close", "Volume"]:
+            out[col] = pd.to_numeric(out[col], errors="coerce").ffill().bfill()
+
+    return out.dropna(how="all").sort_index()
+
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
     df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"),
@@ -484,7 +535,8 @@ def fetch_hist_max(ticker: str) -> pd.Series:
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
     df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"),
                      progress=False, auto_adjust=False)
-    return _ohlc_from_yf(df, ticker=ticker)
+    ohlc = _ohlc_from_yf(df, ticker=ticker)
+    return _regularize_ohlc_for_market_closures(ohlc, freq="D") if not ohlc.empty else ohlc
 
 @st.cache_data(ttl=120)
 def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
@@ -501,7 +553,8 @@ def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
             out.index = out.index.tz_localize("UTC")
     except TypeError:
         pass
-    return out.tz_convert(PACIFIC).sort_index()
+    out = out.tz_convert(PACIFIC).sort_index()
+    return _regularize_ohlc_for_market_closures(out, freq="5min")
 
 @st.cache_data(ttl=120)
 def compute_sarimax_forecast(series_like):
