@@ -4,8 +4,6 @@
 # (UPDATED) NTD panels are less noisy: green/red triangles now appear only after confirmed S/R reversals.
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
-# (UPDATED) Intraday/daily OHLC data is regularized across market-closure gaps to prevent visual trend breaks.
-# (UPDATED) Intraday charts use compressed real-trading-bar axes so weekend/market-closure gaps are removed.
 # (UPDATED) Removed hourly Momentum chart, red/green directional PSAR price overlays, and NTD-cross triangles.
 # (UPDATED) Removed Ichimoku Kijun and Supertrend lines from price charts.
 # (UPDATED) Fibonacci lines are shown on price charts by default.
@@ -208,6 +206,47 @@ def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: i
         )
     except Exception:
         pass
+
+
+def apply_right_x_padding(ax, index_like=None, fraction: float = 0.06, min_bars: int = 8):
+    """
+    Add blank space to the right edge of a chart so the latest price, markers,
+    Fibonacci labels, support/resistance labels, and BUY/SELL annotations do not
+    appear cut off. Works with both datetime x-axes and compressed numeric axes.
+    """
+    try:
+        x0, x1 = ax.get_xlim()
+        span = float(x1 - x0)
+        if not np.isfinite(span) or span <= 0:
+            return (x0, x1)
+
+        pad = span * float(max(0.0, fraction))
+
+        if index_like is not None:
+            try:
+                idx = pd.Index(index_like)
+                if isinstance(idx, pd.DatetimeIndex) and len(idx) >= 2:
+                    diffs = idx.to_series().diff().dropna()
+                    if len(diffs):
+                        med = diffs.median()
+                        if pd.notna(med):
+                            pad = max(pad, float(med / pd.Timedelta(days=1)) * int(max(1, min_bars)))
+                else:
+                    vals = pd.to_numeric(pd.Series(idx), errors="coerce").dropna()
+                    if len(vals) >= 2:
+                        med = float(vals.diff().dropna().median())
+                        if np.isfinite(med) and med > 0:
+                            pad = max(pad, med * int(max(1, min_bars)))
+            except Exception:
+                pass
+
+        ax.set_xlim(x0, x1 + pad)
+        return ax.get_xlim()
+    except Exception:
+        try:
+            return ax.get_xlim()
+        except Exception:
+            return None
 
 def subset_by_daily_view(obj, view_label: str):
     if obj is None or len(obj.index) == 0:
@@ -465,134 +504,6 @@ def _ohlc_from_yf(df: pd.DataFrame, ticker: str = None) -> pd.DataFrame:
     out = _ensure_pacific_index(out)
     return out.sort_index()
 
-def _regularize_ohlc_for_market_closures(df: pd.DataFrame, freq: str) -> pd.DataFrame:
-    """
-    Fill missing calendar/intraday bars caused by market closures so plotted
-    price, EMA, support/resistance, and trend lines do not visually break.
-    Missing bars are carried forward with zero volume, preserving the last
-    tradable price while avoiding artificial gaps in Matplotlib line charts.
-    """
-    if df is None or df.empty:
-        return pd.DataFrame()
-    out = df.copy().sort_index()
-    out = _ensure_pacific_index(out)
-    if out is None or out.empty or not isinstance(out.index, pd.DatetimeIndex):
-        return pd.DataFrame()
-
-    # Remove duplicate timestamps before reindexing.
-    out = out[~out.index.duplicated(keep="last")]
-
-    try:
-        full_index = pd.date_range(out.index.min(), out.index.max(), freq=freq, tz=out.index.tz)
-    except Exception:
-        return out
-
-    if len(full_index) <= len(out.index):
-        return out
-
-    out = out.reindex(full_index)
-
-    if "Close" in out.columns:
-        out["Close"] = pd.to_numeric(out["Close"], errors="coerce").ffill().bfill()
-
-    if "Adj Close" in out.columns:
-        out["Adj Close"] = pd.to_numeric(out["Adj Close"], errors="coerce").ffill().bfill()
-
-    close_fill = out["Close"] if "Close" in out.columns else None
-    for col in ["Open", "High", "Low"]:
-        if col in out.columns:
-            out[col] = pd.to_numeric(out[col], errors="coerce")
-            if close_fill is not None:
-                out[col] = out[col].fillna(close_fill)
-            out[col] = out[col].ffill().bfill()
-
-    if "Volume" in out.columns:
-        out["Volume"] = pd.to_numeric(out["Volume"], errors="coerce").fillna(0.0)
-
-    for col in out.columns:
-        if col not in ["Open", "High", "Low", "Close", "Adj Close", "Volume"]:
-            out[col] = pd.to_numeric(out[col], errors="coerce").ffill().bfill()
-
-    return out.dropna(how="all").sort_index()
-
-
-def _compressed_axis_map(index) -> pd.Series:
-    """Map a DatetimeIndex onto consecutive bar numbers so market-closure gaps are removed from charts."""
-    try:
-        idx = pd.DatetimeIndex(index)
-    except Exception:
-        return pd.Series(dtype=float)
-    if len(idx) == 0:
-        return pd.Series(dtype=float)
-    idx = idx.sort_values()
-    idx = idx[~idx.duplicated(keep="last")]
-    return pd.Series(np.arange(len(idx), dtype=float), index=idx)
-
-def _axis_x(ax, values):
-    """
-    Convert timestamps to compressed bar-number x coordinates when an axis has
-    _compressed_time_map. Otherwise return values unchanged.
-    """
-    mapper = getattr(ax, "_compressed_time_map", None)
-    if mapper is None or mapper.empty:
-        return values
-
-    def _one(v):
-        try:
-            ts = pd.Timestamp(v)
-            if ts.tzinfo is None and getattr(mapper.index, "tz", None) is not None:
-                ts = ts.tz_localize(mapper.index.tz)
-            elif ts.tzinfo is not None and getattr(mapper.index, "tz", None) is not None:
-                ts = ts.tz_convert(mapper.index.tz)
-            if ts in mapper.index:
-                return float(mapper.loc[ts])
-            pos = mapper.index.get_indexer([ts], method="nearest")
-            if len(pos) and int(pos[0]) >= 0:
-                return float(mapper.iloc[int(pos[0])])
-        except Exception:
-            pass
-        try:
-            return float(v)
-        except Exception:
-            return np.nan
-
-    if isinstance(values, (pd.DatetimeIndex, pd.Index, list, tuple, np.ndarray, pd.Series)):
-        return np.array([_one(v) for v in list(values)], dtype=float)
-    return _one(values)
-
-def _enable_compressed_time_axis(ax, index, max_ticks: int = 8):
-    """
-    Use consecutive bar numbers on the x-axis but display PST timestamps as tick labels.
-    This removes weekend/holiday/market-closure gaps while keeping chart labels readable.
-    """
-    mapper = _compressed_axis_map(index)
-    ax._compressed_time_map = mapper
-    if mapper.empty:
-        return mapper
-    n = len(mapper)
-    tick_count = int(max(2, min(max_ticks, n)))
-    ticks = np.linspace(0, n - 1, tick_count).round().astype(int)
-    ticks = np.unique(ticks)
-    labels = []
-    for i in ticks:
-        ts = mapper.index[int(i)]
-        try:
-            labels.append(pd.Timestamp(ts).strftime("%m-%d %H:%M"))
-        except Exception:
-            labels.append(str(ts))
-    ax.set_xticks(ticks)
-    ax.set_xticklabels(labels, rotation=0)
-    ax.set_xlim(0, n - 1)
-    return mapper
-
-def _compressed_hspan(ax, start, end, **kwargs):
-    """Draw an x-span on a compressed-time axis."""
-    try:
-        ax.axvspan(_axis_x(ax, start), _axis_x(ax, end), **kwargs)
-    except Exception:
-        pass
-
-
 @st.cache_data(ttl=120)
 def fetch_hist(ticker: str) -> pd.Series:
     df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"),
@@ -614,8 +525,6 @@ def fetch_hist_max(ticker: str) -> pd.Series:
 def fetch_hist_ohlc(ticker: str) -> pd.DataFrame:
     df = yf.download(ticker, start="2018-01-01", end=pd.to_datetime("today"),
                      progress=False, auto_adjust=False)
-    # Keep only real trading bars. Do NOT calendar-fill weekends/market closures:
-    # charts use compressed bar-number axes to remove closure gaps visually.
     return _ohlc_from_yf(df, ticker=ticker)
 
 @st.cache_data(ttl=120)
@@ -633,10 +542,7 @@ def fetch_intraday(ticker: str, period: str = "1d") -> pd.DataFrame:
             out.index = out.index.tz_localize("UTC")
     except TypeError:
         pass
-    out = out.tz_convert(PACIFIC).sort_index()
-    # Keep only real 5-minute trading bars. Weekend/holiday/market-closure time is
-    # removed visually by _enable_compressed_time_axis() instead of being filled.
-    return out
+    return out.tz_convert(PACIFIC).sort_index()
 
 @st.cache_data(ttl=120)
 def compute_sarimax_forecast(series_like):
@@ -822,9 +728,8 @@ def shade_ntd_regions(ax, ntd: pd.Series):
     ntd = ntd.copy()
     pos = ntd.where(ntd > 0)
     neg = ntd.where(ntd < 0)
-    x = _axis_x(ax, ntd.index)
-    ax.fill_between(x, 0, pos.values, alpha=0.12, color="tab:green")
-    ax.fill_between(x, 0, neg.values, alpha=0.12, color="tab:red")
+    ax.fill_between(ntd.index, 0, pos, alpha=0.12, color="tab:green")
+    ax.fill_between(ntd.index, 0, neg, alpha=0.12, color="tab:red")
 
 def shade_npo_regions(ax, npo: pd.Series):
     return
@@ -1014,13 +919,11 @@ def detect_last_crossover(price: pd.Series, line: pd.Series):
 def annotate_crossover(ax, ts, px, side: str, conf: float):
     try:
         if side == "BUY":
-            x = _axis_x(ax, ts)
-            ax.scatter([x], [px], marker="^", s=90, color="tab:green", zorder=7)
-            ax.text(x, px, f"  BUY {int(conf*100)}%", va="bottom", fontsize=9, color="tab:green", fontweight="bold")
+            ax.scatter([ts], [px], marker="^", s=90, color="tab:green", zorder=7)
+            ax.text(ts, px, f"  BUY {int(conf*100)}%", va="bottom", fontsize=9, color="tab:green", fontweight="bold")
         else:
-            x = _axis_x(ax, ts)
-            ax.scatter([x], [px], marker="v", s=90, color="tab:red", zorder=7)
-            ax.text(x, px, f"  SELL {int(conf*100)}%", va="top", fontsize=9, color="tab:red", fontweight="bold")
+            ax.scatter([ts], [px], marker="v", s=90, color="tab:red", zorder=7)
+            ax.text(ts, px, f"  SELL {int(conf*100)}%", va="top", fontsize=9, color="tab:red", fontweight="bold")
     except Exception:
         pass
 
@@ -1061,10 +964,10 @@ def overlay_hma_reversal_on_ntd(ax, price: pd.Series, hma: pd.Series, lookback: 
         idx_up = list(buy_rev[buy_rev].index)
         idx_dn = list(sell_rev[sell_rev].index)
         if len(idx_up):
-            ax.scatter(_axis_x(ax, idx_up), [y_up]*len(idx_up), marker="s", s=60, color="tab:green",
+            ax.scatter(idx_up, [y_up]*len(idx_up), marker="s", s=60, color="tab:green",
                        zorder=8, label=f"HMA({period}) ↑ REV")
         if len(idx_dn):
-            ax.scatter(_axis_x(ax, idx_dn), [y_dn]*len(idx_dn), marker="D", s=60, color="tab:red",
+            ax.scatter(idx_dn, [y_dn]*len(idx_dn), marker="D", s=60, color="tab:red",
                        zorder=8, label=f"HMA({period}) ↓ REV")
     except Exception:
         pass
@@ -1178,7 +1081,7 @@ def overlay_npx_on_ntd(ax, npx: pd.Series, ntd: pd.Series, mark_crosses: bool = 
     if npx.dropna().empty:
         return
 
-    ax.plot(_axis_x(ax, npx.index), npx.values, "-", linewidth=1.6, color="tab:gray", alpha=0.80,
+    ax.plot(npx.index, npx.values, "-", linewidth=1.6, color="tab:gray", alpha=0.80,
             label="Smoothed NPX")
 
 
@@ -1408,7 +1311,7 @@ def overlay_sr_reversal_indicator_on_ntd(ax,
     )
 
     if not sri.dropna().empty:
-        ax.plot(_axis_x(ax, sri.index), sri.values, "-", linewidth=1.4, color="tab:purple", alpha=0.85,
+        ax.plot(sri.index, sri.values, "-", linewidth=1.4, color="tab:purple", alpha=0.85,
                 label="S/R Reversal Index")
 
     if ntd is None:
@@ -1421,12 +1324,12 @@ def overlay_sr_reversal_indicator_on_ntd(ax,
     if buy.any():
         idx_buy = list(buy[buy].index)
         y_buy = yref.reindex(idx_buy).fillna(sri.reindex(idx_buy)).fillna(-zone)
-        ax.scatter(_axis_x(ax, idx_buy), y_buy.values, marker="^", s=120, color="tab:green", zorder=12,
+        ax.scatter(idx_buy, y_buy.values, marker="^", s=120, color="tab:green", zorder=12,
                    label="BUY: support reversal")
     if sell.any():
         idx_sell = list(sell[sell].index)
         y_sell = yref.reindex(idx_sell).fillna(sri.reindex(idx_sell)).fillna(zone)
-        ax.scatter(_axis_x(ax, idx_sell), y_sell.values, marker="v", s=120, color="tab:red", zorder=12,
+        ax.scatter(idx_sell, y_sell.values, marker="v", s=120, color="tab:red", zorder=12,
                    label="SELL: resistance reversal")
 
 
@@ -2587,13 +2490,13 @@ def draw_session_lines(ax, lines: dict):
     ax.plot([], [], linestyle="-",  color="tab:orange", label="New York Open (PST)")
     ax.plot([], [], linestyle="--", color="tab:orange", label="New York Close (PST)")
     for t in lines.get("ldn_open", []):
-        ax.axvline(_axis_x(ax, t), linestyle="-",  linewidth=1.0, color="tab:blue",   alpha=0.35)
+        ax.axvline(t, linestyle="-",  linewidth=1.0, color="tab:blue",   alpha=0.35)
     for t in lines.get("ldn_close", []):
-        ax.axvline(_axis_x(ax, t), linestyle="--", linewidth=1.0, color="tab:blue",   alpha=0.35)
+        ax.axvline(t, linestyle="--", linewidth=1.0, color="tab:blue",   alpha=0.35)
     for t in lines.get("ny_open", []):
-        ax.axvline(_axis_x(ax, t), linestyle="-",  linewidth=1.0, color="tab:orange", alpha=0.35)
+        ax.axvline(t, linestyle="-",  linewidth=1.0, color="tab:orange", alpha=0.35)
     for t in lines.get("ny_close", []):
-        ax.axvline(_axis_x(ax, t), linestyle="--", linewidth=1.0, color="tab:orange", alpha=0.35)
+        ax.axvline(t, linestyle="--", linewidth=1.0, color="tab:orange", alpha=0.35)
     ax.text(0.99, 0.98, "Session times in PST",
             transform=ax.transAxes, ha="right", va="top",
             fontsize=8, color="black",
@@ -2667,7 +2570,7 @@ def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
 def draw_news_markers(ax, times, ymin, ymax, label="News"):
     for t in times:
         try:
-            ax.axvline(_axis_x(ax, t), color="tab:red", alpha=0.18, linewidth=1)
+            ax.axvline(t, color="tab:red", alpha=0.18, linewidth=1)
         except Exception:
             pass
     ax.plot([], [], color="tab:red", alpha=0.5, linewidth=2, label=label)
@@ -2708,17 +2611,17 @@ def overlay_inrange_on_ntd(ax, price: pd.Series, sup: pd.Series, res: pd.Series)
     in_mask = (state == 0)
     for a, b in _true_spans(in_mask):
         try:
-            _compressed_hspan(ax, a, b, color="gold", alpha=0.15, zorder=1)
+            ax.axvspan(a, b, color="gold", alpha=0.15, zorder=1)
         except Exception:
             pass
     ax.plot([], [], linewidth=8, color="gold", alpha=0.20, label="In Range (S↔R)")
     enter_from_below = (state.shift(1) == -1) & (state == 0)
     enter_from_above = (state.shift(1) ==  1) & (state == 0)
     if enter_from_below.any():
-        ax.scatter(_axis_x(ax, price.index[enter_from_below]), [0.92]*int(enter_from_below.sum()),
+        ax.scatter(price.index[enter_from_below], [0.92]*int(enter_from_below.sum()),
                    marker="o", s=45, color="tab:green", zorder=7, label="Enter from S")
     if enter_from_above.any():
-        ax.scatter(_axis_x(ax, price.index[enter_from_above]), [0.92]*int(enter_from_above.sum()),
+        ax.scatter(price.index[enter_from_above], [0.92]*int(enter_from_above.sum()),
                    marker="o", s=45, color="tab:orange", zorder=7, label="Enter from R")
     lbl = None; col = "black"
     last = state.dropna().iloc[-1] if state.dropna().shape[0] else np.nan
@@ -2764,18 +2667,16 @@ def bb_divergence_signals(ax, price: pd.Series, bb_upper: pd.Series, bb_lower: p
     sell_cond = (m_price < 0) and (m_upper > 0) and (m_dist_sell > 0) and (last_sign < 0) and (conf_dn >= conf_level)
     try:
         if buy_cond and np.isfinite(px):
-            x = _axis_x(ax, ts)
-            ax.scatter([x], [px], marker="^", s=120, color="tab:green", zorder=9)
-            ax.text(x, px, f"  BB BUY {int(conf_level*100)}%", va="bottom", fontsize=9,
+            ax.scatter([ts], [px], marker="^", s=120, color="tab:green", zorder=9)
+            ax.text(ts, px, f"  BB BUY {int(conf_level*100)}%", va="bottom", fontsize=9,
                     color="tab:green", fontweight="bold")
             st.success(
                 f"**BB Divergence BUY** @ {fmt_price_val(px)} — trend↑ ({fmt_slope(m_price)}), "
                 f"lowerBB↓ ({fmt_slope(m_lower)}), Δ(price−lower)↑ ({fmt_slope(m_dist_buy)}), P(up)≥{int(conf_level*100)}%"
             )
         if sell_cond and np.isfinite(px):
-            x = _axis_x(ax, ts)
-            ax.scatter([x], [px], marker="v", s=120, color="tab:red", zorder=9)
-            ax.text(x, px, f"  BB SELL {int(conf_level*100)}%", va="top", fontsize=9,
+            ax.scatter([ts], [px], marker="v", s=120, color="tab:red", zorder=9)
+            ax.text(ts, px, f"  BB SELL {int(conf_level*100)}%", va="top", fontsize=9,
                     color="tab:red", fontweight="bold")
             st.error(
                 f"**BB Divergence SELL** @ {fmt_price_val(px)} — trend↓ ({fmt_slope(m_price)}), "
@@ -3895,6 +3796,9 @@ with tab1:
             axdw.axhline(0.75, linestyle="-",  linewidth=3.0, color="tab:green", label="+0.75")
             axdw.axhline(-0.75, linestyle="-", linewidth=3.0, color="tab:red",   label="-0.75")
             axdw.set_ylim(-1.1, 1.1); axdw.set_xlabel("Date (PST)"); axdw.legend(loc="lower left", framealpha=0.5)
+            xlim_daily = apply_right_x_padding(ax, df_show.index, fraction=0.06, min_bars=8)
+            if xlim_daily is not None:
+                axdw.set_xlim(xlim_daily)
             st.pyplot(fig)
 
         # ----- Hourly -----
@@ -3934,27 +3838,25 @@ with tab1:
 
                 fig2, ax2 = plt.subplots(figsize=(14,4))
                 plt.subplots_adjust(top=0.85, right=0.93)
-                _enable_compressed_time_axis(ax2, hc.index, max_ticks=8)
-                hx = _axis_x(ax2, hc.index)
 
-                ax2.plot(hx, hc.values, label="Intraday")
-                ax2.plot(hx, he.values, "--", label="20 EMA")
-                ax2.plot(hx, trend_h, "--", color=trend_color_for_slope(slope_h), label=f"Trend (m={fmt_slope(slope_h)}/bar)", linewidth=2)
+                ax2.plot(hc.index, hc, label="Intraday")
+                ax2.plot(hc.index, he, "--", label="20 EMA")
+                ax2.plot(hc.index, trend_h, "--", color=trend_color_for_slope(slope_h), label=f"Trend (m={fmt_slope(slope_h)}/bar)", linewidth=2)
                 if show_hma and not hma_h.dropna().empty:
-                    ax2.plot(_axis_x(ax2, hma_h.index), hma_h.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
+                    ax2.plot(hma_h.index, hma_h.values, "-", linewidth=1.6, label=f"HMA({hma_period})")
                 if show_bbands and not bb_up_h.dropna().empty and not bb_lo_h.dropna().empty:
-                    ax2.fill_between(hx, bb_lo_h.values, bb_up_h.values, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
-                    ax2.plot(_axis_x(ax2, bb_mid_h.index), bb_mid_h.values, "-", linewidth=1.1, label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
-                    ax2.plot(_axis_x(ax2, bb_up_h.index), bb_up_h.values, ":", linewidth=1.0)
-                    ax2.plot(_axis_x(ax2, bb_lo_h.index), bb_lo_h.values, ":", linewidth=1.0)
+                    ax2.fill_between(hc.index, bb_lo_h, bb_up_h, alpha=0.06, label=f"BB (×{bb_mult:.1f})")
+                    ax2.plot(bb_mid_h.index, bb_mid_h.values, "-", linewidth=1.1, label=f"BB mid ({'EMA' if bb_use_ema else 'SMA'}, w={bb_win})")
+                    ax2.plot(bb_up_h.index, bb_up_h.values, ":", linewidth=1.0)
+                    ax2.plot(bb_lo_h.index, bb_lo_h.values, ":", linewidth=1.0)
                 if show_psar and not psar_h_df.dropna().empty:
                     up_mask = psar_h_df["in_uptrend"] == True
                     dn_mask = ~up_mask
                     if up_mask.any():
-                        ax2.scatter(_axis_x(ax2, psar_h_df.index[up_mask]), psar_h_df["PSAR"][up_mask],
+                        ax2.scatter(psar_h_df.index[up_mask], psar_h_df["PSAR"][up_mask],
                                     s=15, color="tab:green", zorder=6, label=f"PSAR (step={psar_step:.02f}, max={psar_max:.02f})")
                     if dn_mask.any():
-                        ax2.scatter(_axis_x(ax2, psar_h_df.index[dn_mask]), psar_h_df["PSAR"][dn_mask], s=15, color="tab:red", zorder=6)
+                        ax2.scatter(psar_h_df.index[dn_mask], psar_h_df["PSAR"][dn_mask], s=15, color="tab:red", zorder=6)
 
                 res_val = sup_val = px_val = np.nan
                 try:
@@ -3963,8 +3865,8 @@ with tab1:
                     pass
 
                 if np.isfinite(res_val) and np.isfinite(sup_val):
-                    ax2.hlines(res_val, xmin=0, xmax=len(hc)-1, colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance")
-                    ax2.hlines(sup_val, xmin=0, xmax=len(hc)-1, colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
+                    ax2.hlines(res_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:red", linestyles="-", linewidth=1.6, label="Resistance")
+                    ax2.hlines(sup_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
 
@@ -4032,7 +3934,7 @@ with tab1:
                              bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
 
                 if not yhat_h.empty:
-                    ax2.plot(_axis_x(ax2, yhat_h.index), yhat_h.values, "-", linewidth=2, color=trend_color_for_slope(m_h), label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
+                    ax2.plot(yhat_h.index, yhat_h.values, "-", linewidth=2, color=trend_color_for_slope(m_h), label=f"Slope {slope_lb_hourly} bars ({fmt_slope(m_h)}/bar)")
 
                 ax2.text(0.01, 0.02, f"Slope: {fmt_slope(slope_h)}/bar",
                          transform=ax2.transAxes, ha="left", va="bottom", fontsize=9, color="black",
@@ -4048,10 +3950,10 @@ with tab1:
                 if show_fibs and not hc.empty:
                     fibs_h = fibonacci_levels(hc)
                     for lbl, y in fibs_h.items():
-                        ax2.hlines(y, xmin=0, xmax=len(hc)-1,
+                        ax2.hlines(y, xmin=hc.index[0], xmax=hc.index[-1],
                                    linestyles="dotted", linewidth=1.0, alpha=0.9)
                     for lbl, y in fibs_h.items():
-                        ax2.text(len(hc)-1, y, f" Fib {lbl}", va="center", fontsize=8)
+                        ax2.text(hc.index[-1], y, f" Fib {lbl}", va="center", fontsize=8)
 
                 if mode == "Forex" and show_fx_news and not hc.empty:
                     fx_news = fetch_yf_news(sel, window_days=news_window_days)
@@ -4129,7 +4031,7 @@ with tab1:
 
                 ax2.set_xlabel("Time (PST)")
                 ax2.legend(loc="lower left", framealpha=0.5)
-                xlim_price = ax2.get_xlim()
+                xlim_price = apply_right_x_padding(ax2, hc.index, fraction=0.08, min_bars=10)
                 st.pyplot(fig2)
 
                 # === Hourly Volume panel ===
@@ -4139,18 +4041,16 @@ with tab1:
                     v_trend, v_m = slope_line(vol, slope_lb_hourly)
                     v_r2 = regression_r2(vol, slope_lb_hourly)
                     fig2v, ax2v = plt.subplots(figsize=(14, 2.8))
-                    _enable_compressed_time_axis(ax2v, vol.index, max_ticks=8)
-                    vx = _axis_x(ax2v, vol.index)
                     ax2v.set_title(f"Volume (Hourly) — Mid-line & Trend  |  Slope={fmt_slope(v_m)}/bar")
-                    ax2v.fill_between(vx, 0, vol.values, alpha=0.18, label="Volume", color="tab:blue")
-                    ax2v.plot(vx, vol.values, linewidth=1.0, color="tab:blue")
-                    ax2v.plot(_axis_x(ax2v, v_mid.index), v_mid.values, ":", linewidth=1.6, label=f"Mid-line ({slope_lb_hourly}-roll)")
+                    ax2v.fill_between(vol.index, 0, vol, alpha=0.18, label="Volume", color="tab:blue")
+                    ax2v.plot(vol.index, vol, linewidth=1.0, color="tab:blue")
+                    ax2v.plot(v_mid.index, v_mid, ":", linewidth=1.6, label=f"Mid-line ({slope_lb_hourly}-roll)")
                     if v_mid.notna().any():
                         last_mid = _safe_last_float(v_mid.dropna())
-                        ax2v.hlines(last_mid, xmin=0, xmax=len(vol)-1, linestyles="dotted", linewidth=1.0)
+                        ax2v.hlines(last_mid, xmin=vol.index[0], xmax=vol.index[-1], linestyles="dotted", linewidth=1.0)
                         label_on_left(ax2v, last_mid, f"Mid {last_mid:,.0f}", color="black")
                     if not v_trend.empty:
-                        ax2v.plot(_axis_x(ax2v, v_trend.index), v_trend.values, "--", linewidth=2, label=f"Trend {slope_lb_hourly} ({fmt_slope(v_m)}/bar)")
+                        ax2v.plot(v_trend.index, v_trend.values, "--", linewidth=2, label=f"Trend {slope_lb_hourly} ({fmt_slope(v_m)}/bar)")
                     ax2v.text(0.01, 0.02, f"Slope: {fmt_slope(v_m)}/bar",
                               transform=ax2v.transAxes, ha="left", va="bottom",
                               fontsize=9, color="black",
@@ -4169,13 +4069,12 @@ with tab1:
                     ntd_trend_h, ntd_m_h = slope_line(ntd_h, slope_lb_hourly)
                     npx_h = npx_h.reindex(hc.index) if show_npx_ntd else pd.Series(index=hc.index, dtype=float)
                     fig2r, ax2r = plt.subplots(figsize=(14,2.8))
-                    _enable_compressed_time_axis(ax2r, hc.index, max_ticks=8)
                     ax2r.set_title(f"Hourly Indicator Panel — NTD + Smoothed NPX + S/R Reversal + Trend (win={ntd_window})")
                     if shade_ntd and not ntd_h.dropna().empty:
                         shade_ntd_regions(ax2r, ntd_h)
                     if show_ntd_channel and np.isfinite(res_val) and np.isfinite(sup_val):
                         overlay_inrange_on_ntd(ax2r, hc, sup_h, res_h)
-                    ax2r.plot(_axis_x(ax2r, ntd_h.index), ntd_h.values, "-", linewidth=1.6, label="NTD")
+                    ax2r.plot(ntd_h.index, ntd_h, "-", linewidth=1.6, label="NTD")
                     if show_npx_ntd and not npx_h.dropna().empty and not ntd_h.dropna().empty:
                         overlay_npx_on_ntd(ax2r, npx_h, ntd_h, mark_crosses=mark_npx_cross)
                     if show_sr_reversal_ntd and not hc.dropna().empty and not ntd_h.dropna().empty:
@@ -4193,7 +4092,7 @@ with tab1:
                             smooth_span=sr_rev_smooth,
                         )
                     if not ntd_trend_h.empty:
-                        ax2r.plot(_axis_x(ax2r, ntd_trend_h.index), ntd_trend_h.values, "--", linewidth=2,
+                        ax2r.plot(ntd_trend_h.index, ntd_trend_h.values, "--", linewidth=2,
                                   label=f"NTD Trend {slope_lb_hourly} ({fmt_slope(ntd_m_h)}/bar)")
                     if show_hma_rev_ntd and not hma_h.dropna().empty and not hc.dropna().empty:
                         overlay_hma_reversal_on_ntd(ax2r, hc, hma_h, lookback=hma_rev_lb, period=hma_period)
@@ -4274,6 +4173,7 @@ with tab4:
         ax.plot(df3m.index, trend3m, "--", color=trend_color_for_slope(slope3m), label="Trend")
         ax.set_xlabel("Date (PST)")
         ax.legend()
+        apply_right_x_padding(ax, df3m.index, fraction=0.05, min_bars=5)
         st.pyplot(fig)
 
         st.markdown("---")
@@ -4297,6 +4197,7 @@ with tab4:
         ax0.plot(df0.index, trend0, "--", label="Trend")
         ax0.set_xlabel("Date (PST)")
         ax0.legend()
+        apply_right_x_padding(ax0, df0.index, fraction=0.05, min_bars=5)
         st.pyplot(fig0)
 
         st.markdown("---")
@@ -4449,6 +4350,7 @@ with tab6:
                         fontsize=11, fontweight="bold",
                         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
             ax.set_xlabel("Date (PST)"); ax.set_ylabel("Price"); ax.legend(loc="lower left", framealpha=0.5)
+            apply_right_x_padding(ax, s.index, fraction=0.05, min_bars=5)
             st.pyplot(fig)
 
 # --- Tab 7: S/R Reversal zero-line cross scanner ---
