@@ -20,6 +20,7 @@
 # (UPDATED) S/R scanner tables include support/EMA pullback quality columns.
 # (NEW) EMA Divergence tab scans daily/hourly recent upward price crosses above the 30 EMA.
 
+# (NEW) Trend-aligned S/R Reversal indicator marks bullish support reversals in uptrends and bearish resistance reversals in downtrends.
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -207,47 +208,6 @@ def label_on_left(ax, y_val: float, text: str, color: str = "black", fontsize: i
     except Exception:
         pass
 
-
-def apply_right_x_padding(ax, index_like=None, fraction: float = 0.06, min_bars: int = 8):
-    """
-    Add blank space to the right edge of a chart so the latest price, markers,
-    Fibonacci labels, support/resistance labels, and BUY/SELL annotations do not
-    appear cut off. Works with both datetime x-axes and compressed numeric axes.
-    """
-    try:
-        x0, x1 = ax.get_xlim()
-        span = float(x1 - x0)
-        if not np.isfinite(span) or span <= 0:
-            return (x0, x1)
-
-        pad = span * float(max(0.0, fraction))
-
-        if index_like is not None:
-            try:
-                idx = pd.Index(index_like)
-                if isinstance(idx, pd.DatetimeIndex) and len(idx) >= 2:
-                    diffs = idx.to_series().diff().dropna()
-                    if len(diffs):
-                        med = diffs.median()
-                        if pd.notna(med):
-                            pad = max(pad, float(med / pd.Timedelta(days=1)) * int(max(1, min_bars)))
-                else:
-                    vals = pd.to_numeric(pd.Series(idx), errors="coerce").dropna()
-                    if len(vals) >= 2:
-                        med = float(vals.diff().dropna().median())
-                        if np.isfinite(med) and med > 0:
-                            pad = max(pad, med * int(max(1, min_bars)))
-            except Exception:
-                pass
-
-        ax.set_xlim(x0, x1 + pad)
-        return ax.get_xlim()
-    except Exception:
-        try:
-            return ax.get_xlim()
-        except Exception:
-            return None
-
 def subset_by_daily_view(obj, view_label: str):
     if obj is None or len(obj.index) == 0:
         return obj
@@ -356,6 +316,29 @@ sr_rev_smooth = st.sidebar.slider(
     "S/R reversal index smoothing",
     1, 30, 8, 1,
     key="sb_sr_rev_smooth"
+)
+
+# Trend-aligned S/R reversal price-chart marker
+st.sidebar.subheader("Trend-Aligned S/R Reversal")
+show_trend_sr_reversal = st.sidebar.checkbox(
+    "Show trend-aligned support/resistance reversal markers on price charts",
+    value=True,
+    key="sb_trend_sr_rev_show"
+)
+trend_sr_touch_lookback = st.sidebar.slider(
+    "Trend S/R touch lookback (bars)",
+    2, 30, 8, 1,
+    key="sb_trend_sr_rev_touch_lb"
+)
+trend_sr_confirm_bars = st.sidebar.slider(
+    "Trend S/R confirmation bars",
+    1, 8, 3, 1,
+    key="sb_trend_sr_rev_confirm_bars"
+)
+trend_sr_cooldown = st.sidebar.slider(
+    "Trend S/R marker cooldown (bars)",
+    2, 40, 10, 1,
+    key="sb_trend_sr_rev_cooldown"
 )
 
 # Ichimoku / Kijun
@@ -2458,6 +2441,257 @@ def _render_sr_level_up_cross_table(title: str, rows: list, empty_text: str):
 NY_TZ   = pytz.timezone("America/New_York")
 LDN_TZ  = pytz.timezone("Europe/London")
 
+
+
+# ========= Trend-aligned support/resistance reversal helpers ======
+def trend_aligned_sr_reversal_masks(price: pd.Series,
+                                    support: pd.Series,
+                                    resistance: pd.Series,
+                                    trend_slope: float,
+                                    prox: float = 0.0025,
+                                    touch_lookback: int = 8,
+                                    confirm_bars: int = 3,
+                                    ema_span: int = 20,
+                                    cooldown_bars: int = 10):
+    """
+    Bullish signal: trendline is upward, price recently touched/approached support,
+    then price confirms by closing higher and away from support.
+    Bearish signal: trendline is downward, price recently touched/approached resistance,
+    then price confirms by closing lower and away from resistance.
+    """
+    p = _coerce_1d_series(price).dropna().astype(float)
+    if p.empty:
+        return pd.Series(dtype=bool), pd.Series(dtype=bool), pd.DataFrame()
+
+    sup = _coerce_1d_series(support).reindex(p.index).ffill().bfill()
+    res = _coerce_1d_series(resistance).reindex(p.index).ffill().bfill()
+
+    try:
+        m = float(np.squeeze(trend_slope))
+    except Exception:
+        m = np.nan
+
+    if not np.isfinite(m):
+        buy = pd.Series(False, index=p.index)
+        sell = pd.Series(False, index=p.index)
+        ctx = pd.DataFrame(index=p.index)
+        return buy, sell, ctx
+
+    eps = float(max(0.0, prox))
+    touch_lookback = int(max(1, touch_lookback))
+    confirm_bars = int(max(1, confirm_bars))
+    cooldown_bars = int(max(1, cooldown_bars))
+
+    denom = p.abs().replace(0, np.nan)
+    dist_to_support = (p - sup) / denom
+    dist_to_resistance = (res - p) / denom
+
+    near_support = dist_to_support.between(-eps, eps, inclusive="both") | (p <= sup * (1.0 + eps))
+    near_resistance = dist_to_resistance.between(-eps, eps, inclusive="both") | (p >= res * (1.0 - eps))
+
+    touched_support_recent = near_support.rolling(touch_lookback, min_periods=1).max().astype(bool)
+    touched_resistance_recent = near_resistance.rolling(touch_lookback, min_periods=1).max().astype(bool)
+
+    ema = p.ewm(span=int(max(2, ema_span)), adjust=False, min_periods=1).mean()
+    ema_up = ema.diff().fillna(0) >= 0
+    ema_down = ema.diff().fillna(0) <= 0
+
+    confirm_up = (
+        (p > sup) &
+        (p.diff(confirm_bars) > 0) &
+        (p > p.shift(1)) &
+        ema_up
+    )
+    confirm_down = (
+        (p < res) &
+        (p.diff(confirm_bars) < 0) &
+        (p < p.shift(1)) &
+        ema_down
+    )
+
+    trend_up = m >= 0
+    trend_down = m < 0
+
+    buy_raw = (touched_support_recent & confirm_up) if trend_up else pd.Series(False, index=p.index)
+    sell_raw = (touched_resistance_recent & confirm_down) if trend_down else pd.Series(False, index=p.index)
+
+    buy = _apply_signal_cooldown(buy_raw.fillna(False), cooldown_bars=cooldown_bars)
+    sell = _apply_signal_cooldown(sell_raw.fillna(False), cooldown_bars=cooldown_bars)
+
+    ctx = pd.DataFrame({
+        "Price": p,
+        "Support": sup,
+        "Resistance": res,
+        "Distance to Support %": dist_to_support * 100.0,
+        "Distance to Resistance %": dist_to_resistance * 100.0,
+        "Touched Support Recently": touched_support_recent,
+        "Touched Resistance Recently": touched_resistance_recent,
+        "EMA20": ema,
+        "EMA20 Direction": np.where(ema_up, "Upward", "Downward"),
+        "Trend Direction": "Upward" if trend_up else "Downward",
+    }, index=p.index)
+    return buy.fillna(False), sell.fillna(False), ctx
+
+
+def _latest_trend_sr_reversal_context(buy_mask: pd.Series,
+                                      sell_mask: pd.Series,
+                                      ctx: pd.DataFrame,
+                                      max_bars_since: int = 20) -> dict:
+    if ctx is None or ctx.empty:
+        return {"ok": False, "state": "WAIT", "detail": "No trend S/R reversal context available."}
+
+    max_bars_since = int(max(1, max_bars_since))
+    pidx = list(ctx.index)
+
+    best = None
+    for side, mask in (("BUY", buy_mask), ("SELL", sell_mask)):
+        m = pd.Series(mask, index=ctx.index).fillna(False)
+        hits = list(m[m].index)
+        if not hits:
+            continue
+        ts = hits[-1]
+        try:
+            bars = len(pidx) - 1 - pidx.index(ts)
+        except ValueError:
+            bars = np.nan
+        if np.isfinite(bars) and bars <= max_bars_since:
+            if best is None or bars < best["bars"]:
+                best = {"side": side, "time": ts, "bars": int(bars)}
+
+    if best is not None:
+        ts = best["time"]
+        side = best["side"]
+        bars = best["bars"]
+        row = ctx.loc[ts]
+        if side == "BUY":
+            detail = (
+                f"Bullish support reversal confirmed {int(bars)} bars ago: "
+                f"upward trendline, recent support touch near {fmt_price_val(row.get('Support', np.nan))}, "
+                f"then price turned up."
+            )
+            state = "BULLISH SUPPORT REVERSAL"
+            level = "success"
+        else:
+            detail = (
+                f"Bearish resistance reversal confirmed {int(bars)} bars ago: "
+                f"downward trendline, recent resistance touch near {fmt_price_val(row.get('Resistance', np.nan))}, "
+                f"then price turned down."
+            )
+            state = "BEARISH RESISTANCE REVERSAL"
+            level = "error"
+        return {
+            "ok": True,
+            "side": side,
+            "state": state,
+            "detail": detail,
+            "bars_since": int(bars),
+            "time": ts,
+            "price": float(row.get("Price", np.nan)),
+            "support": float(row.get("Support", np.nan)),
+            "resistance": float(row.get("Resistance", np.nan)),
+            "level": level,
+        }
+
+    trend_dir = str(ctx["Trend Direction"].dropna().iloc[-1]) if "Trend Direction" in ctx and len(ctx["Trend Direction"].dropna()) else "Unknown"
+    return {
+        "ok": False,
+        "side": None,
+        "state": "WAIT",
+        "detail": f"Trend is {trend_dir}; waiting for a fresh trend-aligned support/resistance reversal confirmation.",
+        "level": "info",
+    }
+
+
+def overlay_trend_sr_reversal_on_price(ax,
+                                       price: pd.Series,
+                                       support: pd.Series,
+                                       resistance: pd.Series,
+                                       trend_slope: float,
+                                       prox: float = 0.0025,
+                                       touch_lookback: int = 8,
+                                       confirm_bars: int = 3,
+                                       cooldown_bars: int = 10,
+                                       marker_size: int = 130):
+    buy, sell, ctx = trend_aligned_sr_reversal_masks(
+        price=price,
+        support=support,
+        resistance=resistance,
+        trend_slope=trend_slope,
+        prox=prox,
+        touch_lookback=touch_lookback,
+        confirm_bars=confirm_bars,
+        cooldown_bars=cooldown_bars,
+    )
+
+    p = _coerce_1d_series(price).reindex(ctx.index) if ctx is not None and not ctx.empty else _coerce_1d_series(price)
+
+    if buy.any():
+        idx_buy = list(buy[buy].index)
+        y_buy = p.reindex(idx_buy)
+        ax.scatter(
+            idx_buy, y_buy.values,
+            marker="^", s=marker_size, color="tab:green",
+            edgecolors="white", linewidths=0.7, zorder=14,
+            label="Trend S/R BUY"
+        )
+    if sell.any():
+        idx_sell = list(sell[sell].index)
+        y_sell = p.reindex(idx_sell)
+        ax.scatter(
+            idx_sell, y_sell.values,
+            marker="v", s=marker_size, color="tab:red",
+            edgecolors="white", linewidths=0.7, zorder=14,
+            label="Trend S/R SELL"
+        )
+
+    context = _latest_trend_sr_reversal_context(
+        buy, sell, ctx,
+        max_bars_since=max(int(touch_lookback) * 3, int(confirm_bars) * 3, 12)
+    )
+
+    try:
+        if context.get("ok", False):
+            x = context.get("time")
+            y = context.get("price", np.nan)
+            if context.get("side") == "BUY":
+                ax.annotate(
+                    f"Trend S/R BUY\n{context.get('bars_since')} bars",
+                    xy=(x, y), xytext=(0, 18), textcoords="offset points",
+                    ha="center", va="bottom", fontsize=8, color="tab:green",
+                    bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="tab:green", alpha=0.8),
+                    arrowprops=dict(arrowstyle="->", color="tab:green", lw=1.0),
+                    zorder=15
+                )
+            elif context.get("side") == "SELL":
+                ax.annotate(
+                    f"Trend S/R SELL\n{context.get('bars_since')} bars",
+                    xy=(x, y), xytext=(0, -22), textcoords="offset points",
+                    ha="center", va="top", fontsize=8, color="tab:red",
+                    bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="tab:red", alpha=0.8),
+                    arrowprops=dict(arrowstyle="->", color="tab:red", lw=1.0),
+                    zorder=15
+                )
+    except Exception:
+        pass
+
+    return buy, sell, ctx, context
+
+
+def render_trend_sr_status(context: dict, label: str = "Trend S/R Reversal"):
+    if not isinstance(context, dict):
+        return
+    state = context.get("state", "WAIT")
+    detail = context.get("detail", "")
+    level = context.get("level", "info")
+    msg = f"**{label}: {state}** — {detail}"
+    if level == "success":
+        st.success(msg)
+    elif level == "error":
+        st.error(msg)
+    else:
+        st.info(msg)
+
+
 def session_markers_for_index(idx: pd.DatetimeIndex, session_tz, open_hr: int, close_hr: int):
     opens, closes = [], []
     if not isinstance(idx, pd.DatetimeIndex) or idx.tz is None or idx.empty:
@@ -3737,6 +3971,23 @@ with tab1:
                 ax.text(df_show.index[-1], r30_last, f"  30R = {fmt_price_val(r30_last)}", va="bottom")
                 ax.text(df_show.index[-1], s30_last, f"  30S = {fmt_price_val(s30_last)}", va="top")
 
+            if show_trend_sr_reversal and not df_show.dropna().empty:
+                try:
+                    _, _, _, trend_sr_ctx_d = overlay_trend_sr_reversal_on_price(
+                        ax,
+                        price=df_show,
+                        support=sup30_show,
+                        resistance=res30_show,
+                        trend_slope=m_d,
+                        prox=sr_prox_pct,
+                        touch_lookback=trend_sr_touch_lookback,
+                        confirm_bars=trend_sr_confirm_bars,
+                        cooldown_bars=trend_sr_cooldown,
+                    )
+                    render_trend_sr_status(trend_sr_ctx_d, label="Daily Trend S/R Reversal")
+                except Exception as exc:
+                    st.info(f"Daily Trend S/R Reversal unavailable: {exc}")
+
             ax.set_ylabel("Price")
             ax.legend(loc="lower left", framealpha=0.5)
 
@@ -3796,9 +4047,6 @@ with tab1:
             axdw.axhline(0.75, linestyle="-",  linewidth=3.0, color="tab:green", label="+0.75")
             axdw.axhline(-0.75, linestyle="-", linewidth=3.0, color="tab:red",   label="-0.75")
             axdw.set_ylim(-1.1, 1.1); axdw.set_xlabel("Date (PST)"); axdw.legend(loc="lower left", framealpha=0.5)
-            xlim_daily = apply_right_x_padding(ax, df_show.index, fraction=0.06, min_bars=8)
-            if xlim_daily is not None:
-                axdw.set_xlim(xlim_daily)
             st.pyplot(fig)
 
         # ----- Hourly -----
@@ -3869,6 +4117,26 @@ with tab1:
                     ax2.hlines(sup_val, xmin=hc.index[0], xmax=hc.index[-1], colors="tab:green", linestyles="-", linewidth=1.6, label="Support")
                     label_on_left(ax2, res_val, f"R {fmt_price_val(res_val)}", color="tab:red")
                     label_on_left(ax2, sup_val, f"S {fmt_price_val(sup_val)}", color="tab:green")
+
+                trend_sr_buy_mask_h = pd.Series(False, index=hc.index)
+                trend_sr_sell_mask_h = pd.Series(False, index=hc.index)
+                trend_sr_ctx_h = {"ok": False}
+                if show_trend_sr_reversal and not hc.dropna().empty:
+                    try:
+                        trend_sr_buy_mask_h, trend_sr_sell_mask_h, _, trend_sr_ctx_h = overlay_trend_sr_reversal_on_price(
+                            ax2,
+                            price=hc,
+                            support=sup_h,
+                            resistance=res_h,
+                            trend_slope=m_h,
+                            prox=sr_prox_pct,
+                            touch_lookback=trend_sr_touch_lookback,
+                            confirm_bars=trend_sr_confirm_bars,
+                            cooldown_bars=trend_sr_cooldown,
+                        )
+                        render_trend_sr_status(trend_sr_ctx_h, label="Hourly Trend S/R Reversal")
+                    except Exception as exc:
+                        st.info(f"Hourly Trend S/R Reversal unavailable: {exc}")
 
                 trade_buy_mask = pd.Series(False, index=hc.index)
                 trade_sell_mask = pd.Series(False, index=hc.index)
@@ -4031,7 +4299,7 @@ with tab1:
 
                 ax2.set_xlabel("Time (PST)")
                 ax2.legend(loc="lower left", framealpha=0.5)
-                xlim_price = apply_right_x_padding(ax2, hc.index, fraction=0.08, min_bars=10)
+                xlim_price = ax2.get_xlim()
                 st.pyplot(fig2)
 
                 # === Hourly Volume panel ===
@@ -4173,7 +4441,6 @@ with tab4:
         ax.plot(df3m.index, trend3m, "--", color=trend_color_for_slope(slope3m), label="Trend")
         ax.set_xlabel("Date (PST)")
         ax.legend()
-        apply_right_x_padding(ax, df3m.index, fraction=0.05, min_bars=5)
         st.pyplot(fig)
 
         st.markdown("---")
@@ -4197,7 +4464,6 @@ with tab4:
         ax0.plot(df0.index, trend0, "--", label="Trend")
         ax0.set_xlabel("Date (PST)")
         ax0.legend()
-        apply_right_x_padding(ax0, df0.index, fraction=0.05, min_bars=5)
         st.pyplot(fig0)
 
         st.markdown("---")
@@ -4350,7 +4616,6 @@ with tab6:
                         fontsize=11, fontweight="bold",
                         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="grey", alpha=0.7))
             ax.set_xlabel("Date (PST)"); ax.set_ylabel("Price"); ax.legend(loc="lower left", framealpha=0.5)
-            apply_right_x_padding(ax, s.index, fraction=0.05, min_bars=5)
             st.pyplot(fig)
 
 # --- Tab 7: S/R Reversal zero-line cross scanner ---
