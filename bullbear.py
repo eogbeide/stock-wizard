@@ -22,6 +22,7 @@
 # (NEW) Smoothed NPX line tab scans daily upward 0.0 crosses grouped by trend direction.
 
 # (NEW) Trend-aligned S/R Reversal indicator marks bullish support reversals in uptrends and bearish resistance reversals in downtrends.
+# (NEW) S/R 0.0 Up Cross tab mirrors Smoothed NPX line tab with Upward/Downward trend groups for Daily and 48h Hourly charts.
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -3907,7 +3908,7 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -3921,7 +3922,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "S/R Cross",
     "S/R -0.5 Cross",
     "EMA Divergence",
-    "Smoothed NPX line"
+    "Smoothed NPX line",
+    "S/R 0.0 Up Cross"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -5514,4 +5516,161 @@ with tab14:
         )
     else:
         st.info("Click **Scan Smoothed NPX line** to build the daily upward-cross tables.")
+
+
+# --- Tab 15: S/R 0.0 Up Cross ---
+with tab15:
+    st.header("S/R 0.0 Up Cross")
+    st.caption(
+        "Daily and 48-hour intraday scan for symbols where the **S/R Reversal Index** "
+        "recently crossed the **0.0** line going upward. This tab mirrors the "
+        "**Smoothed NPX line** tab by separating results into **Upward Trend** and "
+        "**Downward Trend** groups. Rows are sorted by **Bars Since Cross** in ascending order."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        sr_zero_daily_recent = st.slider(
+            "Daily recent upward 0.0 cross window (bars)",
+            1, 120, 30, 1,
+            key="sr_zero_mirror_daily_recent"
+        )
+    with c2:
+        sr_zero_hourly_recent = st.slider(
+            "Hourly 48h recent upward 0.0 cross window (bars)",
+            1, 240, 60, 1,
+            key="sr_zero_mirror_hourly_recent"
+        )
+    with c3:
+        sr_zero_smooth = st.slider(
+            "S/R Reversal smoothing",
+            1, 30, int(sr_rev_smooth), 1,
+            key="sr_zero_mirror_smooth"
+        )
+
+    c4, c5 = st.columns(2)
+    with c4:
+        sr_zero_daily_trend_lb = st.slider(
+            "Daily trendline lookback (bars)",
+            10, 360, int(slope_lb_daily), 10,
+            key="sr_zero_mirror_daily_trend_lb"
+        )
+    with c5:
+        sr_zero_hourly_trend_lb = st.slider(
+            "Hourly trendline lookback (bars)",
+            12, 480, int(slope_lb_hourly), 6,
+            key="sr_zero_mirror_hourly_trend_lb"
+        )
+
+    sr_zero_show_current_up = st.checkbox(
+        "Only show rows where current S/R Reversal direction is upward",
+        value=False,
+        key="sr_zero_mirror_current_up_filter"
+    )
+
+    run_sr_zero_mirror_scan = st.button("Scan S/R 0.0 Up Cross", key="btn_sr_zero_mirror_scan")
+
+    if run_sr_zero_mirror_scan:
+        daily_uptrend_rows = []
+        daily_downtrend_rows = []
+        hourly_uptrend_rows = []
+        hourly_downtrend_rows = []
+
+        progress = st.progress(0, text="Scanning S/R Reversal Index 0.0 upward crosses...")
+        total_steps = max(1, len(universe) * 2)
+        step_count = 0
+
+        for sym in universe:
+            daily_row = sr_reversal_cross_info_daily(
+                sym,
+                smooth_span=int(sr_zero_smooth),
+                recent_bars=int(sr_zero_daily_recent),
+                slope_lookback=int(sr_zero_daily_trend_lb),
+            )
+            if daily_row is not None and daily_row.get("Direction") == "Upward":
+                current_direction = "Upward"
+                try:
+                    current_direction = "Upward" if float(daily_row.get("Current S/R Reversal", np.nan)) >= float(daily_row.get("Value at Cross", np.nan)) else "Downward"
+                except Exception:
+                    current_direction = "Upward"
+                daily_row["Current S/R Direction"] = current_direction
+                if (not sr_zero_show_current_up) or current_direction == "Upward":
+                    if daily_row.get("Trend Direction") == "Upward":
+                        daily_uptrend_rows.append(daily_row)
+                    else:
+                        daily_downtrend_rows.append(daily_row)
+
+            step_count += 1
+            progress.progress(
+                min(1.0, step_count / total_steps),
+                text=f"Scanning daily S/R 0.0 upward crosses: {sym}"
+            )
+
+            hourly_row = sr_reversal_cross_info_hourly(
+                sym,
+                period="2d",  # fixed 48-hour view
+                sr_window=int(sr_lb_hourly),
+                smooth_span=int(sr_zero_smooth),
+                recent_bars=int(sr_zero_hourly_recent),
+                slope_lookback=int(sr_zero_hourly_trend_lb),
+            )
+            if hourly_row is not None and hourly_row.get("Direction") == "Upward":
+                current_direction = "Upward"
+                try:
+                    current_direction = "Upward" if float(hourly_row.get("Current S/R Reversal", np.nan)) >= float(hourly_row.get("Value at Cross", np.nan)) else "Downward"
+                except Exception:
+                    current_direction = "Upward"
+                hourly_row["Current S/R Direction"] = current_direction
+                if (not sr_zero_show_current_up) or current_direction == "Upward":
+                    if hourly_row.get("Trend Direction") == "Upward":
+                        hourly_uptrend_rows.append(hourly_row)
+                    else:
+                        hourly_downtrend_rows.append(hourly_row)
+
+            step_count += 1
+            progress.progress(
+                min(1.0, step_count / total_steps),
+                text=f"Scanning hourly 48h S/R 0.0 upward crosses: {sym}"
+            )
+
+        progress.empty()
+
+        st.markdown("## Daily Chart")
+        st.markdown("### Upward Trend")
+        _render_sr_cross_table(
+            "Daily — S/R Reversal Index crossed 0.0 upward in an upward trend",
+            daily_uptrend_rows
+        )
+
+        st.markdown("### Downward Trend")
+        _render_sr_cross_table(
+            "Daily — S/R Reversal Index crossed 0.0 upward in a downward trend",
+            daily_downtrend_rows
+        )
+
+        st.markdown("## Hourly Chart — 48h View")
+        st.markdown("### Upward Trend")
+        _render_sr_cross_table(
+            "Hourly 48h — S/R Reversal Index crossed 0.0 upward in an upward trend",
+            hourly_uptrend_rows
+        )
+
+        st.markdown("### Downward Trend")
+        _render_sr_cross_table(
+            "Hourly 48h — S/R Reversal Index crossed 0.0 upward in a downward trend",
+            hourly_downtrend_rows
+        )
+
+        st.caption(
+            f"Daily upward-trend S/R 0.0 crosses: {len(daily_uptrend_rows)} • "
+            f"Daily downward-trend S/R 0.0 crosses: {len(daily_downtrend_rows)} • "
+            f"Hourly 48h upward-trend S/R 0.0 crosses: {len(hourly_uptrend_rows)} • "
+            f"Hourly 48h downward-trend S/R 0.0 crosses: {len(hourly_downtrend_rows)}"
+        )
+    else:
+        st.info(
+            "Click **Scan S/R 0.0 Up Cross** to build Daily and 48h Hourly tables, "
+            "grouped the same way as the Smoothed NPX line tab."
+        )
+
 
