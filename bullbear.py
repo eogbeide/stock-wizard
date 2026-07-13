@@ -19,6 +19,7 @@
 
 # (UPDATED) S/R scanner tables include support/EMA pullback quality columns.
 # (NEW) EMA Divergence tab scans daily/hourly recent upward price crosses above the 30 EMA.
+# (NEW) S/R 0.0 Up Cross tab scans Daily and 48h Hourly upward S/R Reversal Index zero-line crosses.
 
 # (NEW) Trend-aligned S/R Reversal indicator marks bullish support reversals in uptrends and bearish resistance reversals in downtrends.
 import streamlit as st
@@ -3806,7 +3807,7 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -3819,7 +3820,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "Green Triangle Pick",
     "S/R Cross",
     "S/R -0.5 Cross",
-    "EMA Divergence"
+    "EMA Divergence",
+    "S/R 0.0 Up Cross"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -5321,4 +5323,100 @@ with tab13:
         )
     else:
         st.info("Click **Scan EMA Divergence** to build the Daily and Hourly 30 EMA upward-cross tables.")
+
+# --- Tab 14: S/R 0.0 Up Cross ---
+with tab14:
+    st.header("S/R 0.0 Up Cross")
+    st.caption(
+        "Daily and 48-hour intraday scan for symbols where the **S/R Reversal Index** on the NTD chart "
+        "has recently crossed the **0.0** line going **upward**. Results are sorted by "
+        "**Bars Since Cross** in ascending order."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        sr_zero_up_daily_recent = st.slider(
+            "Daily recent upward 0.0 cross window (bars)",
+            1, 120, 30, 1,
+            key="sr_zero_up_daily_recent"
+        )
+    with c2:
+        sr_zero_up_hourly_recent = st.slider(
+            "Hourly 48h recent upward 0.0 cross window (5-min bars)",
+            1, 576, 96, 1,
+            key="sr_zero_up_hourly_recent"
+        )
+    with c3:
+        sr_zero_up_smooth = st.slider(
+            "S/R Reversal Index smoothing",
+            1, 30, int(sr_rev_smooth), 1,
+            key="sr_zero_up_smooth"
+        )
+
+    sr_zero_up_only_uptrend = st.checkbox(
+        "Show only rows with upward price trendline",
+        value=False,
+        key="sr_zero_up_only_uptrend"
+    )
+
+    run_sr_zero_up_scan = st.button("Scan S/R 0.0 Up Cross", key="btn_sr_zero_up_scan")
+
+    if run_sr_zero_up_scan:
+        daily_rows = []
+        hourly_rows = []
+
+        progress = st.progress(0, text="Scanning S/R 0.0 upward crosses...")
+        total_steps = max(1, len(universe) * 2)
+        step_count = 0
+
+        for sym in universe:
+            daily_row = sr_reversal_cross_info_daily(
+                sym,
+                smooth_span=int(sr_zero_up_smooth),
+                recent_bars=int(sr_zero_up_daily_recent),
+                slope_lookback=int(slope_lb_daily),
+            )
+            if daily_row is not None and daily_row.get("Direction") == "Upward":
+                if (not sr_zero_up_only_uptrend) or daily_row.get("Trend Direction") == "Upward":
+                    daily_rows.append(daily_row)
+
+            step_count += 1
+            progress.progress(
+                min(1.0, step_count / total_steps),
+                text=f"Scanning daily S/R 0.0 upward crosses: {sym}"
+            )
+
+            hourly_row = sr_reversal_cross_info_hourly(
+                sym,
+                period="2d",  # fixed 48-hour view
+                sr_window=int(sr_lb_hourly),
+                smooth_span=int(sr_zero_up_smooth),
+                recent_bars=int(sr_zero_up_hourly_recent),
+                slope_lookback=int(slope_lb_hourly),
+            )
+            if hourly_row is not None and hourly_row.get("Direction") == "Upward":
+                if (not sr_zero_up_only_uptrend) or hourly_row.get("Trend Direction") == "Upward":
+                    hourly_rows.append(hourly_row)
+
+            step_count += 1
+            progress.progress(
+                min(1.0, step_count / total_steps),
+                text=f"Scanning hourly 48h S/R 0.0 upward crosses: {sym}"
+            )
+
+        progress.empty()
+
+        st.markdown("### Daily Chart — Recent upward 0.0 crosses")
+        _render_sr_cross_table("Daily — S/R Reversal Index crossed 0.0 upward", daily_rows)
+
+        st.markdown("### Hourly Chart — 48h view — Recent upward 0.0 crosses")
+        _render_sr_cross_table("Hourly 48h — S/R Reversal Index crossed 0.0 upward", hourly_rows)
+
+        st.caption(
+            f"Daily upward 0.0 crosses found: {len(daily_rows)} • "
+            f"Hourly 48h upward 0.0 crosses found: {len(hourly_rows)}"
+        )
+    else:
+        st.info("Click **Scan S/R 0.0 Up Cross** to build the Daily and 48h Hourly upward-cross tables.")
+
 
