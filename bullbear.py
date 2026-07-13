@@ -19,7 +19,7 @@
 
 # (UPDATED) S/R scanner tables include support/EMA pullback quality columns.
 # (NEW) EMA Divergence tab scans daily/hourly recent upward price crosses above the 30 EMA.
-# (NEW) S/R 0.0 Up Cross tab scans Daily and 48h Hourly upward S/R Reversal Index zero-line crosses.
+# (NEW) Smoothed NPX line tab scans daily upward 0.0 crosses grouped by trend direction.
 
 # (NEW) Trend-aligned S/R Reversal indicator marks bullish support reversals in uptrends and bearish resistance reversals in downtrends.
 import streamlit as st
@@ -3798,6 +3798,106 @@ def _render_ema_divergence_table(title: str, rows: list):
     st.dataframe(df.reset_index(drop=True), use_container_width=True, hide_index=True)
 
 
+def smoothed_npx_up_cross_info_daily(symbol: str,
+                                     recent_bars: int = 30,
+                                     npx_window: int = 60,
+                                     npx_smooth_span_value: int = 9,
+                                     trend_lookback: int = 90) -> dict:
+    """
+    Return a scanner row when the daily smoothed NPX line recently crossed upward
+    through the 0.0 line. The row includes trend direction so the tab can split
+    candidates into upward-trend and downward-trend groups.
+    """
+    try:
+        close = fetch_hist(symbol)
+        close = _coerce_1d_series(close).dropna()
+        min_needed = max(int(npx_window) + int(npx_smooth_span_value) + 5, int(recent_bars) + 5, 40)
+        if close is None or close.empty or len(close) < min_needed:
+            return None
+
+        npx = compute_normalized_price(close, window=int(npx_window))
+        sm_npx = smooth_npx(npx, span=int(npx_smooth_span_value)).dropna()
+        if sm_npx.empty or len(sm_npx) < int(recent_bars) + 2:
+            return None
+
+        cross_up = (sm_npx.shift(1) <= 0.0) & (sm_npx > 0.0)
+        cross_points = sm_npx[cross_up.fillna(False)]
+        if cross_points.empty:
+            return None
+
+        last_cross_time = cross_points.index[-1]
+        try:
+            loc = sm_npx.index.get_loc(last_cross_time)
+            if isinstance(loc, slice):
+                loc = loc.stop - 1
+            elif isinstance(loc, (np.ndarray, list)):
+                loc = int(np.where(loc)[0][-1])
+            bars_since = int(len(sm_npx) - 1 - int(loc))
+        except Exception:
+            bars_since = int((sm_npx.index > last_cross_time).sum())
+
+        if bars_since < 0 or bars_since > int(recent_bars):
+            return None
+
+        trend_line, trend_slope = slope_line(close, lookback=int(trend_lookback))
+        trend_direction = "Upward" if np.isfinite(trend_slope) and float(trend_slope) >= 0 else "Downward"
+
+        current_npx = _safe_last_float(sm_npx)
+        value_at_cross = float(sm_npx.loc[last_cross_time])
+        prior_value = float(sm_npx.shift(1).loc[last_cross_time]) if last_cross_time in sm_npx.index else float("nan")
+        current_price = _safe_last_float(close)
+
+        recent_npx = sm_npx.dropna().iloc[-min(8, len(sm_npx.dropna())):]
+        if len(recent_npx) >= 2:
+            x = np.arange(len(recent_npx), dtype=float)
+            npx_slope = float(np.polyfit(x, recent_npx.to_numpy(dtype=float), 1)[0])
+        else:
+            npx_slope = float("nan")
+        npx_direction = "Upward" if np.isfinite(npx_slope) and npx_slope >= 0 else "Downward"
+
+        return {
+            "Symbol": symbol,
+            "Bars Since NPX Cross": bars_since,
+            "Cross Time": last_cross_time,
+            "Previous Smoothed NPX": prior_value,
+            "Value at Cross": value_at_cross,
+            "Current Smoothed NPX": current_npx,
+            "Smoothed NPX Direction": npx_direction,
+            "Smoothed NPX Slope": npx_slope,
+            "Last Close": current_price,
+            "Trend Direction": trend_direction,
+            "Trend Slope": float(trend_slope) if np.isfinite(trend_slope) else float("nan"),
+        }
+    except Exception:
+        return None
+
+
+def _render_smoothed_npx_cross_table(title: str, rows: list, empty_text: str):
+    st.subheader(title)
+    if not rows:
+        st.info(empty_text)
+        return
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        sort_cols = [c for c in ["Bars Since NPX Cross", "Symbol"] if c in df.columns]
+        if sort_cols:
+            df = df.sort_values(sort_cols, ascending=[True] * len(sort_cols))
+        if "Cross Time" in df.columns:
+            df["Cross Time"] = df["Cross Time"].astype(str)
+        for col in [
+            "Previous Smoothed NPX",
+            "Value at Cross",
+            "Current Smoothed NPX",
+            "Smoothed NPX Slope",
+            "Last Close",
+            "Trend Slope",
+        ]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+    st.dataframe(df.reset_index(drop=True), use_container_width=True, hide_index=True)
+
+
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -3821,7 +3921,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "S/R Cross",
     "S/R -0.5 Cross",
     "EMA Divergence",
-    "S/R 0.0 Up Cross"
+    "Smoothed NPX line"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -5324,99 +5424,94 @@ with tab13:
     else:
         st.info("Click **Scan EMA Divergence** to build the Daily and Hourly 30 EMA upward-cross tables.")
 
-# --- Tab 14: S/R 0.0 Up Cross ---
+# --- Tab 14: Smoothed NPX line ---
 with tab14:
-    st.header("S/R 0.0 Up Cross")
+    st.header("Smoothed NPX line")
     st.caption(
-        "Daily and 48-hour intraday scan for symbols where the **S/R Reversal Index** on the NTD chart "
-        "has recently crossed the **0.0** line going **upward**. Results are sorted by "
-        "**Bars Since Cross** in ascending order."
+        "Daily-chart scanner for symbols where the **Smoothed NPX** line recently crossed the **0.0** line upward. "
+        "Results are split into upward-trend and downward-trend groups and sorted by **Bars Since NPX Cross**."
     )
 
     c1, c2, c3 = st.columns(3)
     with c1:
-        sr_zero_up_daily_recent = st.slider(
-            "Daily recent upward 0.0 cross window (bars)",
+        sm_npx_recent = st.slider(
+            "Recent NPX upward-cross window (daily bars)",
             1, 120, 30, 1,
-            key="sr_zero_up_daily_recent"
+            key="sm_npx_recent_cross_window"
         )
     with c2:
-        sr_zero_up_hourly_recent = st.slider(
-            "Hourly 48h recent upward 0.0 cross window (5-min bars)",
-            1, 576, 96, 1,
-            key="sr_zero_up_hourly_recent"
+        sm_npx_window = st.slider(
+            "NPX normalization window",
+            10, 300, int(ntd_window), 5,
+            key="sm_npx_norm_window"
         )
     with c3:
-        sr_zero_up_smooth = st.slider(
-            "S/R Reversal Index smoothing",
-            1, 30, int(sr_rev_smooth), 1,
-            key="sr_zero_up_smooth"
+        sm_npx_smooth = st.slider(
+            "Smoothed NPX EMA span",
+            1, 60, int(npx_smooth_span), 1,
+            key="sm_npx_smooth_span_tab"
         )
 
-    sr_zero_up_only_uptrend = st.checkbox(
-        "Show only rows with upward price trendline",
-        value=False,
-        key="sr_zero_up_only_uptrend"
-    )
+    c4, c5 = st.columns(2)
+    with c4:
+        sm_npx_trend_lb = st.slider(
+            "Daily trendline lookback (bars)",
+            10, 360, int(slope_lb_daily), 10,
+            key="sm_npx_trend_lookback"
+        )
+    with c5:
+        sm_npx_show_current_up = st.checkbox(
+            "Only show rows where current Smoothed NPX slope is upward",
+            value=False,
+            key="sm_npx_current_slope_up_filter"
+        )
 
-    run_sr_zero_up_scan = st.button("Scan S/R 0.0 Up Cross", key="btn_sr_zero_up_scan")
+    run_sm_npx_scan = st.button("Scan Smoothed NPX line", key="btn_smoothed_npx_line_scan")
 
-    if run_sr_zero_up_scan:
-        daily_rows = []
-        hourly_rows = []
+    if run_sm_npx_scan:
+        uptrend_rows = []
+        downtrend_rows = []
 
-        progress = st.progress(0, text="Scanning S/R 0.0 upward crosses...")
-        total_steps = max(1, len(universe) * 2)
-        step_count = 0
-
-        for sym in universe:
-            daily_row = sr_reversal_cross_info_daily(
+        progress = st.progress(0, text="Scanning daily Smoothed NPX 0.0 upward crosses...")
+        total_steps = max(1, len(universe))
+        for i, sym in enumerate(universe, start=1):
+            row = smoothed_npx_up_cross_info_daily(
                 sym,
-                smooth_span=int(sr_zero_up_smooth),
-                recent_bars=int(sr_zero_up_daily_recent),
-                slope_lookback=int(slope_lb_daily),
+                recent_bars=int(sm_npx_recent),
+                npx_window=int(sm_npx_window),
+                npx_smooth_span_value=int(sm_npx_smooth),
+                trend_lookback=int(sm_npx_trend_lb),
             )
-            if daily_row is not None and daily_row.get("Direction") == "Upward":
-                if (not sr_zero_up_only_uptrend) or daily_row.get("Trend Direction") == "Upward":
-                    daily_rows.append(daily_row)
-
-            step_count += 1
+            if row is not None:
+                if (not sm_npx_show_current_up) or row.get("Smoothed NPX Direction") == "Upward":
+                    if row.get("Trend Direction") == "Upward":
+                        uptrend_rows.append(row)
+                    else:
+                        downtrend_rows.append(row)
             progress.progress(
-                min(1.0, step_count / total_steps),
-                text=f"Scanning daily S/R 0.0 upward crosses: {sym}"
+                min(1.0, i / total_steps),
+                text=f"Scanning Smoothed NPX upward crosses: {sym}"
             )
-
-            hourly_row = sr_reversal_cross_info_hourly(
-                sym,
-                period="2d",  # fixed 48-hour view
-                sr_window=int(sr_lb_hourly),
-                smooth_span=int(sr_zero_up_smooth),
-                recent_bars=int(sr_zero_up_hourly_recent),
-                slope_lookback=int(slope_lb_hourly),
-            )
-            if hourly_row is not None and hourly_row.get("Direction") == "Upward":
-                if (not sr_zero_up_only_uptrend) or hourly_row.get("Trend Direction") == "Upward":
-                    hourly_rows.append(hourly_row)
-
-            step_count += 1
-            progress.progress(
-                min(1.0, step_count / total_steps),
-                text=f"Scanning hourly 48h S/R 0.0 upward crosses: {sym}"
-            )
-
         progress.empty()
 
-        st.markdown("### Daily Chart — Recent upward 0.0 crosses")
-        _render_sr_cross_table("Daily — S/R Reversal Index crossed 0.0 upward", daily_rows)
+        st.markdown("### Upward Trend")
+        _render_smoothed_npx_cross_table(
+            "Daily — Smoothed NPX crossed 0.0 upward in an upward trend",
+            uptrend_rows,
+            "No recent Smoothed NPX upward 0.0 crosses found in upward-trend symbols."
+        )
 
-        st.markdown("### Hourly Chart — 48h view — Recent upward 0.0 crosses")
-        _render_sr_cross_table("Hourly 48h — S/R Reversal Index crossed 0.0 upward", hourly_rows)
+        st.markdown("### Downward Trend")
+        _render_smoothed_npx_cross_table(
+            "Daily — Smoothed NPX crossed 0.0 upward in a downward trend",
+            downtrend_rows,
+            "No recent Smoothed NPX upward 0.0 crosses found in downward-trend symbols."
+        )
 
         st.caption(
-            f"Daily upward 0.0 crosses found: {len(daily_rows)} • "
-            f"Hourly 48h upward 0.0 crosses found: {len(hourly_rows)}"
+            f"Upward-trend NPX crosses found: {len(uptrend_rows)} • "
+            f"Downward-trend NPX crosses found: {len(downtrend_rows)}"
         )
     else:
-        st.info("Click **Scan S/R 0.0 Up Cross** to build the Daily and 48h Hourly upward-cross tables.")
-
+        st.info("Click **Scan Smoothed NPX line** to build the daily upward-cross tables.")
 
