@@ -22,7 +22,8 @@
 # (NEW) Smoothed NPX line tab scans daily upward 0.0 crosses grouped by trend direction.
 
 # (NEW) Trend-aligned S/R Reversal indicator marks bullish support reversals in uptrends and bearish resistance reversals in downtrends.
-# (NEW) S/R 0.0 Up Cross tab mirrors Smoothed NPX line tab with Upward/Downward trend groups for Daily and 48h Hourly charts.
+# (NEW) S/R 0.0 Up Cross tab mirrors Smoothed NPX line tab
+# (NEW) Buy/Sell Picks tab scans daily bullish confirmations and bearish continuation/rejection setups with Upward/Downward trend groups for Daily and 48h Hourly charts.
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -3899,6 +3900,236 @@ def _render_smoothed_npx_cross_table(title: str, rows: list, empty_text: str):
     st.dataframe(df.reset_index(drop=True), use_container_width=True, hide_index=True)
 
 
+
+# ---- Buy/Sell Picks scanner helpers ----
+def _latest_line_slope_for_signal(series_like, lookback: int = 5) -> float:
+    """Small regression slope over the latest indicator bars."""
+    s = _coerce_1d_series(series_like).replace([np.inf, -np.inf], np.nan).dropna()
+    try:
+        lb = int(max(2, lookback))
+    except Exception:
+        lb = 5
+    if s.shape[0] < 2:
+        return float("nan")
+    s = s.iloc[-lb:]
+    if s.shape[0] < 2:
+        return float("nan")
+    x = np.arange(len(s), dtype=float)
+    try:
+        m, _ = np.polyfit(x, s.to_numpy(dtype=float), 1)
+        return float(m)
+    except Exception:
+        return float("nan")
+
+
+def _pct_distance(price: float, level: float) -> float:
+    try:
+        p = float(price); l = float(level)
+    except Exception:
+        return float("nan")
+    if not np.isfinite(p) or not np.isfinite(l) or l == 0:
+        return float("nan")
+    return float((p - l) / abs(l))
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def buy_sell_pick_info_daily(symbol: str,
+                             ntd_window_value: int = 60,
+                             sr_smooth_value: int = 8,
+                             trend_lookback: int = 90,
+                             ema_len: int = 30,
+                             hma_len: int = 55,
+                             sr_window: int = 30,
+                             turn_lookback: int = 8,
+                             pullback_pct: float = 0.006) -> dict:
+    """
+    Build one daily Buy/Sell scanner row.
+
+    BUY logic is intentionally conservative:
+      price reclaimed 30 EMA and HMA, S/R Reversal Index is above 0,
+      and NTD is turning upward from the lower side.
+
+    SELL logic is trend-continuation/rejection:
+      price trendline is downward, price is below 30 EMA or HMA,
+      NTD is below 0, and S/R Reversal Index is rolling over or below 0.
+    """
+    try:
+        close = fetch_hist(symbol)
+        if close is None or close.empty:
+            return None
+        close = _coerce_1d_series(close).replace([np.inf, -np.inf], np.nan).dropna()
+        if close.shape[0] < max(80, int(ema_len), int(hma_len), int(trend_lookback) // 2):
+            return None
+
+        last_close = _safe_last_float(close)
+        ema30 = close.ewm(span=int(ema_len), adjust=False, min_periods=1).mean()
+        hma = compute_hma(close, int(hma_len))
+        support = close.rolling(int(sr_window), min_periods=1).min()
+        resistance = close.rolling(int(sr_window), min_periods=1).max()
+
+        ntd = compute_normalized_trend(close, window=int(ntd_window_value))
+        sri = compute_sr_reversal_index(
+            price=close,
+            support=support,
+            resistance=resistance,
+            smooth_span=int(sr_smooth_value),
+        )
+
+        _, trend_slope = slope_line(close, int(trend_lookback))
+        trend_direction = "Upward" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward"
+
+        ema30_last = _safe_last_float(ema30)
+        hma_last = _safe_last_float(hma)
+        support_last = _safe_last_float(support)
+        resistance_last = _safe_last_float(resistance)
+        ntd_current = _safe_last_float(ntd)
+        sri_current = _safe_last_float(sri)
+        ntd_slope = _latest_line_slope_for_signal(ntd, int(turn_lookback))
+        sri_slope = _latest_line_slope_for_signal(sri, int(turn_lookback))
+
+        recent_ntd = _coerce_1d_series(ntd).dropna().iloc[-max(3, int(turn_lookback) * 3):]
+        recent_sri = _coerce_1d_series(sri).dropna().iloc[-max(3, int(turn_lookback) * 3):]
+        recent_ntd_min = float(recent_ntd.min()) if len(recent_ntd) else float("nan")
+        recent_sri_max = float(recent_sri.max()) if len(recent_sri) else float("nan")
+
+        price_above_ema = np.isfinite(last_close) and np.isfinite(ema30_last) and last_close > ema30_last
+        price_above_hma = np.isfinite(last_close) and np.isfinite(hma_last) and last_close > hma_last
+        price_below_ema = np.isfinite(last_close) and np.isfinite(ema30_last) and last_close < ema30_last
+        price_below_hma = np.isfinite(last_close) and np.isfinite(hma_last) and last_close < hma_last
+
+        dist_ema30 = _pct_distance(last_close, ema30_last)
+        dist_hma = _pct_distance(last_close, hma_last)
+        dist_support = _pct_distance(last_close, support_last)
+        dist_resistance = _pct_distance(last_close, resistance_last)
+
+        near_ema30 = np.isfinite(dist_ema30) and abs(dist_ema30) <= float(pullback_pct)
+        near_hma = np.isfinite(dist_hma) and abs(dist_hma) <= float(pullback_pct)
+        near_support = np.isfinite(dist_support) and dist_support >= 0 and dist_support <= max(float(pullback_pct), 0.01)
+        near_resistance = np.isfinite(dist_resistance) and dist_resistance <= 0 and abs(dist_resistance) <= max(float(pullback_pct), 0.01)
+
+        ntd_turning_up_from_lower = (
+            np.isfinite(ntd_slope) and ntd_slope > 0 and
+            (
+                (np.isfinite(recent_ntd_min) and recent_ntd_min <= -0.50) or
+                (np.isfinite(ntd_current) and ntd_current > -0.50)
+            )
+        )
+        sr_confirming_up = np.isfinite(sri_current) and sri_current > 0 and np.isfinite(sri_slope) and sri_slope >= 0
+        bullish_confirmed = bool(price_above_ema and price_above_hma and sr_confirming_up and ntd_turning_up_from_lower)
+
+        sr_rolling_over = bool(
+            (np.isfinite(sri_slope) and sri_slope < 0) or
+            (np.isfinite(sri_current) and sri_current < 0)
+        )
+        bearish_structure = bool(
+            trend_direction == "Downward" and
+            (price_below_ema or price_below_hma) and
+            np.isfinite(ntd_current) and ntd_current < 0 and
+            sr_rolling_over
+        )
+
+        # Add an early SELL condition for the common pattern described by the user:
+        # bounce attempt under EMA/HMA/resistance in a downward structure.
+        bearish_rejection_watch = bool(
+            trend_direction == "Downward" and
+            (near_ema30 or near_hma or near_resistance) and
+            (price_below_ema or price_below_hma) and
+            np.isfinite(ntd_current) and ntd_current < 0
+        )
+
+        if bullish_confirmed:
+            signal = "BUY"
+            setup = "Bullish confirmation — price reclaimed 30 EMA/HMA, S/R > 0, NTD turning up"
+            quality_score = 0
+            quality_score += 2 if trend_direction == "Upward" else 0
+            quality_score += 2 if near_ema30 or near_hma or near_support else 0
+            quality_score += 2 if np.isfinite(sri_current) and 0.0 <= sri_current <= 0.75 else 1
+            quality_score += 2 if np.isfinite(ntd_slope) and ntd_slope > 0 else 0
+            entry_zone = f"{fmt_price_val(min(ema30_last, hma_last))} - {fmt_price_val(max(ema30_last, hma_last))}"
+            stop_zone = f"Below {fmt_price_val(support_last)}"
+            target_zone = f"{fmt_price_val(resistance_last)} first target"
+        elif bearish_structure or bearish_rejection_watch:
+            signal = "SELL"
+            setup = "Bearish continuation/rejection — down structure, below key MA, NTD weak"
+            quality_score = 0
+            quality_score += 2 if trend_direction == "Downward" else 0
+            quality_score += 2 if price_below_ema and price_below_hma else 1
+            quality_score += 2 if near_ema30 or near_hma or near_resistance else 0
+            quality_score += 2 if np.isfinite(sri_slope) and sri_slope < 0 else 0
+            entry_zone = f"{fmt_price_val(min(ema30_last, hma_last))} - {fmt_price_val(max(ema30_last, hma_last))}"
+            stop_zone = f"Above {fmt_price_val(resistance_last)}"
+            target_zone = f"{fmt_price_val(support_last)} first target"
+        else:
+            return None
+
+        return {
+            "Symbol": symbol,
+            "Signal": signal,
+            "Setup": setup,
+            "Quality Score": int(quality_score),
+            "Last Close": last_close,
+            "30 EMA": ema30_last,
+            "HMA": hma_last,
+            "Support": support_last,
+            "Resistance": resistance_last,
+            "Trend Direction": trend_direction,
+            "Trend Slope": trend_slope,
+            "NTD": ntd_current,
+            "NTD Slope": ntd_slope,
+            "Recent NTD Low": recent_ntd_min,
+            "S/R Reversal": sri_current,
+            "S/R Slope": sri_slope,
+            "Recent S/R High": recent_sri_max,
+            "Price Above 30 EMA": bool(price_above_ema),
+            "Price Above HMA": bool(price_above_hma),
+            "Near 30 EMA": bool(near_ema30),
+            "Near HMA": bool(near_hma),
+            "Near Support": bool(near_support),
+            "Near Resistance": bool(near_resistance),
+            "Distance to 30 EMA %": dist_ema30,
+            "Distance to HMA %": dist_hma,
+            "Distance to Support %": dist_support,
+            "Distance to Resistance %": dist_resistance,
+            "Suggested Entry Zone": entry_zone,
+            "Invalidation / Stop Zone": stop_zone,
+            "Target Zone": target_zone,
+            "As Of": close.index[-1],
+        }
+    except Exception:
+        return None
+
+
+def _render_buy_sell_picks_table(title: str, rows: list, empty_text: str):
+    st.subheader(title)
+    if not rows:
+        st.info(empty_text)
+        return
+    df = pd.DataFrame(rows)
+    if df.empty:
+        st.info(empty_text)
+        return
+
+    if "Quality Score" in df.columns:
+        df["Quality Score"] = pd.to_numeric(df["Quality Score"], errors="coerce")
+    df = df.sort_values(["Quality Score", "Symbol"], ascending=[False, True]).reset_index(drop=True)
+
+    for col in [
+        "Last Close", "30 EMA", "HMA", "Support", "Resistance",
+        "Trend Slope", "NTD", "NTD Slope", "Recent NTD Low",
+        "S/R Reversal", "S/R Slope", "Recent S/R High",
+        "Distance to 30 EMA %", "Distance to HMA %",
+        "Distance to Support %", "Distance to Resistance %",
+    ]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    if "As Of" in df.columns:
+        df["As Of"] = df["As Of"].astype(str)
+
+    st.dataframe(df, use_container_width=True, hide_index=True)
+
+
+
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -3908,7 +4139,7 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -3923,7 +4154,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "S/R -0.5 Cross",
     "EMA Divergence",
     "Smoothed NPX line",
-    "S/R 0.0 Up Cross"
+    "S/R 0.0 Up Cross",
+    "Buy/Sell Picks"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -5672,5 +5904,113 @@ with tab15:
             "Click **Scan S/R 0.0 Up Cross** to build Daily and 48h Hourly tables, "
             "grouped the same way as the Smoothed NPX line tab."
         )
+
+
+# --- Tab 16: Buy/Sell Picks ---
+with tab16:
+    st.header("Buy/Sell Picks")
+    st.caption(
+        "Daily scanner based on the trading read from the chart: "
+        "**BUY** requires price reclaiming the 30 EMA/HMA with S/R Reversal above 0.0 "
+        "and NTD turning up from the lower zone. **SELL** looks for bearish continuation "
+        "or rejection while the daily structure remains downward."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        bs_trend_lb = st.slider(
+            "Daily trendline lookback (bars)",
+            10, 360, int(slope_lb_daily), 10,
+            key="buy_sell_daily_trend_lb"
+        )
+    with c2:
+        bs_ntd_window = st.slider(
+            "NTD window",
+            10, 300, int(ntd_window), 5,
+            key="buy_sell_ntd_window"
+        )
+    with c3:
+        bs_sr_smooth = st.slider(
+            "S/R Reversal smoothing",
+            1, 30, int(sr_rev_smooth), 1,
+            key="buy_sell_sr_smooth"
+        )
+
+    c4, c5, c6 = st.columns(3)
+    with c4:
+        bs_turn_lb = st.slider(
+            "Indicator turn lookback (bars)",
+            3, 30, 8, 1,
+            key="buy_sell_turn_lookback"
+        )
+    with c5:
+        bs_pullback_pct = st.slider(
+            "Near EMA/S/R tolerance (%)",
+            0.10, 2.00, 0.60, 0.05,
+            key="buy_sell_pullback_tolerance_pct"
+        ) / 100.0
+    with c6:
+        bs_show_only_high = st.checkbox(
+            "Show only Quality Score ≥ 4",
+            value=False,
+            key="buy_sell_quality_filter"
+        )
+
+    st.markdown(
+        "**BUY rule:** close above 30 EMA and HMA, S/R Reversal Index above 0.0, "
+        "and NTD turning upward from the lower side.  \n"
+        "**SELL rule:** downward daily structure, price below/rejecting 30 EMA/HMA or resistance, "
+        "NTD below 0.0, and S/R Reversal weak or rolling over."
+    )
+
+    run_buy_sell = st.button("Scan Buy/Sell Picks", key="btn_buy_sell_picks_scan")
+
+    if run_buy_sell:
+        buy_rows = []
+        sell_rows = []
+
+        progress = st.progress(0, text="Scanning daily Buy/Sell candidates...")
+        total_steps = max(1, len(universe))
+        for i, sym in enumerate(universe, start=1):
+            row = buy_sell_pick_info_daily(
+                sym,
+                ntd_window_value=int(bs_ntd_window),
+                sr_smooth_value=int(bs_sr_smooth),
+                trend_lookback=int(bs_trend_lb),
+                ema_len=30,
+                hma_len=55,
+                sr_window=30,
+                turn_lookback=int(bs_turn_lb),
+                pullback_pct=float(bs_pullback_pct),
+            )
+            if row is not None:
+                if (not bs_show_only_high) or int(row.get("Quality Score", 0)) >= 4:
+                    if row.get("Signal") == "BUY":
+                        buy_rows.append(row)
+                    elif row.get("Signal") == "SELL":
+                        sell_rows.append(row)
+            progress.progress(
+                min(1.0, i / total_steps),
+                text=f"Scanning Buy/Sell Picks: {sym}"
+            )
+        progress.empty()
+
+        st.markdown("## BUY Candidates")
+        _render_buy_sell_picks_table(
+            "BUY — confirmed bullish reversal / EMA-HMA reclaim",
+            buy_rows,
+            "No BUY candidates found under the current rules."
+        )
+
+        st.markdown("## SELL Candidates")
+        _render_buy_sell_picks_table(
+            "SELL — bearish continuation / resistance or EMA-HMA rejection",
+            sell_rows,
+            "No SELL candidates found under the current rules."
+        )
+
+        st.caption(f"BUY candidates found: {len(buy_rows)} • SELL candidates found: {len(sell_rows)}")
+    else:
+        st.info("Click **Scan Buy/Sell Picks** to build the daily BUY and SELL tables.")
 
 
