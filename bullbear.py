@@ -24,6 +24,7 @@
 # (NEW) Trend-aligned S/R Reversal indicator marks bullish support reversals in uptrends and bearish resistance reversals in downtrends.
 # (NEW) S/R 0.0 Up Cross tab mirrors Smoothed NPX line tab
 # (NEW) Buy/Sell Picks tab scans daily bullish confirmations and bearish continuation/rejection setups with Upward/Downward trend groups for Daily and 48h Hourly charts.
+# (NEW) S/R +0.5 Cross tab scans daily upward crosses through +0.5 on the S/R Reversal Index.
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -1373,120 +1374,6 @@ def _last_zero_cross_info(line_like: pd.Series, max_bars_since: int = 20):
 
 
 
-
-def _current_indicator_direction_and_slope(line_like: pd.Series, lookback: int = 8):
-    """Return current indicator direction using a short regression slope over the latest values."""
-    s = _coerce_1d_series(line_like).replace([np.inf, -np.inf], np.nan).dropna()
-    if s.shape[0] < 2:
-        return "Downward", float("nan")
-    try:
-        lb = max(2, int(lookback))
-    except Exception:
-        lb = 8
-    recent = s.iloc[-min(lb, len(s)):]
-    if recent.shape[0] < 2:
-        return "Downward", float("nan")
-    try:
-        x = np.arange(len(recent), dtype=float)
-        m = float(np.polyfit(x, recent.to_numpy(dtype=float), 1)[0])
-    except Exception:
-        m = float("nan")
-    return ("Upward" if np.isfinite(m) and m >= 0 else "Downward"), m
-
-
-def _trend_direction_from_slope_or_group(slope_value=None, group_value=None):
-    """Normalize trend direction text to Upward/Downward."""
-    try:
-        g = str(group_value)
-        if "up" in g.lower():
-            return "Upward"
-        if "down" in g.lower():
-            return "Downward"
-    except Exception:
-        pass
-    try:
-        sv = float(np.squeeze(slope_value))
-        if np.isfinite(sv):
-            return "Upward" if sv >= 0 else "Downward"
-    except Exception:
-        pass
-    return "Downward"
-
-
-def _sr_direction_sort_order(value) -> int:
-    return 0 if str(value).strip().lower() == "upward" else 1
-
-
-def _prepare_sr_direction_trend_table(df: pd.DataFrame,
-                                      secondary_sort_cols=None,
-                                      numeric_cols=None,
-                                      datetime_cols=None) -> pd.DataFrame:
-    """
-    Format S/R scanner tables so Current S/R Direction and Trend Direction sit next
-    to each other and rows sort with S/R Upward + Trend Upward at the top.
-    """
-    if df is None or df.empty:
-        return df
-
-    out = df.copy()
-
-    if "Current S/R Direction" not in out.columns and "S/R Direction" in out.columns:
-        out["Current S/R Direction"] = out["S/R Direction"]
-
-    if "Current S/R Direction" not in out.columns:
-        if "Current S/R Slope" in out.columns:
-            out["Current S/R Direction"] = pd.to_numeric(out["Current S/R Slope"], errors="coerce").apply(
-                lambda v: "Upward" if pd.notna(v) and float(v) >= 0 else "Downward"
-            )
-        elif "Direction" in out.columns:
-            out["Current S/R Direction"] = out["Direction"]
-        else:
-            out["Current S/R Direction"] = "Downward"
-
-    if "Trend Direction" not in out.columns:
-        if "Trend Group" in out.columns:
-            out["Trend Direction"] = out["Trend Group"].apply(lambda v: _trend_direction_from_slope_or_group(group_value=v))
-        elif "Trend Slope" in out.columns:
-            out["Trend Direction"] = pd.to_numeric(out["Trend Slope"], errors="coerce").apply(
-                lambda v: _trend_direction_from_slope_or_group(slope_value=v)
-            )
-        else:
-            out["Trend Direction"] = "Downward"
-
-    out["_sr_dir_order"] = out["Current S/R Direction"].apply(_sr_direction_sort_order)
-    out["_trend_dir_order"] = out["Trend Direction"].apply(_sr_direction_sort_order)
-
-    sort_cols = ["_sr_dir_order", "_trend_dir_order"]
-    ascending = [True, True]
-    for col in (secondary_sort_cols or []):
-        if col in out.columns:
-            sort_cols.append(col)
-            ascending.append(True)
-    if "Symbol" in out.columns:
-        sort_cols.append("Symbol")
-        ascending.append(True)
-    out = out.sort_values(sort_cols, ascending=ascending)
-
-    if numeric_cols:
-        for col in numeric_cols:
-            if col in out.columns:
-                out[col] = pd.to_numeric(out[col], errors="coerce")
-    if datetime_cols:
-        for col in datetime_cols:
-            if col in out.columns:
-                out[col] = out[col].astype(str)
-
-    leading = []
-    if "Symbol" in out.columns:
-        leading.append("Symbol")
-    leading += ["Current S/R Direction", "Trend Direction"]
-    remaining = [
-        c for c in out.columns
-        if c not in set(leading + ["_sr_dir_order", "_trend_dir_order", "Trend Group", "S/R Direction"])
-    ]
-    return out[leading + remaining]
-
-
 def _pct_distance_from_price(price_value: float, ref_value: float) -> float:
     """Return signed distance from reference as a fraction of price: positive means price is above reference."""
     try:
@@ -1707,7 +1594,6 @@ def sr_reversal_cross_info_daily(symbol: str,
 
         _, trend_slope = slope_line(close, int(slope_lookback))
         trend_direction = "Upward" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward"
-        sr_current_direction, sr_current_slope = _current_indicator_direction_and_slope(sri, lookback=8)
         pullback_ctx = build_support_ema_pullback_context(
             close,
             trend_slope=trend_slope,
@@ -1725,8 +1611,6 @@ def sr_reversal_cross_info_daily(symbol: str,
             "Cross Time": ev["time"],
             "Value at Cross": ev["value_at_cross"],
             "Current S/R Reversal": ev["current_value"],
-            "Current S/R Direction": sr_current_direction,
-            "Current S/R Slope": sr_current_slope,
             "Last Close": _safe_last_float(close),
             "Trend Direction": trend_direction,
             "Trend Slope": trend_slope,
@@ -1771,7 +1655,6 @@ def sr_reversal_cross_info_hourly(symbol: str, period: str = "1d",
 
         _, trend_slope = slope_line(close, int(slope_lookback))
         trend_direction = "Upward" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward"
-        sr_current_direction, sr_current_slope = _current_indicator_direction_and_slope(sri, lookback=8)
         pullback_ctx = build_support_ema_pullback_context(
             close,
             trend_slope=trend_slope,
@@ -1789,8 +1672,6 @@ def sr_reversal_cross_info_hourly(symbol: str, period: str = "1d",
             "Cross Time": ev["time"],
             "Value at Cross": ev["value_at_cross"],
             "Current S/R Reversal": ev["current_value"],
-            "Current S/R Direction": sr_current_direction,
-            "Current S/R Slope": sr_current_slope,
             "Last Close": _safe_last_float(close),
             "Trend Direction": trend_direction,
             "Trend Slope": trend_slope,
@@ -1808,18 +1689,12 @@ def _render_sr_cross_table(title: str, rows: list):
         return
     df = pd.DataFrame(rows)
     if not df.empty:
-        df = _prepare_sr_direction_trend_table(
-            df,
-            secondary_sort_cols=["Bars Since Cross"],
-            numeric_cols=[
-                "Value at Cross", "Current S/R Reversal", "Current S/R Slope",
-                "Last Close", "Trend Slope", "Support Level", "20 EMA", "30 EMA",
-                "HMA", "Distance to Support %", "Distance to 20 EMA %",
-                "Distance to 30 EMA %", "Distance to HMA %",
-                "Nearest Pullback Distance %",
-            ],
-            datetime_cols=["Cross Time"],
-        )
+        df = df.sort_values(["Bars Since Cross", "Symbol"], ascending=[True, True])
+        for col in ["Value at Cross", "Current S/R Reversal", "Last Close", "Trend Slope", "Support Level", "20 EMA", "30 EMA", "HMA", "Distance to Support %", "Distance to 20 EMA %", "Distance to 30 EMA %", "Distance to HMA %", "Nearest Pullback Distance %"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        if "Cross Time" in df.columns:
+            df["Cross Time"] = df["Cross Time"].astype(str)
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
@@ -1941,7 +1816,6 @@ def sr_reversal_minus075_up_cross_info_daily(symbol: str,
 
         _, trend_slope = slope_line(close, int(slope_lookback))
         trend_direction = "Upward" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward"
-        sr_current_direction, sr_current_slope = _current_indicator_direction_and_slope(sri, lookback=8)
         pullback_ctx = build_support_ema_pullback_context(
             close,
             trend_slope=trend_slope,
@@ -2115,19 +1989,14 @@ def minus075_sr_crosser_info_daily(symbol: str,
             return None
 
         _, trend_slope = slope_line(close, int(slope_lookback))
-        trend_direction = "Upward" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward"
-        trend_group = f"{trend_direction} Trend"
-        sr_current_direction, sr_current_slope = _current_indicator_direction_and_slope(sri, lookback=8)
+        trend_group = "Upward Trend" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward Trend"
 
         return {
             "Symbol": symbol,
-            "Current S/R Direction": sr_current_direction,
-            "Trend Direction": trend_direction,
             "Trend Group": trend_group,
             "Bars Since Reversal": ev["bars_since_reversal"],
             "Reversal Date": ev["reversal_time"],
             "Current S/R Reversal": ev["current_value"],
-            "Current S/R Slope": sr_current_slope,
             "Recent Minimum": ev["recent_min"],
             "Change Since Reversal": ev["value_change_since_reversal"],
             "Last Close": _safe_last_float(close),
@@ -2144,15 +2013,14 @@ def _render_minus075_sr_table(title: str, rows: list):
         return
     df = pd.DataFrame(rows)
     if not df.empty:
-        df = _prepare_sr_direction_trend_table(
-            df,
-            secondary_sort_cols=["Bars Since Reversal"],
-            numeric_cols=[
-                "Current S/R Reversal", "Current S/R Slope", "Recent Minimum",
-                "Change Since Reversal", "Last Close", "Trend Slope",
-            ],
-            datetime_cols=["Reversal Date"],
-        )
+        df = df.sort_values(["Bars Since Reversal", "Symbol"], ascending=[True, True])
+        for col in ["Current S/R Reversal", "Recent Minimum", "Change Since Reversal", "Last Close", "Trend Slope"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        if "Reversal Date" in df.columns:
+            df["Reversal Date"] = df["Reversal Date"].astype(str)
+        if "Trend Group" in df.columns:
+            df = df.drop(columns=["Trend Group"])
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
@@ -2208,22 +2076,17 @@ def minus075_sr_below_info_daily(symbol: str,
             first_below_time = sri.index[-bars_below]
 
         _, trend_slope = slope_line(close, int(slope_lookback))
-        trend_direction = "Upward" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward"
-        trend_group = f"{trend_direction} Trend"
-        sr_current_direction, sr_current_slope = _current_indicator_direction_and_slope(sri, lookback=8)
+        trend_group = "Upward Trend" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward Trend"
 
         recent_window = sri.iloc[-min(len(sri), 20):]
         recent_min = _safe_last_float(recent_window.min()) if len(recent_window) else np.nan
 
         return {
             "Symbol": symbol,
-            "Current S/R Direction": sr_current_direction,
-            "Trend Direction": trend_direction,
             "Trend Group": trend_group,
             "Bars Below Threshold": int(bars_below),
             "First Below Date": first_below_time,
             "Current S/R Reversal": current_value,
-            "Current S/R Slope": sr_current_slope,
             "Recent Minimum": recent_min,
             "Last Close": _safe_last_float(close),
             "Trend Slope": trend_slope,
@@ -2239,15 +2102,14 @@ def _render_minus075_below_table(title: str, rows: list):
         return
     df = pd.DataFrame(rows)
     if not df.empty:
-        df = _prepare_sr_direction_trend_table(
-            df,
-            secondary_sort_cols=["Current S/R Reversal"],
-            numeric_cols=[
-                "Current S/R Reversal", "Current S/R Slope", "Recent Minimum",
-                "Last Close", "Trend Slope",
-            ],
-            datetime_cols=["First Below Date"],
-        )
+        df = df.sort_values(["Current S/R Reversal", "Symbol"], ascending=[True, True])
+        for col in ["Current S/R Reversal", "Recent Minimum", "Last Close", "Trend Slope"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        if "First Below Date" in df.columns:
+            df["First Below Date"] = df["First Below Date"].astype(str)
+        if "Trend Group" in df.columns:
+            df = df.drop(columns=["Trend Group"])
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
@@ -2310,8 +2172,6 @@ def sr_cross_daily_below_threshold_info(symbol: str,
         row = {
             "Symbol": symbol,
             "Current S/R Reversal": current_value,
-            "Current S/R Direction": sr_current_direction,
-            "Current S/R Slope": sr_current_slope,
             "Bars Below -0.75": int(bars_below),
             "First Below Date": first_below_time,
             "Last Close": _safe_last_float(close),
@@ -2349,8 +2209,6 @@ def sr_cross_daily_upward_zero_info(symbol: str,
             "Cross Time": row.get("Cross Time"),
             "Value at Cross": row.get("Value at Cross"),
             "Current S/R Reversal": row.get("Current S/R Reversal"),
-            "Current S/R Direction": row.get("Current S/R Direction"),
-            "Current S/R Slope": row.get("Current S/R Slope"),
             "Last Close": row.get("Last Close"),
             "Trend Direction": row.get("Trend Direction"),
             "Trend Slope": row.get("Trend Slope"),
@@ -2385,18 +2243,12 @@ def _render_sr_cross_daily_threshold_table(title: str, rows: list):
         return
     df = pd.DataFrame(rows)
     if not df.empty:
-        df = _prepare_sr_direction_trend_table(
-            df,
-            secondary_sort_cols=["Current S/R Reversal"],
-            numeric_cols=[
-                "Current S/R Reversal", "Current S/R Slope", "Last Close",
-                "Trend Slope", "Support Level", "20 EMA", "30 EMA", "HMA",
-                "Distance to Support %", "Distance to 20 EMA %",
-                "Distance to 30 EMA %", "Distance to HMA %",
-                "Nearest Pullback Distance %",
-            ],
-            datetime_cols=["First Below Date"],
-        )
+        df = df.sort_values(["Current S/R Reversal", "Symbol"], ascending=[True, True])
+        for col in ["Current S/R Reversal", "Last Close", "Trend Slope", "Support Level", "20 EMA", "30 EMA", "HMA", "Distance to Support %", "Distance to 20 EMA %", "Distance to 30 EMA %", "Distance to HMA %", "Nearest Pullback Distance %"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        if "First Below Date" in df.columns:
+            df["First Below Date"] = df["First Below Date"].astype(str)
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
@@ -2407,18 +2259,12 @@ def _render_sr_cross_daily_upward_table(title: str, rows: list):
         return
     df = pd.DataFrame(rows)
     if not df.empty:
-        df = _prepare_sr_direction_trend_table(
-            df,
-            secondary_sort_cols=["Bars Since Cross"],
-            numeric_cols=[
-                "Value at Cross", "Current S/R Reversal", "Current S/R Slope",
-                "Last Close", "Trend Slope", "Support Level", "20 EMA", "30 EMA",
-                "HMA", "Distance to Support %", "Distance to 20 EMA %",
-                "Distance to 30 EMA %", "Distance to HMA %",
-                "Nearest Pullback Distance %",
-            ],
-            datetime_cols=["Cross Time"],
-        )
+        df = df.sort_values(["Bars Since Cross", "Symbol"], ascending=[True, True])
+        for col in ["Value at Cross", "Current S/R Reversal", "Last Close", "Trend Slope", "Support Level", "20 EMA", "30 EMA", "HMA", "Distance to Support %", "Distance to 20 EMA %", "Distance to 30 EMA %", "Distance to HMA %", "Nearest Pullback Distance %"]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+        if "Cross Time" in df.columns:
+            df["Cross Time"] = df["Cross Time"].astype(str)
     st.dataframe(df, use_container_width=True, hide_index=True)
 
 
@@ -2570,30 +2416,94 @@ def _render_sr_level_up_cross_table(title: str, rows: list, empty_text: str):
 
     df = pd.DataFrame(rows)
     if not df.empty:
-        df = _prepare_sr_direction_trend_table(
-            df,
-            secondary_sort_cols=["Bars Since Cross"],
-            numeric_cols=[
-                "Previous S/R Reversal",
-                "Value at Cross",
-                "Current S/R Reversal",
-                "Current S/R Slope",
-                "Trend Slope",
-                "Last Close",
-                "Support Level",
-                "20 EMA",
-                "30 EMA",
-                "HMA",
-                "Distance to Support %",
-                "Distance to 20 EMA %",
-                "Distance to 30 EMA %",
-                "Distance to HMA %",
-                "Nearest Pullback Distance %",
-            ],
-            datetime_cols=["Cross Time"],
-        )
-    st.dataframe(df, use_container_width=True, hide_index=True)
+        # Keep S/R direction and trend direction beside each other and sort so
+        # Current S/R Upward + Trend Upward rows appear first.
+        sr_dir_order = {"Upward": 0, "Downward": 1}
+        trend_dir_order = {"Upward": 0, "Downward": 1}
 
+        if "Current S/R Direction" in df.columns:
+            df["_sr_dir_sort"] = df["Current S/R Direction"].map(sr_dir_order).fillna(9)
+        else:
+            df["_sr_dir_sort"] = 9
+
+        if "Trend Direction" in df.columns:
+            df["_trend_dir_sort"] = df["Trend Direction"].map(trend_dir_order).fillna(9)
+        else:
+            df["_trend_dir_sort"] = 9
+
+        sort_cols = ["_sr_dir_sort", "_trend_dir_sort"]
+        ascending = [True, True]
+        if "Bars Since Cross" in df.columns:
+            sort_cols.append("Bars Since Cross")
+            ascending.append(True)
+        if "Symbol" in df.columns:
+            sort_cols.append("Symbol")
+            ascending.append(True)
+
+        df = df.sort_values(sort_cols, ascending=ascending)
+
+        for col in [
+            "Previous S/R Reversal",
+            "Value at Cross",
+            "Current S/R Reversal",
+            "Current S/R Slope",
+            "Trend Slope",
+            "Last Close",
+            "Support Level",
+            "20 EMA",
+            "30 EMA",
+            "HMA",
+            "Distance to Support %",
+            "Distance to 20 EMA %",
+            "Distance to 30 EMA %",
+            "Distance to HMA %",
+            "Nearest Pullback Distance %",
+        ]:
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+
+        if "Cross Time" in df.columns:
+            df["Cross Time"] = df["Cross Time"].astype(str)
+
+        df = df.drop(columns=[c for c in ["_sr_dir_sort", "_trend_dir_sort"] if c in df.columns])
+
+        preferred_cols = [
+            "Symbol",
+            "Cross Level",
+            "Bars Since Cross",
+            "Cross Time",
+            "Current S/R Direction",
+            "Trend Direction",
+            "Previous S/R Reversal",
+            "Value at Cross",
+            "Current S/R Reversal",
+            "Current S/R Slope",
+            "Trend Slope",
+            "Last Close",
+            "Trade Setup",
+            "Pullback Quality",
+            "Suggested Entry Zone",
+            "Invalidation / Stop Zone",
+            "Nearest Pullback Line",
+            "Nearest Pullback Distance %",
+            "Price Near Support",
+            "Near 20 EMA",
+            "Near 30 EMA",
+            "Near HMA",
+            "Support Level",
+            "20 EMA",
+            "30 EMA",
+            "HMA",
+            "Distance to Support %",
+            "Distance to 20 EMA %",
+            "Distance to 30 EMA %",
+            "Distance to HMA %",
+        ]
+        ordered_cols = [c for c in preferred_cols if c in df.columns]
+        ordered_cols += [c for c in df.columns if c not in ordered_cols]
+        df = df[ordered_cols]
+
+    st.dataframe(df, use_container_width=True, hide_index=True)
 
 # ========= Sessions =========
 NY_TZ   = pytz.timezone("America/New_York")
@@ -4294,7 +4204,7 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -4310,6 +4220,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "EMA Divergence",
     "Smoothed NPX line",
     "S/R 0.0 Up Cross",
+    "S/R +0.5 Cross",
     "Buy/Sell Picks"
 ])
 
@@ -5975,7 +5886,11 @@ with tab15:
                 slope_lookback=int(sr_zero_daily_trend_lb),
             )
             if daily_row is not None and daily_row.get("Direction") == "Upward":
-                current_direction = daily_row.get("Current S/R Direction", "Upward")
+                current_direction = "Upward"
+                try:
+                    current_direction = "Upward" if float(daily_row.get("Current S/R Reversal", np.nan)) >= float(daily_row.get("Value at Cross", np.nan)) else "Downward"
+                except Exception:
+                    current_direction = "Upward"
                 daily_row["Current S/R Direction"] = current_direction
                 if (not sr_zero_show_current_up) or current_direction == "Upward":
                     if daily_row.get("Trend Direction") == "Upward":
@@ -5998,7 +5913,11 @@ with tab15:
                 slope_lookback=int(sr_zero_hourly_trend_lb),
             )
             if hourly_row is not None and hourly_row.get("Direction") == "Upward":
-                current_direction = hourly_row.get("Current S/R Direction", "Upward")
+                current_direction = "Upward"
+                try:
+                    current_direction = "Upward" if float(hourly_row.get("Current S/R Reversal", np.nan)) >= float(hourly_row.get("Value at Cross", np.nan)) else "Downward"
+                except Exception:
+                    current_direction = "Upward"
                 hourly_row["Current S/R Direction"] = current_direction
                 if (not sr_zero_show_current_up) or current_direction == "Upward":
                     if hourly_row.get("Trend Direction") == "Upward":
@@ -6053,8 +5972,78 @@ with tab15:
         )
 
 
-# --- Tab 16: Buy/Sell Picks ---
+# --- Tab 16: S/R +0.5 Cross ---
 with tab16:
+    st.header("S/R +0.5 Cross")
+    st.caption(
+        "Daily-chart scan for symbols where the **S/R Reversal Index** on the NTD chart "
+        "recently crossed **+0.5 upward**. Results are sorted with **Current S/R Direction** "
+        "Upward first, then **Trend Direction** Upward first, then by **Bars Since Cross**."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        sr_plus05_cross_recent = st.slider(
+            "Recent +0.5 upward cross window (daily bars)",
+            1, 120, 30, 1,
+            key="sr_plus05_cross_recent"
+        )
+    with c2:
+        sr_plus05_cross_smooth = st.slider(
+            "S/R Reversal smoothing",
+            1, 30, int(sr_rev_smooth), 1,
+            key="sr_plus05_cross_smooth"
+        )
+    with c3:
+        sr_plus05_show_only_current_up = st.checkbox(
+            "Only show rows still sloping upward",
+            value=False,
+            key="sr_plus05_show_only_current_up"
+        )
+
+    run_sr_plus05_cross = st.button("Scan S/R +0.5 Cross", key="btn_sr_plus05_cross_scan")
+
+    if run_sr_plus05_cross:
+        plus05_rows = []
+
+        progress = st.progress(0, text="Scanning daily S/R +0.5 Cross setup...")
+        total_steps = max(1, len(universe))
+        step_count = 0
+
+        for sym in universe:
+            plus05_row = sr_reversal_level_up_cross_info_daily(
+                sym,
+                level=0.5,
+                smooth_span=int(sr_plus05_cross_smooth),
+                recent_bars=int(sr_plus05_cross_recent),
+                slope_lookback=int(slope_lb_daily),
+            )
+            if plus05_row is not None:
+                if (not sr_plus05_show_only_current_up) or plus05_row.get("Current S/R Direction") == "Upward":
+                    plus05_rows.append(plus05_row)
+
+            step_count += 1
+            progress.progress(
+                min(1.0, step_count / total_steps),
+                text=f"Scanning upward +0.5 S/R Reversal crosses: {sym}"
+            )
+
+        progress.empty()
+
+        st.markdown("### Daily S/R Reversal Index Recently Crossed +0.5 Upward")
+        _render_sr_level_up_cross_table(
+            "Recent upward +0.5 crosses — sorted by Current S/R Direction, Trend Direction, then bars since cross",
+            plus05_rows,
+            "No recent upward +0.5 crosses found."
+        )
+
+        st.caption(f"Recent upward +0.5 crosses found: {len(plus05_rows)}")
+    else:
+        st.info("Click **Scan S/R +0.5 Cross** to build the daily upward-cross table.")
+
+
+# --- Tab 17: Buy/Sell Picks ---
+with tab17:
     st.header("Buy/Sell Picks")
     st.caption(
         "Daily scanner based on the trading read from the chart: "
