@@ -20,6 +20,7 @@
 # (UPDATED) S/R scanner tables include support/EMA pullback quality columns.
 # (NEW) EMA Divergence tab scans daily/hourly recent upward price crosses above the 30 EMA.
 # (NEW) Smoothed NPX line tab scans daily upward 0.0 crosses grouped by trend direction.
+# (NEW) S/R 0.5 Cross tab scans daily upward crosses through +0.5 on the S/R Reversal Index.
 
 # (NEW) Trend-aligned S/R Reversal indicator marks bullish support reversals in uptrends and bearish resistance reversals in downtrends.
 # (NEW) S/R 0.0 Up Cross tab mirrors Smoothed NPX line tab
@@ -4139,7 +4140,7 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -4152,6 +4153,7 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "Green Triangle Pick",
     "S/R Cross",
     "S/R -0.5 Cross",
+    "S/R 0.5 Cross",
     "EMA Divergence",
     "Smoothed NPX line",
     "S/R 0.0 Up Cross",
@@ -5554,8 +5556,78 @@ with tab12:
     else:
         st.info("Click **Scan S/R -0.5 Cross** to build the daily upward-cross tables.")
 
-# --- Tab 13: EMA Divergence ---
+
+# --- Tab 13: S/R 0.5 Cross ---
 with tab13:
+    st.header("S/R 0.5 Cross")
+    st.caption(
+        "Daily-chart scan for symbols where the **S/R Reversal Index** on the NTD chart recently crossed "
+        "**+0.5 upward**. Results are sorted by the number of bars since the cross, lowest to highest."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        sr_plus05_cross_recent = st.slider(
+            "Recent +0.5 upward cross window (daily bars)",
+            1, 120, 30, 1,
+            key="sr_plus05_cross_recent"
+        )
+    with c2:
+        sr_plus05_cross_smooth = st.slider(
+            "S/R Reversal smoothing",
+            1, 30, int(sr_rev_smooth), 1,
+            key="sr_plus05_cross_smooth"
+        )
+    with c3:
+        sr_plus05_show_only_current_up = st.checkbox(
+            "Only show rows still sloping upward",
+            value=True,
+            key="sr_plus05_show_only_current_up"
+        )
+
+    run_sr_plus05_cross = st.button("Scan S/R 0.5 Cross", key="btn_sr_plus05_cross_scan")
+
+    if run_sr_plus05_cross:
+        plus05_rows = []
+
+        progress = st.progress(0, text="Scanning daily S/R +0.5 Cross setup...")
+        total_steps = max(1, len(universe))
+        step_count = 0
+
+        for sym in universe:
+            plus05_row = sr_reversal_level_up_cross_info_daily(
+                sym,
+                level=0.5,
+                smooth_span=int(sr_plus05_cross_smooth),
+                recent_bars=int(sr_plus05_cross_recent),
+                slope_lookback=int(slope_lb_daily),
+            )
+            if plus05_row is not None:
+                if (not sr_plus05_show_only_current_up) or plus05_row.get("Current S/R Direction") == "Upward":
+                    plus05_rows.append(plus05_row)
+
+            step_count += 1
+            progress.progress(
+                min(1.0, step_count / total_steps),
+                text=f"Scanning upward +0.5 S/R Reversal crosses: {sym}"
+            )
+
+        progress.empty()
+
+        st.markdown("### Daily S/R Reversal Index Recently Crossed +0.5 Upward")
+        _render_sr_level_up_cross_table(
+            "Recent upward +0.5 crosses — sorted by bars since cross",
+            plus05_rows,
+            "No recent upward +0.5 crosses found."
+        )
+
+        st.caption(f"Recent upward +0.5 crosses found: {len(plus05_rows)}")
+    else:
+        st.info("Click **Scan S/R 0.5 Cross** to build the daily upward +0.5 cross table.")
+
+
+# --- Tab 14: EMA Divergence ---
+with tab14:
     st.header("EMA Divergence")
     st.caption(
         "Daily and intraday scan for symbols where price has recently crossed **upward** through the **30 EMA**. "
@@ -5658,8 +5730,8 @@ with tab13:
     else:
         st.info("Click **Scan EMA Divergence** to build the Daily and Hourly 30 EMA upward-cross tables.")
 
-# --- Tab 14: Smoothed NPX line ---
-with tab14:
+# --- Tab 15: Smoothed NPX line ---
+with tab15:
     st.header("Smoothed NPX line")
     st.caption(
         "Daily-chart scanner for symbols where the **Smoothed NPX** line recently crossed the **0.0** line upward. "
@@ -5750,8 +5822,8 @@ with tab14:
         st.info("Click **Scan Smoothed NPX line** to build the daily upward-cross tables.")
 
 
-# --- Tab 15: S/R 0.0 Up Cross ---
-with tab15:
+# --- Tab 16: S/R 0.0 Up Cross ---
+with tab16:
     st.header("S/R 0.0 Up Cross")
     st.caption(
         "Daily and 48-hour intraday scan for symbols where the **S/R Reversal Index** "
@@ -5906,8 +5978,8 @@ with tab15:
         )
 
 
-# --- Tab 16: Buy/Sell Picks ---
-with tab16:
+# --- Tab 17: Buy/Sell Picks ---
+with tab17:
     st.header("Buy/Sell Picks")
     st.caption(
         "Daily scanner based on the trading read from the chart: "
