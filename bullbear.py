@@ -2149,6 +2149,16 @@ def sr_cross_daily_below_threshold_info(symbol: str,
         if not np.isfinite(current_value) or current_value > th:
             return None
 
+        sr_slope = np.nan
+        try:
+            recent_sri = sri.iloc[-min(8, len(sri)):].dropna()
+            if len(recent_sri) >= 2:
+                x_sr = np.arange(len(recent_sri), dtype=float)
+                sr_slope = float(np.polyfit(x_sr, recent_sri.to_numpy(dtype=float), 1)[0])
+        except Exception:
+            sr_slope = np.nan
+        sr_direction = "Upward" if np.isfinite(sr_slope) and sr_slope >= 0 else "Downward"
+
         below_mask = (sri <= th)
         bars_below = 0
         for val in reversed(below_mask.to_numpy(dtype=bool)):
@@ -2172,6 +2182,8 @@ def sr_cross_daily_below_threshold_info(symbol: str,
         row = {
             "Symbol": symbol,
             "Current S/R Reversal": current_value,
+            "S/R Direction": sr_direction,
+            "S/R Slope": sr_slope,
             "Bars Below -0.75": int(bars_below),
             "First Below Date": first_below_time,
             "Last Close": _safe_last_float(close),
@@ -2209,6 +2221,7 @@ def sr_cross_daily_upward_zero_info(symbol: str,
             "Cross Time": row.get("Cross Time"),
             "Value at Cross": row.get("Value at Cross"),
             "Current S/R Reversal": row.get("Current S/R Reversal"),
+            "S/R Direction": row.get("Direction"),
             "Last Close": row.get("Last Close"),
             "Trend Direction": row.get("Trend Direction"),
             "Trend Slope": row.get("Trend Slope"),
@@ -2243,8 +2256,16 @@ def _render_sr_cross_daily_threshold_table(title: str, rows: list):
         return
     df = pd.DataFrame(rows)
     if not df.empty:
-        df = df.sort_values(["Current S/R Reversal", "Symbol"], ascending=[True, True])
-        for col in ["Current S/R Reversal", "Last Close", "Trend Slope", "Support Level", "20 EMA", "30 EMA", "HMA", "Distance to Support %", "Distance to 20 EMA %", "Distance to 30 EMA %", "Distance to HMA %", "Nearest Pullback Distance %"]:
+        direction_order = {"Upward": 0, "Downward": 1}
+        if "S/R Direction" in df.columns:
+            df["_sr_direction_order"] = df["S/R Direction"].map(direction_order).fillna(2)
+            df = df.sort_values(
+                ["_sr_direction_order", "Current S/R Reversal", "Symbol"],
+                ascending=[True, True, True],
+            ).drop(columns=["_sr_direction_order"])
+        else:
+            df = df.sort_values(["Current S/R Reversal", "Symbol"], ascending=[True, True])
+        for col in ["Current S/R Reversal", "S/R Slope", "Last Close", "Trend Slope", "Support Level", "20 EMA", "30 EMA", "HMA", "Distance to Support %", "Distance to 20 EMA %", "Distance to 30 EMA %", "Distance to HMA %", "Nearest Pullback Distance %"]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
         if "First Below Date" in df.columns:
@@ -2259,8 +2280,16 @@ def _render_sr_cross_daily_upward_table(title: str, rows: list):
         return
     df = pd.DataFrame(rows)
     if not df.empty:
-        df = df.sort_values(["Bars Since Cross", "Symbol"], ascending=[True, True])
-        for col in ["Value at Cross", "Current S/R Reversal", "Last Close", "Trend Slope", "Support Level", "20 EMA", "30 EMA", "HMA", "Distance to Support %", "Distance to 20 EMA %", "Distance to 30 EMA %", "Distance to HMA %", "Nearest Pullback Distance %"]:
+        direction_order = {"Upward": 0, "Downward": 1}
+        if "S/R Direction" in df.columns:
+            df["_sr_direction_order"] = df["S/R Direction"].map(direction_order).fillna(2)
+            df = df.sort_values(
+                ["_sr_direction_order", "Bars Since Cross", "Symbol"],
+                ascending=[True, True, True],
+            ).drop(columns=["_sr_direction_order"])
+        else:
+            df = df.sort_values(["Bars Since Cross", "Symbol"], ascending=[True, True])
+        for col in ["Value at Cross", "Current S/R Reversal", "S/R Slope", "Last Close", "Trend Slope", "Support Level", "20 EMA", "30 EMA", "HMA", "Distance to Support %", "Distance to 20 EMA %", "Distance to 30 EMA %", "Distance to HMA %", "Nearest Pullback Distance %"]:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
         if "Cross Time" in df.columns:
