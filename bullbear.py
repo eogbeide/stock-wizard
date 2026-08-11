@@ -1,5 +1,5 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
-# (UPDATED) Price Trend Bars now labels each bar with that period closing price.
+# (UPDATED) Price Trend Bars daily views include current-day live price and labels each bar with price.
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (UPDATED) Removed MACD from NTD panels; NTD panels now use a smoothed NPX price overlay.
 # (UPDATED) NTD panels are less noisy: green/red triangles now appear only after confirmed S/R reversals.
@@ -4219,6 +4219,60 @@ def _real_close_for_trend_bars(symbol: str) -> pd.Series:
     except Exception:
         return pd.Series(dtype=float)
 
+def _with_current_day_price_for_trend_bars(symbol: str, close: pd.Series):
+    """
+    Add/replace the current trading day's close with the latest intraday price.
+
+    yfinance daily bars often lag until the session closes. The Price Trend Bars
+    daily views should include the latest live/intraday price so the current day
+    updates on each Streamlit refresh. This helper keeps only one bar per calendar
+    day and uses the latest 5-minute close for the current day when available.
+    """
+    base = _coerce_1d_series(close).dropna().sort_index()
+    if base.empty:
+        return base, float("nan"), pd.NaT, False
+
+    try:
+        live_df = fetch_intraday(symbol, period="1d")
+        live_df = _flatten_yf_columns(live_df, ticker=symbol)
+        if live_df is None or live_df.empty or "Close" not in live_df.columns:
+            return base, _safe_last_float(base), base.index[-1], False
+
+        live_close = _coerce_1d_series(live_df["Close"]).dropna()
+        if live_close.empty:
+            return base, _safe_last_float(base), base.index[-1], False
+
+        live_close = _ensure_pacific_index(live_close).sort_index()
+        live_ts = live_close.index[-1]
+        live_price = float(live_close.iloc[-1])
+        if not np.isfinite(live_price):
+            return base, _safe_last_float(base), base.index[-1], False
+
+        out = base.copy()
+        if not isinstance(out.index, pd.DatetimeIndex):
+            out.index = pd.to_datetime(out.index, errors="coerce")
+            out = out.loc[out.index.notna()]
+
+        out = _ensure_pacific_index(out).sort_index()
+        live_date = pd.Timestamp(live_ts).date()
+
+        # Remove any existing daily bar for this calendar date, then append the
+        # latest intraday price as the current-day bar.
+        keep_mask = [pd.Timestamp(idx).date() != live_date for idx in out.index]
+        out = out.loc[keep_mask]
+        current_day_idx = pd.Timestamp(live_ts).normalize()
+        try:
+            if current_day_idx.tzinfo is None:
+                current_day_idx = current_day_idx.tz_localize(PACIFIC)
+        except Exception:
+            pass
+        out.loc[current_day_idx] = live_price
+        out = out.sort_index()
+
+        return out, live_price, live_ts, True
+    except Exception:
+        return base, _safe_last_float(base), base.index[-1], False
+
 def compute_price_trend_bars(close: pd.Series, view: str = "daily_2w") -> pd.DataFrame:
     """
     Build normalized price-level trend bars.
@@ -6321,7 +6375,7 @@ with tab18:
     st.caption(
         "Shows normalized positive and negative price-movement bars. "
         "Bars range from 0 to +1 when price is rising and from 0 to -1 when price is falling. "
-        "Monthly view uses the last 12 completed monthly moves; daily views use recent real trading bars. Each bar is labeled with the closing price for that period."
+        "Monthly view uses the last 12 completed monthly moves; daily views use recent real trading bars plus the current-day live price. Each bar is labeled with the closing price for that period."
     )
 
     c1, c2 = st.columns([1, 2])
@@ -6339,23 +6393,31 @@ with tab18:
         )
 
     close_tb = _real_close_for_trend_bars(trend_bar_symbol)
+    close_tb_live, live_price_tb, live_ts_tb, live_used_tb = _with_current_day_price_for_trend_bars(
+        trend_bar_symbol,
+        close_tb
+    )
 
-    if close_tb is None or close_tb.empty or len(close_tb) < 30:
+    if close_tb_live is None or close_tb_live.empty or len(close_tb_live) < 30:
         st.warning("Not enough price history available for this symbol.")
     else:
-        latest_close_tb = _safe_last_float(close_tb)
-        _, price_trend_bar_slope = slope_line(close_tb, lookback=min(int(slope_lb_daily), len(close_tb)))
+        latest_close_tb = _safe_last_float(close_tb_live)
+        _, price_trend_bar_slope = slope_line(close_tb_live, lookback=min(int(slope_lb_daily), len(close_tb_live)))
         trend_text_tb = "Upward" if np.isfinite(price_trend_bar_slope) and price_trend_bar_slope >= 0 else "Downward"
         trend_icon_tb = "🟢" if trend_text_tb == "Upward" else "🔴"
+        live_note_tb = ""
+        if live_used_tb and pd.notna(live_ts_tb):
+            live_note_tb = f" • Current-day live price: **{fmt_price_val(live_price_tb)}** as of **{live_ts_tb.strftime('%Y-%m-%d %H:%M PST')}**"
         st.info(
             f"{trend_icon_tb} **Current daily trend:** {trend_text_tb} "
-            f"• Last close: **{fmt_price_val(latest_close_tb)}** "
+            f"• Latest daily chart price: **{fmt_price_val(latest_close_tb)}** "
             f"• Trend slope: **{fmt_slope(price_trend_bar_slope)} / bar**"
+            f"{live_note_tb}"
         )
 
         monthly_df = compute_price_trend_bars(close_tb, view="monthly_12m")
-        daily_2w_df = compute_price_trend_bars(close_tb, view="daily_2w")
-        daily_4w_df = compute_price_trend_bars(close_tb, view="daily_4w")
+        daily_2w_df = compute_price_trend_bars(close_tb_live, view="daily_2w")
+        daily_4w_df = compute_price_trend_bars(close_tb_live, view="daily_4w")
 
         st.subheader("Monthly View — Last 12 Months")
         plot_price_trend_bars(monthly_df, f"{trend_bar_symbol} — Monthly Price Trend Bars")
@@ -6386,13 +6448,14 @@ with tab18:
             status.text(f"Scanning {sym}...")
             try:
                 c = _real_close_for_trend_bars(sym)
-                if c is None or c.empty or len(c) < 30:
+                c_live, live_price_scan, live_ts_scan, live_used_scan = _with_current_day_price_for_trend_bars(sym, c)
+                if c_live is None or c_live.empty or len(c_live) < 30:
                     continue
-                d4 = compute_price_trend_bars(c, view="daily_4w")
+                d4 = compute_price_trend_bars(c_live, view="daily_4w")
                 if d4.empty:
                     continue
                 last_row = d4.iloc[-1]
-                _, tr_slope = slope_line(c, lookback=min(int(slope_lb_daily), len(c)))
+                _, tr_slope = slope_line(c_live, lookback=min(int(slope_lb_daily), len(c_live)))
                 scan_rows.append({
                     "Symbol": sym,
                     "Direction": "Rising" if float(last_row["Trend Bar"]) >= 0 else "Falling",
@@ -6400,8 +6463,8 @@ with tab18:
                     "Latest Return %": float(last_row["Return %"]),
                     "Trend Direction": "Upward" if np.isfinite(tr_slope) and tr_slope >= 0 else "Downward",
                     "Trend Slope": float(tr_slope) if np.isfinite(tr_slope) else np.nan,
-                    "Last Close": _safe_last_float(c),
-                    "As Of": c.index[-1],
+                    "Last Close": _safe_last_float(c_live),
+                    "As Of": live_ts_scan if live_used_scan and pd.notna(live_ts_scan) else c_live.index[-1],
                 })
             except Exception:
                 continue
