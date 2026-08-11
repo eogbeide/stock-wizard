@@ -4221,12 +4221,21 @@ def _real_close_for_trend_bars(symbol: str) -> pd.Series:
 
 def compute_price_trend_bars(close: pd.Series, view: str = "daily_2w") -> pd.DataFrame:
     """
-    Build normalized directional price bars:
-      +0 to +1 when price is rising
-       0 to -1 when price is falling
+    Build normalized price-level trend bars.
 
-    The bar magnitude is normalized by the largest absolute move in the selected view,
-    which makes the sequence easy to compare visually over time.
+    The previous version normalized each bar by the one-period price change. That made
+    a small up day plot above a much higher down-day close, which was confusing.
+    This version normalizes each close relative to the first close in the selected
+    view, so a lower closing price always plots lower than a higher closing price.
+
+    Scale:
+      0.0  = starting close for the selected view
+      +1.0 = highest close above the starting close in the selected view
+      -1.0 = lowest close below the starting close in the selected view
+
+    Bar color still shows the one-period direction:
+      green = close rose from prior selected bar
+      red   = close fell from prior selected bar
     """
     s = _coerce_1d_series(close).dropna().sort_index()
     if s.empty or len(s) < 2:
@@ -4237,12 +4246,15 @@ def compute_price_trend_bars(close: pd.Series, view: str = "daily_2w") -> pd.Dat
         # Some pandas versions use month-end alias M instead of ME.
         if period_close.empty:
             period_close = s.resample("M").last().dropna()
+        # Keep one extra anchor month, then display the following 12 months.
         period_close = period_close.iloc[-13:]
         label_fmt = "%Y-%m"
     elif view == "daily_4w":
+        # Keep one extra anchor bar, then display roughly 4 trading weeks.
         period_close = s.iloc[-21:]
         label_fmt = "%m-%d"
     else:
+        # Keep one extra anchor bar, then display roughly 2 trading weeks.
         period_close = s.iloc[-11:]
         label_fmt = "%m-%d"
 
@@ -4251,11 +4263,21 @@ def compute_price_trend_bars(close: pd.Series, view: str = "daily_2w") -> pd.Dat
 
     change = period_close.diff()
     ret = period_close.pct_change() * 100.0
-    abs_max = float(change.abs().max()) if len(change.dropna()) else np.nan
-    if not np.isfinite(abs_max) or abs_max <= 0:
-        norm_bar = change.fillna(0.0) * 0.0
-    else:
-        norm_bar = (change / abs_max).clip(-1.0, 1.0)
+
+    anchor = float(period_close.iloc[0])
+    rel = period_close.astype(float) - anchor
+    max_up = float(rel[rel > 0].max()) if (rel > 0).any() else np.nan
+    max_down = float(abs(rel[rel < 0].min())) if (rel < 0).any() else np.nan
+
+    norm_vals = []
+    for rv in rel.to_numpy(dtype=float):
+        if not np.isfinite(rv) or abs(rv) <= 0:
+            norm_vals.append(0.0)
+        elif rv > 0:
+            norm_vals.append(float(np.clip(rv / max_up, 0.0, 1.0)) if np.isfinite(max_up) and max_up > 0 else 0.0)
+        else:
+            norm_vals.append(float(np.clip(rv / max_down, -1.0, 0.0)) if np.isfinite(max_down) and max_down > 0 else 0.0)
+    norm_bar = pd.Series(norm_vals, index=period_close.index, dtype=float)
 
     out = pd.DataFrame({
         "Period": [idx.strftime(label_fmt) if hasattr(idx, "strftime") else str(idx) for idx in period_close.index],
@@ -4265,7 +4287,7 @@ def compute_price_trend_bars(close: pd.Series, view: str = "daily_2w") -> pd.Dat
         "Trend Bar": norm_bar.to_numpy(dtype=float),
     }, index=period_close.index)
     out = out.iloc[1:].copy()
-    out["Direction"] = np.where(out["Trend Bar"] >= 0, "Rising", "Falling")
+    out["Direction"] = np.where(pd.to_numeric(out["Change"], errors="coerce") >= 0, "Rising", "Falling")
     return out
 
 def plot_price_trend_bars(df: pd.DataFrame, title: str):
@@ -4308,7 +4330,7 @@ def plot_price_trend_bars(df: pd.DataFrame, title: str):
         )
 
     ax.set_ylim(-1.22, 1.22)
-    ax.set_ylabel("Normalized price move")
+    ax.set_ylabel("Normalized price level")
     ax.set_title(title)
     ax.set_xticks(x)
     ax.set_xticklabels(plot_df["Period"].astype(str).tolist(), rotation=45, ha="right")
