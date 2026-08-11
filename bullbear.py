@@ -3,6 +3,7 @@
 # (UPDATED) Removed MACD from NTD panels; NTD panels now use a smoothed NPX price overlay.
 # (UPDATED) NTD panels are less noisy: green/red triangles now appear only after confirmed S/R reversals.
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
+# (NEW) Price Trend Bars tab shows normalized positive/negative price movement bars for monthly and daily views.
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
 # (UPDATED) Removed hourly Momentum chart, red/green directional PSAR price overlays, and NTD-cross triangles.
 # (UPDATED) Removed Ichimoku Kijun and Supertrend lines from price charts.
@@ -4195,6 +4196,122 @@ def _render_buy_sell_picks_table(title: str, rows: list, empty_text: str):
 
 
 
+
+# ---- Price Trend Bars helpers ----
+def _real_close_for_trend_bars(symbol: str) -> pd.Series:
+    """Return real daily close bars without artificial weekend/closure forward-filled rows."""
+    try:
+        ohlc = fetch_hist_ohlc(symbol)
+        if ohlc is not None and not ohlc.empty and "Close" in ohlc.columns:
+            close = _coerce_1d_series(ohlc["Close"]).dropna()
+            close = _ensure_pacific_index(close)
+            return close.sort_index()
+    except Exception:
+        pass
+    try:
+        close = fetch_hist(symbol)
+        close = _coerce_1d_series(close).dropna()
+        # fetch_hist is daily-frequency forward filled, so remove closure rows that did not move.
+        if not close.empty:
+            close = close.loc[close.diff().fillna(1.0).abs() > 0]
+        return close.sort_index()
+    except Exception:
+        return pd.Series(dtype=float)
+
+def compute_price_trend_bars(close: pd.Series, view: str = "daily_2w") -> pd.DataFrame:
+    """
+    Build normalized directional price bars:
+      +0 to +1 when price is rising
+       0 to -1 when price is falling
+
+    The bar magnitude is normalized by the largest absolute move in the selected view,
+    which makes the sequence easy to compare visually over time.
+    """
+    s = _coerce_1d_series(close).dropna().sort_index()
+    if s.empty or len(s) < 2:
+        return pd.DataFrame(columns=["Period", "Close", "Change", "Return %", "Trend Bar", "Direction"])
+
+    if view == "monthly_12m":
+        period_close = s.resample("ME").last().dropna()
+        # Some pandas versions use month-end alias M instead of ME.
+        if period_close.empty:
+            period_close = s.resample("M").last().dropna()
+        period_close = period_close.iloc[-13:]
+        label_fmt = "%Y-%m"
+    elif view == "daily_4w":
+        period_close = s.iloc[-21:]
+        label_fmt = "%m-%d"
+    else:
+        period_close = s.iloc[-11:]
+        label_fmt = "%m-%d"
+
+    if len(period_close) < 2:
+        return pd.DataFrame(columns=["Period", "Close", "Change", "Return %", "Trend Bar", "Direction"])
+
+    change = period_close.diff()
+    ret = period_close.pct_change() * 100.0
+    abs_max = float(change.abs().max()) if len(change.dropna()) else np.nan
+    if not np.isfinite(abs_max) or abs_max <= 0:
+        norm_bar = change.fillna(0.0) * 0.0
+    else:
+        norm_bar = (change / abs_max).clip(-1.0, 1.0)
+
+    out = pd.DataFrame({
+        "Period": [idx.strftime(label_fmt) if hasattr(idx, "strftime") else str(idx) for idx in period_close.index],
+        "Close": period_close.to_numpy(dtype=float),
+        "Change": change.to_numpy(dtype=float),
+        "Return %": ret.to_numpy(dtype=float),
+        "Trend Bar": norm_bar.to_numpy(dtype=float),
+    }, index=period_close.index)
+    out = out.iloc[1:].copy()
+    out["Direction"] = np.where(out["Trend Bar"] >= 0, "Rising", "Falling")
+    return out
+
+def plot_price_trend_bars(df: pd.DataFrame, title: str):
+    if df is None or df.empty or "Trend Bar" not in df.columns:
+        st.info("Not enough data to draw trend bars.")
+        return
+    plot_df = df.copy()
+    x = np.arange(len(plot_df), dtype=float)
+    vals = pd.to_numeric(plot_df["Trend Bar"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+
+    fig, ax = plt.subplots(figsize=(12, 3.8))
+    colors = ["tab:green" if v >= 0 else "tab:red" for v in vals]
+    ax.bar(x, vals, color=colors, width=0.72)
+    ax.axhline(0.0, color="black", linewidth=1.0)
+    ax.axhline(0.5, color="tab:green", linewidth=0.8, linestyle="--", alpha=0.45)
+    ax.axhline(-0.5, color="tab:red", linewidth=0.8, linestyle="--", alpha=0.45)
+    ax.set_ylim(-1.05, 1.05)
+    ax.set_ylabel("Normalized price move")
+    ax.set_title(title)
+    ax.set_xticks(x)
+    ax.set_xticklabels(plot_df["Period"].astype(str).tolist(), rotation=45, ha="right")
+    ax.grid(True, axis="y", alpha=0.25)
+
+    # Give the final bar/label room so it is not clipped.
+    ax.set_xlim(-0.75, len(plot_df) - 0.25 + max(1.0, len(plot_df) * 0.04))
+    fig.tight_layout()
+    st.pyplot(fig, clear_figure=True)
+
+def _format_price_trend_bars_table(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.reset_index(drop=True).copy()
+    for col in ["Close", "Change", "Return %", "Trend Bar"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+    if "Close" in out.columns:
+        out["Close"] = out["Close"].map(lambda x: fmt_price_val(x) if np.isfinite(float(x)) else "n/a")
+    if "Change" in out.columns:
+        out["Change"] = out["Change"].map(lambda x: f"{float(x):+.5f}" if np.isfinite(float(x)) else "n/a")
+    if "Return %" in out.columns:
+        out["Return %"] = out["Return %"].map(lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a")
+    if "Trend Bar" in out.columns:
+        out["Trend Bar"] = out["Trend Bar"].map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
+    return out
+
+
+
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -4204,7 +4321,7 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13, tab14, tab15, tab16, tab17, tab18 = st.tabs([
     "Original Forecast",
     "Enhanced Forecast",
     "Bull vs Bear",
@@ -4221,7 +4338,8 @@ tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10, tab11, tab12, tab13
     "Smoothed NPX line",
     "S/R 0.0 Up Cross",
     "S/R +0.5 Cross",
-    "Buy/Sell Picks"
+    "Buy/Sell Picks",
+    "Price Trend Bars"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -6149,4 +6267,133 @@ with tab17:
     else:
         st.info("Click **Scan Buy/Sell Picks** to build the daily BUY and SELL tables.")
 
+# --- Tab 18: Price Trend Bars ---
+with tab18:
+    st.header("Price Trend Bars")
+    st.caption(
+        "Shows normalized positive and negative price-movement bars. "
+        "Bars range from 0 to +1 when price is rising and from 0 to -1 when price is falling. "
+        "Monthly view uses the last 12 completed monthly moves; daily views use recent real trading bars."
+    )
+
+    c1, c2 = st.columns([1, 2])
+    with c1:
+        trend_bar_symbol = st.selectbox(
+            "Symbol",
+            universe,
+            index=0 if len(universe) else None,
+            key="price_trend_bars_symbol"
+        )
+    with c2:
+        st.markdown(
+            "**How to read it:** green bars show rising-price periods; red bars show falling-price periods. "
+            "Taller bars mean the move was larger relative to the biggest move in that selected view."
+        )
+
+    close_tb = _real_close_for_trend_bars(trend_bar_symbol)
+
+    if close_tb is None or close_tb.empty or len(close_tb) < 30:
+        st.warning("Not enough price history available for this symbol.")
+    else:
+        latest_close_tb = _safe_last_float(close_tb)
+        _, price_trend_bar_slope = slope_line(close_tb, lookback=min(int(slope_lb_daily), len(close_tb)))
+        trend_text_tb = "Upward" if np.isfinite(price_trend_bar_slope) and price_trend_bar_slope >= 0 else "Downward"
+        trend_icon_tb = "🟢" if trend_text_tb == "Upward" else "🔴"
+        st.info(
+            f"{trend_icon_tb} **Current daily trend:** {trend_text_tb} "
+            f"• Last close: **{fmt_price_val(latest_close_tb)}** "
+            f"• Trend slope: **{fmt_slope(price_trend_bar_slope)} / bar**"
+        )
+
+        monthly_df = compute_price_trend_bars(close_tb, view="monthly_12m")
+        daily_2w_df = compute_price_trend_bars(close_tb, view="daily_2w")
+        daily_4w_df = compute_price_trend_bars(close_tb, view="daily_4w")
+
+        st.subheader("Monthly View — Last 12 Months")
+        plot_price_trend_bars(monthly_df, f"{trend_bar_symbol} — Monthly Price Trend Bars")
+        with st.expander("Monthly values", expanded=False):
+            st.dataframe(_format_price_trend_bars_table(monthly_df), use_container_width=True, hide_index=True)
+
+        st.subheader("Daily View — Last 2 Weeks")
+        plot_price_trend_bars(daily_2w_df, f"{trend_bar_symbol} — Daily Price Trend Bars, 2 Weeks")
+        with st.expander("2-week daily values", expanded=False):
+            st.dataframe(_format_price_trend_bars_table(daily_2w_df), use_container_width=True, hide_index=True)
+
+        st.subheader("Daily View — Last 4 Weeks")
+        plot_price_trend_bars(daily_4w_df, f"{trend_bar_symbol} — Daily Price Trend Bars, 4 Weeks")
+        with st.expander("4-week daily values", expanded=False):
+            st.dataframe(_format_price_trend_bars_table(daily_4w_df), use_container_width=True, hide_index=True)
+
+        st.markdown("---")
+        st.subheader("Quick Scanner — Latest Daily Trend Bar")
+        st.caption(
+            "Ranks the current universe by the latest normalized daily price bar. "
+            "Use this to quickly find symbols with the strongest recent rising or falling price movement."
+        )
+
+        scan_rows = []
+        progress = st.progress(0.0)
+        status = st.empty()
+        for i, sym in enumerate(universe):
+            status.text(f"Scanning {sym}...")
+            try:
+                c = _real_close_for_trend_bars(sym)
+                if c is None or c.empty or len(c) < 30:
+                    continue
+                d4 = compute_price_trend_bars(c, view="daily_4w")
+                if d4.empty:
+                    continue
+                last_row = d4.iloc[-1]
+                _, tr_slope = slope_line(c, lookback=min(int(slope_lb_daily), len(c)))
+                scan_rows.append({
+                    "Symbol": sym,
+                    "Direction": "Rising" if float(last_row["Trend Bar"]) >= 0 else "Falling",
+                    "Latest Trend Bar": float(last_row["Trend Bar"]),
+                    "Latest Return %": float(last_row["Return %"]),
+                    "Trend Direction": "Upward" if np.isfinite(tr_slope) and tr_slope >= 0 else "Downward",
+                    "Trend Slope": float(tr_slope) if np.isfinite(tr_slope) else np.nan,
+                    "Last Close": _safe_last_float(c),
+                    "As Of": c.index[-1],
+                })
+            except Exception:
+                continue
+            progress.progress((i + 1) / max(1, len(universe)))
+        progress.empty()
+        status.empty()
+
+        scan_df = pd.DataFrame(scan_rows)
+        if scan_df.empty:
+            st.info("No scan results available.")
+        else:
+            scan_df["_direction_order"] = scan_df["Direction"].map({"Rising": 0, "Falling": 1}).fillna(2)
+            scan_df["_trend_order"] = scan_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
+            scan_df["_abs_bar"] = pd.to_numeric(scan_df["Latest Trend Bar"], errors="coerce").abs()
+            scan_df = scan_df.sort_values(
+                ["_direction_order", "_trend_order", "_abs_bar", "Symbol"],
+                ascending=[True, True, False, True]
+            ).drop(columns=["_direction_order", "_trend_order", "_abs_bar"])
+
+            fmt_scan = scan_df.copy()
+            fmt_scan["Latest Trend Bar"] = fmt_scan["Latest Trend Bar"].map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
+            fmt_scan["Latest Return %"] = fmt_scan["Latest Return %"].map(lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a")
+            fmt_scan["Trend Slope"] = fmt_scan["Trend Slope"].map(fmt_slope)
+            fmt_scan["Last Close"] = fmt_scan["Last Close"].map(fmt_price_val)
+            fmt_scan["As Of"] = fmt_scan["As Of"].astype(str)
+
+            st.dataframe(
+                fmt_scan[
+                    [
+                        "Symbol",
+                        "Direction",
+                        "Trend Direction",
+                        "Latest Trend Bar",
+                        "Latest Return %",
+                        "Trend Slope",
+                        "Last Close",
+                        "As Of",
+                    ]
+                ],
+                use_container_width=True,
+                hide_index=True
+            )
 
