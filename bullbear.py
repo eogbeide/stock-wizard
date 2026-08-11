@@ -1,4 +1,5 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
+# (UPDATED) Price Trend Bars now labels each bar with that period closing price.
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (UPDATED) Removed MACD from NTD panels; NTD panels now use a smoothed NPX price overlay.
 # (UPDATED) NTD panels are less noisy: green/red triangles now appear only after confirmed S/R reversals.
@@ -4274,14 +4275,39 @@ def plot_price_trend_bars(df: pd.DataFrame, title: str):
     plot_df = df.copy()
     x = np.arange(len(plot_df), dtype=float)
     vals = pd.to_numeric(plot_df["Trend Bar"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
+    closes = pd.to_numeric(plot_df.get("Close", pd.Series(index=plot_df.index, dtype=float)), errors="coerce").to_numpy(dtype=float)
 
-    fig, ax = plt.subplots(figsize=(12, 3.8))
+    fig, ax = plt.subplots(figsize=(12, 4.2))
     colors = ["tab:green" if v >= 0 else "tab:red" for v in vals]
     ax.bar(x, vals, color=colors, width=0.72)
     ax.axhline(0.0, color="black", linewidth=1.0)
     ax.axhline(0.5, color="tab:green", linewidth=0.8, linestyle="--", alpha=0.45)
     ax.axhline(-0.5, color="tab:red", linewidth=0.8, linestyle="--", alpha=0.45)
-    ax.set_ylim(-1.05, 1.05)
+
+    # Price labels: above positive bars and below negative bars.
+    for xi, v, close_val in zip(x, vals, closes):
+        if not np.isfinite(close_val):
+            continue
+        label = fmt_price_val(close_val)
+        if v >= 0:
+            y_text = min(1.12, v + 0.06)
+            va = "bottom"
+        else:
+            y_text = max(-1.12, v - 0.06)
+            va = "top"
+        ax.text(
+            xi,
+            y_text,
+            label,
+            ha="center",
+            va=va,
+            fontsize=8,
+            rotation=0,
+            clip_on=False,
+            bbox=dict(boxstyle="round,pad=0.12", fc="white", ec="none", alpha=0.65),
+        )
+
+    ax.set_ylim(-1.22, 1.22)
     ax.set_ylabel("Normalized price move")
     ax.set_title(title)
     ax.set_xticks(x)
@@ -6273,7 +6299,7 @@ with tab18:
     st.caption(
         "Shows normalized positive and negative price-movement bars. "
         "Bars range from 0 to +1 when price is rising and from 0 to -1 when price is falling. "
-        "Monthly view uses the last 12 completed monthly moves; daily views use recent real trading bars."
+        "Monthly view uses the last 12 completed monthly moves; daily views use recent real trading bars. Each bar is labeled with the closing price for that period."
     )
 
     c1, c2 = st.columns([1, 2])
