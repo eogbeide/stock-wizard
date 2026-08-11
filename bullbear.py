@@ -4,7 +4,7 @@
 # (UPDATED) Removed MACD from NTD panels; NTD panels now use a smoothed NPX price overlay.
 # (UPDATED) NTD panels are less noisy: green/red triangles now appear only after confirmed S/R reversals.
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
-# (NEW) Price Trend Bars tab shows normalized positive/negative price movement bars for monthly and daily views.
+# (NEW) Price Trend Bars tab shows normalized price-level bars plus current +1/-1 daily extreme tables.
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
 # (UPDATED) Removed hourly Momentum chart, red/green directional PSAR price overlays, and NTD-cross triangles.
 # (UPDATED) Removed Ichimoku Kijun and Supertrend lines from price charts.
@@ -6507,4 +6507,72 @@ with tab18:
                 use_container_width=True,
                 hide_index=True
             )
+
+            st.markdown("### Current Daily Extremes")
+            st.caption(
+                "These tables isolate symbols whose latest 4-week normalized daily price-level bar is currently at "
+                "**+1.000** or **-1.000**. A +1.000 reading means the current/latest price is the highest level in "
+                "the selected 4-week daily window; a -1.000 reading means it is the lowest level in that window. "
+                "The current day uses the latest intraday price and updates on each refresh."
+            )
+
+            extreme_cols = [
+                "Symbol",
+                "Direction",
+                "Trend Direction",
+                "Latest Trend Bar",
+                "Latest Return %",
+                "Trend Slope",
+                "Last Close",
+                "As Of",
+            ]
+
+            plus_one_df = scan_df[
+                pd.to_numeric(scan_df["Latest Trend Bar"], errors="coerce") >= 0.999
+            ].copy()
+            minus_one_df = scan_df[
+                pd.to_numeric(scan_df["Latest Trend Bar"], errors="coerce") <= -0.999
+            ].copy()
+
+            def _format_price_trend_extreme_scan(df_extreme: pd.DataFrame) -> pd.DataFrame:
+                if df_extreme is None or df_extreme.empty:
+                    return pd.DataFrame(columns=extreme_cols)
+                out_extreme = df_extreme.copy()
+                out_extreme["Latest Trend Bar"] = out_extreme["Latest Trend Bar"].map(
+                    lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a"
+                )
+                out_extreme["Latest Return %"] = out_extreme["Latest Return %"].map(
+                    lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a"
+                )
+                out_extreme["Trend Slope"] = out_extreme["Trend Slope"].map(fmt_slope)
+                out_extreme["Last Close"] = out_extreme["Last Close"].map(fmt_price_val)
+                out_extreme["As Of"] = out_extreme["As Of"].astype(str)
+                return out_extreme[extreme_cols]
+
+            col_plus, col_minus = st.columns(2)
+            with col_plus:
+                st.subheader("Currently at +1")
+                if plus_one_df.empty:
+                    st.info("No symbols currently at +1.000.")
+                else:
+                    plus_one_df["_trend_order"] = plus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
+                    plus_one_df = plus_one_df.sort_values(["_trend_order", "Latest Return %", "Symbol"], ascending=[True, False, True]).drop(columns=["_trend_order"])
+                    st.dataframe(
+                        _format_price_trend_extreme_scan(plus_one_df),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+            with col_minus:
+                st.subheader("Currently at -1")
+                if minus_one_df.empty:
+                    st.info("No symbols currently at -1.000.")
+                else:
+                    minus_one_df["_trend_order"] = minus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
+                    minus_one_df = minus_one_df.sort_values(["_trend_order", "Latest Return %", "Symbol"], ascending=[True, True, True]).drop(columns=["_trend_order"])
+                    st.dataframe(
+                        _format_price_trend_extreme_scan(minus_one_df),
+                        use_container_width=True,
+                        hide_index=True
+                    )
 
