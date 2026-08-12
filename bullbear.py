@@ -5,7 +5,7 @@
 # (UPDATED) Removed MACD from NTD panels; NTD panels now use a smoothed NPX price overlay.
 # (UPDATED) NTD panels are less noisy: green/red triangles now appear only after confirmed S/R reversals.
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
-# (NEW) Price Trend Bars tab shows normalized price-level bars plus current +1/-1 daily extreme tables.
+# (NEW) Price Trend Bars tab shows normalized price-level bars plus current +1/-1 daily and monthly extreme tables.
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
 # (UPDATED) Removed hourly Momentum chart, red/green directional PSAR price overlays, and NTD-cross triangles.
 # (UPDATED) Removed Ichimoku Kijun and Supertrend lines from price charts.
@@ -5106,12 +5106,29 @@ with tab18:
                 if d4.empty:
                     continue
                 last_row = d4.iloc[-1]
+
+                # Monthly extremes use the same current/latest price series so the current
+                # month updates on every refresh instead of waiting for month-end.
+                m12_live = compute_price_trend_bars(c_live, view="monthly_12m")
+                if m12_live is not None and not m12_live.empty:
+                    last_month_row = m12_live.iloc[-1]
+                    latest_monthly_bar = float(last_month_row["Trend Bar"])
+                    latest_monthly_ret = float(last_month_row["Return %"])
+                    monthly_direction = "Rising" if latest_monthly_bar >= 0 else "Falling"
+                else:
+                    latest_monthly_bar = np.nan
+                    latest_monthly_ret = np.nan
+                    monthly_direction = "n/a"
+
                 _, tr_slope = slope_line(c_live, lookback=min(int(slope_lb_daily), len(c_live)))
                 scan_rows.append({
                     "Symbol": sym,
                     "Direction": "Rising" if float(last_row["Trend Bar"]) >= 0 else "Falling",
                     "Latest Trend Bar": float(last_row["Trend Bar"]),
                     "Latest Return %": float(last_row["Return %"]),
+                    "Monthly Direction": monthly_direction,
+                    "Latest Monthly Trend Bar": latest_monthly_bar,
+                    "Latest Monthly Return %": latest_monthly_ret,
                     "Trend Direction": "Upward" if np.isfinite(tr_slope) and tr_slope >= 0 else "Downward",
                     "Trend Slope": float(tr_slope) if np.isfinite(tr_slope) else np.nan,
                     "Last Close": _safe_last_float(c_live),
@@ -5223,6 +5240,78 @@ with tab18:
                     minus_one_df = minus_one_df.sort_values(["_trend_order", "Latest Return %", "Symbol"], ascending=[True, True, True]).drop(columns=["_trend_order"])
                     st.dataframe(
                         _format_price_trend_extreme_scan(minus_one_df),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+            st.markdown("### Current Monthly Extremes")
+            st.caption(
+                "These tables isolate symbols whose latest 12-month normalized monthly price-level bar is currently at "
+                "**+1.000** or **-1.000**. The current month uses the latest available price, so it updates on each refresh."
+            )
+
+            monthly_extreme_cols = [
+                "Symbol",
+                "Monthly Direction",
+                "Trend Direction",
+                "Latest Monthly Trend Bar",
+                "Latest Monthly Return %",
+                "Trend Slope",
+                "Last Close",
+                "As Of",
+            ]
+
+            monthly_plus_one_df = scan_df[
+                pd.to_numeric(scan_df["Latest Monthly Trend Bar"], errors="coerce") >= 0.999
+            ].copy()
+            monthly_minus_one_df = scan_df[
+                pd.to_numeric(scan_df["Latest Monthly Trend Bar"], errors="coerce") <= -0.999
+            ].copy()
+
+            def _format_price_trend_monthly_extreme_scan(df_extreme: pd.DataFrame) -> pd.DataFrame:
+                if df_extreme is None or df_extreme.empty:
+                    return pd.DataFrame(columns=monthly_extreme_cols)
+                out_extreme = df_extreme.copy()
+                out_extreme["Latest Monthly Trend Bar"] = out_extreme["Latest Monthly Trend Bar"].map(
+                    lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a"
+                )
+                out_extreme["Latest Monthly Return %"] = out_extreme["Latest Monthly Return %"].map(
+                    lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a"
+                )
+                out_extreme["Trend Slope"] = out_extreme["Trend Slope"].map(fmt_slope)
+                out_extreme["Last Close"] = out_extreme["Last Close"].map(fmt_price_val)
+                out_extreme["As Of"] = out_extreme["As Of"].astype(str)
+                return out_extreme[monthly_extreme_cols]
+
+            col_m_plus, col_m_minus = st.columns(2)
+            with col_m_plus:
+                st.subheader("Monthly currently at +1")
+                if monthly_plus_one_df.empty:
+                    st.info("No symbols currently at monthly +1.000.")
+                else:
+                    monthly_plus_one_df["_trend_order"] = monthly_plus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
+                    monthly_plus_one_df = monthly_plus_one_df.sort_values(
+                        ["_trend_order", "Latest Monthly Return %", "Symbol"],
+                        ascending=[True, False, True]
+                    ).drop(columns=["_trend_order"])
+                    st.dataframe(
+                        _format_price_trend_monthly_extreme_scan(monthly_plus_one_df),
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+            with col_m_minus:
+                st.subheader("Monthly currently at -1")
+                if monthly_minus_one_df.empty:
+                    st.info("No symbols currently at monthly -1.000.")
+                else:
+                    monthly_minus_one_df["_trend_order"] = monthly_minus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
+                    monthly_minus_one_df = monthly_minus_one_df.sort_values(
+                        ["_trend_order", "Latest Monthly Return %", "Symbol"],
+                        ascending=[True, True, True]
+                    ).drop(columns=["_trend_order"])
+                    st.dataframe(
+                        _format_price_trend_monthly_extreme_scan(monthly_minus_one_df),
                         use_container_width=True,
                         hide_index=True
                     )
