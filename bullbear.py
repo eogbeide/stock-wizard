@@ -6,6 +6,7 @@
 # (UPDATED) NTD panels are less noisy: green/red triangles now appear only after confirmed S/R reversals.
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
 # (NEW) Price Trend Bars tab shows normalized price-level bars plus current +1/-1 daily and monthly extreme tables.
+# (UPDATED) Price Trend Bars can overlay normalized MACD and MACD signal lines on the bars.
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
 # (UPDATED) Removed hourly Momentum chart, red/green directional PSAR price overlays, and NTD-cross triangles.
 # (UPDATED) Removed Ichimoku Kijun and Supertrend lines from price charts.
@@ -4274,6 +4275,43 @@ def _with_current_day_price_for_trend_bars(symbol: str, close: pd.Series):
     except Exception:
         return base, _safe_last_float(base), base.index[-1], False
 
+def _normalized_macd_for_trend_bars(close: pd.Series,
+                                    fast: int = 12,
+                                    slow: int = 26,
+                                    signal: int = 9) -> pd.DataFrame:
+    """
+    Build MACD, signal, and histogram lines normalized to the same -1 to +1
+    vertical scale as the Price Trend Bars.
+
+    The values are normalized by the largest absolute MACD/signal/histogram
+    value in the selected view so the MACD overlay can be read as direction and
+    relative momentum strength, not as raw price units.
+    """
+    s = _coerce_1d_series(close).dropna().astype(float).sort_index()
+    out = pd.DataFrame(index=s.index, columns=["MACD", "MACD Signal", "MACD Histogram"], dtype=float)
+    if s.empty or len(s) < 2:
+        return out
+
+    fast = int(max(1, fast))
+    slow = int(max(fast + 1, slow))
+    signal = int(max(1, signal))
+
+    ema_fast = s.ewm(span=fast, adjust=False, min_periods=1).mean()
+    ema_slow = s.ewm(span=slow, adjust=False, min_periods=1).mean()
+    macd = ema_fast - ema_slow
+    sig = macd.ewm(span=signal, adjust=False, min_periods=1).mean()
+    hist = macd - sig
+
+    combo = pd.concat([macd.abs(), sig.abs(), hist.abs()], axis=0).dropna()
+    scale = float(combo.max()) if not combo.empty else np.nan
+    if not np.isfinite(scale) or scale <= 0:
+        scale = 1.0
+
+    out["MACD"] = (macd / scale).clip(-1.0, 1.0)
+    out["MACD Signal"] = (sig / scale).clip(-1.0, 1.0)
+    out["MACD Histogram"] = (hist / scale).clip(-1.0, 1.0)
+    return out
+
 def compute_price_trend_bars(close: pd.Series, view: str = "daily_2w") -> pd.DataFrame:
     """
     Build normalized price-level trend bars.
@@ -4334,18 +4372,23 @@ def compute_price_trend_bars(close: pd.Series, view: str = "daily_2w") -> pd.Dat
             norm_vals.append(float(np.clip(rv / max_down, -1.0, 0.0)) if np.isfinite(max_down) and max_down > 0 else 0.0)
     norm_bar = pd.Series(norm_vals, index=period_close.index, dtype=float)
 
+    macd_norm = _normalized_macd_for_trend_bars(period_close)
+
     out = pd.DataFrame({
         "Period": [idx.strftime(label_fmt) if hasattr(idx, "strftime") else str(idx) for idx in period_close.index],
         "Close": period_close.to_numpy(dtype=float),
         "Change": change.to_numpy(dtype=float),
         "Return %": ret.to_numpy(dtype=float),
         "Trend Bar": norm_bar.to_numpy(dtype=float),
+        "MACD": macd_norm["MACD"].reindex(period_close.index).to_numpy(dtype=float),
+        "MACD Signal": macd_norm["MACD Signal"].reindex(period_close.index).to_numpy(dtype=float),
+        "MACD Histogram": macd_norm["MACD Histogram"].reindex(period_close.index).to_numpy(dtype=float),
     }, index=period_close.index)
     out = out.iloc[1:].copy()
     out["Direction"] = np.where(pd.to_numeric(out["Change"], errors="coerce") >= 0, "Rising", "Falling")
     return out
 
-def plot_price_trend_bars(df: pd.DataFrame, title: str):
+def plot_price_trend_bars(df: pd.DataFrame, title: str, show_macd: bool = True):
     if df is None or df.empty or "Trend Bar" not in df.columns:
         st.info("Not enough data to draw trend bars.")
         return
@@ -4356,10 +4399,22 @@ def plot_price_trend_bars(df: pd.DataFrame, title: str):
 
     fig, ax = plt.subplots(figsize=(12, 4.2))
     colors = ["tab:green" if v >= 0 else "tab:red" for v in vals]
-    ax.bar(x, vals, color=colors, width=0.72)
+    ax.bar(x, vals, color=colors, width=0.72, label="Normalized Price Level")
     ax.axhline(0.0, color="black", linewidth=1.0)
     ax.axhline(0.5, color="tab:green", linewidth=0.8, linestyle="--", alpha=0.45)
     ax.axhline(-0.5, color="tab:red", linewidth=0.8, linestyle="--", alpha=0.45)
+
+    if show_macd:
+        macd_vals = pd.to_numeric(plot_df.get("MACD", pd.Series(index=plot_df.index, dtype=float)), errors="coerce").to_numpy(dtype=float)
+        sig_vals = pd.to_numeric(plot_df.get("MACD Signal", pd.Series(index=plot_df.index, dtype=float)), errors="coerce").to_numpy(dtype=float)
+        hist_vals = pd.to_numeric(plot_df.get("MACD Histogram", pd.Series(index=plot_df.index, dtype=float)), errors="coerce").to_numpy(dtype=float)
+
+        if np.isfinite(macd_vals).any():
+            ax.plot(x, macd_vals, color="tab:blue", linewidth=2.0, marker="o", markersize=3.5, label="Normalized MACD")
+        if np.isfinite(sig_vals).any():
+            ax.plot(x, sig_vals, color="tab:orange", linewidth=1.8, linestyle="--", marker="o", markersize=3.0, label="Normalized MACD Signal")
+        if np.isfinite(hist_vals).any():
+            ax.plot(x, hist_vals, color="tab:purple", linewidth=1.0, alpha=0.55, label="Normalized MACD Histogram")
 
     # Price labels: above positive bars and below negative bars.
     for xi, v, close_val in zip(x, vals, closes):
@@ -4390,6 +4445,8 @@ def plot_price_trend_bars(df: pd.DataFrame, title: str):
     ax.set_xticks(x)
     ax.set_xticklabels(plot_df["Period"].astype(str).tolist(), rotation=45, ha="right")
     ax.grid(True, axis="y", alpha=0.25)
+    if show_macd:
+        ax.legend(loc="upper left", fontsize=8, framealpha=0.85)
 
     # Give the final bar/label room so it is not clipped.
     ax.set_xlim(-0.75, len(plot_df) - 0.25 + max(1.0, len(plot_df) * 0.04))
@@ -4400,7 +4457,7 @@ def _format_price_trend_bars_table(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
     out = df.reset_index(drop=True).copy()
-    for col in ["Close", "Change", "Return %", "Trend Bar"]:
+    for col in ["Close", "Change", "Return %", "Trend Bar", "MACD", "MACD Signal", "MACD Histogram"]:
         if col in out.columns:
             out[col] = pd.to_numeric(out[col], errors="coerce")
     if "Close" in out.columns:
@@ -4411,6 +4468,9 @@ def _format_price_trend_bars_table(df: pd.DataFrame) -> pd.DataFrame:
         out["Return %"] = out["Return %"].map(lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a")
     if "Trend Bar" in out.columns:
         out["Trend Bar"] = out["Trend Bar"].map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
+    for col in ["MACD", "MACD Signal", "MACD Histogram"]:
+        if col in out.columns:
+            out[col] = out[col].map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
     return out
 
 
@@ -5037,10 +5097,16 @@ with tab18:
             index=0 if len(universe) else None,
             key="price_trend_bars_symbol"
         )
+        show_macd_trend_bars = st.checkbox(
+            "Overlay normalized MACD lines",
+            value=True,
+            key="price_trend_bars_show_macd"
+        )
     with c2:
         st.markdown(
             "**How to read it:** green bars show rising-price periods; red bars show falling-price periods. "
-            "Taller bars mean the move was larger relative to the biggest move in that selected view."
+            "Taller bars mean the move was larger relative to the biggest move in that selected view. "
+            "The optional MACD overlay is normalized to the same -1 to +1 scale so you can compare price trend direction with momentum."
         )
 
     close_tb = _real_close_for_trend_bars(trend_bar_symbol)
@@ -5071,17 +5137,17 @@ with tab18:
         daily_4w_df = compute_price_trend_bars(close_tb_live, view="daily_4w")
 
         st.subheader("Monthly View — Last 12 Months")
-        plot_price_trend_bars(monthly_df, f"{trend_bar_symbol} — Monthly Price Trend Bars")
+        plot_price_trend_bars(monthly_df, f"{trend_bar_symbol} — Monthly Price Trend Bars", show_macd=show_macd_trend_bars)
         with st.expander("Monthly values", expanded=False):
             st.dataframe(_format_price_trend_bars_table(monthly_df), use_container_width=True, hide_index=True)
 
         st.subheader("Daily View — Last 2 Weeks")
-        plot_price_trend_bars(daily_2w_df, f"{trend_bar_symbol} — Daily Price Trend Bars, 2 Weeks")
+        plot_price_trend_bars(daily_2w_df, f"{trend_bar_symbol} — Daily Price Trend Bars, 2 Weeks", show_macd=show_macd_trend_bars)
         with st.expander("2-week daily values", expanded=False):
             st.dataframe(_format_price_trend_bars_table(daily_2w_df), use_container_width=True, hide_index=True)
 
         st.subheader("Daily View — Last 4 Weeks")
-        plot_price_trend_bars(daily_4w_df, f"{trend_bar_symbol} — Daily Price Trend Bars, 4 Weeks")
+        plot_price_trend_bars(daily_4w_df, f"{trend_bar_symbol} — Daily Price Trend Bars, 4 Weeks", show_macd=show_macd_trend_bars)
         with st.expander("4-week daily values", expanded=False):
             st.dataframe(_format_price_trend_bars_table(daily_4w_df), use_container_width=True, hide_index=True)
 
