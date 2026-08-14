@@ -6,7 +6,6 @@
 # (UPDATED) NTD panels are less noisy: green/red triangles now appear only after confirmed S/R reversals.
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
 # (NEW) Price Trend Bars tab shows normalized price-level bars plus current +1/-1 daily and monthly extreme tables.
-# (NEW) Price Trend Bars can overlay a normalized RSI + slope momentum trading signal.
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
 # (UPDATED) Removed hourly Momentum chart, red/green directional PSAR price overlays, and NTD-cross triangles.
 # (UPDATED) Removed Ichimoku Kijun and Supertrend lines from price charts.
@@ -4346,72 +4345,7 @@ def compute_price_trend_bars(close: pd.Series, view: str = "daily_2w") -> pd.Dat
     out["Direction"] = np.where(pd.to_numeric(out["Change"], errors="coerce") >= 0, "Rising", "Falling")
     return out
 
-
-def _periodic_close_for_price_trend_view(close: pd.Series, view: str = "daily_2w") -> pd.Series:
-    """Return the periodic close series used for the selected Price Trend Bars view."""
-    s = _coerce_1d_series(close).dropna().sort_index()
-    if s.empty:
-        return pd.Series(dtype=float)
-
-    if view == "monthly_12m":
-        period_close = s.resample("ME").last().dropna()
-        if period_close.empty:
-            period_close = s.resample("M").last().dropna()
-        return period_close.sort_index()
-
-    return s.sort_index()
-
-def compute_normalized_rsi_slope_signal(close: pd.Series, view: str = "daily_2w") -> pd.DataFrame:
-    """
-    Build a normalized trading overlay for Price Trend Bars.
-
-    This is designed to be more directly useful than MACD on the normalized bar chart:
-      - RSI Pressure shows whether buyers/sellers have momentum.
-      - Slope Momentum shows whether the price path is accelerating up or down.
-      - Trade Signal combines both and is centered on 0.0.
-        Above 0.0 = bullish pressure; below 0.0 = bearish pressure.
-
-    All lines are clipped to the same -1 to +1 scale as the bars.
-    """
-    period_close = _periodic_close_for_price_trend_view(close, view=view)
-    if period_close is None or period_close.empty or len(period_close) < 6:
-        return pd.DataFrame(columns=["RSI Pressure", "Slope Momentum", "Trade Signal", "Trade Bias"])
-
-    # Monthly needs a shorter RSI because only twelve display bars are shown,
-    # but the calculation uses all available monthly history.
-    rsi_period = 6 if view == "monthly_12m" else 14
-    rsi = compute_rsi(period_close, period=int(rsi_period))
-    rsi_pressure = ((rsi - 50.0) / 50.0).clip(-1.0, 1.0)
-
-    slope_window = 4 if view == "monthly_12m" else 8
-    minp = max(3, slope_window // 2)
-
-    def _norm_slope(y):
-        y = pd.Series(y).dropna()
-        if len(y) < 3:
-            return np.nan
-        x = np.arange(len(y), dtype=float)
-        try:
-            m, _ = np.polyfit(x, y.to_numpy(dtype=float), 1)
-            sd = float(y.std())
-            if not np.isfinite(sd) or sd <= 0:
-                return np.nan
-            return float(np.tanh((m * len(y)) / sd / 2.0))
-        except Exception:
-            return np.nan
-
-    slope_momentum = period_close.rolling(slope_window, min_periods=minp).apply(_norm_slope, raw=False).clip(-1.0, 1.0)
-    trade_signal = ((0.55 * rsi_pressure) + (0.45 * slope_momentum)).clip(-1.0, 1.0)
-
-    out = pd.DataFrame({
-        "RSI Pressure": rsi_pressure,
-        "Slope Momentum": slope_momentum,
-        "Trade Signal": trade_signal,
-    }, index=period_close.index)
-    out["Trade Bias"] = np.where(out["Trade Signal"] >= 0, "Bullish", "Bearish")
-    return out
-
-def plot_price_trend_bars(df: pd.DataFrame, title: str, indicator_df: pd.DataFrame = None, show_trade_indicator: bool = False):
+def plot_price_trend_bars(df: pd.DataFrame, title: str):
     if df is None or df.empty or "Trend Bar" not in df.columns:
         st.info("Not enough data to draw trend bars.")
         return
@@ -4422,25 +4356,10 @@ def plot_price_trend_bars(df: pd.DataFrame, title: str, indicator_df: pd.DataFra
 
     fig, ax = plt.subplots(figsize=(12, 4.2))
     colors = ["tab:green" if v >= 0 else "tab:red" for v in vals]
-    ax.bar(x, vals, color=colors, width=0.72, alpha=0.72, label="Price Level Bar")
+    ax.bar(x, vals, color=colors, width=0.72)
     ax.axhline(0.0, color="black", linewidth=1.0)
     ax.axhline(0.5, color="tab:green", linewidth=0.8, linestyle="--", alpha=0.45)
     ax.axhline(-0.5, color="tab:red", linewidth=0.8, linestyle="--", alpha=0.45)
-
-    # Optional trading overlay: RSI pressure + slope momentum, normalized to -1..+1.
-    if show_trade_indicator and indicator_df is not None and not indicator_df.empty:
-        try:
-            overlay = indicator_df.reindex(plot_df.index).copy()
-            rsi_vals = pd.to_numeric(overlay.get("RSI Pressure"), errors="coerce").to_numpy(dtype=float)
-            slope_vals = pd.to_numeric(overlay.get("Slope Momentum"), errors="coerce").to_numpy(dtype=float)
-            signal_vals = pd.to_numeric(overlay.get("Trade Signal"), errors="coerce").to_numpy(dtype=float)
-
-            ax.plot(x, rsi_vals, linewidth=1.5, linestyle=":", label="RSI Pressure")
-            ax.plot(x, slope_vals, linewidth=1.5, linestyle="--", label="Slope Momentum")
-            ax.plot(x, signal_vals, linewidth=2.4, label="Trade Signal")
-            ax.legend(loc="upper left", fontsize=8)
-        except Exception:
-            pass
 
     # Price labels: above positive bars and below negative bars.
     for xi, v, close_val in zip(x, vals, closes):
@@ -4466,7 +4385,7 @@ def plot_price_trend_bars(df: pd.DataFrame, title: str, indicator_df: pd.DataFra
         )
 
     ax.set_ylim(-1.22, 1.22)
-    ax.set_ylabel("Normalized price level / signal")
+    ax.set_ylabel("Normalized price level")
     ax.set_title(title)
     ax.set_xticks(x)
     ax.set_xticklabels(plot_df["Period"].astype(str).tolist(), rotation=45, ha="right")
@@ -4481,7 +4400,7 @@ def _format_price_trend_bars_table(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
     out = df.reset_index(drop=True).copy()
-    for col in ["Close", "Change", "Return %", "Trend Bar", "RSI Pressure", "Slope Momentum", "Trade Signal"]:
+    for col in ["Close", "Change", "Return %", "Trend Bar"]:
         if col in out.columns:
             out[col] = pd.to_numeric(out[col], errors="coerce")
     if "Close" in out.columns:
@@ -4492,9 +4411,6 @@ def _format_price_trend_bars_table(df: pd.DataFrame) -> pd.DataFrame:
         out["Return %"] = out["Return %"].map(lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a")
     if "Trend Bar" in out.columns:
         out["Trend Bar"] = out["Trend Bar"].map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
-    for col in ["RSI Pressure", "Slope Momentum", "Trade Signal"]:
-        if col in out.columns:
-            out[col] = out[col].map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
     return out
 
 
@@ -5124,13 +5040,7 @@ with tab18:
     with c2:
         st.markdown(
             "**How to read it:** green bars show rising-price periods; red bars show falling-price periods. "
-            "Taller bars mean the move was larger relative to the biggest move in that selected view. "
-            "The optional trading overlay adds normalized RSI Pressure, Slope Momentum, and a combined Trade Signal."
-        )
-        show_price_trend_trade_overlay = st.checkbox(
-            "Overlay normalized RSI + slope trading signal",
-            value=True,
-            key="price_trend_show_rsi_slope_overlay"
+            "Taller bars mean the move was larger relative to the biggest move in that selected view."
         )
 
     close_tb = _real_close_for_trend_bars(trend_bar_symbol)
@@ -5160,43 +5070,20 @@ with tab18:
         daily_2w_df = compute_price_trend_bars(close_tb_live, view="daily_2w")
         daily_4w_df = compute_price_trend_bars(close_tb_live, view="daily_4w")
 
-        monthly_indicator_df = compute_normalized_rsi_slope_signal(close_tb, view="monthly_12m")
-        daily_2w_indicator_df = compute_normalized_rsi_slope_signal(close_tb_live, view="daily_2w")
-        daily_4w_indicator_df = compute_normalized_rsi_slope_signal(close_tb_live, view="daily_4w")
-
-        monthly_table_df = monthly_df.join(monthly_indicator_df, how="left") if monthly_df is not None and not monthly_df.empty else monthly_df
-        daily_2w_table_df = daily_2w_df.join(daily_2w_indicator_df, how="left") if daily_2w_df is not None and not daily_2w_df.empty else daily_2w_df
-        daily_4w_table_df = daily_4w_df.join(daily_4w_indicator_df, how="left") if daily_4w_df is not None and not daily_4w_df.empty else daily_4w_df
-
         st.subheader("Monthly View — Last 12 Months")
-        plot_price_trend_bars(
-            monthly_df,
-            f"{trend_bar_symbol} — Monthly Price Trend Bars",
-            indicator_df=monthly_indicator_df,
-            show_trade_indicator=show_price_trend_trade_overlay,
-        )
+        plot_price_trend_bars(monthly_df, f"{trend_bar_symbol} — Monthly Price Trend Bars")
         with st.expander("Monthly values", expanded=False):
-            st.dataframe(_format_price_trend_bars_table(monthly_table_df), use_container_width=True, hide_index=True)
+            st.dataframe(_format_price_trend_bars_table(monthly_df), use_container_width=True, hide_index=True)
 
         st.subheader("Daily View — Last 2 Weeks")
-        plot_price_trend_bars(
-            daily_2w_df,
-            f"{trend_bar_symbol} — Daily Price Trend Bars, 2 Weeks",
-            indicator_df=daily_2w_indicator_df,
-            show_trade_indicator=show_price_trend_trade_overlay,
-        )
+        plot_price_trend_bars(daily_2w_df, f"{trend_bar_symbol} — Daily Price Trend Bars, 2 Weeks")
         with st.expander("2-week daily values", expanded=False):
-            st.dataframe(_format_price_trend_bars_table(daily_2w_table_df), use_container_width=True, hide_index=True)
+            st.dataframe(_format_price_trend_bars_table(daily_2w_df), use_container_width=True, hide_index=True)
 
         st.subheader("Daily View — Last 4 Weeks")
-        plot_price_trend_bars(
-            daily_4w_df,
-            f"{trend_bar_symbol} — Daily Price Trend Bars, 4 Weeks",
-            indicator_df=daily_4w_indicator_df,
-            show_trade_indicator=show_price_trend_trade_overlay,
-        )
+        plot_price_trend_bars(daily_4w_df, f"{trend_bar_symbol} — Daily Price Trend Bars, 4 Weeks")
         with st.expander("4-week daily values", expanded=False):
-            st.dataframe(_format_price_trend_bars_table(daily_4w_table_df), use_container_width=True, hide_index=True)
+            st.dataframe(_format_price_trend_bars_table(daily_4w_df), use_container_width=True, hide_index=True)
 
         st.markdown("---")
         st.subheader("Quick Scanner — Latest Daily Trend Bar")
@@ -5219,18 +5106,6 @@ with tab18:
                 if d4.empty:
                     continue
                 last_row = d4.iloc[-1]
-                d4_signal = compute_normalized_rsi_slope_signal(c_live, view="daily_4w")
-                if d4_signal is not None and not d4_signal.empty:
-                    last_signal_row = d4_signal.reindex(d4.index).iloc[-1]
-                    latest_trade_signal = float(last_signal_row.get("Trade Signal", np.nan))
-                    latest_rsi_pressure = float(last_signal_row.get("RSI Pressure", np.nan))
-                    latest_slope_momentum = float(last_signal_row.get("Slope Momentum", np.nan))
-                    latest_trade_bias = "Bullish" if np.isfinite(latest_trade_signal) and latest_trade_signal >= 0 else "Bearish"
-                else:
-                    latest_trade_signal = np.nan
-                    latest_rsi_pressure = np.nan
-                    latest_slope_momentum = np.nan
-                    latest_trade_bias = "n/a"
 
                 # Monthly extremes use the same current/latest price series so the current
                 # month updates on every refresh instead of waiting for month-end.
@@ -5256,10 +5131,6 @@ with tab18:
                     "Latest Monthly Return %": latest_monthly_ret,
                     "Trend Direction": "Upward" if np.isfinite(tr_slope) and tr_slope >= 0 else "Downward",
                     "Trend Slope": float(tr_slope) if np.isfinite(tr_slope) else np.nan,
-                    "Trade Bias": latest_trade_bias,
-                    "Trade Signal": latest_trade_signal,
-                    "RSI Pressure": latest_rsi_pressure,
-                    "Slope Momentum": latest_slope_momentum,
                     "Last Close": _safe_last_float(c_live),
                     "As Of": live_ts_scan if live_used_scan and pd.notna(live_ts_scan) else c_live.index[-1],
                 })
@@ -5285,9 +5156,6 @@ with tab18:
             fmt_scan["Latest Trend Bar"] = fmt_scan["Latest Trend Bar"].map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
             fmt_scan["Latest Return %"] = fmt_scan["Latest Return %"].map(lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a")
             fmt_scan["Trend Slope"] = fmt_scan["Trend Slope"].map(fmt_slope)
-            for _sig_col in ["Trade Signal", "RSI Pressure", "Slope Momentum"]:
-                if _sig_col in fmt_scan.columns:
-                    fmt_scan[_sig_col] = fmt_scan[_sig_col].map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
             fmt_scan["Last Close"] = fmt_scan["Last Close"].map(fmt_price_val)
             fmt_scan["As Of"] = fmt_scan["As Of"].astype(str)
 
@@ -5297,10 +5165,6 @@ with tab18:
                         "Symbol",
                         "Direction",
                         "Trend Direction",
-                        "Trade Bias",
-                        "Trade Signal",
-                        "RSI Pressure",
-                        "Slope Momentum",
                         "Latest Trend Bar",
                         "Latest Return %",
                         "Trend Slope",
@@ -5324,10 +5188,6 @@ with tab18:
                 "Symbol",
                 "Direction",
                 "Trend Direction",
-                "Trade Bias",
-                "Trade Signal",
-                "RSI Pressure",
-                "Slope Momentum",
                 "Latest Trend Bar",
                 "Latest Return %",
                 "Trend Slope",
@@ -5352,16 +5212,6 @@ with tab18:
                 out_extreme["Latest Return %"] = out_extreme["Latest Return %"].map(
                     lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a"
                 )
-                for _sig_col in ["Trade Signal", "RSI Pressure", "Slope Momentum"]:
-                    if _sig_col in out_extreme.columns:
-                        out_extreme[_sig_col] = out_extreme[_sig_col].map(
-                            lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a"
-                        )
-                for _sig_col in ["Trade Signal", "RSI Pressure", "Slope Momentum"]:
-                    if _sig_col in out_extreme.columns:
-                        out_extreme[_sig_col] = out_extreme[_sig_col].map(
-                            lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a"
-                        )
                 out_extreme["Trend Slope"] = out_extreme["Trend Slope"].map(fmt_slope)
                 out_extreme["Last Close"] = out_extreme["Last Close"].map(fmt_price_val)
                 out_extreme["As Of"] = out_extreme["As Of"].astype(str)
@@ -5404,10 +5254,6 @@ with tab18:
                 "Symbol",
                 "Monthly Direction",
                 "Trend Direction",
-                "Trade Bias",
-                "Trade Signal",
-                "RSI Pressure",
-                "Slope Momentum",
                 "Latest Monthly Trend Bar",
                 "Latest Monthly Return %",
                 "Trend Slope",
