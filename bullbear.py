@@ -4453,23 +4453,92 @@ def fetch_hist_volume(symbol: str) -> pd.Series:
     except Exception:
         return pd.Series(dtype=float)
 
-def _real_volume_for_trend_bars(symbol: str) -> pd.Series:
-    """Return daily volume series for Volume Trend Bars."""
+def _is_forex_symbol(symbol: str) -> bool:
+    try:
+        return str(symbol).upper().endswith("=X")
+    except Exception:
+        return False
+
+def _has_real_reported_volume(symbol: str) -> bool:
+    """True when Yahoo provides non-zero, varying reported volume for this symbol."""
     try:
         vol = fetch_hist_volume(symbol)
-        vol = _coerce_1d_series(vol).dropna().sort_index()
-        if not vol.empty:
-            return vol
+        vol = _coerce_1d_series(vol).replace([np.inf, -np.inf], np.nan).dropna()
+        vol = vol.loc[vol > 0]
+        return len(vol) >= 30 and float(vol.max()) > float(vol.min())
+    except Exception:
+        return False
+
+def _activity_proxy_for_trend_bars(symbol: str) -> pd.Series:
+    """
+    Build a daily activity proxy when reported volume is missing/zero.
+
+    Yahoo Finance commonly reports no usable volume for spot forex pairs. For those symbols
+    the Volume Trend Bars tab uses daily True Range converted to pips as a tradable
+    activity proxy. This keeps the view useful for forex without inventing volume.
+    """
+    try:
+        ohlc = fetch_hist_ohlc(symbol)
+        if ohlc is None or ohlc.empty or not {"High", "Low", "Close"}.issubset(ohlc.columns):
+            return pd.Series(dtype=float)
+        df = ohlc[["High", "Low", "Close"]].apply(pd.to_numeric, errors="coerce").dropna().sort_index()
+        if df.empty or len(df) < 30:
+            return pd.Series(dtype=float)
+
+        prev_close = df["Close"].shift()
+        tr = pd.concat(
+            [
+                (df["High"] - df["Low"]).abs(),
+                (df["High"] - prev_close).abs(),
+                (df["Low"] - prev_close).abs(),
+            ],
+            axis=1
+        ).max(axis=1)
+
+        pip = pip_size_for_symbol(symbol)
+        if pip is not None and pip > 0:
+            tr = tr / pip
+        tr = _coerce_1d_series(tr).replace([np.inf, -np.inf], np.nan).dropna()
+        tr = tr.loc[tr > 0]
+        return _ensure_pacific_index(tr).sort_index()
+    except Exception:
+        return pd.Series(dtype=float)
+
+def _volume_trend_source_label(symbol: str) -> str:
+    if _has_real_reported_volume(symbol):
+        return "Reported Volume"
+    if _is_forex_symbol(symbol):
+        return "Forex Activity Proxy (daily true range in pips)"
+    return "Activity Proxy"
+
+def _real_volume_for_trend_bars(symbol: str) -> pd.Series:
+    """
+    Return the series used by Volume Trend Bars.
+
+    Uses real reported volume when available. If volume is missing/zero, uses a
+    price-range activity proxy so forex pairs can still display meaningful bars.
+    """
+    try:
+        vol = fetch_hist_volume(symbol)
+        vol = _coerce_1d_series(vol).replace([np.inf, -np.inf], np.nan).dropna().sort_index()
+        real_vol = vol.loc[vol > 0]
+        if len(real_vol) >= 30 and float(real_vol.max()) > float(real_vol.min()):
+            return real_vol
     except Exception:
         pass
+
+    proxy = _activity_proxy_for_trend_bars(symbol)
+    if proxy is not None and not proxy.empty:
+        return proxy
     return pd.Series(dtype=float)
 
 def _with_current_day_volume_for_trend_bars(symbol: str, volume: pd.Series):
     """
-    Add/replace the current trading day's volume with the latest intraday accumulated volume.
+    Add/replace the current trading day's value.
 
-    For stock/ETF symbols this gives an updating current-day volume bar. Some forex
-    feeds report zero/no volume; in that case the original daily volume series is returned.
+    For symbols with real volume, this uses latest intraday accumulated volume.
+    For forex/no-volume symbols, this uses current-day intraday range activity
+    converted to pips so the current bar updates on every refresh.
     """
     base = _coerce_1d_series(volume).dropna().sort_index()
     if base.empty:
@@ -4478,17 +4547,28 @@ def _with_current_day_volume_for_trend_bars(symbol: str, volume: pd.Series):
     try:
         live_df = fetch_intraday(symbol, period="1d")
         live_df = _flatten_yf_columns(live_df, ticker=symbol)
-        if live_df is None or live_df.empty or "Volume" not in live_df.columns:
+        if live_df is None or live_df.empty:
             return base, _safe_last_float(base), base.index[-1], False
 
-        live_vol = _coerce_1d_series(live_df["Volume"]).replace([np.inf, -np.inf], np.nan).dropna()
-        if live_vol.empty:
-            return base, _safe_last_float(base), base.index[-1], False
+        live_df = _ensure_pacific_index(live_df).sort_index()
+        live_ts = live_df.index[-1]
+        current_day_value = float("nan")
 
-        live_vol = _ensure_pacific_index(live_vol).sort_index()
-        live_ts = live_vol.index[-1]
-        current_day_volume = float(live_vol.sum())
-        if not np.isfinite(current_day_volume) or current_day_volume <= 0:
+        use_real_volume = _has_real_reported_volume(symbol) and "Volume" in live_df.columns
+        if use_real_volume:
+            live_vol = _coerce_1d_series(live_df["Volume"]).replace([np.inf, -np.inf], np.nan).dropna()
+            current_day_value = float(live_vol.sum()) if not live_vol.empty else float("nan")
+
+        if (not np.isfinite(current_day_value) or current_day_value <= 0) and {"High", "Low"}.issubset(live_df.columns):
+            live_high = pd.to_numeric(live_df["High"], errors="coerce").dropna()
+            live_low = pd.to_numeric(live_df["Low"], errors="coerce").dropna()
+            if not live_high.empty and not live_low.empty:
+                current_day_value = float(live_high.max() - live_low.min())
+                pip = pip_size_for_symbol(symbol)
+                if pip is not None and pip > 0:
+                    current_day_value = current_day_value / pip
+
+        if not np.isfinite(current_day_value) or current_day_value <= 0:
             return base, _safe_last_float(base), base.index[-1], False
 
         out = base.copy()
@@ -4507,10 +4587,10 @@ def _with_current_day_volume_for_trend_bars(symbol: str, volume: pd.Series):
                 current_day_idx = current_day_idx.tz_localize(PACIFIC)
         except Exception:
             pass
-        out.loc[current_day_idx] = current_day_volume
+        out.loc[current_day_idx] = current_day_value
         out = out.sort_index()
 
-        return out, current_day_volume, live_ts, True
+        return out, current_day_value, live_ts, True
     except Exception:
         return base, _safe_last_float(base), base.index[-1], False
 
@@ -5552,9 +5632,9 @@ with tab18:
 with tab19:
     st.header("Volume Trend Bars")
     st.caption(
-        "Shows normalized positive and negative volume bars. "
-        "Bars range from 0 to +1 when volume is rising relative to the selected view and from 0 to -1 when volume is falling. "
-        "Monthly view uses the last 12 monthly volume totals; daily views use recent real trading bars plus the current-day live/intraday accumulated volume when available."
+        "Shows normalized positive and negative volume/activity bars. "
+        "Bars range from 0 to +1 when the selected measure is rising relative to the selected view and from 0 to -1 when it is falling. "
+        "For stocks/ETFs this uses reported volume. For forex pairs, Yahoo often reports zero volume, so the tab uses daily true-range activity in pips instead."
     )
 
     c1, c2 = st.columns([1, 2])
@@ -5567,20 +5647,24 @@ with tab19:
         )
     with c2:
         st.markdown(
-            "**How to read it:** green bars show periods where volume rose versus the prior period; red bars show periods where volume fell. "
-            "The height shows where the current volume sits between the selected view's low and high volume levels."
+            "**How to read it:** green bars show periods where volume/activity rose versus the prior period; red bars show periods where it fell. "
+            "The height shows where the current value sits between the selected view's low and high levels. "
+            "For forex, the measure is a range/activity proxy in pips because spot forex volume is usually unavailable from Yahoo Finance."
         )
 
+    volume_source_label_tb = _volume_trend_source_label(volume_trend_symbol)
     volume_tb = _real_volume_for_trend_bars(volume_trend_symbol)
     volume_tb_live, live_volume_tb, live_volume_ts_tb, live_volume_used_tb = _with_current_day_volume_for_trend_bars(
         volume_trend_symbol,
         volume_tb
     )
 
+    st.caption(f"Current data source: **{volume_source_label_tb}**")
+
     if volume_tb_live is None or volume_tb_live.empty or len(volume_tb_live) < 30 or not _has_volume_to_plot(volume_tb_live):
         st.warning(
-            "Not enough usable volume history is available for this symbol. "
-            "Some forex symbols from Yahoo Finance report zero or no volume; stocks/ETFs generally work better for volume views."
+            "Not enough usable volume/activity history is available for this symbol. "
+            "For forex, the app now falls back to a true-range activity proxy in pips when reported volume is unavailable."
         )
     else:
         latest_volume_tb = _safe_last_float(volume_tb_live)
@@ -5590,7 +5674,7 @@ with tab19:
         live_volume_note_tb = ""
         if live_volume_used_tb and pd.notna(live_volume_ts_tb):
             live_volume_note_tb = (
-                f" • Current-day live/accumulated volume: **{_format_volume_value(live_volume_tb)}** "
+                f" • Current-day live value: **{_format_volume_value(live_volume_tb)}** "
                 f"as of **{live_volume_ts_tb.strftime('%Y-%m-%d %H:%M PST')}**"
             )
         st.info(
@@ -5663,6 +5747,7 @@ with tab19:
                     "Latest Monthly Change %": latest_monthly_volume_change_pct,
                     "Volume Trend Direction": "Upward" if np.isfinite(v_slope) and v_slope >= 0 else "Downward",
                     "Volume Slope": float(v_slope) if np.isfinite(v_slope) else np.nan,
+                    "Data Source": _volume_trend_source_label(sym),
                     "Last Volume": _safe_last_float(v_live),
                     "As Of": live_volume_ts_scan if live_volume_used_scan and pd.notna(live_volume_ts_scan) else v_live.index[-1],
                 })
@@ -5691,6 +5776,7 @@ with tab19:
                 "Latest Volume Bar",
                 "Latest Change %",
                 "Volume Slope",
+                "Data Source",
                 "Last Volume",
                 "As Of",
             ]
@@ -5785,6 +5871,7 @@ with tab19:
                 "Latest Monthly Volume Bar",
                 "Latest Monthly Change %",
                 "Volume Slope",
+                "Data Source",
                 "Last Volume",
                 "As Of",
             ]
