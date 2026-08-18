@@ -1,5 +1,6 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # (FOCUSED VERSION) Only shows Original Forecast, Bull vs Bears, Price Trend Bars, and Volume Trend Bars.
+# (UPDATED) Monthly Price Trend Bars now use the live/current-day price for the current month.
 # (UPDATED) Price Trend Bars daily views include current-day live price and labels each bar with price.
 # (NEW) Volume Trend Bars show normalized monthly/daily volume bars with current-day live volume and extremes.
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
@@ -5335,7 +5336,7 @@ with tab18:
     st.caption(
         "Shows normalized positive and negative price-movement bars. "
         "Bars range from 0 to +1 when price is rising and from 0 to -1 when price is falling. "
-        "Monthly view uses the last 12 completed monthly moves; daily views use recent real trading bars plus the current-day live price. Each bar is labeled with the closing price for that period."
+        "Monthly view uses the last 12 monthly moves and updates the current month with the latest/current-day price; daily views use recent real trading bars plus the current-day live price. Each bar is labeled with the closing price for that period."
     )
 
     c1, c2 = st.columns([1, 2])
@@ -5375,7 +5376,9 @@ with tab18:
             f"{live_note_tb}"
         )
 
-        monthly_df = compute_price_trend_bars(close_tb, view="monthly_12m")
+        # Use close_tb_live here so the current month is updated with the latest
+        # intraday/current-day price instead of waiting for the final month-end close.
+        monthly_df = compute_price_trend_bars(close_tb_live, view="monthly_12m")
         daily_2w_df = compute_price_trend_bars(close_tb_live, view="daily_2w")
         daily_4w_df = compute_price_trend_bars(close_tb_live, view="daily_4w")
 
