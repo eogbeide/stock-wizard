@@ -1,6 +1,7 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # (FOCUSED VERSION) Only shows Original Forecast, Bull vs Bears, Price Trend Bars, Cumulative Frequency, and Trade Momentum.
 # (UPDATED) CF latest-reading cards use compact font sizing for better readability.
+# (UPDATED) Trade Momentum result tables are collapsible/minimized for cleaner UX.
 # (UPDATED) Price Trend Bars daily views include current-day live price and labels each bar with price.
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (UPDATED) Removed MACD from NTD panels; NTD panels now use a smoothed NPX price overlay.
@@ -6432,11 +6433,12 @@ Use the **Score** to rank candidates, then open the chart and confirm that price
                 "Last Close",
                 "As Of",
             ]
-            st.dataframe(
-                _format_trade_momentum_df(selected_df)[selected_cols],
-                use_container_width=True,
-                hide_index=True
-            )
+            with st.expander("Selected-symbol momentum table", expanded=False):
+                st.dataframe(
+                    _format_trade_momentum_df(selected_df)[selected_cols],
+                    use_container_width=True,
+                    hide_index=True
+                )
 
             try:
                 selected_close = _real_close_for_trend_bars(momentum_symbol_filter)
@@ -6506,22 +6508,31 @@ Use the **Score** to rank candidates, then open the chart and confirm that price
                 "Last Close",
                 "As Of",
             ]
-            st.dataframe(fmt_tm[cols], use_container_width=True, hide_index=True)
+            st.caption(
+                f"Momentum results: {len(tm_df)} total • "
+                f"{int(tm_df['Trade Bias'].isin(['BUY / Bullish', 'BUY Watch']).sum())} BUY/Watch • "
+                f"{int(tm_df['Trade Bias'].isin(['SELL / Bearish', 'SELL Watch']).sum())} SELL/Watch"
+            )
 
-            st.markdown("### BUY / Bullish")
+            with st.expander("All Trade Momentum results", expanded=False):
+                st.dataframe(fmt_tm[cols], use_container_width=True, hide_index=True)
+
             buy_df = tm_df[tm_df["Trade Bias"].isin(["BUY / Bullish", "BUY Watch"])].copy()
-            if buy_df.empty:
-                st.info("No BUY/Bullish candidates found.")
-            else:
-                buy_df = buy_df.sort_values(["Score", "Daily Trend Bar", "Symbol"], ascending=[False, False, True])
-                st.dataframe(_format_trade_momentum_df(buy_df)[cols], use_container_width=True, hide_index=True)
+            buy_count = len(buy_df)
+            with st.expander(f"BUY / Bullish candidates ({buy_count})", expanded=False):
+                if buy_df.empty:
+                    st.info("No BUY/Bullish candidates found.")
+                else:
+                    buy_df = buy_df.sort_values(["Score", "Daily Trend Bar", "Symbol"], ascending=[False, False, True])
+                    st.dataframe(_format_trade_momentum_df(buy_df)[cols], use_container_width=True, hide_index=True)
 
-            st.markdown("### SELL / Bearish")
             sell_df = tm_df[tm_df["Trade Bias"].isin(["SELL / Bearish", "SELL Watch"])].copy()
-            if sell_df.empty:
-                st.info("No SELL/Bearish candidates found.")
-            else:
-                sell_df = sell_df.sort_values(["Score", "Daily Trend Bar", "Symbol"], ascending=[True, True, True])
-                st.dataframe(_format_trade_momentum_df(sell_df)[cols], use_container_width=True, hide_index=True)
+            sell_count = len(sell_df)
+            with st.expander(f"SELL / Bearish candidates ({sell_count})", expanded=False):
+                if sell_df.empty:
+                    st.info("No SELL/Bearish candidates found.")
+                else:
+                    sell_df = sell_df.sort_values(["Score", "Daily Trend Bar", "Symbol"], ascending=[True, True, True])
+                    st.dataframe(_format_trade_momentum_df(sell_df)[cols], use_container_width=True, hide_index=True)
     else:
         st.info("Click **Run Trade Momentum Scan** to rank the current universe.")
