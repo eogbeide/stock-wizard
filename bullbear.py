@@ -4589,6 +4589,179 @@ def _price_trend_cdf_read(latest_bar: float, percentile: float, trend_direction:
         return "Middle range / wait for direction"
     return "Mixed / confirm on chart"
 
+
+def _price_trend_cdf_trade_signal(latest_bar: float,
+                                  percentile: float,
+                                  trend_direction: str,
+                                  direction: str = None) -> dict:
+    """
+    Convert the CF location into a trade-friendly instruction.
+
+    CF is location, not a standalone signal. The instruction combines:
+    - current normalized bar location,
+    - percentile rank in the selected view,
+    - daily trend direction,
+    - latest bar direction/rate-of-change.
+    """
+    try:
+        lb = float(latest_bar)
+        pr = float(percentile)
+    except Exception:
+        lb, pr = np.nan, np.nan
+
+    if not np.isfinite(lb) or not np.isfinite(pr):
+        return {
+            "Trade Bias": "WAIT",
+            "Symbol": "⏳",
+            "Instruction": "Not enough CF data. Wait.",
+            "Action Zone": "No signal",
+            "Score": 0,
+        }
+
+    trend_up = str(trend_direction) == "Upward"
+    trend_down = str(trend_direction) == "Downward"
+    dir_text = str(direction or "")
+    rising = dir_text.lower().startswith("ris") or lb > 0
+    falling = dir_text.lower().startswith("fall") or lb < 0
+
+    score = 0
+    score += 2 if trend_up else -2
+    score += 2 if lb > 0 else -2
+    score += 1 if rising else (-1 if falling else 0)
+    score += 1 if pr >= 55 else (-1 if pr <= 45 else 0)
+
+    if trend_up and lb > 0 and rising and pr < 85:
+        if pr <= 35:
+            bias = "BUY Watch"
+            symbol = "🟢"
+            instruction = "BUY WATCH — early recovery from a low/mid CF area. Wait for a green bar or pullback hold before entry."
+            zone = "Early bullish recovery"
+        else:
+            bias = "BUY / Bullish"
+            symbol = "🟢▲"
+            instruction = "BUY / BULLISH — upward trend and CF pressure are aligned. Prefer pullback entries; avoid chasing if price is extended."
+            zone = "Bullish alignment"
+    elif trend_up and lb <= -0.5:
+        bias = "BUY Watch"
+        symbol = "🟡▲"
+        instruction = "BUY WATCH — pullback inside an upward trend. Wait for CF/bar to turn upward before entry."
+        zone = "Bullish pullback watch"
+        score += 1
+    elif trend_down and lb < 0 and falling and pr > 15:
+        if pr >= 65:
+            bias = "SELL Watch"
+            symbol = "🔴"
+            instruction = "SELL WATCH — weakening from a high/mid CF area. Wait for rejection or a red continuation bar."
+            zone = "Early bearish rollover"
+        else:
+            bias = "SELL / Bearish"
+            symbol = "🔴▼"
+            instruction = "SELL / BEARISH — downward trend and CF pressure are aligned. Prefer shorts after rejection or breakdown confirmation."
+            zone = "Bearish alignment"
+    elif trend_down and lb >= 0.5:
+        bias = "SELL Watch"
+        symbol = "🟡▼"
+        instruction = "SELL WATCH — bounce inside a downward trend. Wait for CF/bar to roll over before entry."
+        zone = "Bearish bounce watch"
+        score -= 1
+    elif pr >= 85:
+        bias = "WAIT / Take Profit"
+        symbol = "⚠️"
+        instruction = "WAIT / TAKE PROFIT — CF is in the upper extreme. Avoid chasing; wait for pullback or confirmed continuation."
+        zone = "Upper extreme"
+    elif pr <= 15:
+        bias = "WAIT / Reversal Watch"
+        symbol = "⚠️"
+        instruction = "WAIT / REVERSAL WATCH — CF is in the lower extreme. Do not buy blindly; wait for a bullish turn."
+        zone = "Lower extreme"
+    else:
+        bias = "WAIT"
+        symbol = "⏳"
+        instruction = "WAIT — mixed CF and trend signals. Let price confirm direction first."
+        zone = "Neutral/mixed"
+
+    return {
+        "Trade Bias": bias,
+        "Symbol": symbol,
+        "Instruction": instruction,
+        "Action Zone": zone,
+        "Score": int(score),
+    }
+
+
+def _cf_trade_row_for_symbol(symbol: str, view: str = "daily_4w") -> dict:
+    """Build one Cumulative Frequency scanner row with BUY/SELL instructions."""
+    try:
+        close = _real_close_for_trend_bars(symbol)
+        close_live, live_price, live_ts, live_used = _with_current_day_price_for_trend_bars(symbol, close)
+        if close_live is None or close_live.empty or len(close_live) < 30:
+            return None
+
+        df = compute_price_trend_bars(close_live, view=view)
+        if df is None or df.empty:
+            return None
+
+        latest = df.iloc[-1]
+        latest_bar = float(latest["Trend Bar"])
+        pct_rank = _price_trend_percentile_rank(df)
+        latest_change = float(latest["Change"]) if "Change" in df.columns else np.nan
+        direction = "Rising" if np.isfinite(latest_change) and latest_change >= 0 else "Falling"
+
+        _, tr_slope = slope_line(close_live, lookback=min(int(slope_lb_daily), len(close_live)))
+        trend_direction = "Upward" if np.isfinite(tr_slope) and tr_slope >= 0 else "Downward"
+        signal = _price_trend_cdf_trade_signal(
+            latest_bar=latest_bar,
+            percentile=pct_rank,
+            trend_direction=trend_direction,
+            direction=direction
+        )
+
+        return {
+            "Symbol": symbol,
+            "Trade Symbol": signal["Symbol"],
+            "Trade Bias": signal["Trade Bias"],
+            "Action Zone": signal["Action Zone"],
+            "Instruction": signal["Instruction"],
+            "Score": signal["Score"],
+            "Trend Direction": trend_direction,
+            "CF Direction": direction,
+            "Latest Trend Bar": latest_bar,
+            "CF Percentile": pct_rank,
+            "Latest Return %": float(latest["Return %"]) if "Return %" in df.columns else np.nan,
+            "Trend Slope": float(tr_slope) if np.isfinite(tr_slope) else np.nan,
+            "Last Close": _safe_last_float(close_live),
+            "As Of": live_ts if live_used and pd.notna(live_ts) else close_live.index[-1],
+        }
+    except Exception:
+        return None
+
+
+def _format_cf_trade_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Format Cumulative Frequency trade-instruction tables."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy()
+    if "Latest Trend Bar" in out.columns:
+        out["Latest Trend Bar"] = out["Latest Trend Bar"].map(
+            lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a"
+        )
+    if "CF Percentile" in out.columns:
+        out["CF Percentile"] = out["CF Percentile"].map(
+            lambda x: f"{float(x):.1f}%" if np.isfinite(float(x)) else "n/a"
+        )
+    if "Latest Return %" in out.columns:
+        out["Latest Return %"] = out["Latest Return %"].map(
+            lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a"
+        )
+    if "Trend Slope" in out.columns:
+        out["Trend Slope"] = out["Trend Slope"].map(fmt_slope)
+    if "Last Close" in out.columns:
+        out["Last Close"] = out["Last Close"].map(fmt_price_val)
+    if "As Of" in out.columns:
+        out["As Of"] = out["As Of"].astype(str)
+    return out
+
+
 def plot_price_trend_cumulative_frequency(df: pd.DataFrame, title: str):
     if df is None or df.empty or "Trend Bar" not in df.columns:
         st.info("Not enough data to draw the cumulative frequency curve.")
@@ -4781,7 +4954,7 @@ def _format_price_trend_cdf_observation_table(obs_df: pd.DataFrame) -> pd.DataFr
     return out[[c for c in display_cols if c in out.columns]]
 
 def render_cdf_latest_reading_box(symbol: str, view_label: str, source_df: pd.DataFrame, trend_direction: str):
-    """Show the latest price/time/percentile context immediately above the CF chart."""
+    """Show the latest price/time/percentile context and trade instruction above the CF chart."""
     obs = compute_price_trend_cdf_observations(source_df, trend_direction=trend_direction)
     if obs is None or obs.empty:
         st.info("No price/time cumulative-frequency details available for this view.")
@@ -4794,16 +4967,25 @@ def render_cdf_latest_reading_box(symbol: str, view_label: str, source_df: pd.Da
     latest_direction = str(latest.get("Direction", "n/a"))
     latest_time = str(latest.get("Date/Time", latest.get("Period", "n/a")))
     latest_read = str(latest.get("Trading Read", "n/a"))
+    cf_signal = _price_trend_cdf_trade_signal(
+        latest_bar=latest_bar,
+        percentile=latest_pct,
+        trend_direction=trend_direction,
+        direction=latest_direction
+    )
 
     st.markdown(f"**Latest CF reading — {symbol} ({view_label})**")
-    m1, m2, m3, m4, m5 = st.columns(5)
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
     m1.metric("As of", latest_time)
     m2.metric("Close Price", fmt_price_val(latest_close))
     m3.metric("CF Percentile", f"{latest_pct:.1f}%" if np.isfinite(latest_pct) else "n/a")
     m4.metric("Trend Bar", f"{latest_bar:+.3f}" if np.isfinite(latest_bar) else "n/a")
     m5.metric("Direction", latest_direction)
-    st.caption(f"Trading read: **{latest_read}**")
+    m6.metric("Trade", f"{cf_signal['Symbol']} {cf_signal['Trade Bias']}")
+    st.info(f"**Instruction:** {cf_signal['Instruction']}")
+    st.caption(f"Trading read: **{latest_read}** • Action zone: **{cf_signal['Action Zone']}** • Score: **{cf_signal['Score']}**")
     return obs
+
 
 def _trade_momentum_score_for_symbol(symbol: str) -> dict:
     """
@@ -5843,6 +6025,14 @@ Use the current percentile to understand where price sits inside its recent dist
 
 **Cleaner SELL setup:** CF is falling from high/mid range, Trade Momentum is **SELL Watch** or **SELL / Bearish**, and Price Trend Bars are turning red.
 
+**Trade symbols used in this tab:**
+- 🟢▲ = BUY / Bullish alignment
+- 🟡▲ = BUY Watch / bullish pullback watch
+- 🔴▼ = SELL / Bearish alignment
+- 🟡▼ = SELL Watch / bearish bounce watch
+- ⚠️ = extreme zone; manage risk or wait for confirmation
+- ⏳ = WAIT
+
 A very high CF can mean strength or overextension. A very low CF can mean weakness or a bounce zone. Always use momentum and price confirmation.
 """)
 
@@ -6024,6 +6214,78 @@ A very high CF can mean strength or overextension. A very low CF can mean weakne
                 use_container_width=True,
                 hide_index=True
             )
+
+            st.markdown("### CF Buy/Sell Instructions")
+            st.caption(
+                "Uses the latest daily 4-week CF reading to classify each symbol into BUY, SELL, Watch, or WAIT. "
+                "This mirrors the Trade Momentum workflow but focuses on CF location plus current trend direction."
+            )
+            cf_trade_df = pd.DataFrame([r for r in (_cf_trade_row_for_symbol(sym, view="daily_4w") for sym in universe) if r is not None])
+            if cf_trade_df.empty:
+                st.info("No CF Buy/Sell instruction rows available.")
+            else:
+                cf_bias_order = {
+                    "BUY / Bullish": 0,
+                    "BUY Watch": 1,
+                    "WAIT": 2,
+                    "WAIT / Take Profit": 3,
+                    "WAIT / Reversal Watch": 4,
+                    "SELL Watch": 5,
+                    "SELL / Bearish": 6,
+                }
+                cf_trade_df["_bias_order"] = cf_trade_df["Trade Bias"].map(cf_bias_order).fillna(9)
+                cf_trade_df["_abs_score"] = pd.to_numeric(cf_trade_df["Score"], errors="coerce").abs()
+                cf_trade_df = cf_trade_df.sort_values(
+                    ["_bias_order", "_abs_score", "Symbol"],
+                    ascending=[True, False, True]
+                ).drop(columns=["_bias_order", "_abs_score"])
+
+                cf_trade_cols = [
+                    "Symbol",
+                    "Trade Symbol",
+                    "Trade Bias",
+                    "Action Zone",
+                    "Instruction",
+                    "Score",
+                    "Trend Direction",
+                    "CF Direction",
+                    "Latest Trend Bar",
+                    "CF Percentile",
+                    "Latest Return %",
+                    "Trend Slope",
+                    "Last Close",
+                    "As Of",
+                ]
+
+                st.dataframe(
+                    _format_cf_trade_df(cf_trade_df)[cf_trade_cols],
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+                st.markdown("#### BUY candidates")
+                cf_buy_df = cf_trade_df[cf_trade_df["Trade Bias"].isin(["BUY / Bullish", "BUY Watch"])].copy()
+                if cf_buy_df.empty:
+                    st.info("No CF BUY candidates found.")
+                else:
+                    cf_buy_df = cf_buy_df.sort_values(["Score", "CF Percentile", "Symbol"], ascending=[False, True, True])
+                    st.dataframe(
+                        _format_cf_trade_df(cf_buy_df)[cf_trade_cols],
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                st.markdown("#### SELL candidates")
+                cf_sell_df = cf_trade_df[cf_trade_df["Trade Bias"].isin(["SELL / Bearish", "SELL Watch"])].copy()
+                if cf_sell_df.empty:
+                    st.info("No CF SELL candidates found.")
+                else:
+                    cf_sell_df = cf_sell_df.sort_values(["Score", "CF Percentile", "Symbol"], ascending=[True, False, True])
+                    st.dataframe(
+                        _format_cf_trade_df(cf_sell_df)[cf_trade_cols],
+                        use_container_width=True,
+                        hide_index=True
+                    )
 
 
 # --- Tab 20: Trade Momentum ---
