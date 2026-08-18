@@ -8,6 +8,7 @@
 # (NEW) Price Trend Bars tab shows normalized price-level bars plus current +1/-1 daily and monthly extreme tables.
 # (NEW) Cumulative Frequency tab replaces the histogram with ECDF curves of normalized price trend bars.
 # (NEW) Trade Momentum tab ranks BUY/SELL/WAIT candidates using price trend bars, percentile, and slope.
+# (UPDATED) Cumulative Frequency and Trade Momentum tabs include built-in trading interpretation guides.
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
 # (UPDATED) Removed hourly Momentum chart, red/green directional PSAR price overlays, and NTD-cross triangles.
 # (UPDATED) Removed Ichimoku Kijun and Supertrend lines from price charts.
@@ -5675,10 +5676,28 @@ with tab19:
     with cf2:
         st.markdown(
             "**How to use it for trading:** use the curve to judge context before acting on the bars. "
-            "When the latest reading is high and the trend is upward, it can support bullish continuation. "
-            "When the latest reading is very high but trend is downward, it may be a resistance/bounce area. "
-            "When the latest reading is very low inside an upward trend, it can flag a pullback watchlist candidate."
+            "CF shows location; Trade Momentum shows direction; Price Trend Bars confirm the move."
         )
+
+    with st.expander("How to trade the Cumulative Frequency chart", expanded=True):
+        st.markdown("""
+**Cumulative Frequency (CF) = location, not a standalone buy/sell signal.**
+
+Use the current percentile to understand where price sits inside its recent distribution:
+
+| CF / Percentile area | Meaning | Trade use |
+|---:|---|---|
+| **0%–20%** | Price is near the lower end of the recent range | Look for reversal/bounce setups; do not buy blindly |
+| **20%–50%** | Price is recovering from the lower range | Good area for early long setups if momentum turns up |
+| **50%–80%** | Price is in the upper half of the range | Trend-following longs can work; avoid chasing late moves |
+| **80%–100%** | Price is extended near the upper range | Consider profit-taking, pullback entries, or rejection shorts |
+
+**Cleaner BUY setup:** CF is rising from low/mid range, Trade Momentum is **BUY Watch** or **BUY / Bullish**, and Price Trend Bars are turning green.
+
+**Cleaner SELL setup:** CF is falling from high/mid range, Trade Momentum is **SELL Watch** or **SELL / Bearish**, and Price Trend Bars are turning red.
+
+A very high CF can mean strength or overextension. A very low CF can mean weakness or a bounce zone. Always use momentum and price confirmation.
+""")
 
     cf_close = _real_close_for_trend_bars(cf_symbol)
     cf_close_live, cf_live_price, cf_live_ts, cf_live_used = _with_current_day_price_for_trend_bars(
@@ -5861,6 +5880,26 @@ with tab20:
         "or breakout confirmation. Look for SELL/Bearish rows when daily and monthly pressure align downward, then enter only "
         "after rejection or breakdown confirmation."
     )
+
+    with st.expander("How to trade the Trade Momentum tab", expanded=True):
+        st.markdown("""
+**Trade Momentum = direction and ranking.**  
+Use it to decide which symbols deserve chart review first. It should not be used as an automatic market order.
+
+| Momentum read | Meaning | Trade use |
+|---|---|---|
+| **BUY / Bullish** | Daily and monthly pressure are aligned upward | Highest-priority long watchlist; enter on pullback hold or breakout confirmation |
+| **BUY Watch** | Conditions are improving but not fully confirmed | Watch for a trigger: green Price Trend Bar, reclaim of support/EMA, or higher close |
+| **WAIT** | Mixed or unclear signals | Skip unless the chart gives a very clean separate setup |
+| **SELL Watch** | Conditions are weakening but not fully confirmed | Watch for rejection, red Price Trend Bar, or breakdown |
+| **SELL / Bearish** | Daily and monthly pressure are aligned downward | Highest-priority short watchlist; enter after rejection or breakdown confirmation |
+
+**Simple long rule:** Momentum is **BUY Watch** or **BUY / Bullish**, CF is rising, and the latest normalized bar is above 0 but not already exhausted at +1.
+
+**Simple short rule:** Momentum is **SELL Watch** or **SELL / Bearish**, CF is falling, and the latest normalized bar is below 0 but not already exhausted at -1.
+
+Use the **Score** to rank candidates, then open the chart and confirm that price is near a reasonable entry zone instead of extended.
+""")
 
     run_trade_scan = st.button("Run Trade Momentum Scan", key="btn_run_trade_momentum_scan")
     if run_trade_scan:
