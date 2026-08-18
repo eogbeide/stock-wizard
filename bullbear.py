@@ -1,13 +1,12 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
-# (FOCUSED VERSION) Only shows Original Forecast, Bull vs Bears, Price Trend Bars, and Volume Trend Bars.
-# (UPDATED) Monthly Price Trend Bars now use the live/current-day price for the current month.
+# (FOCUSED VERSION) Only shows Original Forecast, Bull vs Bears, Price Trend Bars, and Histogram.
 # (UPDATED) Price Trend Bars daily views include current-day live price and labels each bar with price.
-# (NEW) Volume Trend Bars show normalized monthly/daily volume bars with current-day live volume and extremes.
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (UPDATED) Removed MACD from NTD panels; NTD panels now use a smoothed NPX price overlay.
 # (UPDATED) NTD panels are less noisy: green/red triangles now appear only after confirmed S/R reversals.
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
 # (NEW) Price Trend Bars tab shows normalized price-level bars plus current +1/-1 daily and monthly extreme tables.
+# (NEW) Histogram tab replaces the Volume Trend Bars concept with normalized price trend-bar distribution views.
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
 # (UPDATED) Removed hourly Momentum chart, red/green directional PSAR price overlays, and NTD-cross triangles.
 # (UPDATED) Removed Ichimoku Kijun and Supertrend lines from price charts.
@@ -4416,312 +4415,109 @@ def _format_price_trend_bars_table(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
-def _format_volume_value(v: float) -> str:
-    try:
-        val = float(v)
-    except Exception:
-        return "n/a"
-    if not np.isfinite(val):
-        return "n/a"
-    av = abs(val)
-    if av >= 1_000_000_000:
-        return f"{val/1_000_000_000:.2f}B"
-    if av >= 1_000_000:
-        return f"{val/1_000_000:.2f}M"
-    if av >= 1_000:
-        return f"{val/1_000:.1f}K"
-    return f"{val:,.0f}"
-
-@st.cache_data(ttl=120)
-def fetch_hist_volume(symbol: str) -> pd.Series:
-    """Return real daily volume bars without artificial weekend/closure rows."""
-    try:
-        df = yf.download(
-            symbol,
-            start="2018-01-01",
-            end=pd.to_datetime("today"),
-            progress=False,
-            auto_adjust=False
-        )
-        df = _flatten_yf_columns(df, ticker=symbol)
-        if df is None or df.empty or "Volume" not in df.columns:
-            return pd.Series(dtype=float)
-        vol = _coerce_1d_series(df["Volume"]).dropna()
-        vol = vol.replace([np.inf, -np.inf], np.nan).dropna()
-        vol = _ensure_pacific_index(vol).sort_index()
-        # Keep only actual bars with reported volume. This avoids weekend/closure rows.
-        return vol.loc[vol >= 0]
-    except Exception:
-        return pd.Series(dtype=float)
-
-def _is_forex_symbol(symbol: str) -> bool:
-    try:
-        return str(symbol).upper().endswith("=X")
-    except Exception:
-        return False
-
-def _has_real_reported_volume(symbol: str) -> bool:
-    """True when Yahoo provides non-zero, varying reported volume for this symbol."""
-    try:
-        vol = fetch_hist_volume(symbol)
-        vol = _coerce_1d_series(vol).replace([np.inf, -np.inf], np.nan).dropna()
-        vol = vol.loc[vol > 0]
-        return len(vol) >= 30 and float(vol.max()) > float(vol.min())
-    except Exception:
-        return False
-
-def _activity_proxy_for_trend_bars(symbol: str) -> pd.Series:
+def compute_price_trend_histogram(df: pd.DataFrame, bins: int = 10) -> pd.DataFrame:
     """
-    Build a daily activity proxy when reported volume is missing/zero.
+    Build a histogram summary from a Price Trend Bars dataframe.
 
-    Yahoo Finance commonly reports no usable volume for spot forex pairs. For those symbols
-    the Volume Trend Bars tab uses daily True Range converted to pips as a tradable
-    activity proxy. This keeps the view useful for forex without inventing volume.
+    Values are the normalized price-level bars from -1 to +1. This shows where
+    the selected symbol spent most of its time in the chosen view: lower zone,
+    mid/neutral zone, or upper zone.
     """
-    try:
-        ohlc = fetch_hist_ohlc(symbol)
-        if ohlc is None or ohlc.empty or not {"High", "Low", "Close"}.issubset(ohlc.columns):
-            return pd.Series(dtype=float)
-        df = ohlc[["High", "Low", "Close"]].apply(pd.to_numeric, errors="coerce").dropna().sort_index()
-        if df.empty or len(df) < 30:
-            return pd.Series(dtype=float)
+    if df is None or df.empty or "Trend Bar" not in df.columns:
+        return pd.DataFrame(columns=["Bin", "Low", "High", "Count", "Percent"])
+    vals = pd.to_numeric(df["Trend Bar"], errors="coerce").dropna()
+    if vals.empty:
+        return pd.DataFrame(columns=["Bin", "Low", "High", "Count", "Percent"])
 
-        prev_close = df["Close"].shift()
-        tr = pd.concat(
-            [
-                (df["High"] - df["Low"]).abs(),
-                (df["High"] - prev_close).abs(),
-                (df["Low"] - prev_close).abs(),
-            ],
-            axis=1
-        ).max(axis=1)
+    bins = int(max(4, min(20, bins)))
+    edges = np.linspace(-1.0, 1.0, bins + 1)
+    counts, edges = np.histogram(vals.to_numpy(dtype=float), bins=edges)
+    total = int(counts.sum())
 
-        pip = pip_size_for_symbol(symbol)
-        if pip is not None and pip > 0:
-            tr = tr / pip
-        tr = _coerce_1d_series(tr).replace([np.inf, -np.inf], np.nan).dropna()
-        tr = tr.loc[tr > 0]
-        return _ensure_pacific_index(tr).sort_index()
-    except Exception:
-        return pd.Series(dtype=float)
+    rows = []
+    for i, count in enumerate(counts):
+        low = float(edges[i])
+        high = float(edges[i + 1])
+        rows.append({
+            "Bin": f"{low:+.2f} to {high:+.2f}",
+            "Low": low,
+            "High": high,
+            "Count": int(count),
+            "Percent": (float(count) / total * 100.0) if total > 0 else np.nan,
+        })
+    return pd.DataFrame(rows)
 
-def _volume_trend_source_label(symbol: str) -> str:
-    if _has_real_reported_volume(symbol):
-        return "Reported Volume"
-    if _is_forex_symbol(symbol):
-        return "Forex Activity Proxy (daily true range in pips)"
-    return "Activity Proxy"
-
-def _real_volume_for_trend_bars(symbol: str) -> pd.Series:
-    """
-    Return the series used by Volume Trend Bars.
-
-    Uses real reported volume when available. If volume is missing/zero, uses a
-    price-range activity proxy so forex pairs can still display meaningful bars.
-    """
-    try:
-        vol = fetch_hist_volume(symbol)
-        vol = _coerce_1d_series(vol).replace([np.inf, -np.inf], np.nan).dropna().sort_index()
-        real_vol = vol.loc[vol > 0]
-        if len(real_vol) >= 30 and float(real_vol.max()) > float(real_vol.min()):
-            return real_vol
-    except Exception:
-        pass
-
-    proxy = _activity_proxy_for_trend_bars(symbol)
-    if proxy is not None and not proxy.empty:
-        return proxy
-    return pd.Series(dtype=float)
-
-def _with_current_day_volume_for_trend_bars(symbol: str, volume: pd.Series):
-    """
-    Add/replace the current trading day's value.
-
-    For symbols with real volume, this uses latest intraday accumulated volume.
-    For forex/no-volume symbols, this uses current-day intraday range activity
-    converted to pips so the current bar updates on every refresh.
-    """
-    base = _coerce_1d_series(volume).dropna().sort_index()
-    if base.empty:
-        return base, float("nan"), pd.NaT, False
-
-    try:
-        live_df = fetch_intraday(symbol, period="1d")
-        live_df = _flatten_yf_columns(live_df, ticker=symbol)
-        if live_df is None or live_df.empty:
-            return base, _safe_last_float(base), base.index[-1], False
-
-        live_df = _ensure_pacific_index(live_df).sort_index()
-        live_ts = live_df.index[-1]
-        current_day_value = float("nan")
-
-        use_real_volume = _has_real_reported_volume(symbol) and "Volume" in live_df.columns
-        if use_real_volume:
-            live_vol = _coerce_1d_series(live_df["Volume"]).replace([np.inf, -np.inf], np.nan).dropna()
-            current_day_value = float(live_vol.sum()) if not live_vol.empty else float("nan")
-
-        if (not np.isfinite(current_day_value) or current_day_value <= 0) and {"High", "Low"}.issubset(live_df.columns):
-            live_high = pd.to_numeric(live_df["High"], errors="coerce").dropna()
-            live_low = pd.to_numeric(live_df["Low"], errors="coerce").dropna()
-            if not live_high.empty and not live_low.empty:
-                current_day_value = float(live_high.max() - live_low.min())
-                pip = pip_size_for_symbol(symbol)
-                if pip is not None and pip > 0:
-                    current_day_value = current_day_value / pip
-
-        if not np.isfinite(current_day_value) or current_day_value <= 0:
-            return base, _safe_last_float(base), base.index[-1], False
-
-        out = base.copy()
-        if not isinstance(out.index, pd.DatetimeIndex):
-            out.index = pd.to_datetime(out.index, errors="coerce")
-            out = out.loc[out.index.notna()]
-
-        out = _ensure_pacific_index(out).sort_index()
-        live_date = pd.Timestamp(live_ts).date()
-
-        keep_mask = [pd.Timestamp(idx).date() != live_date for idx in out.index]
-        out = out.loc[keep_mask]
-        current_day_idx = pd.Timestamp(live_ts).normalize()
-        try:
-            if current_day_idx.tzinfo is None:
-                current_day_idx = current_day_idx.tz_localize(PACIFIC)
-        except Exception:
-            pass
-        out.loc[current_day_idx] = current_day_value
-        out = out.sort_index()
-
-        return out, current_day_value, live_ts, True
-    except Exception:
-        return base, _safe_last_float(base), base.index[-1], False
-
-def compute_volume_trend_bars(volume: pd.Series, view: str = "daily_2w") -> pd.DataFrame:
-    """
-    Build normalized volume-level trend bars.
-
-    Scale:
-      0.0  = starting volume for the selected view
-      +1.0 = highest volume above the starting volume in the selected view
-      -1.0 = lowest volume below the starting volume in the selected view
-
-    Bar color/direction shows whether volume rose or fell versus the prior selected bar.
-    """
-    s = _coerce_1d_series(volume).replace([np.inf, -np.inf], np.nan).dropna().sort_index()
-    s = s.loc[s >= 0]
-    if s.empty or len(s) < 2:
-        return pd.DataFrame(columns=["Period", "Volume", "Change", "Change %", "Volume Bar", "Direction"])
-
-    if view == "monthly_12m":
-        period_volume = s.resample("ME").sum().dropna()
-        if period_volume.empty:
-            period_volume = s.resample("M").sum().dropna()
-        period_volume = period_volume.iloc[-13:]
-        label_fmt = "%Y-%m"
-    elif view == "daily_4w":
-        period_volume = s.iloc[-21:]
-        label_fmt = "%m-%d"
-    else:
-        period_volume = s.iloc[-11:]
-        label_fmt = "%m-%d"
-
-    if len(period_volume) < 2:
-        return pd.DataFrame(columns=["Period", "Volume", "Change", "Change %", "Volume Bar", "Direction"])
-
-    change = period_volume.diff()
-    change_pct = period_volume.pct_change() * 100.0
-
-    anchor = float(period_volume.iloc[0])
-    rel = period_volume.astype(float) - anchor
-    max_up = float(rel[rel > 0].max()) if (rel > 0).any() else np.nan
-    max_down = float(abs(rel[rel < 0].min())) if (rel < 0).any() else np.nan
-
-    norm_vals = []
-    for rv in rel.to_numpy(dtype=float):
-        if not np.isfinite(rv) or abs(rv) <= 0:
-            norm_vals.append(0.0)
-        elif rv > 0:
-            norm_vals.append(float(np.clip(rv / max_up, 0.0, 1.0)) if np.isfinite(max_up) and max_up > 0 else 0.0)
-        else:
-            norm_vals.append(float(np.clip(rv / max_down, -1.0, 0.0)) if np.isfinite(max_down) and max_down > 0 else 0.0)
-
-    norm_bar = pd.Series(norm_vals, index=period_volume.index, dtype=float)
-
-    out = pd.DataFrame({
-        "Period": [idx.strftime(label_fmt) if hasattr(idx, "strftime") else str(idx) for idx in period_volume.index],
-        "Volume": period_volume.to_numpy(dtype=float),
-        "Change": change.to_numpy(dtype=float),
-        "Change %": change_pct.to_numpy(dtype=float),
-        "Volume Bar": norm_bar.to_numpy(dtype=float),
-    }, index=period_volume.index)
-    out = out.iloc[1:].copy()
-    out["Direction"] = np.where(pd.to_numeric(out["Change"], errors="coerce") >= 0, "Rising", "Falling")
-    return out
-
-def plot_volume_trend_bars(df: pd.DataFrame, title: str):
-    if df is None or df.empty or "Volume Bar" not in df.columns:
-        st.info("Not enough volume data to draw volume bars.")
+def plot_price_trend_histogram(df: pd.DataFrame, title: str, bins: int = 10):
+    if df is None or df.empty or "Trend Bar" not in df.columns:
+        st.info("Not enough data to draw the histogram.")
         return
-    plot_df = df.copy()
-    x = np.arange(len(plot_df), dtype=float)
-    vals = pd.to_numeric(plot_df["Volume Bar"], errors="coerce").fillna(0.0).to_numpy(dtype=float)
-    volumes = pd.to_numeric(plot_df.get("Volume", pd.Series(index=plot_df.index, dtype=float)), errors="coerce").to_numpy(dtype=float)
 
+    vals = pd.to_numeric(df["Trend Bar"], errors="coerce").dropna()
+    if vals.empty:
+        st.info("Not enough normalized bar values to draw the histogram.")
+        return
+
+    bins = int(max(4, min(20, bins)))
+    edges = np.linspace(-1.0, 1.0, bins + 1)
+    counts, edges = np.histogram(vals.to_numpy(dtype=float), bins=edges)
+    centers = (edges[:-1] + edges[1:]) / 2.0
+    widths = np.diff(edges) * 0.86
+
+    latest_val = float(vals.iloc[-1]) if len(vals) else np.nan
     fig, ax = plt.subplots(figsize=(12, 4.2))
-    colors = ["tab:green" if v >= 0 else "tab:red" for v in vals]
-    ax.bar(x, vals, color=colors, width=0.72)
-    ax.axhline(0.0, color="black", linewidth=1.0)
-    ax.axhline(0.5, color="tab:green", linewidth=0.8, linestyle="--", alpha=0.45)
-    ax.axhline(-0.5, color="tab:red", linewidth=0.8, linestyle="--", alpha=0.45)
 
-    # Volume labels: above positive bars and below negative bars.
-    for xi, v, volume_val in zip(x, vals, volumes):
-        if not np.isfinite(volume_val):
+    colors = ["tab:green" if c >= 0 else "tab:red" for c in centers]
+    ax.bar(centers, counts, width=widths, align="center", color=colors, alpha=0.82)
+
+    for cx, count in zip(centers, counts):
+        if int(count) <= 0:
             continue
-        label = _format_volume_value(volume_val)
-        if v >= 0:
-            y_text = min(1.12, v + 0.06)
-            va = "bottom"
-        else:
-            y_text = max(-1.12, v - 0.06)
-            va = "top"
         ax.text(
-            xi,
-            y_text,
-            label,
+            cx,
+            int(count) + max(0.15, counts.max() * 0.03),
+            str(int(count)),
             ha="center",
-            va=va,
-            fontsize=8,
-            rotation=0,
+            va="bottom",
+            fontsize=9,
+            fontweight="bold",
             clip_on=False,
-            bbox=dict(boxstyle="round,pad=0.12", fc="white", ec="none", alpha=0.65),
         )
 
-    ax.set_ylim(-1.22, 1.22)
-    ax.set_ylabel("Normalized volume level")
+    ax.axvline(0.0, color="black", linewidth=1.0)
+    ax.axvline(0.5, color="tab:green", linewidth=0.9, linestyle="--", alpha=0.55)
+    ax.axvline(-0.5, color="tab:red", linewidth=0.9, linestyle="--", alpha=0.55)
+
+    if np.isfinite(latest_val):
+        ax.axvline(latest_val, color="tab:blue", linewidth=2.0, linestyle="-", alpha=0.85)
+        ax.text(
+            latest_val,
+            max(1.0, counts.max() * 0.92),
+            f"Latest {latest_val:+.3f}",
+            ha="center",
+            va="top",
+            fontsize=9,
+            fontweight="bold",
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="tab:blue", alpha=0.85),
+            clip_on=False,
+        )
+
+    ax.set_xlim(-1.08, 1.08)
+    ax.set_ylim(0, max(1.0, counts.max() * 1.18))
     ax.set_title(title)
-    ax.set_xticks(x)
-    ax.set_xticklabels(plot_df["Period"].astype(str).tolist(), rotation=45, ha="right")
+    ax.set_xlabel("Normalized price trend-bar zone")
+    ax.set_ylabel("Number of periods")
     ax.grid(True, axis="y", alpha=0.25)
-    ax.set_xlim(-0.75, len(plot_df) - 0.25 + max(1.0, len(plot_df) * 0.04))
     fig.tight_layout()
     st.pyplot(fig, clear_figure=True)
 
-def _format_volume_trend_bars_table(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
-    out = df.reset_index(drop=True).copy()
-    for col in ["Volume", "Change", "Change %", "Volume Bar"]:
-        if col in out.columns:
-            out[col] = pd.to_numeric(out[col], errors="coerce")
-    if "Volume" in out.columns:
-        out["Volume"] = out["Volume"].map(_format_volume_value)
-    if "Change" in out.columns:
-        out["Change"] = out["Change"].map(lambda x: _format_volume_value(x) if np.isfinite(float(x)) else "n/a")
-    if "Change %" in out.columns:
-        out["Change %"] = out["Change %"].map(lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a")
-    if "Volume Bar" in out.columns:
-        out["Volume Bar"] = out["Volume Bar"].map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
-    return out
+def _format_price_trend_histogram_table(hist_df: pd.DataFrame) -> pd.DataFrame:
+    if hist_df is None or hist_df.empty:
+        return pd.DataFrame(columns=["Bin", "Count", "Percent"])
+    out = hist_df.copy()
+    if "Percent" in out.columns:
+        out["Percent"] = out["Percent"].map(lambda x: f"{float(x):.1f}%" if np.isfinite(float(x)) else "n/a")
+    return out[["Bin", "Count", "Percent"]]
+
 
 
 # --- Session init ---
@@ -4737,7 +4533,7 @@ tab1, tab3, tab18, tab19 = st.tabs([
     "Original Forecast",
     "Bull vs Bears",
     "Price Trend Bars",
-    "Volume Trend Bars"
+    "Histogram"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -5336,7 +5132,7 @@ with tab18:
     st.caption(
         "Shows normalized positive and negative price-movement bars. "
         "Bars range from 0 to +1 when price is rising and from 0 to -1 when price is falling. "
-        "Monthly view uses the last 12 monthly moves and updates the current month with the latest/current-day price; daily views use recent real trading bars plus the current-day live price. Each bar is labeled with the closing price for that period."
+        "Monthly view uses the last 12 completed monthly moves; daily views use recent real trading bars plus the current-day live price. Each bar is labeled with the closing price for that period."
     )
 
     c1, c2 = st.columns([1, 2])
@@ -5376,9 +5172,7 @@ with tab18:
             f"{live_note_tb}"
         )
 
-        # Use close_tb_live here so the current month is updated with the latest
-        # intraday/current-day price instead of waiting for the final month-end close.
-        monthly_df = compute_price_trend_bars(close_tb_live, view="monthly_12m")
+        monthly_df = compute_price_trend_bars(close_tb, view="monthly_12m")
         daily_2w_df = compute_price_trend_bars(close_tb_live, view="daily_2w")
         daily_4w_df = compute_price_trend_bars(close_tb_live, view="daily_4w")
 
@@ -5629,292 +5423,206 @@ with tab18:
                     )
 
 
-
-
-# --- Tab 19: Volume Trend Bars ---
+# --- Tab 19: Histogram ---
 with tab19:
-    st.header("Volume Trend Bars")
+    st.header("Histogram")
     st.caption(
-        "Shows normalized positive and negative volume/activity bars. "
-        "Bars range from 0 to +1 when the selected measure is rising relative to the selected view and from 0 to -1 when it is falling. "
-        "For stocks/ETFs this uses reported volume. For forex pairs, Yahoo often reports zero volume, so the tab uses daily true-range activity in pips instead."
+        "Replaces the Volume Trend Bars view with a histogram of the normalized price trend bars. "
+        "The histogram shows how often the selected symbol has been in each normalized price zone from -1 to +1. "
+        "The blue vertical line marks the latest/current reading."
     )
 
-    c1, c2 = st.columns([1, 2])
-    with c1:
-        volume_trend_symbol = st.selectbox(
+    hc1, hc2 = st.columns([1, 2])
+    with hc1:
+        hist_symbol = st.selectbox(
             "Symbol",
             universe,
             index=0 if len(universe) else None,
-            key="volume_trend_bars_symbol"
+            key="price_trend_histogram_symbol"
         )
-    with c2:
+        hist_bins = st.slider(
+            "Histogram bins",
+            4, 20, 10, 1,
+            key="price_trend_histogram_bins"
+        )
+    with hc2:
         st.markdown(
-            "**How to read it:** green bars show periods where volume/activity rose versus the prior period; red bars show periods where it fell. "
-            "The height shows where the current value sits between the selected view's low and high levels. "
-            "For forex, the measure is a range/activity proxy in pips because spot forex volume is usually unavailable from Yahoo Finance."
+            "**How to read it:** bars on the right side of zero show the symbol spent more periods above the selected "
+            "view's starting price; bars on the left side show periods below the starting price. "
+            "A cluster near +1 means price has spent more time near the high end of the selected view. "
+            "A cluster near -1 means price has spent more time near the low end."
         )
 
-    volume_source_label_tb = _volume_trend_source_label(volume_trend_symbol)
-    volume_tb = _real_volume_for_trend_bars(volume_trend_symbol)
-    volume_tb_live, live_volume_tb, live_volume_ts_tb, live_volume_used_tb = _with_current_day_volume_for_trend_bars(
-        volume_trend_symbol,
-        volume_tb
+    hist_close = _real_close_for_trend_bars(hist_symbol)
+    hist_close_live, hist_live_price, hist_live_ts, hist_live_used = _with_current_day_price_for_trend_bars(
+        hist_symbol,
+        hist_close
     )
 
-    st.caption(f"Current data source: **{volume_source_label_tb}**")
-
-    if volume_tb_live is None or volume_tb_live.empty or len(volume_tb_live) < 30 or not _has_volume_to_plot(volume_tb_live):
-        st.warning(
-            "Not enough usable volume/activity history is available for this symbol. "
-            "For forex, the app now falls back to a true-range activity proxy in pips when reported volume is unavailable."
-        )
+    if hist_close_live is None or hist_close_live.empty or len(hist_close_live) < 30:
+        st.warning("Not enough price history available for this symbol.")
     else:
-        latest_volume_tb = _safe_last_float(volume_tb_live)
-        _, volume_trend_bar_slope = slope_line(volume_tb_live, lookback=min(int(slope_lb_daily), len(volume_tb_live)))
-        volume_trend_text_tb = "Upward" if np.isfinite(volume_trend_bar_slope) and volume_trend_bar_slope >= 0 else "Downward"
-        volume_trend_icon_tb = "🟢" if volume_trend_text_tb == "Upward" else "🔴"
-        live_volume_note_tb = ""
-        if live_volume_used_tb and pd.notna(live_volume_ts_tb):
-            live_volume_note_tb = (
-                f" • Current-day live value: **{_format_volume_value(live_volume_tb)}** "
-                f"as of **{live_volume_ts_tb.strftime('%Y-%m-%d %H:%M PST')}**"
-            )
+        latest_hist_close = _safe_last_float(hist_close_live)
+        _, hist_slope = slope_line(hist_close_live, lookback=min(int(slope_lb_daily), len(hist_close_live)))
+        hist_trend_text = "Upward" if np.isfinite(hist_slope) and hist_slope >= 0 else "Downward"
+        hist_trend_icon = "🟢" if hist_trend_text == "Upward" else "🔴"
+
+        hist_live_note = ""
+        if hist_live_used and pd.notna(hist_live_ts):
+            hist_live_note = f" • Live/current price: **{fmt_price_val(hist_live_price)}** as of **{hist_live_ts.strftime('%Y-%m-%d %H:%M PST')}**"
+
         st.info(
-            f"{volume_trend_icon_tb} **Current daily volume trend:** {volume_trend_text_tb} "
-            f"• Latest volume: **{_format_volume_value(latest_volume_tb)}** "
-            f"• Volume slope: **{fmt_slope(volume_trend_bar_slope)} / bar**"
-            f"{live_volume_note_tb}"
+            f"{hist_trend_icon} **Current daily trend:** {hist_trend_text} "
+            f"• Latest daily chart price: **{fmt_price_val(latest_hist_close)}** "
+            f"• Trend slope: **{fmt_slope(hist_slope)} / bar**"
+            f"{hist_live_note}"
         )
 
-        monthly_volume_df = compute_volume_trend_bars(volume_tb_live, view="monthly_12m")
-        daily_volume_2w_df = compute_volume_trend_bars(volume_tb_live, view="daily_2w")
-        daily_volume_4w_df = compute_volume_trend_bars(volume_tb_live, view="daily_4w")
+        hist_monthly_df = compute_price_trend_bars(hist_close_live, view="monthly_12m")
+        hist_daily_2w_df = compute_price_trend_bars(hist_close_live, view="daily_2w")
+        hist_daily_4w_df = compute_price_trend_bars(hist_close_live, view="daily_4w")
 
-        st.subheader("Monthly View — Last 12 Months")
-        plot_volume_trend_bars(monthly_volume_df, f"{volume_trend_symbol} — Monthly Volume Trend Bars")
-        with st.expander("Monthly volume values", expanded=False):
-            st.dataframe(_format_volume_trend_bars_table(monthly_volume_df), use_container_width=True, hide_index=True)
+        st.subheader("Monthly Histogram — Last 12 Months")
+        plot_price_trend_histogram(
+            hist_monthly_df,
+            f"{hist_symbol} — Monthly Price Trend Histogram",
+            bins=hist_bins
+        )
+        with st.expander("Monthly histogram values", expanded=False):
+            st.dataframe(
+                _format_price_trend_histogram_table(compute_price_trend_histogram(hist_monthly_df, bins=hist_bins)),
+                use_container_width=True,
+                hide_index=True
+            )
+        with st.expander("Monthly source bars", expanded=False):
+            st.dataframe(_format_price_trend_bars_table(hist_monthly_df), use_container_width=True, hide_index=True)
 
-        st.subheader("Daily View — Last 2 Weeks")
-        plot_volume_trend_bars(daily_volume_2w_df, f"{volume_trend_symbol} — Daily Volume Trend Bars, 2 Weeks")
-        with st.expander("2-week daily volume values", expanded=False):
-            st.dataframe(_format_volume_trend_bars_table(daily_volume_2w_df), use_container_width=True, hide_index=True)
+        st.subheader("Daily Histogram — Last 2 Weeks")
+        plot_price_trend_histogram(
+            hist_daily_2w_df,
+            f"{hist_symbol} — Daily Price Trend Histogram, 2 Weeks",
+            bins=hist_bins
+        )
+        with st.expander("2-week histogram values", expanded=False):
+            st.dataframe(
+                _format_price_trend_histogram_table(compute_price_trend_histogram(hist_daily_2w_df, bins=hist_bins)),
+                use_container_width=True,
+                hide_index=True
+            )
+        with st.expander("2-week source bars", expanded=False):
+            st.dataframe(_format_price_trend_bars_table(hist_daily_2w_df), use_container_width=True, hide_index=True)
 
-        st.subheader("Daily View — Last 4 Weeks")
-        plot_volume_trend_bars(daily_volume_4w_df, f"{volume_trend_symbol} — Daily Volume Trend Bars, 4 Weeks")
-        with st.expander("4-week daily volume values", expanded=False):
-            st.dataframe(_format_volume_trend_bars_table(daily_volume_4w_df), use_container_width=True, hide_index=True)
+        st.subheader("Daily Histogram — Last 4 Weeks")
+        plot_price_trend_histogram(
+            hist_daily_4w_df,
+            f"{hist_symbol} — Daily Price Trend Histogram, 4 Weeks",
+            bins=hist_bins
+        )
+        with st.expander("4-week histogram values", expanded=False):
+            st.dataframe(
+                _format_price_trend_histogram_table(compute_price_trend_histogram(hist_daily_4w_df, bins=hist_bins)),
+                use_container_width=True,
+                hide_index=True
+            )
+        with st.expander("4-week source bars", expanded=False):
+            st.dataframe(_format_price_trend_bars_table(hist_daily_4w_df), use_container_width=True, hide_index=True)
 
         st.markdown("---")
-        st.subheader("Quick Scanner — Latest Daily Volume Bar")
+        st.subheader("Histogram Zone Scanner — Latest Daily Reading")
         st.caption(
-            "Ranks the current universe by the latest normalized daily volume bar. "
-            "Use this to quickly find symbols with unusually high or low current volume versus the selected 4-week view."
+            "Groups symbols by the latest 4-week normalized price zone. "
+            "This helps quickly identify symbols sitting near the upper, middle, or lower part of their recent range."
         )
 
-        volume_scan_rows = []
-        volume_progress = st.progress(0.0)
-        volume_status = st.empty()
+        zone_rows = []
+        zone_progress = st.progress(0.0)
+        zone_status = st.empty()
         for i, sym in enumerate(universe):
-            volume_status.text(f"Scanning {sym} volume...")
+            zone_status.text(f"Scanning {sym}...")
             try:
-                v = _real_volume_for_trend_bars(sym)
-                v_live, live_volume_scan, live_volume_ts_scan, live_volume_used_scan = _with_current_day_volume_for_trend_bars(sym, v)
-                if v_live is None or v_live.empty or len(v_live) < 30 or not _has_volume_to_plot(v_live):
+                c = _real_close_for_trend_bars(sym)
+                c_live, live_price_zone, live_ts_zone, live_used_zone = _with_current_day_price_for_trend_bars(sym, c)
+                if c_live is None or c_live.empty or len(c_live) < 30:
                     continue
-                d4v = compute_volume_trend_bars(v_live, view="daily_4w")
-                if d4v.empty:
+                d4 = compute_price_trend_bars(c_live, view="daily_4w")
+                if d4 is None or d4.empty:
                     continue
-                last_volume_row = d4v.iloc[-1]
-
-                m12v_live = compute_volume_trend_bars(v_live, view="monthly_12m")
-                if m12v_live is not None and not m12v_live.empty:
-                    last_month_volume_row = m12v_live.iloc[-1]
-                    latest_monthly_volume_bar = float(last_month_volume_row["Volume Bar"])
-                    latest_monthly_volume_change_pct = float(last_month_volume_row["Change %"])
-                    monthly_volume_direction = "Rising" if latest_monthly_volume_bar >= 0 else "Falling"
+                last_row = d4.iloc[-1]
+                latest_bar = float(last_row["Trend Bar"])
+                if latest_bar >= 0.75:
+                    zone = "Upper Extreme"
+                elif latest_bar >= 0.25:
+                    zone = "Upper Zone"
+                elif latest_bar <= -0.75:
+                    zone = "Lower Extreme"
+                elif latest_bar <= -0.25:
+                    zone = "Lower Zone"
                 else:
-                    latest_monthly_volume_bar = np.nan
-                    latest_monthly_volume_change_pct = np.nan
-                    monthly_volume_direction = "n/a"
+                    zone = "Middle/Neutral"
 
-                _, v_slope = slope_line(v_live, lookback=min(int(slope_lb_daily), len(v_live)))
-                volume_scan_rows.append({
+                _, z_slope = slope_line(c_live, lookback=min(int(slope_lb_daily), len(c_live)))
+                zone_rows.append({
                     "Symbol": sym,
-                    "Direction": "Rising" if float(last_volume_row["Volume Bar"]) >= 0 else "Falling",
-                    "Latest Volume Bar": float(last_volume_row["Volume Bar"]),
-                    "Latest Change %": float(last_volume_row["Change %"]),
-                    "Monthly Direction": monthly_volume_direction,
-                    "Latest Monthly Volume Bar": latest_monthly_volume_bar,
-                    "Latest Monthly Change %": latest_monthly_volume_change_pct,
-                    "Volume Trend Direction": "Upward" if np.isfinite(v_slope) and v_slope >= 0 else "Downward",
-                    "Volume Slope": float(v_slope) if np.isfinite(v_slope) else np.nan,
-                    "Data Source": _volume_trend_source_label(sym),
-                    "Last Volume": _safe_last_float(v_live),
-                    "As Of": live_volume_ts_scan if live_volume_used_scan and pd.notna(live_volume_ts_scan) else v_live.index[-1],
+                    "Histogram Zone": zone,
+                    "Trend Direction": "Upward" if np.isfinite(z_slope) and z_slope >= 0 else "Downward",
+                    "Latest Trend Bar": latest_bar,
+                    "Direction": "Rising" if float(last_row["Trend Bar"]) >= 0 else "Falling",
+                    "Latest Return %": float(last_row["Return %"]),
+                    "Trend Slope": float(z_slope) if np.isfinite(z_slope) else np.nan,
+                    "Last Close": _safe_last_float(c_live),
+                    "As Of": live_ts_zone if live_used_zone and pd.notna(live_ts_zone) else c_live.index[-1],
                 })
             except Exception:
                 continue
-            volume_progress.progress((i + 1) / max(1, len(universe)))
-        volume_progress.empty()
-        volume_status.empty()
+            zone_progress.progress((i + 1) / max(1, len(universe)))
+        zone_progress.empty()
+        zone_status.empty()
 
-        volume_scan_df = pd.DataFrame(volume_scan_rows)
-        if volume_scan_df.empty:
-            st.info("No volume scan results available.")
+        zone_df = pd.DataFrame(zone_rows)
+        if zone_df.empty:
+            st.info("No histogram-zone scan results available.")
         else:
-            volume_scan_df["_direction_order"] = volume_scan_df["Direction"].map({"Rising": 0, "Falling": 1}).fillna(2)
-            volume_scan_df["_trend_order"] = volume_scan_df["Volume Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
-            volume_scan_df["_abs_bar"] = pd.to_numeric(volume_scan_df["Latest Volume Bar"], errors="coerce").abs()
-            volume_scan_df = volume_scan_df.sort_values(
-                ["_direction_order", "_trend_order", "_abs_bar", "Symbol"],
+            zone_order = {
+                "Upper Extreme": 0,
+                "Upper Zone": 1,
+                "Middle/Neutral": 2,
+                "Lower Zone": 3,
+                "Lower Extreme": 4,
+            }
+            zone_df["_zone_order"] = zone_df["Histogram Zone"].map(zone_order).fillna(9)
+            zone_df["_trend_order"] = zone_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
+            zone_df["_abs_bar"] = pd.to_numeric(zone_df["Latest Trend Bar"], errors="coerce").abs()
+            zone_df = zone_df.sort_values(
+                ["_zone_order", "_trend_order", "_abs_bar", "Symbol"],
                 ascending=[True, True, False, True]
-            ).drop(columns=["_direction_order", "_trend_order", "_abs_bar"])
+            ).drop(columns=["_zone_order", "_trend_order", "_abs_bar"])
 
-            volume_scan_cols = [
-                "Symbol",
-                "Direction",
-                "Volume Trend Direction",
-                "Latest Volume Bar",
-                "Latest Change %",
-                "Volume Slope",
-                "Data Source",
-                "Last Volume",
-                "As Of",
-            ]
-
-            def _format_volume_extreme_scan(df_extreme: pd.DataFrame, cols=None) -> pd.DataFrame:
-                if cols is None:
-                    cols = volume_scan_cols
-                if df_extreme is None or df_extreme.empty:
-                    return pd.DataFrame(columns=cols)
-                out_extreme = df_extreme.copy()
-                for bar_col in ["Latest Volume Bar", "Latest Monthly Volume Bar"]:
-                    if bar_col in out_extreme.columns:
-                        out_extreme[bar_col] = out_extreme[bar_col].map(
-                            lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a"
-                        )
-                for pct_col in ["Latest Change %", "Latest Monthly Change %"]:
-                    if pct_col in out_extreme.columns:
-                        out_extreme[pct_col] = out_extreme[pct_col].map(
-                            lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a"
-                        )
-                if "Volume Slope" in out_extreme.columns:
-                    out_extreme["Volume Slope"] = out_extreme["Volume Slope"].map(fmt_slope)
-                if "Last Volume" in out_extreme.columns:
-                    out_extreme["Last Volume"] = out_extreme["Last Volume"].map(_format_volume_value)
-                if "As Of" in out_extreme.columns:
-                    out_extreme["As Of"] = out_extreme["As Of"].astype(str)
-                return out_extreme[cols]
+            fmt_zone = zone_df.copy()
+            fmt_zone["Latest Trend Bar"] = fmt_zone["Latest Trend Bar"].map(
+                lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a"
+            )
+            fmt_zone["Latest Return %"] = fmt_zone["Latest Return %"].map(
+                lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a"
+            )
+            fmt_zone["Trend Slope"] = fmt_zone["Trend Slope"].map(fmt_slope)
+            fmt_zone["Last Close"] = fmt_zone["Last Close"].map(fmt_price_val)
+            fmt_zone["As Of"] = fmt_zone["As Of"].astype(str)
 
             st.dataframe(
-                _format_volume_extreme_scan(volume_scan_df, cols=volume_scan_cols),
+                fmt_zone[
+                    [
+                        "Symbol",
+                        "Histogram Zone",
+                        "Trend Direction",
+                        "Latest Trend Bar",
+                        "Direction",
+                        "Latest Return %",
+                        "Trend Slope",
+                        "Last Close",
+                        "As Of",
+                    ]
+                ],
                 use_container_width=True,
                 hide_index=True
             )
 
-            st.markdown("### Current Daily Volume Extremes")
-            st.caption(
-                "These tables isolate symbols whose latest 4-week normalized daily volume bar is currently at "
-                "**+1.000** or **-1.000**. A +1.000 reading means the current/latest volume is the highest level in "
-                "the selected 4-week daily window; a -1.000 reading means it is the lowest level in that window."
-            )
-
-            volume_plus_one_df = volume_scan_df[
-                pd.to_numeric(volume_scan_df["Latest Volume Bar"], errors="coerce") >= 0.999
-            ].copy()
-            volume_minus_one_df = volume_scan_df[
-                pd.to_numeric(volume_scan_df["Latest Volume Bar"], errors="coerce") <= -0.999
-            ].copy()
-
-            col_v_plus, col_v_minus = st.columns(2)
-            with col_v_plus:
-                st.subheader("Volume currently at +1")
-                if volume_plus_one_df.empty:
-                    st.info("No symbols currently at volume +1.000.")
-                else:
-                    volume_plus_one_df["_trend_order"] = volume_plus_one_df["Volume Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
-                    volume_plus_one_df = volume_plus_one_df.sort_values(
-                        ["_trend_order", "Latest Change %", "Symbol"],
-                        ascending=[True, False, True]
-                    ).drop(columns=["_trend_order"])
-                    st.dataframe(
-                        _format_volume_extreme_scan(volume_plus_one_df, cols=volume_scan_cols),
-                        use_container_width=True,
-                        hide_index=True
-                    )
-
-            with col_v_minus:
-                st.subheader("Volume currently at -1")
-                if volume_minus_one_df.empty:
-                    st.info("No symbols currently at volume -1.000.")
-                else:
-                    volume_minus_one_df["_trend_order"] = volume_minus_one_df["Volume Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
-                    volume_minus_one_df = volume_minus_one_df.sort_values(
-                        ["_trend_order", "Latest Change %", "Symbol"],
-                        ascending=[True, True, True]
-                    ).drop(columns=["_trend_order"])
-                    st.dataframe(
-                        _format_volume_extreme_scan(volume_minus_one_df, cols=volume_scan_cols),
-                        use_container_width=True,
-                        hide_index=True
-                    )
-
-            st.markdown("### Current Monthly Volume Extremes")
-            st.caption(
-                "These tables isolate symbols whose latest 12-month normalized monthly volume bar is currently at "
-                "**+1.000** or **-1.000**. The current month uses the latest available/current-day accumulated volume."
-            )
-
-            monthly_volume_extreme_cols = [
-                "Symbol",
-                "Monthly Direction",
-                "Volume Trend Direction",
-                "Latest Monthly Volume Bar",
-                "Latest Monthly Change %",
-                "Volume Slope",
-                "Data Source",
-                "Last Volume",
-                "As Of",
-            ]
-
-            monthly_volume_plus_one_df = volume_scan_df[
-                pd.to_numeric(volume_scan_df["Latest Monthly Volume Bar"], errors="coerce") >= 0.999
-            ].copy()
-            monthly_volume_minus_one_df = volume_scan_df[
-                pd.to_numeric(volume_scan_df["Latest Monthly Volume Bar"], errors="coerce") <= -0.999
-            ].copy()
-
-            col_mv_plus, col_mv_minus = st.columns(2)
-            with col_mv_plus:
-                st.subheader("Monthly volume currently at +1")
-                if monthly_volume_plus_one_df.empty:
-                    st.info("No symbols currently at monthly volume +1.000.")
-                else:
-                    monthly_volume_plus_one_df["_trend_order"] = monthly_volume_plus_one_df["Volume Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
-                    monthly_volume_plus_one_df = monthly_volume_plus_one_df.sort_values(
-                        ["_trend_order", "Latest Monthly Change %", "Symbol"],
-                        ascending=[True, False, True]
-                    ).drop(columns=["_trend_order"])
-                    st.dataframe(
-                        _format_volume_extreme_scan(monthly_volume_plus_one_df, cols=monthly_volume_extreme_cols),
-                        use_container_width=True,
-                        hide_index=True
-                    )
-
-            with col_mv_minus:
-                st.subheader("Monthly volume currently at -1")
-                if monthly_volume_minus_one_df.empty:
-                    st.info("No symbols currently at monthly volume -1.000.")
-                else:
-                    monthly_volume_minus_one_df["_trend_order"] = monthly_volume_minus_one_df["Volume Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
-                    monthly_volume_minus_one_df = monthly_volume_minus_one_df.sort_values(
-                        ["_trend_order", "Latest Monthly Change %", "Symbol"],
-                        ascending=[True, True, True]
-                    ).drop(columns=["_trend_order"])
-                    st.dataframe(
-                        _format_volume_extreme_scan(monthly_volume_minus_one_df, cols=monthly_volume_extreme_cols),
-                        use_container_width=True,
-                        hide_index=True
-                    )
