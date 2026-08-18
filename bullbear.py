@@ -4626,10 +4626,27 @@ def plot_price_trend_cumulative_frequency(df: pd.DataFrame, title: str):
         ax.axvline(latest_val, color="tab:blue", linewidth=2.0, linestyle="-", alpha=0.85)
         ax.axhline(latest_pct, color="tab:blue", linewidth=1.1, linestyle=":", alpha=0.75)
         ax.scatter([latest_val], [latest_pct], s=80, zorder=5, label="Latest")
+        latest_price_text = ""
+        latest_time_text = ""
+        try:
+            if "Close" in df.columns:
+                latest_close_val = float(pd.to_numeric(df["Close"], errors="coerce").dropna().iloc[-1])
+                if np.isfinite(latest_close_val):
+                    latest_price_text = f"\nPrice {fmt_price_val(latest_close_val)}"
+        except Exception:
+            latest_price_text = ""
+        try:
+            if "Period" in df.columns:
+                latest_time_text = f"\n{str(df.iloc[-1]['Period'])}"
+            elif hasattr(df.index[-1], "strftime"):
+                latest_time_text = f"\n{df.index[-1].strftime('%Y-%m-%d %H:%M')}"
+        except Exception:
+            latest_time_text = ""
+
         ax.text(
             latest_val,
-            min(98.0, max(5.0, latest_pct + 6.0)),
-            f"Latest {latest_val:+.3f}\n{latest_pct:.1f} percentile",
+            min(98.0, max(5.0, latest_pct + 8.0)),
+            f"Latest {latest_val:+.3f}\n{latest_pct:.1f} percentile{latest_price_text}{latest_time_text}",
             ha="center",
             va="center",
             fontsize=9,
@@ -4657,6 +4674,136 @@ def _format_price_trend_cdf_table(cdf_df: pd.DataFrame) -> pd.DataFrame:
     if "Cumulative %" in out.columns:
         out["Cumulative %"] = out["Cumulative %"].map(lambda x: f"{float(x):.1f}%" if np.isfinite(float(x)) else "n/a")
     return out[["Trend Bar", "Cumulative Count", "Cumulative %"]]
+
+def compute_price_trend_cdf_observations(df: pd.DataFrame, trend_direction: str = "") -> pd.DataFrame:
+    """
+    Build a trading-friendly, time-ordered CF table.
+
+    Each row keeps the actual chart period/time, close price, normalized trend-bar
+    value, and percentile rank of that point within the selected view.
+    """
+    columns = [
+        "Period",
+        "Date/Time",
+        "Close",
+        "Trend Bar",
+        "CF Percentile",
+        "Direction",
+        "Change",
+        "Return %",
+        "Trading Read",
+    ]
+    if df is None or df.empty or "Trend Bar" not in df.columns:
+        return pd.DataFrame(columns=columns)
+
+    work = df.copy()
+    vals = pd.to_numeric(work["Trend Bar"], errors="coerce")
+    valid_vals = vals.dropna()
+    if valid_vals.empty:
+        return pd.DataFrame(columns=columns)
+
+    n = float(len(valid_vals))
+    pct_values = []
+    for v in vals:
+        try:
+            vv = float(v)
+        except Exception:
+            pct_values.append(np.nan)
+            continue
+        if not np.isfinite(vv):
+            pct_values.append(np.nan)
+        else:
+            pct_values.append(float((valid_vals <= vv).sum()) / n * 100.0)
+
+    if "Period" not in work.columns:
+        work["Period"] = [idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx) for idx in work.index]
+
+    def _idx_to_time(idx):
+        try:
+            if hasattr(idx, "strftime"):
+                return idx.strftime("%Y-%m-%d %H:%M %Z").strip()
+        except Exception:
+            pass
+        return str(idx)
+
+    work["Date/Time"] = [_idx_to_time(idx) for idx in work.index]
+    work["CF Percentile"] = pct_values
+    work["Trading Read"] = [
+        _price_trend_cdf_read(
+            float(tb) if np.isfinite(float(tb)) else np.nan,
+            float(cp) if np.isfinite(float(cp)) else np.nan,
+            trend_direction
+        )
+        for tb, cp in zip(pd.to_numeric(work["Trend Bar"], errors="coerce").fillna(np.nan),
+                          pd.to_numeric(work["CF Percentile"], errors="coerce").fillna(np.nan))
+    ]
+
+    for col in columns:
+        if col not in work.columns:
+            work[col] = np.nan
+    return work[columns].copy()
+
+def _format_price_trend_cdf_observation_table(obs_df: pd.DataFrame) -> pd.DataFrame:
+    if obs_df is None or obs_df.empty:
+        return pd.DataFrame(columns=[
+            "Period",
+            "Date/Time",
+            "Close",
+            "Trend Bar",
+            "CF Percentile",
+            "Direction",
+            "Change",
+            "Return %",
+            "Trading Read",
+        ])
+    out = obs_df.copy()
+    if "Close" in out.columns:
+        out["Close"] = out["Close"].map(fmt_price_val)
+    if "Trend Bar" in out.columns:
+        out["Trend Bar"] = out["Trend Bar"].map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
+    if "CF Percentile" in out.columns:
+        out["CF Percentile"] = out["CF Percentile"].map(lambda x: f"{float(x):.1f}%" if np.isfinite(float(x)) else "n/a")
+    if "Change" in out.columns:
+        out["Change"] = out["Change"].map(lambda x: f"{float(x):+.5f}" if np.isfinite(float(x)) else "n/a")
+    if "Return %" in out.columns:
+        out["Return %"] = out["Return %"].map(lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a")
+    display_cols = [
+        "Period",
+        "Date/Time",
+        "Close",
+        "Trend Bar",
+        "CF Percentile",
+        "Direction",
+        "Change",
+        "Return %",
+        "Trading Read",
+    ]
+    return out[[c for c in display_cols if c in out.columns]]
+
+def render_cdf_latest_reading_box(symbol: str, view_label: str, source_df: pd.DataFrame, trend_direction: str):
+    """Show the latest price/time/percentile context immediately above the CF chart."""
+    obs = compute_price_trend_cdf_observations(source_df, trend_direction=trend_direction)
+    if obs is None or obs.empty:
+        st.info("No price/time cumulative-frequency details available for this view.")
+        return obs
+
+    latest = obs.iloc[-1]
+    latest_close = _safe_last_float(pd.Series([latest.get("Close", np.nan)]))
+    latest_bar = _safe_last_float(pd.Series([latest.get("Trend Bar", np.nan)]))
+    latest_pct = _safe_last_float(pd.Series([latest.get("CF Percentile", np.nan)]))
+    latest_direction = str(latest.get("Direction", "n/a"))
+    latest_time = str(latest.get("Date/Time", latest.get("Period", "n/a")))
+    latest_read = str(latest.get("Trading Read", "n/a"))
+
+    st.markdown(f"**Latest CF reading — {symbol} ({view_label})**")
+    m1, m2, m3, m4, m5 = st.columns(5)
+    m1.metric("As of", latest_time)
+    m2.metric("Close Price", fmt_price_val(latest_close))
+    m3.metric("CF Percentile", f"{latest_pct:.1f}%" if np.isfinite(latest_pct) else "n/a")
+    m4.metric("Trend Bar", f"{latest_bar:+.3f}" if np.isfinite(latest_bar) else "n/a")
+    m5.metric("Direction", latest_direction)
+    st.caption(f"Trading read: **{latest_read}**")
+    return obs
 
 def _trade_momentum_score_for_symbol(symbol: str) -> dict:
     """
@@ -5741,18 +5888,30 @@ A very high CF can mean strength or overextension. A very low CF can mean weakne
                 f"Percentile rank in this view: **{pct_rank:.1f}%** • "
                 f"Read: **{_price_trend_cdf_read(latest_bar, pct_rank, cf_trend_text)}**"
             )
+            obs_df = render_cdf_latest_reading_box(cf_symbol, title_suffix, source_df, cf_trend_text)
             plot_price_trend_cumulative_frequency(
                 source_df,
                 f"{cf_symbol} — {title_suffix} Price Trend Cumulative Frequency"
             )
-            with st.expander(f"{title_suffix} cumulative frequency values", expanded=False):
+            with st.expander(f"{title_suffix} recent price/time CF readings", expanded=True):
+                recent_obs = obs_df.tail(8) if obs_df is not None and not obs_df.empty else obs_df
+                st.dataframe(
+                    _format_price_trend_cdf_observation_table(recent_obs),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            with st.expander(f"{title_suffix} all price/time CF readings", expanded=False):
+                st.dataframe(
+                    _format_price_trend_cdf_observation_table(obs_df),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            with st.expander(f"{title_suffix} cumulative frequency curve values", expanded=False):
                 st.dataframe(
                     _format_price_trend_cdf_table(compute_price_trend_cumulative_frequency(source_df)),
                     use_container_width=True,
                     hide_index=True
                 )
-            with st.expander(f"{title_suffix} source bars", expanded=False):
-                st.dataframe(_format_price_trend_bars_table(source_df), use_container_width=True, hide_index=True)
 
         st.markdown("---")
         st.subheader("Cumulative Frequency Scanner — Latest Daily Reading")
@@ -5901,17 +6060,75 @@ Use it to decide which symbols deserve chart review first. It should not be used
 Use the **Score** to rank candidates, then open the chart and confirm that price is near a reasonable entry zone instead of extended.
 """)
 
-    run_trade_scan = st.button("Run Trade Momentum Scan", key="btn_run_trade_momentum_scan")
+    momentum_symbol_filter = st.selectbox(
+        "Symbol filter:",
+        ["All symbols"] + list(universe),
+        index=0,
+        key="trade_momentum_symbol_filter",
+        help="Choose a single symbol to inspect, or leave on All symbols to rank the full universe."
+    )
+
+    selected_momentum_symbols = list(universe) if momentum_symbol_filter == "All symbols" else [momentum_symbol_filter]
+
+    if momentum_symbol_filter != "All symbols":
+        st.markdown(f"### Selected Symbol: {momentum_symbol_filter}")
+        selected_row = _trade_momentum_score_for_symbol(momentum_symbol_filter)
+        if selected_row is None:
+            st.info(f"Not enough data to calculate Trade Momentum for {momentum_symbol_filter}.")
+        else:
+            selected_df = pd.DataFrame([selected_row])
+            selected_cols = [
+                "Symbol",
+                "Trade Bias",
+                "Setup",
+                "Score",
+                "Trend Direction",
+                "Daily Trend Bar",
+                "Daily Percentile",
+                "Daily Return %",
+                "Monthly Trend Bar",
+                "Monthly Return %",
+                "Trend Slope",
+                "Last Close",
+                "As Of",
+            ]
+            st.dataframe(
+                _format_trade_momentum_df(selected_df)[selected_cols],
+                use_container_width=True,
+                hide_index=True
+            )
+
+            try:
+                selected_close = _real_close_for_trend_bars(momentum_symbol_filter)
+                selected_close_live, _, _, _ = _with_current_day_price_for_trend_bars(momentum_symbol_filter, selected_close)
+                c1, c2 = st.columns(2)
+                with c1:
+                    plot_price_trend_bars(
+                        compute_price_trend_bars(selected_close_live, view="daily_4w"),
+                        f"{momentum_symbol_filter} — Daily Price Trend Bars, Last 4 Weeks"
+                    )
+                with c2:
+                    plot_price_trend_bars(
+                        compute_price_trend_bars(selected_close_live, view="monthly_12m"),
+                        f"{momentum_symbol_filter} — Monthly Price Trend Bars, Last 12 Months"
+                    )
+            except Exception:
+                st.info("Unable to draw selected-symbol momentum charts.")
+
+    run_trade_scan = st.button(
+        "Run Trade Momentum Scan" if momentum_symbol_filter == "All symbols" else f"Run Trade Momentum for {momentum_symbol_filter}",
+        key="btn_run_trade_momentum_scan"
+    )
     if run_trade_scan:
         tm_rows = []
         tm_progress = st.progress(0.0)
         tm_status = st.empty()
-        for i, sym in enumerate(universe):
+        for i, sym in enumerate(selected_momentum_symbols):
             tm_status.text(f"Scanning {sym}...")
             row = _trade_momentum_score_for_symbol(sym)
             if row is not None:
                 tm_rows.append(row)
-            tm_progress.progress((i + 1) / max(1, len(universe)))
+            tm_progress.progress((i + 1) / max(1, len(selected_momentum_symbols)))
         tm_progress.empty()
         tm_status.empty()
 
