@@ -1,12 +1,13 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
-# (FOCUSED VERSION) Only shows Original Forecast, Bull vs Bears, Price Trend Bars, and Histogram.
+# (FOCUSED VERSION) Only shows Original Forecast, Bull vs Bears, Price Trend Bars, Cumulative Frequency, and Trade Momentum.
 # (UPDATED) Price Trend Bars daily views include current-day live price and labels each bar with price.
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (UPDATED) Removed MACD from NTD panels; NTD panels now use a smoothed NPX price overlay.
 # (UPDATED) NTD panels are less noisy: green/red triangles now appear only after confirmed S/R reversals.
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
 # (NEW) Price Trend Bars tab shows normalized price-level bars plus current +1/-1 daily and monthly extreme tables.
-# (NEW) Histogram tab replaces the Volume Trend Bars concept with normalized price trend-bar distribution views.
+# (NEW) Cumulative Frequency tab replaces the histogram with ECDF curves of normalized price trend bars.
+# (NEW) Trade Momentum tab ranks BUY/SELL/WAIT candidates using price trend bars, percentile, and slope.
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
 # (UPDATED) Removed hourly Momentum chart, red/green directional PSAR price overlays, and NTD-cross triangles.
 # (UPDATED) Removed Ichimoku Kijun and Supertrend lines from price charts.
@@ -4520,6 +4521,236 @@ def _format_price_trend_histogram_table(hist_df: pd.DataFrame) -> pd.DataFrame:
 
 
 
+
+def compute_price_trend_cumulative_frequency(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Build an empirical cumulative frequency curve from normalized Price Trend Bars.
+
+    X-axis: normalized price trend-bar value from -1 to +1.
+    Y-axis: percentage of selected-view periods at or below that value.
+
+    This is more useful than a histogram when the goal is to see whether the
+    current reading is near the bottom, middle, or top of the recent price range.
+    """
+    if df is None or df.empty or "Trend Bar" not in df.columns:
+        return pd.DataFrame(columns=["Trend Bar", "Cumulative Count", "Cumulative %"])
+
+    vals = pd.to_numeric(df["Trend Bar"], errors="coerce").dropna()
+    if vals.empty:
+        return pd.DataFrame(columns=["Trend Bar", "Cumulative Count", "Cumulative %"])
+
+    vals_sorted = np.sort(vals.to_numpy(dtype=float))
+    n = len(vals_sorted)
+    cum_count = np.arange(1, n + 1, dtype=int)
+    cum_pct = cum_count / float(n) * 100.0
+    return pd.DataFrame({
+        "Trend Bar": vals_sorted,
+        "Cumulative Count": cum_count,
+        "Cumulative %": cum_pct,
+    })
+
+def _price_trend_percentile_rank(df: pd.DataFrame) -> float:
+    """Return the percentile rank of the latest Trend Bar within the selected view."""
+    if df is None or df.empty or "Trend Bar" not in df.columns:
+        return float("nan")
+    vals = pd.to_numeric(df["Trend Bar"], errors="coerce").dropna()
+    if vals.empty:
+        return float("nan")
+    latest = float(vals.iloc[-1])
+    if not np.isfinite(latest):
+        return float("nan")
+    return float((vals <= latest).mean() * 100.0)
+
+def _price_trend_cdf_read(latest_bar: float, percentile: float, trend_direction: str) -> str:
+    try:
+        lb = float(latest_bar)
+        pr = float(percentile)
+    except Exception:
+        return "Not enough data"
+
+    if not np.isfinite(lb) or not np.isfinite(pr):
+        return "Not enough data"
+
+    trend_direction = str(trend_direction)
+    if lb >= 0.75 and trend_direction == "Upward":
+        return "Bullish continuation / upper-range strength"
+    if lb >= 0.75 and trend_direction != "Upward":
+        return "Upper-range bounce inside weaker trend"
+    if lb <= -0.75 and trend_direction == "Downward":
+        return "Bearish continuation / lower-range weakness"
+    if lb <= -0.75 and trend_direction != "Downward":
+        return "Lower-range pullback inside stronger trend"
+    if lb > 0.0 and trend_direction == "Upward":
+        return "Constructive bullish pressure"
+    if lb < 0.0 and trend_direction == "Downward":
+        return "Constructive bearish pressure"
+    if abs(lb) < 0.25:
+        return "Middle range / wait for direction"
+    return "Mixed / confirm on chart"
+
+def plot_price_trend_cumulative_frequency(df: pd.DataFrame, title: str):
+    if df is None or df.empty or "Trend Bar" not in df.columns:
+        st.info("Not enough data to draw the cumulative frequency curve.")
+        return
+
+    vals = pd.to_numeric(df["Trend Bar"], errors="coerce").dropna()
+    if vals.empty:
+        st.info("Not enough normalized bar values to draw the cumulative frequency curve.")
+        return
+
+    cdf = compute_price_trend_cumulative_frequency(df)
+    if cdf.empty:
+        st.info("Not enough normalized bar values to draw the cumulative frequency curve.")
+        return
+
+    latest_val = float(vals.iloc[-1]) if len(vals) else np.nan
+    latest_pct = _price_trend_percentile_rank(df)
+
+    fig, ax = plt.subplots(figsize=(12, 4.2))
+    ax.plot(
+        pd.to_numeric(cdf["Trend Bar"], errors="coerce"),
+        pd.to_numeric(cdf["Cumulative %"], errors="coerce"),
+        marker="o",
+        linewidth=2.0,
+        markersize=4,
+        label="Cumulative frequency"
+    )
+
+    ax.axvline(0.0, color="black", linewidth=1.0)
+    ax.axvline(0.5, color="tab:green", linewidth=0.9, linestyle="--", alpha=0.55)
+    ax.axvline(-0.5, color="tab:red", linewidth=0.9, linestyle="--", alpha=0.55)
+    ax.axhline(50.0, color="gray", linewidth=0.9, linestyle="--", alpha=0.45)
+
+    if np.isfinite(latest_val) and np.isfinite(latest_pct):
+        ax.axvline(latest_val, color="tab:blue", linewidth=2.0, linestyle="-", alpha=0.85)
+        ax.axhline(latest_pct, color="tab:blue", linewidth=1.1, linestyle=":", alpha=0.75)
+        ax.scatter([latest_val], [latest_pct], s=80, zorder=5, label="Latest")
+        ax.text(
+            latest_val,
+            min(98.0, max(5.0, latest_pct + 6.0)),
+            f"Latest {latest_val:+.3f}\n{latest_pct:.1f} percentile",
+            ha="center",
+            va="center",
+            fontsize=9,
+            fontweight="bold",
+            bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="tab:blue", alpha=0.90),
+            clip_on=False,
+        )
+
+    ax.set_xlim(-1.08, 1.08)
+    ax.set_ylim(0, 102)
+    ax.set_title(title)
+    ax.set_xlabel("Normalized price trend-bar value")
+    ax.set_ylabel("Cumulative frequency (%)")
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="lower right")
+    fig.tight_layout()
+    st.pyplot(fig, clear_figure=True)
+
+def _format_price_trend_cdf_table(cdf_df: pd.DataFrame) -> pd.DataFrame:
+    if cdf_df is None or cdf_df.empty:
+        return pd.DataFrame(columns=["Trend Bar", "Cumulative Count", "Cumulative %"])
+    out = cdf_df.copy()
+    if "Trend Bar" in out.columns:
+        out["Trend Bar"] = out["Trend Bar"].map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
+    if "Cumulative %" in out.columns:
+        out["Cumulative %"] = out["Cumulative %"].map(lambda x: f"{float(x):.1f}%" if np.isfinite(float(x)) else "n/a")
+    return out[["Trend Bar", "Cumulative Count", "Cumulative %"]]
+
+def _trade_momentum_score_for_symbol(symbol: str) -> dict:
+    """
+    Rank symbols using the normalized price bars plus trend slope.
+
+    This is intentionally simple and transparent:
+    - Daily 4-week bar shows current location in the recent range.
+    - Monthly 12-month bar shows larger structure.
+    - Slope gives directional bias.
+    - Percentile says whether the symbol is near the lower/middle/upper part of its recent range.
+    """
+    try:
+        close = _real_close_for_trend_bars(symbol)
+        close_live, live_price, live_ts, live_used = _with_current_day_price_for_trend_bars(symbol, close)
+        if close_live is None or close_live.empty or len(close_live) < 30:
+            return None
+
+        d4 = compute_price_trend_bars(close_live, view="daily_4w")
+        m12 = compute_price_trend_bars(close_live, view="monthly_12m")
+        if d4 is None or d4.empty or m12 is None or m12.empty:
+            return None
+
+        d_last = d4.iloc[-1]
+        m_last = m12.iloc[-1]
+        d_bar = float(d_last["Trend Bar"])
+        m_bar = float(m_last["Trend Bar"])
+        d_ret = float(d_last["Return %"])
+        m_ret = float(m_last["Return %"])
+        pct_rank = _price_trend_percentile_rank(d4)
+        _, tr_slope = slope_line(close_live, lookback=min(int(slope_lb_daily), len(close_live)))
+        trend_direction = "Upward" if np.isfinite(tr_slope) and tr_slope >= 0 else "Downward"
+
+        score = 0
+        score += 2 if trend_direction == "Upward" else -2
+        score += 2 if d_bar > 0 else -2
+        score += 1 if m_bar > 0 else -1
+        score += 1 if d_ret > 0 else -1
+        score += 1 if np.isfinite(pct_rank) and pct_rank >= 60 else (-1 if np.isfinite(pct_rank) and pct_rank <= 40 else 0)
+
+        if score >= 4:
+            trade_bias = "BUY / Bullish"
+            setup = "Daily and monthly pressure align upward"
+        elif score <= -4:
+            trade_bias = "SELL / Bearish"
+            setup = "Daily and monthly pressure align downward"
+        elif d_bar <= -0.75 and trend_direction == "Upward":
+            trade_bias = "BUY Watch"
+            setup = "Pullback near lower range while larger slope is upward"
+        elif d_bar >= 0.75 and trend_direction == "Downward":
+            trade_bias = "SELL Watch"
+            setup = "Bounce near upper range while larger slope is downward"
+        else:
+            trade_bias = "WAIT"
+            setup = "Mixed conditions; wait for alignment"
+
+        return {
+            "Symbol": symbol,
+            "Trade Bias": trade_bias,
+            "Setup": setup,
+            "Score": int(score),
+            "Daily Trend Bar": d_bar,
+            "Daily Percentile": pct_rank,
+            "Daily Return %": d_ret,
+            "Monthly Trend Bar": m_bar,
+            "Monthly Return %": m_ret,
+            "Trend Direction": trend_direction,
+            "Trend Slope": float(tr_slope) if np.isfinite(tr_slope) else np.nan,
+            "Last Close": _safe_last_float(close_live),
+            "As Of": live_ts if live_used and pd.notna(live_ts) else close_live.index[-1],
+        }
+    except Exception:
+        return None
+
+def _format_trade_momentum_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy()
+    for col in ["Daily Trend Bar", "Monthly Trend Bar"]:
+        if col in out.columns:
+            out[col] = out[col].map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
+    for col in ["Daily Percentile"]:
+        if col in out.columns:
+            out[col] = out[col].map(lambda x: f"{float(x):.1f}%" if np.isfinite(float(x)) else "n/a")
+    for col in ["Daily Return %", "Monthly Return %"]:
+        if col in out.columns:
+            out[col] = out[col].map(lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a")
+    if "Trend Slope" in out.columns:
+        out["Trend Slope"] = out["Trend Slope"].map(fmt_slope)
+    if "Last Close" in out.columns:
+        out["Last Close"] = out["Last Close"].map(fmt_price_val)
+    if "As Of" in out.columns:
+        out["As Of"] = out["As Of"].astype(str)
+    return out
+
+
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -4529,11 +4760,12 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab3, tab18, tab19 = st.tabs([
+tab1, tab3, tab18, tab19, tab20 = st.tabs([
     "Original Forecast",
     "Bull vs Bears",
     "Price Trend Bars",
-    "Histogram"
+    "Cumulative Frequency",
+    "Trade Momentum"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -5423,132 +5655,115 @@ with tab18:
                     )
 
 
-# --- Tab 19: Histogram ---
+# --- Tab 19: Cumulative Frequency ---
 with tab19:
-    st.header("Histogram")
+    st.header("Cumulative Frequency")
     st.caption(
-        "Replaces the Volume Trend Bars view with a histogram of the normalized price trend bars. "
-        "The histogram shows how often the selected symbol has been in each normalized price zone from -1 to +1. "
-        "The blue vertical line marks the latest/current reading."
+        "This replaces the histogram with a cumulative frequency curve for the normalized price trend bars. "
+        "It shows where the current price sits in the selected range over time. A latest point near the upper-right "
+        "means price is near the high side of the selected range; a point near the lower-left means price is near the low side."
     )
 
-    hc1, hc2 = st.columns([1, 2])
-    with hc1:
-        hist_symbol = st.selectbox(
+    cf1, cf2 = st.columns([1, 2])
+    with cf1:
+        cf_symbol = st.selectbox(
             "Symbol",
             universe,
             index=0 if len(universe) else None,
-            key="price_trend_histogram_symbol"
+            key="price_trend_cdf_symbol"
         )
-        hist_bins = st.slider(
-            "Histogram bins",
-            4, 20, 10, 1,
-            key="price_trend_histogram_bins"
-        )
-    with hc2:
+    with cf2:
         st.markdown(
-            "**How to read it:** bars on the right side of zero show the symbol spent more periods above the selected "
-            "view's starting price; bars on the left side show periods below the starting price. "
-            "A cluster near +1 means price has spent more time near the high end of the selected view. "
-            "A cluster near -1 means price has spent more time near the low end."
+            "**How to use it for trading:** use the curve to judge context before acting on the bars. "
+            "When the latest reading is high and the trend is upward, it can support bullish continuation. "
+            "When the latest reading is very high but trend is downward, it may be a resistance/bounce area. "
+            "When the latest reading is very low inside an upward trend, it can flag a pullback watchlist candidate."
         )
 
-    hist_close = _real_close_for_trend_bars(hist_symbol)
-    hist_close_live, hist_live_price, hist_live_ts, hist_live_used = _with_current_day_price_for_trend_bars(
-        hist_symbol,
-        hist_close
+    cf_close = _real_close_for_trend_bars(cf_symbol)
+    cf_close_live, cf_live_price, cf_live_ts, cf_live_used = _with_current_day_price_for_trend_bars(
+        cf_symbol,
+        cf_close
     )
 
-    if hist_close_live is None or hist_close_live.empty or len(hist_close_live) < 30:
+    if cf_close_live is None or cf_close_live.empty or len(cf_close_live) < 30:
         st.warning("Not enough price history available for this symbol.")
     else:
-        latest_hist_close = _safe_last_float(hist_close_live)
-        _, hist_slope = slope_line(hist_close_live, lookback=min(int(slope_lb_daily), len(hist_close_live)))
-        hist_trend_text = "Upward" if np.isfinite(hist_slope) and hist_slope >= 0 else "Downward"
-        hist_trend_icon = "🟢" if hist_trend_text == "Upward" else "🔴"
+        latest_cf_close = _safe_last_float(cf_close_live)
+        _, cf_slope = slope_line(cf_close_live, lookback=min(int(slope_lb_daily), len(cf_close_live)))
+        cf_trend_text = "Upward" if np.isfinite(cf_slope) and cf_slope >= 0 else "Downward"
+        cf_trend_icon = "🟢" if cf_trend_text == "Upward" else "🔴"
 
-        hist_live_note = ""
-        if hist_live_used and pd.notna(hist_live_ts):
-            hist_live_note = f" • Live/current price: **{fmt_price_val(hist_live_price)}** as of **{hist_live_ts.strftime('%Y-%m-%d %H:%M PST')}**"
+        cf_live_note = ""
+        if cf_live_used and pd.notna(cf_live_ts):
+            cf_live_note = f" • Live/current price: **{fmt_price_val(cf_live_price)}** as of **{cf_live_ts.strftime('%Y-%m-%d %H:%M PST')}**"
 
         st.info(
-            f"{hist_trend_icon} **Current daily trend:** {hist_trend_text} "
-            f"• Latest daily chart price: **{fmt_price_val(latest_hist_close)}** "
-            f"• Trend slope: **{fmt_slope(hist_slope)} / bar**"
-            f"{hist_live_note}"
+            f"{cf_trend_icon} **Current daily trend:** {cf_trend_text} "
+            f"• Latest daily chart price: **{fmt_price_val(latest_cf_close)}** "
+            f"• Trend slope: **{fmt_slope(cf_slope)} / bar**"
+            f"{cf_live_note}"
         )
 
-        hist_monthly_df = compute_price_trend_bars(hist_close_live, view="monthly_12m")
-        hist_daily_2w_df = compute_price_trend_bars(hist_close_live, view="daily_2w")
-        hist_daily_4w_df = compute_price_trend_bars(hist_close_live, view="daily_4w")
+        cf_monthly_df = compute_price_trend_bars(cf_close_live, view="monthly_12m")
+        cf_daily_2w_df = compute_price_trend_bars(cf_close_live, view="daily_2w")
+        cf_daily_4w_df = compute_price_trend_bars(cf_close_live, view="daily_4w")
 
-        st.subheader("Monthly Histogram — Last 12 Months")
-        plot_price_trend_histogram(
-            hist_monthly_df,
-            f"{hist_symbol} — Monthly Price Trend Histogram",
-            bins=hist_bins
-        )
-        with st.expander("Monthly histogram values", expanded=False):
-            st.dataframe(
-                _format_price_trend_histogram_table(compute_price_trend_histogram(hist_monthly_df, bins=hist_bins)),
-                use_container_width=True,
-                hide_index=True
+        for label, source_df, title_suffix in [
+            ("Monthly Cumulative Frequency — Last 12 Months", cf_monthly_df, "Monthly"),
+            ("Daily Cumulative Frequency — Last 2 Weeks", cf_daily_2w_df, "Daily, 2 Weeks"),
+            ("Daily Cumulative Frequency — Last 4 Weeks", cf_daily_4w_df, "Daily, 4 Weeks"),
+        ]:
+            st.subheader(label)
+            latest_bar = float(pd.to_numeric(source_df["Trend Bar"], errors="coerce").dropna().iloc[-1]) if source_df is not None and not source_df.empty else np.nan
+            pct_rank = _price_trend_percentile_rank(source_df)
+            st.caption(
+                f"Latest normalized bar: **{latest_bar:+.3f}** • "
+                f"Percentile rank in this view: **{pct_rank:.1f}%** • "
+                f"Read: **{_price_trend_cdf_read(latest_bar, pct_rank, cf_trend_text)}**"
             )
-        with st.expander("Monthly source bars", expanded=False):
-            st.dataframe(_format_price_trend_bars_table(hist_monthly_df), use_container_width=True, hide_index=True)
-
-        st.subheader("Daily Histogram — Last 2 Weeks")
-        plot_price_trend_histogram(
-            hist_daily_2w_df,
-            f"{hist_symbol} — Daily Price Trend Histogram, 2 Weeks",
-            bins=hist_bins
-        )
-        with st.expander("2-week histogram values", expanded=False):
-            st.dataframe(
-                _format_price_trend_histogram_table(compute_price_trend_histogram(hist_daily_2w_df, bins=hist_bins)),
-                use_container_width=True,
-                hide_index=True
+            plot_price_trend_cumulative_frequency(
+                source_df,
+                f"{cf_symbol} — {title_suffix} Price Trend Cumulative Frequency"
             )
-        with st.expander("2-week source bars", expanded=False):
-            st.dataframe(_format_price_trend_bars_table(hist_daily_2w_df), use_container_width=True, hide_index=True)
-
-        st.subheader("Daily Histogram — Last 4 Weeks")
-        plot_price_trend_histogram(
-            hist_daily_4w_df,
-            f"{hist_symbol} — Daily Price Trend Histogram, 4 Weeks",
-            bins=hist_bins
-        )
-        with st.expander("4-week histogram values", expanded=False):
-            st.dataframe(
-                _format_price_trend_histogram_table(compute_price_trend_histogram(hist_daily_4w_df, bins=hist_bins)),
-                use_container_width=True,
-                hide_index=True
-            )
-        with st.expander("4-week source bars", expanded=False):
-            st.dataframe(_format_price_trend_bars_table(hist_daily_4w_df), use_container_width=True, hide_index=True)
+            with st.expander(f"{title_suffix} cumulative frequency values", expanded=False):
+                st.dataframe(
+                    _format_price_trend_cdf_table(compute_price_trend_cumulative_frequency(source_df)),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            with st.expander(f"{title_suffix} source bars", expanded=False):
+                st.dataframe(_format_price_trend_bars_table(source_df), use_container_width=True, hide_index=True)
 
         st.markdown("---")
-        st.subheader("Histogram Zone Scanner — Latest Daily Reading")
+        st.subheader("Cumulative Frequency Scanner — Latest Daily Reading")
         st.caption(
-            "Groups symbols by the latest 4-week normalized price zone. "
-            "This helps quickly identify symbols sitting near the upper, middle, or lower part of their recent range."
+            "Ranks symbols by latest 4-week normalized bar, percentile rank, and trend direction. "
+            "Use this to spot upper-range strength, lower-range weakness, and pullback candidates."
         )
 
-        zone_rows = []
-        zone_progress = st.progress(0.0)
-        zone_status = st.empty()
+        cdf_rows = []
+        cdf_progress = st.progress(0.0)
+        cdf_status = st.empty()
         for i, sym in enumerate(universe):
-            zone_status.text(f"Scanning {sym}...")
+            cdf_status.text(f"Scanning {sym}...")
             try:
                 c = _real_close_for_trend_bars(sym)
-                c_live, live_price_zone, live_ts_zone, live_used_zone = _with_current_day_price_for_trend_bars(sym, c)
+                c_live, live_price_cdf, live_ts_cdf, live_used_cdf = _with_current_day_price_for_trend_bars(sym, c)
                 if c_live is None or c_live.empty or len(c_live) < 30:
                     continue
                 d4 = compute_price_trend_bars(c_live, view="daily_4w")
                 if d4 is None or d4.empty:
                     continue
-                last_row = d4.iloc[-1]
-                latest_bar = float(last_row["Trend Bar"])
+
+                vals = pd.to_numeric(d4["Trend Bar"], errors="coerce").dropna()
+                if vals.empty:
+                    continue
+                latest_bar = float(vals.iloc[-1])
+                pct_rank = _price_trend_percentile_rank(d4)
+                _, z_slope = slope_line(c_live, lookback=min(int(slope_lb_daily), len(c_live)))
+                trend_direction = "Upward" if np.isfinite(z_slope) and z_slope >= 0 else "Downward"
+
                 if latest_bar >= 0.75:
                     zone = "Upper Extreme"
                 elif latest_bar >= 0.25:
@@ -5560,27 +5775,28 @@ with tab19:
                 else:
                     zone = "Middle/Neutral"
 
-                _, z_slope = slope_line(c_live, lookback=min(int(slope_lb_daily), len(c_live)))
-                zone_rows.append({
+                cdf_rows.append({
                     "Symbol": sym,
-                    "Histogram Zone": zone,
-                    "Trend Direction": "Upward" if np.isfinite(z_slope) and z_slope >= 0 else "Downward",
+                    "CDF Zone": zone,
+                    "Trend Direction": trend_direction,
                     "Latest Trend Bar": latest_bar,
-                    "Direction": "Rising" if float(last_row["Trend Bar"]) >= 0 else "Falling",
-                    "Latest Return %": float(last_row["Return %"]),
+                    "Percentile Rank": pct_rank,
+                    "Read": _price_trend_cdf_read(latest_bar, pct_rank, trend_direction),
+                    "Direction": "Rising" if float(d4.iloc[-1]["Change"]) >= 0 else "Falling",
+                    "Latest Return %": float(d4.iloc[-1]["Return %"]),
                     "Trend Slope": float(z_slope) if np.isfinite(z_slope) else np.nan,
                     "Last Close": _safe_last_float(c_live),
-                    "As Of": live_ts_zone if live_used_zone and pd.notna(live_ts_zone) else c_live.index[-1],
+                    "As Of": live_ts_cdf if live_used_cdf and pd.notna(live_ts_cdf) else c_live.index[-1],
                 })
             except Exception:
                 continue
-            zone_progress.progress((i + 1) / max(1, len(universe)))
-        zone_progress.empty()
-        zone_status.empty()
+            cdf_progress.progress((i + 1) / max(1, len(universe)))
+        cdf_progress.empty()
+        cdf_status.empty()
 
-        zone_df = pd.DataFrame(zone_rows)
-        if zone_df.empty:
-            st.info("No histogram-zone scan results available.")
+        cdf_df = pd.DataFrame(cdf_rows)
+        if cdf_df.empty:
+            st.info("No cumulative-frequency scan results available.")
         else:
             zone_order = {
                 "Upper Extreme": 0,
@@ -5589,32 +5805,37 @@ with tab19:
                 "Lower Zone": 3,
                 "Lower Extreme": 4,
             }
-            zone_df["_zone_order"] = zone_df["Histogram Zone"].map(zone_order).fillna(9)
-            zone_df["_trend_order"] = zone_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
-            zone_df["_abs_bar"] = pd.to_numeric(zone_df["Latest Trend Bar"], errors="coerce").abs()
-            zone_df = zone_df.sort_values(
+            cdf_df["_zone_order"] = cdf_df["CDF Zone"].map(zone_order).fillna(9)
+            cdf_df["_trend_order"] = cdf_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
+            cdf_df["_abs_bar"] = pd.to_numeric(cdf_df["Latest Trend Bar"], errors="coerce").abs()
+            cdf_df = cdf_df.sort_values(
                 ["_zone_order", "_trend_order", "_abs_bar", "Symbol"],
                 ascending=[True, True, False, True]
             ).drop(columns=["_zone_order", "_trend_order", "_abs_bar"])
 
-            fmt_zone = zone_df.copy()
-            fmt_zone["Latest Trend Bar"] = fmt_zone["Latest Trend Bar"].map(
+            fmt_cdf = cdf_df.copy()
+            fmt_cdf["Latest Trend Bar"] = fmt_cdf["Latest Trend Bar"].map(
                 lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a"
             )
-            fmt_zone["Latest Return %"] = fmt_zone["Latest Return %"].map(
+            fmt_cdf["Percentile Rank"] = fmt_cdf["Percentile Rank"].map(
+                lambda x: f"{float(x):.1f}%" if np.isfinite(float(x)) else "n/a"
+            )
+            fmt_cdf["Latest Return %"] = fmt_cdf["Latest Return %"].map(
                 lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a"
             )
-            fmt_zone["Trend Slope"] = fmt_zone["Trend Slope"].map(fmt_slope)
-            fmt_zone["Last Close"] = fmt_zone["Last Close"].map(fmt_price_val)
-            fmt_zone["As Of"] = fmt_zone["As Of"].astype(str)
+            fmt_cdf["Trend Slope"] = fmt_cdf["Trend Slope"].map(fmt_slope)
+            fmt_cdf["Last Close"] = fmt_cdf["Last Close"].map(fmt_price_val)
+            fmt_cdf["As Of"] = fmt_cdf["As Of"].astype(str)
 
             st.dataframe(
-                fmt_zone[
+                fmt_cdf[
                     [
                         "Symbol",
-                        "Histogram Zone",
+                        "CDF Zone",
                         "Trend Direction",
                         "Latest Trend Bar",
+                        "Percentile Rank",
+                        "Read",
                         "Direction",
                         "Latest Return %",
                         "Trend Slope",
@@ -5626,3 +5847,85 @@ with tab19:
                 hide_index=True
             )
 
+
+# --- Tab 20: Trade Momentum ---
+with tab20:
+    st.header("Trade Momentum")
+    st.caption(
+        "Suggested trading helper: this ranks symbols using the daily price trend bar, monthly price trend bar, "
+        "daily percentile rank, and trend slope. It is a watchlist/ranking tool, not an automatic buy/sell command."
+    )
+
+    st.markdown(
+        "**Best use:** look for BUY/Bullish rows when daily and monthly pressure align upward, then enter only on a pullback "
+        "or breakout confirmation. Look for SELL/Bearish rows when daily and monthly pressure align downward, then enter only "
+        "after rejection or breakdown confirmation."
+    )
+
+    run_trade_scan = st.button("Run Trade Momentum Scan", key="btn_run_trade_momentum_scan")
+    if run_trade_scan:
+        tm_rows = []
+        tm_progress = st.progress(0.0)
+        tm_status = st.empty()
+        for i, sym in enumerate(universe):
+            tm_status.text(f"Scanning {sym}...")
+            row = _trade_momentum_score_for_symbol(sym)
+            if row is not None:
+                tm_rows.append(row)
+            tm_progress.progress((i + 1) / max(1, len(universe)))
+        tm_progress.empty()
+        tm_status.empty()
+
+        tm_df = pd.DataFrame(tm_rows)
+        if tm_df.empty:
+            st.info("No Trade Momentum results available.")
+        else:
+            bias_order = {
+                "BUY / Bullish": 0,
+                "BUY Watch": 1,
+                "WAIT": 2,
+                "SELL Watch": 3,
+                "SELL / Bearish": 4,
+            }
+            tm_df["_bias_order"] = tm_df["Trade Bias"].map(bias_order).fillna(9)
+            tm_df["_abs_score"] = pd.to_numeric(tm_df["Score"], errors="coerce").abs()
+            tm_df = tm_df.sort_values(
+                ["_bias_order", "_abs_score", "Symbol"],
+                ascending=[True, False, True]
+            ).drop(columns=["_bias_order", "_abs_score"])
+
+            fmt_tm = _format_trade_momentum_df(tm_df)
+            cols = [
+                "Symbol",
+                "Trade Bias",
+                "Setup",
+                "Score",
+                "Trend Direction",
+                "Daily Trend Bar",
+                "Daily Percentile",
+                "Daily Return %",
+                "Monthly Trend Bar",
+                "Monthly Return %",
+                "Trend Slope",
+                "Last Close",
+                "As Of",
+            ]
+            st.dataframe(fmt_tm[cols], use_container_width=True, hide_index=True)
+
+            st.markdown("### BUY / Bullish")
+            buy_df = tm_df[tm_df["Trade Bias"].isin(["BUY / Bullish", "BUY Watch"])].copy()
+            if buy_df.empty:
+                st.info("No BUY/Bullish candidates found.")
+            else:
+                buy_df = buy_df.sort_values(["Score", "Daily Trend Bar", "Symbol"], ascending=[False, False, True])
+                st.dataframe(_format_trade_momentum_df(buy_df)[cols], use_container_width=True, hide_index=True)
+
+            st.markdown("### SELL / Bearish")
+            sell_df = tm_df[tm_df["Trade Bias"].isin(["SELL / Bearish", "SELL Watch"])].copy()
+            if sell_df.empty:
+                st.info("No SELL/Bearish candidates found.")
+            else:
+                sell_df = sell_df.sort_values(["Score", "Daily Trend Bar", "Symbol"], ascending=[True, True, True])
+                st.dataframe(_format_trade_momentum_df(sell_df)[cols], use_container_width=True, hide_index=True)
+    else:
+        st.info("Click **Run Trade Momentum Scan** to rank the current universe.")
