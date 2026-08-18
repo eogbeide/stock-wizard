@@ -10,6 +10,7 @@
 # (NEW) Cumulative Frequency tab replaces the histogram with ECDF curves of normalized price trend bars.
 # (NEW) Trade Momentum tab ranks BUY/SELL/WAIT candidates using price trend bars, percentile, and slope.
 # (UPDATED) Cumulative Frequency and Trade Momentum tabs include built-in trading interpretation guides.
+# (UPDATED) Cumulative Frequency data tables are collapsed/minimized by default for a cleaner trading view.
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
 # (UPDATED) Removed hourly Momentum chart, red/green directional PSAR price overlays, and NTD-cross triangles.
 # (UPDATED) Removed Ichimoku Kijun and Supertrend lines from price charts.
@@ -6156,7 +6157,7 @@ A very high CF can mean strength or overextension. A very low CF can mean weakne
                 source_df,
                 f"{cf_symbol} — {title_suffix} Price Trend Cumulative Frequency"
             )
-            with st.expander(f"{title_suffix} recent price/time CF readings", expanded=True):
+            with st.expander(f"{title_suffix} recent price/time CF readings", expanded=False):
                 recent_obs = obs_df.tail(8) if obs_df is not None and not obs_df.empty else obs_df
                 st.dataframe(
                     _format_price_trend_cdf_observation_table(recent_obs),
@@ -6268,25 +6269,26 @@ A very high CF can mean strength or overextension. A very low CF can mean weakne
             fmt_cdf["Last Close"] = fmt_cdf["Last Close"].map(fmt_price_val)
             fmt_cdf["As Of"] = fmt_cdf["As Of"].astype(str)
 
-            st.dataframe(
-                fmt_cdf[
-                    [
-                        "Symbol",
-                        "CDF Zone",
-                        "Trend Direction",
-                        "Latest Trend Bar",
-                        "Percentile Rank",
-                        "Read",
-                        "Direction",
-                        "Latest Return %",
-                        "Trend Slope",
-                        "Last Close",
-                        "As Of",
-                    ]
-                ],
-                use_container_width=True,
-                hide_index=True
-            )
+            with st.expander("Show Cumulative Frequency scanner table", expanded=False):
+                st.dataframe(
+                    fmt_cdf[
+                        [
+                            "Symbol",
+                            "CDF Zone",
+                            "Trend Direction",
+                            "Latest Trend Bar",
+                            "Percentile Rank",
+                            "Read",
+                            "Direction",
+                            "Latest Return %",
+                            "Trend Slope",
+                            "Last Close",
+                            "As Of",
+                        ]
+                    ],
+                    use_container_width=True,
+                    hide_index=True
+                )
 
             st.markdown("### CF Buy/Sell Instructions")
             st.caption(
@@ -6330,11 +6332,12 @@ A very high CF can mean strength or overextension. A very low CF can mean weakne
                     "As Of",
                 ]
 
-                st.dataframe(
-                    _format_cf_trade_df(cf_trade_df)[cf_trade_cols],
-                    use_container_width=True,
-                    hide_index=True
-                )
+                with st.expander("Show all CF Buy/Sell instruction rows", expanded=False):
+                    st.dataframe(
+                        _format_cf_trade_df(cf_trade_df)[cf_trade_cols],
+                        use_container_width=True,
+                        hide_index=True
+                    )
 
                 st.markdown("#### BUY candidates")
                 cf_buy_df = cf_trade_df[cf_trade_df["Trade Bias"].isin(["BUY / Bullish", "BUY Watch"])].copy()
@@ -6342,11 +6345,12 @@ A very high CF can mean strength or overextension. A very low CF can mean weakne
                     st.info("No CF BUY candidates found.")
                 else:
                     cf_buy_df = cf_buy_df.sort_values(["Score", "CF Percentile", "Symbol"], ascending=[False, True, True])
-                    st.dataframe(
-                        _format_cf_trade_df(cf_buy_df)[cf_trade_cols],
-                        use_container_width=True,
-                        hide_index=True
-                    )
+                    with st.expander("Show CF BUY candidates table", expanded=False):
+                        st.dataframe(
+                            _format_cf_trade_df(cf_buy_df)[cf_trade_cols],
+                            use_container_width=True,
+                            hide_index=True
+                        )
 
                 st.markdown("#### SELL candidates")
                 cf_sell_df = cf_trade_df[cf_trade_df["Trade Bias"].isin(["SELL / Bearish", "SELL Watch"])].copy()
@@ -6354,11 +6358,12 @@ A very high CF can mean strength or overextension. A very low CF can mean weakne
                     st.info("No CF SELL candidates found.")
                 else:
                     cf_sell_df = cf_sell_df.sort_values(["Score", "CF Percentile", "Symbol"], ascending=[True, False, True])
-                    st.dataframe(
-                        _format_cf_trade_df(cf_sell_df)[cf_trade_cols],
-                        use_container_width=True,
-                        hide_index=True
-                    )
+                    with st.expander("Show CF SELL candidates table", expanded=False):
+                        st.dataframe(
+                            _format_cf_trade_df(cf_sell_df)[cf_trade_cols],
+                            use_container_width=True,
+                            hide_index=True
+                        )
 
 
 # --- Tab 20: Trade Momentum ---
