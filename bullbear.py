@@ -1,5 +1,6 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
 # (FOCUSED VERSION) Only shows Original Forecast, Bull vs Bears, Price Trend Bars, Cumulative Frequency, and Trade Momentum.
+# (UPDATED) CF latest-reading cards use compact font sizing for better readability.
 # (UPDATED) Price Trend Bars daily views include current-day live price and labels each bar with price.
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (UPDATED) Removed MACD from NTD panels; NTD panels now use a smoothed NPX price overlay.
@@ -4974,14 +4975,86 @@ def render_cdf_latest_reading_box(symbol: str, view_label: str, source_df: pd.Da
         direction=latest_direction
     )
 
-    st.markdown(f"**Latest CF reading — {symbol} ({view_label})**")
-    m1, m2, m3, m4, m5, m6 = st.columns(6)
-    m1.metric("As of", latest_time)
-    m2.metric("Close Price", fmt_price_val(latest_close))
-    m3.metric("CF Percentile", f"{latest_pct:.1f}%" if np.isfinite(latest_pct) else "n/a")
-    m4.metric("Trend Bar", f"{latest_bar:+.3f}" if np.isfinite(latest_bar) else "n/a")
-    m5.metric("Direction", latest_direction)
-    m6.metric("Trade", f"{cf_signal['Symbol']} {cf_signal['Trade Bias']}")
+    def _html_escape(value) -> str:
+        return (
+            str(value)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&#x27;")
+        )
+
+    cards = [
+        ("As of", latest_time),
+        ("Close Price", fmt_price_val(latest_close)),
+        ("CF Percentile", f"{latest_pct:.1f}%" if np.isfinite(latest_pct) else "n/a"),
+        ("Trend Bar", f"{latest_bar:+.3f}" if np.isfinite(latest_bar) else "n/a"),
+        ("Direction", latest_direction),
+        ("Trade", f"{cf_signal['Symbol']} {cf_signal['Trade Bias']}"),
+    ]
+    cards_html = "".join(
+        f"""
+        <div class="cf-mini-card">
+            <div class="cf-mini-label">{_html_escape(label)}</div>
+            <div class="cf-mini-value" title="{_html_escape(value)}">{_html_escape(value)}</div>
+        </div>
+        """
+        for label, value in cards
+    )
+
+    st.markdown(
+        f"""
+        <style>
+          .cf-mini-grid {{
+            display: grid;
+            grid-template-columns: repeat(6, minmax(0, 1fr));
+            gap: 0.55rem;
+            margin: 0.25rem 0 0.65rem 0;
+          }}
+          .cf-mini-card {{
+            border: 1px solid rgba(128, 128, 128, 0.24);
+            border-radius: 0.65rem;
+            padding: 0.55rem 0.65rem;
+            background: rgba(128, 128, 128, 0.08);
+            min-width: 0;
+          }}
+          .cf-mini-label {{
+            font-size: 0.72rem;
+            line-height: 1.05;
+            color: rgba(250, 250, 250, 0.72);
+            font-weight: 650;
+            margin-bottom: 0.28rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }}
+          .cf-mini-value {{
+            font-size: clamp(0.86rem, 1.3vw, 1.14rem);
+            line-height: 1.18;
+            color: rgba(250, 250, 250, 0.96);
+            font-weight: 750;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }}
+          @media (max-width: 1100px) {{
+            .cf-mini-grid {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
+          }}
+          @media (max-width: 680px) {{
+            .cf-mini-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+            .cf-mini-value {{ font-size: 0.9rem; }}
+          }}
+        </style>
+        <div style="font-weight:750; font-size:1rem; margin-top:0.5rem; margin-bottom:0.2rem;">
+          Latest CF reading — {_html_escape(symbol)} ({_html_escape(view_label)})
+        </div>
+        <div class="cf-mini-grid">
+          {cards_html}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
     st.info(f"**Instruction:** {cf_signal['Instruction']}")
     st.caption(f"Trading read: **{latest_read}** • Action zone: **{cf_signal['Action Zone']}** • Score: **{cf_signal['Score']}**")
     return obs
