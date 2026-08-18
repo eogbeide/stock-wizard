@@ -2,6 +2,7 @@
 # (FOCUSED VERSION) Only shows Original Forecast, Bull vs Bears, Price Trend Bars, Cumulative Frequency, and Trade Momentum.
 # (UPDATED) CF latest-reading cards use compact font sizing for better readability.
 # (UPDATED) Trade Momentum result tables are collapsible/minimized for cleaner UX.
+# (UPDATED) Price Trend Bars scanner and extreme tables are collapsible/minimized for cleaner UX.
 # (UPDATED) Price Trend Bars daily views include current-day live price and labels each bar with price.
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (UPDATED) Removed MACD from NTD panels; NTD panels now use a smoothed NPX price overlay.
@@ -5902,22 +5903,23 @@ with tab18:
             fmt_scan["Last Close"] = fmt_scan["Last Close"].map(fmt_price_val)
             fmt_scan["As Of"] = fmt_scan["As Of"].astype(str)
 
-            st.dataframe(
-                fmt_scan[
-                    [
-                        "Symbol",
-                        "Direction",
-                        "Trend Direction",
-                        "Latest Trend Bar",
-                        "Latest Return %",
-                        "Trend Slope",
-                        "Last Close",
-                        "As Of",
-                    ]
-                ],
-                use_container_width=True,
-                hide_index=True
-            )
+            with st.expander(f"Quick Scanner results ({len(fmt_scan)} symbols)", expanded=False):
+                st.dataframe(
+                    fmt_scan[
+                        [
+                            "Symbol",
+                            "Direction",
+                            "Trend Direction",
+                            "Latest Trend Bar",
+                            "Latest Return %",
+                            "Trend Slope",
+                            "Last Close",
+                            "As Of",
+                        ]
+                    ],
+                    use_container_width=True,
+                    hide_index=True
+                )
 
             st.markdown("### Current Daily Extremes")
             st.caption(
@@ -5960,32 +5962,36 @@ with tab18:
                 out_extreme["As Of"] = out_extreme["As Of"].astype(str)
                 return out_extreme[extreme_cols]
 
-            col_plus, col_minus = st.columns(2)
-            with col_plus:
-                st.subheader("Currently at +1")
-                if plus_one_df.empty:
-                    st.info("No symbols currently at +1.000.")
-                else:
-                    plus_one_df["_trend_order"] = plus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
-                    plus_one_df = plus_one_df.sort_values(["_trend_order", "Latest Return %", "Symbol"], ascending=[True, False, True]).drop(columns=["_trend_order"])
-                    st.dataframe(
-                        _format_price_trend_extreme_scan(plus_one_df),
-                        use_container_width=True,
-                        hide_index=True
-                    )
+            with st.expander(
+                f"Current Daily Extremes tables (+1: {len(plus_one_df)} • -1: {len(minus_one_df)})",
+                expanded=False
+            ):
+                col_plus, col_minus = st.columns(2)
+                with col_plus:
+                    st.subheader("Currently at +1")
+                    if plus_one_df.empty:
+                        st.info("No symbols currently at +1.000.")
+                    else:
+                        plus_one_df["_trend_order"] = plus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
+                        plus_one_df = plus_one_df.sort_values(["_trend_order", "Latest Return %", "Symbol"], ascending=[True, False, True]).drop(columns=["_trend_order"])
+                        st.dataframe(
+                            _format_price_trend_extreme_scan(plus_one_df),
+                            use_container_width=True,
+                            hide_index=True
+                        )
 
-            with col_minus:
-                st.subheader("Currently at -1")
-                if minus_one_df.empty:
-                    st.info("No symbols currently at -1.000.")
-                else:
-                    minus_one_df["_trend_order"] = minus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
-                    minus_one_df = minus_one_df.sort_values(["_trend_order", "Latest Return %", "Symbol"], ascending=[True, True, True]).drop(columns=["_trend_order"])
-                    st.dataframe(
-                        _format_price_trend_extreme_scan(minus_one_df),
-                        use_container_width=True,
-                        hide_index=True
-                    )
+                with col_minus:
+                    st.subheader("Currently at -1")
+                    if minus_one_df.empty:
+                        st.info("No symbols currently at -1.000.")
+                    else:
+                        minus_one_df["_trend_order"] = minus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
+                        minus_one_df = minus_one_df.sort_values(["_trend_order", "Latest Return %", "Symbol"], ascending=[True, True, True]).drop(columns=["_trend_order"])
+                        st.dataframe(
+                            _format_price_trend_extreme_scan(minus_one_df),
+                            use_container_width=True,
+                            hide_index=True
+                        )
 
             st.markdown("### Current Monthly Extremes")
             st.caption(
@@ -6026,38 +6032,42 @@ with tab18:
                 out_extreme["As Of"] = out_extreme["As Of"].astype(str)
                 return out_extreme[monthly_extreme_cols]
 
-            col_m_plus, col_m_minus = st.columns(2)
-            with col_m_plus:
-                st.subheader("Monthly currently at +1")
-                if monthly_plus_one_df.empty:
-                    st.info("No symbols currently at monthly +1.000.")
-                else:
-                    monthly_plus_one_df["_trend_order"] = monthly_plus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
-                    monthly_plus_one_df = monthly_plus_one_df.sort_values(
-                        ["_trend_order", "Latest Monthly Return %", "Symbol"],
-                        ascending=[True, False, True]
-                    ).drop(columns=["_trend_order"])
-                    st.dataframe(
-                        _format_price_trend_monthly_extreme_scan(monthly_plus_one_df),
-                        use_container_width=True,
-                        hide_index=True
-                    )
+            with st.expander(
+                f"Current Monthly Extremes tables (+1: {len(monthly_plus_one_df)} • -1: {len(monthly_minus_one_df)})",
+                expanded=False
+            ):
+                col_m_plus, col_m_minus = st.columns(2)
+                with col_m_plus:
+                    st.subheader("Monthly currently at +1")
+                    if monthly_plus_one_df.empty:
+                        st.info("No symbols currently at monthly +1.000.")
+                    else:
+                        monthly_plus_one_df["_trend_order"] = monthly_plus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
+                        monthly_plus_one_df = monthly_plus_one_df.sort_values(
+                            ["_trend_order", "Latest Monthly Return %", "Symbol"],
+                            ascending=[True, False, True]
+                        ).drop(columns=["_trend_order"])
+                        st.dataframe(
+                            _format_price_trend_monthly_extreme_scan(monthly_plus_one_df),
+                            use_container_width=True,
+                            hide_index=True
+                        )
 
-            with col_m_minus:
-                st.subheader("Monthly currently at -1")
-                if monthly_minus_one_df.empty:
-                    st.info("No symbols currently at monthly -1.000.")
-                else:
-                    monthly_minus_one_df["_trend_order"] = monthly_minus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
-                    monthly_minus_one_df = monthly_minus_one_df.sort_values(
-                        ["_trend_order", "Latest Monthly Return %", "Symbol"],
-                        ascending=[True, True, True]
-                    ).drop(columns=["_trend_order"])
-                    st.dataframe(
-                        _format_price_trend_monthly_extreme_scan(monthly_minus_one_df),
-                        use_container_width=True,
-                        hide_index=True
-                    )
+                with col_m_minus:
+                    st.subheader("Monthly currently at -1")
+                    if monthly_minus_one_df.empty:
+                        st.info("No symbols currently at monthly -1.000.")
+                    else:
+                        monthly_minus_one_df["_trend_order"] = monthly_minus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
+                        monthly_minus_one_df = monthly_minus_one_df.sort_values(
+                            ["_trend_order", "Latest Monthly Return %", "Symbol"],
+                            ascending=[True, True, True]
+                        ).drop(columns=["_trend_order"])
+                        st.dataframe(
+                            _format_price_trend_monthly_extreme_scan(monthly_minus_one_df),
+                            use_container_width=True,
+                            hide_index=True
+                        )
 
 
 # --- Tab 19: Cumulative Frequency ---
