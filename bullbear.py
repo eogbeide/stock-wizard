@@ -3,7 +3,7 @@
 # (UPDATED) CF latest-reading cards use compact font sizing for better readability.
 # (UPDATED) Trade Momentum result tables are collapsible/minimized for cleaner UX.
 # (UPDATED) Price Trend Bars scanner and extreme tables are collapsible/minimized for cleaner UX.
-# (NEW) Rolling Return Strength tab adds normalized 5/10/20-period return strength and trade-bias scanner.
+# (NEW) Rolling Return Strength tab adds normalized 5/10/20-period return strength, dip scanners, and peak/reversal price labels.
 # (UPDATED) Price Trend Bars daily views include current-day live price and labels each bar with price.
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (UPDATED) Removed MACD from NTD panels; NTD panels now use a smoothed NPX price overlay.
@@ -5298,6 +5298,32 @@ def plot_rolling_return_strength(df: pd.DataFrame, title: str):
             arrowprops=dict(arrowstyle="->", alpha=0.55),
         )
 
+    # Label the latest major peak and reversal low with their price values.
+    try:
+        extrema = _rolling_strength_extrema(plot_df)
+        marker_specs = [
+            ("Peak", extrema.get("Peak Period"), extrema.get("Peak Price"), extrema.get("Peak Strength"), 18),
+            ("Reversal", extrema.get("Reversal Period"), extrema.get("Reversal Price"), extrema.get("Reversal Strength"), -24),
+        ]
+        periods = plot_df["Period"].astype(str).tolist()
+        for label, period, price, strength, yoff in marker_specs:
+            if period in periods and np.isfinite(float(strength)) and np.isfinite(float(price)):
+                ix = periods.index(str(period))
+                ax.scatter([x[ix]], [float(strength)], s=46, zorder=4)
+                ax.annotate(
+                    f"{label}\n{period} • {fmt_price_val(price)}",
+                    xy=(x[ix], float(strength)),
+                    xytext=(8, yoff),
+                    textcoords="offset points",
+                    ha="left",
+                    va="center",
+                    fontsize=7,
+                    bbox=dict(boxstyle="round,pad=0.20", fc="white", ec="gray", alpha=0.70),
+                    arrowprops=dict(arrowstyle="->", alpha=0.35),
+                )
+    except Exception:
+        pass
+
     ax.set_ylim(-1.08, 1.08)
     ax.set_ylabel("Normalized return strength")
     ax.set_title(title)
@@ -5308,6 +5334,144 @@ def plot_rolling_return_strength(df: pd.DataFrame, title: str):
     ax.set_xlim(-0.75, len(plot_df) - 0.25 + max(1.0, len(plot_df) * 0.04))
     fig.tight_layout()
     st.pyplot(fig, clear_figure=True)
+
+
+
+def _rolling_strength_extrema(df: pd.DataFrame) -> dict:
+    """
+    Return recent price/strength values at major composite-strength peaks and reversal lows.
+
+    A "reversal low" is the most recent local trough in Composite Strength. When a clean
+    local trough is not available, this falls back to the lowest reading in the window.
+    """
+    out = {
+        "Peak Period": "",
+        "Peak Price": np.nan,
+        "Peak Strength": np.nan,
+        "Reversal Period": "",
+        "Reversal Price": np.nan,
+        "Reversal Strength": np.nan,
+    }
+    if df is None or df.empty or "Composite Strength" not in df.columns:
+        return out
+
+    d = df.copy()
+    comp = pd.to_numeric(d["Composite Strength"], errors="coerce")
+    close = pd.to_numeric(d.get("Close", pd.Series(index=d.index, dtype=float)), errors="coerce")
+    valid = comp.dropna()
+    if valid.empty:
+        return out
+
+    # Latest meaningful peak: prefer latest local peak, otherwise highest point.
+    peak_candidates = []
+    vals = comp.to_numpy(dtype=float)
+    for i in range(1, len(vals) - 1):
+        if np.isfinite(vals[i]) and np.isfinite(vals[i - 1]) and np.isfinite(vals[i + 1]):
+            if vals[i] >= vals[i - 1] and vals[i] >= vals[i + 1]:
+                peak_candidates.append(i)
+    peak_i = peak_candidates[-1] if peak_candidates else int(np.nanargmax(vals))
+
+    # Latest reversal low: prefer latest local trough, otherwise lowest point.
+    trough_candidates = []
+    for i in range(1, len(vals) - 1):
+        if np.isfinite(vals[i]) and np.isfinite(vals[i - 1]) and np.isfinite(vals[i + 1]):
+            if vals[i] <= vals[i - 1] and vals[i] <= vals[i + 1]:
+                trough_candidates.append(i)
+    trough_i = trough_candidates[-1] if trough_candidates else int(np.nanargmin(vals))
+
+    def _period_at(i):
+        try:
+            return str(d.iloc[i].get("Period", d.index[i]))
+        except Exception:
+            return ""
+
+    def _price_at(i):
+        try:
+            return float(close.iloc[i])
+        except Exception:
+            return np.nan
+
+    out.update({
+        "Peak Period": _period_at(peak_i),
+        "Peak Price": _price_at(peak_i),
+        "Peak Strength": float(comp.iloc[peak_i]) if np.isfinite(comp.iloc[peak_i]) else np.nan,
+        "Reversal Period": _period_at(trough_i),
+        "Reversal Price": _price_at(trough_i),
+        "Reversal Strength": float(comp.iloc[trough_i]) if np.isfinite(comp.iloc[trough_i]) else np.nan,
+    })
+    return out
+
+
+def _rolling_strength_dip_read(strength: float, change: float) -> str:
+    try:
+        s = float(strength)
+    except Exception:
+        return "n/a"
+    try:
+        chg = float(change)
+    except Exception:
+        chg = 0.0
+    if not np.isfinite(s):
+        return "n/a"
+    if s <= -0.50 and chg > 0:
+        return "🟢 Deep dip turning up"
+    if s <= -0.50:
+        return "🔴 Deep dip still falling"
+    if s < 0.0 and chg > 0:
+        return "🟡 Dip improving"
+    if s < 0.0:
+        return "⚠️ Dip still weakening"
+    return "n/a"
+
+
+def _rolling_return_strength_dip_snapshot(symbol: str, view: str = "daily_3m") -> dict | None:
+    try:
+        close = _real_close_for_trend_bars(symbol)
+        close_live, _, as_of, _ = _with_current_day_price_for_trend_bars(symbol, close)
+        rs = compute_rolling_return_strength(close_live, view=view)
+        if rs is None or rs.empty:
+            return None
+
+        latest = rs.iloc[-1]
+        strength = float(pd.to_numeric(pd.Series([latest.get("Composite Strength")]), errors="coerce").iloc[0])
+        change = float(pd.to_numeric(pd.Series([latest.get("Strength Change")]), errors="coerce").fillna(0.0).iloc[0])
+        last_close = float(pd.to_numeric(pd.Series([latest.get("Close")]), errors="coerce").iloc[0])
+        _, trend_slope = slope_line(close_live, lookback=slope_lb_daily)
+        trend_direction = "Upward" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward"
+
+        extrema = _rolling_strength_extrema(rs)
+        return {
+            "Symbol": symbol,
+            "View": "Daily 3M" if view == "daily_3m" else "Daily 6M" if view == "daily_6m" else str(view),
+            "Dip Read": _rolling_strength_dip_read(strength, change),
+            "Composite Strength": strength,
+            "Strength Change": change,
+            "Trend Direction": trend_direction,
+            "Trend Slope": trend_slope,
+            "Last Close": last_close,
+            "As Of": as_of if as_of is not None else (close_live.index[-1] if len(close_live) else ""),
+            **extrema,
+        }
+    except Exception:
+        return None
+
+
+def _format_rolling_strength_dip_scanner(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy()
+    for col in ["Composite Strength", "Strength Change", "Peak Strength", "Reversal Strength"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
+    for col in ["Last Close", "Peak Price", "Reversal Price"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").map(lambda x: fmt_price_val(x) if np.isfinite(float(x)) else "n/a")
+    if "Trend Slope" in out.columns:
+        out["Trend Slope"] = out["Trend Slope"].map(fmt_slope)
+    for col in ["As Of", "Peak Period", "Reversal Period", "View"]:
+        if col in out.columns:
+            out[col] = out[col].astype(str)
+    return out
 
 
 def _format_rolling_return_strength_table(df: pd.DataFrame) -> pd.DataFrame:
@@ -6778,6 +6942,8 @@ with tab21:
 - **+0.70 / -0.70** are stronger/extreme zones; avoid chasing if price is already extended.
 - Best BUY setup: Price Trend Bars rising, CF not overextended near 100%, and Rolling Return Strength crossing/rising above 0.
 - Best SELL setup: Price Trend Bars falling, CF rolling down from a high zone, and Rolling Return Strength crossing/falling below 0.
+- Dip-buy watchlist: Composite Strength below 0.0, especially below -0.5, can identify oversold pullbacks; wait for Strength Change to turn positive before entering.
+- Peak/Reversal labels show the price where return strength most recently peaked or reversed from a low.
             """
         )
 
@@ -6854,7 +7020,7 @@ with tab21:
 
     st.divider()
     st.subheader("Rolling Return Strength Scanner")
-    st.caption("Ranks the current universe by latest daily 3-month Composite Strength. Tables are collapsed by default.")
+    st.caption("Ranks the current universe by latest daily 3-month Composite Strength and includes dip-buy watchlists for 3-month and 6-month views. Tables are collapsed by default.")
 
     run_rr_scan = st.button("Run Rolling Return Strength Scan", key="btn_run_rolling_return_strength_scan")
     if run_rr_scan:
@@ -6924,6 +7090,90 @@ with tab21:
                 else:
                     sell_rr = sell_rr.sort_values(["Composite Strength", "Strength Change", "Symbol"], ascending=[True, True, True])
                     st.dataframe(_format_rolling_strength_scanner(sell_rr)[rr_cols], use_container_width=True, hide_index=True)
+
+            st.divider()
+            st.subheader("Dip-Buy Watchlists")
+            st.caption(
+                "Shows symbols where the red Composite Strength line is below 0.0 or below -0.5. "
+                "These are dip watchlists, not automatic buys; stronger candidates have Strength Change turning positive."
+            )
+
+            dip_rows = []
+            dip_progress = st.progress(0.0)
+            dip_status = st.empty()
+            dip_views = ["daily_3m", "daily_6m"]
+            total_dip_steps = max(1, len(universe) * len(dip_views))
+            step = 0
+            for view_name in dip_views:
+                for sym in universe:
+                    step += 1
+                    dip_status.text(f"Scanning dips {sym} ({'3M' if view_name == 'daily_3m' else '6M'})...")
+                    drow = _rolling_return_strength_dip_snapshot(sym, view=view_name)
+                    if drow is not None:
+                        dip_rows.append(drow)
+                    dip_progress.progress(step / total_dip_steps)
+            dip_progress.empty()
+            dip_status.empty()
+
+            dip_df = pd.DataFrame(dip_rows)
+            dip_cols = [
+                "Symbol",
+                "View",
+                "Dip Read",
+                "Composite Strength",
+                "Strength Change",
+                "Trend Direction",
+                "Trend Slope",
+                "Last Close",
+                "Peak Period",
+                "Peak Price",
+                "Peak Strength",
+                "Reversal Period",
+                "Reversal Price",
+                "Reversal Strength",
+                "As Of",
+            ]
+
+            if dip_df.empty:
+                st.info("No dip-watchlist results available.")
+            else:
+                dip_df["_strength"] = pd.to_numeric(dip_df["Composite Strength"], errors="coerce")
+                dip_df["_change"] = pd.to_numeric(dip_df["Strength Change"], errors="coerce")
+                dip_df["_turning_order"] = np.where(dip_df["_change"] > 0, 0, 1)
+
+                for view_label, view_key in [("Daily 3M", "Daily 3M"), ("Daily 6M", "Daily 6M")]:
+                    view_df = dip_df[dip_df["View"] == view_key].copy()
+                    below_zero = view_df[view_df["_strength"] < 0.0].copy()
+                    below_deep = view_df[view_df["_strength"] <= -0.5].copy()
+
+                    below_zero = below_zero.sort_values(
+                        ["_turning_order", "_strength", "Symbol"],
+                        ascending=[True, True, True]
+                    )
+                    below_deep = below_deep.sort_values(
+                        ["_turning_order", "_strength", "Symbol"],
+                        ascending=[True, True, True]
+                    )
+
+                    with st.expander(f"{view_label} — Composite Strength below 0.0 ({len(below_zero)})", expanded=False):
+                        if below_zero.empty:
+                            st.info("No symbols currently below 0.0 for this view.")
+                        else:
+                            st.dataframe(
+                                _format_rolling_strength_dip_scanner(below_zero)[dip_cols],
+                                use_container_width=True,
+                                hide_index=True
+                            )
+
+                    with st.expander(f"{view_label} — Composite Strength below -0.5 ({len(below_deep)})", expanded=False):
+                        if below_deep.empty:
+                            st.info("No symbols currently below -0.5 for this view.")
+                        else:
+                            st.dataframe(
+                                _format_rolling_strength_dip_scanner(below_deep)[dip_cols],
+                                use_container_width=True,
+                                hide_index=True
+                            )
     else:
         st.info("Click **Run Rolling Return Strength Scan** to rank the current universe.")
 
