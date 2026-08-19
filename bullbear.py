@@ -3,6 +3,7 @@
 # (UPDATED) CF latest-reading cards use compact font sizing for better readability.
 # (UPDATED) Trade Momentum result tables are collapsible/minimized for cleaner UX.
 # (UPDATED) Price Trend Bars scanner and extreme tables are collapsible/minimized for cleaner UX.
+# (NEW) Rolling Return Strength tab adds normalized 5/10/20-period return strength and trade-bias scanner.
 # (UPDATED) Price Trend Bars daily views include current-day live price and labels each bar with price.
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (UPDATED) Removed MACD from NTD panels; NTD panels now use a smoothed NPX price overlay.
@@ -5157,6 +5158,215 @@ def _format_trade_momentum_df(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+
+# ---------- Rolling Return Strength helpers ----------
+def _period_close_for_return_strength(close: pd.Series, view: str = "daily_3m") -> tuple[pd.Series, list[int], str]:
+    """
+    Prepare the close series used by the Rolling Return Strength tab.
+
+    Daily views use 5/10/20-bar rolling returns.
+    Monthly views use 1/3/6-month rolling returns.
+    """
+    s = _coerce_1d_series(close).dropna().sort_index()
+    if s.empty:
+        return pd.Series(dtype=float), [5, 10, 20], "%m-%d"
+
+    view = str(view)
+    if view == "monthly_12m":
+        period_close = s.resample("ME").last().dropna()
+        if period_close.empty:
+            period_close = s.resample("M").last().dropna()
+        # Keep additional history for 6-month return calculation, then display recent months.
+        period_close = period_close.iloc[-20:]
+        return period_close, [1, 3, 6], "%Y-%m"
+
+    if view == "daily_6m":
+        return s.iloc[-160:], [5, 10, 20], "%m-%d"
+
+    # Default daily 3-month view.
+    return s.iloc[-90:], [5, 10, 20], "%m-%d"
+
+
+def compute_rolling_return_strength(close: pd.Series, view: str = "daily_3m") -> pd.DataFrame:
+    """
+    Build normalized rolling return-strength lines.
+
+    Raw returns are percentage changes over the selected windows. Each line is then
+    normalized to -1/+1 over the selected chart window so different symbols and
+    forex pairs can be compared visually.
+    """
+    period_close, windows, label_fmt = _period_close_for_return_strength(close, view=view)
+    if period_close.empty or len(period_close) < max(windows) + 2:
+        return pd.DataFrame()
+
+    data = pd.DataFrame({"Close": period_close.astype(float)})
+    for w in windows:
+        data[f"Return {w}"] = data["Close"].pct_change(w) * 100.0
+
+    # Display window after enough return history exists.
+    if view == "monthly_12m":
+        data = data.iloc[-12:].copy()
+    elif view == "daily_6m":
+        data = data.iloc[-126:].copy()
+    else:
+        data = data.iloc[-63:].copy()
+
+    norm_cols = []
+    for w in windows:
+        raw_col = f"Return {w}"
+        norm_col = f"Norm {w}"
+        raw = pd.to_numeric(data[raw_col], errors="coerce")
+        max_abs = float(raw.abs().max()) if raw.notna().any() else np.nan
+        if np.isfinite(max_abs) and max_abs > 0:
+            data[norm_col] = (raw / max_abs).clip(-1.0, 1.0)
+        else:
+            data[norm_col] = np.nan
+        norm_cols.append(norm_col)
+
+    data["Composite Strength"] = data[norm_cols].mean(axis=1, skipna=True).clip(-1.0, 1.0)
+    data["Strength Change"] = data["Composite Strength"].diff()
+    data["Direction"] = np.where(data["Composite Strength"] >= 0, "Bullish", "Bearish")
+    data["Period"] = [idx.strftime(label_fmt) if hasattr(idx, "strftime") else str(idx) for idx in data.index]
+    return data.dropna(subset=["Composite Strength"], how="all")
+
+
+def _rolling_strength_trade_read(latest_strength: float, strength_change: float) -> str:
+    try:
+        s = float(latest_strength)
+    except Exception:
+        return "WAIT"
+    try:
+        chg = float(strength_change)
+    except Exception:
+        chg = 0.0
+
+    if not np.isfinite(s):
+        return "WAIT"
+    if s >= 0.35 and chg >= 0:
+        return "🟢▲ BUY / Bullish strength"
+    if s >= 0.10:
+        return "🟡▲ BUY Watch"
+    if s <= -0.35 and chg <= 0:
+        return "🔴▼ SELL / Bearish strength"
+    if s <= -0.10:
+        return "🟡▼ SELL Watch"
+    return "⏳ WAIT / Neutral"
+
+
+def plot_rolling_return_strength(df: pd.DataFrame, title: str):
+    if df is None or df.empty or "Composite Strength" not in df.columns:
+        st.info("Not enough data to draw Rolling Return Strength.")
+        return
+
+    plot_df = df.copy()
+    x = np.arange(len(plot_df), dtype=float)
+
+    fig, ax = plt.subplots(figsize=(12, 4.4))
+    norm_cols = [c for c in plot_df.columns if c.startswith("Norm ")]
+    for col in norm_cols:
+        y = pd.to_numeric(plot_df[col], errors="coerce").to_numpy(dtype=float)
+        label = col.replace("Norm ", "Return ")
+        ax.plot(x, y, linewidth=1.4, alpha=0.60, label=label)
+
+    comp = pd.to_numeric(plot_df["Composite Strength"], errors="coerce").to_numpy(dtype=float)
+    ax.plot(x, comp, linewidth=2.8, label="Composite Strength")
+
+    ax.axhline(0.0, color="black", linewidth=1.0)
+    ax.axhline(0.35, color="tab:green", linewidth=0.8, linestyle="--", alpha=0.55)
+    ax.axhline(-0.35, color="tab:red", linewidth=0.8, linestyle="--", alpha=0.55)
+    ax.axhline(0.70, color="tab:green", linewidth=0.7, linestyle=":", alpha=0.45)
+    ax.axhline(-0.70, color="tab:red", linewidth=0.7, linestyle=":", alpha=0.45)
+
+    latest = plot_df.iloc[-1]
+    latest_strength = float(pd.to_numeric(pd.Series([latest.get("Composite Strength")]), errors="coerce").iloc[0])
+    latest_price = float(pd.to_numeric(pd.Series([latest.get("Close")]), errors="coerce").iloc[0])
+    latest_period = str(latest.get("Period", plot_df.index[-1]))
+    latest_change = float(pd.to_numeric(pd.Series([latest.get("Strength Change")]), errors="coerce").fillna(0.0).iloc[0])
+    read = _rolling_strength_trade_read(latest_strength, latest_change)
+
+    if np.isfinite(latest_strength):
+        ax.scatter([x[-1]], [latest_strength], s=70, zorder=5)
+        ax.annotate(
+            f"{read}\n{latest_period} • {fmt_price_val(latest_price)} • {latest_strength:+.2f}",
+            xy=(x[-1], latest_strength),
+            xytext=(10, 16 if latest_strength < 0.75 else -34),
+            textcoords="offset points",
+            ha="left",
+            va="center",
+            fontsize=8,
+            bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="gray", alpha=0.82),
+            arrowprops=dict(arrowstyle="->", alpha=0.55),
+        )
+
+    ax.set_ylim(-1.08, 1.08)
+    ax.set_ylabel("Normalized return strength")
+    ax.set_title(title)
+    ax.set_xticks(x)
+    ax.set_xticklabels(plot_df["Period"].astype(str).tolist(), rotation=45, ha="right")
+    ax.grid(True, axis="y", alpha=0.25)
+    ax.legend(loc="upper left", fontsize=8, ncol=2)
+    ax.set_xlim(-0.75, len(plot_df) - 0.25 + max(1.0, len(plot_df) * 0.04))
+    fig.tight_layout()
+    st.pyplot(fig, clear_figure=True)
+
+
+def _format_rolling_return_strength_table(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.reset_index(drop=True).copy()
+    if "Close" in out.columns:
+        out["Close"] = pd.to_numeric(out["Close"], errors="coerce").map(lambda x: fmt_price_val(x) if np.isfinite(float(x)) else "n/a")
+    for col in [c for c in out.columns if c.startswith("Return ")]:
+        out[col] = pd.to_numeric(out[col], errors="coerce").map(lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a")
+    for col in [c for c in out.columns if c.startswith("Norm ")] + ["Composite Strength", "Strength Change"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
+    return out
+
+
+def _rolling_return_strength_snapshot(symbol: str, view: str = "daily_3m") -> dict | None:
+    try:
+        close = _real_close_for_trend_bars(symbol)
+        close_live, _, as_of, _ = _with_current_day_price_for_trend_bars(symbol, close)
+        rs = compute_rolling_return_strength(close_live, view=view)
+        if rs is None or rs.empty:
+            return None
+        latest = rs.iloc[-1]
+        strength = float(pd.to_numeric(pd.Series([latest.get("Composite Strength")]), errors="coerce").iloc[0])
+        change = float(pd.to_numeric(pd.Series([latest.get("Strength Change")]), errors="coerce").fillna(0.0).iloc[0])
+        last_close = float(pd.to_numeric(pd.Series([latest.get("Close")]), errors="coerce").iloc[0])
+        _, trend_slope = slope_line(close_live, lookback=slope_lb_daily)
+        trend_direction = "Upward" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward"
+        return {
+            "Symbol": symbol,
+            "Trade Read": _rolling_strength_trade_read(strength, change),
+            "Composite Strength": strength,
+            "Strength Change": change,
+            "Trend Direction": trend_direction,
+            "Trend Slope": trend_slope,
+            "Last Close": last_close,
+            "As Of": as_of if as_of is not None else (close_live.index[-1] if len(close_live) else ""),
+        }
+    except Exception:
+        return None
+
+
+def _format_rolling_strength_scanner(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy()
+    for col in ["Composite Strength", "Strength Change"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
+    if "Trend Slope" in out.columns:
+        out["Trend Slope"] = out["Trend Slope"].map(fmt_slope)
+    if "Last Close" in out.columns:
+        out["Last Close"] = pd.to_numeric(out["Last Close"], errors="coerce").map(lambda x: fmt_price_val(x) if np.isfinite(float(x)) else "n/a")
+    if "As Of" in out.columns:
+        out["As Of"] = out["As Of"].astype(str)
+    return out
+
+
 # --- Session init ---
 if 'run_all' not in st.session_state:
     st.session_state.run_all = False
@@ -5166,12 +5376,13 @@ if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
 # Tabs
-tab1, tab3, tab18, tab19, tab20 = st.tabs([
+tab1, tab3, tab18, tab19, tab20, tab21 = st.tabs([
     "Original Forecast",
     "Bull vs Bears",
     "Price Trend Bars",
     "Cumulative Frequency",
-    "Trade Momentum"
+    "Trade Momentum",
+    "Rolling Return Strength"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -6546,3 +6757,174 @@ Use the **Score** to rank candidates, then open the chart and confirm that price
                     st.dataframe(_format_trade_momentum_df(sell_df)[cols], use_container_width=True, hide_index=True)
     else:
         st.info("Click **Run Trade Momentum Scan** to rank the current universe.")
+
+
+# --- Tab 21: Rolling Return Strength ---
+with tab21:
+    st.header("Rolling Return Strength")
+    st.caption(
+        "Shows whether return momentum is improving or fading over time. "
+        "Daily views use normalized 5/10/20-bar returns; monthly view uses normalized 1/3/6-month returns."
+    )
+
+    with st.expander("How to trade this chart", expanded=True):
+        st.markdown(
+            """
+**Use this tab as a momentum-acceleration filter.**
+
+- **Composite Strength above 0 and rising** = bullish pressure is improving.
+- **Composite Strength below 0 and falling** = bearish pressure is increasing.
+- **+0.35 / -0.35** are practical confirmation zones.
+- **+0.70 / -0.70** are stronger/extreme zones; avoid chasing if price is already extended.
+- Best BUY setup: Price Trend Bars rising, CF not overextended near 100%, and Rolling Return Strength crossing/rising above 0.
+- Best SELL setup: Price Trend Bars falling, CF rolling down from a high zone, and Rolling Return Strength crossing/falling below 0.
+            """
+        )
+
+    rr_col1, rr_col2 = st.columns([1, 1])
+    with rr_col1:
+        rr_symbol = st.selectbox("Symbol:", universe, key="rr_strength_symbol")
+    with rr_col2:
+        rr_view_label = st.selectbox(
+            "View:",
+            ["Daily — 3 months", "Daily — 6 months", "Monthly — 12 months"],
+            index=0,
+            key="rr_strength_view"
+        )
+
+    rr_view_map = {
+        "Daily — 3 months": "daily_3m",
+        "Daily — 6 months": "daily_6m",
+        "Monthly — 12 months": "monthly_12m",
+    }
+    rr_view = rr_view_map.get(rr_view_label, "daily_3m")
+
+    try:
+        rr_close = _real_close_for_trend_bars(rr_symbol)
+        rr_close_live, rr_live_price, rr_as_of, _ = _with_current_day_price_for_trend_bars(rr_symbol, rr_close)
+        rr_df = compute_rolling_return_strength(rr_close_live, view=rr_view)
+
+        if rr_df.empty:
+            st.info("Not enough data to calculate Rolling Return Strength for this symbol.")
+        else:
+            latest = rr_df.iloc[-1]
+            latest_strength = float(pd.to_numeric(pd.Series([latest.get("Composite Strength")]), errors="coerce").iloc[0])
+            latest_change = float(pd.to_numeric(pd.Series([latest.get("Strength Change")]), errors="coerce").fillna(0.0).iloc[0])
+            latest_close = float(pd.to_numeric(pd.Series([latest.get("Close")]), errors="coerce").iloc[0])
+            read = _rolling_strength_trade_read(latest_strength, latest_change)
+
+            st.markdown(
+                f"""
+<div style="display:flex; flex-wrap:wrap; gap:10px; margin:0.25rem 0 0.75rem 0;">
+  <div style="border:1px solid #ddd; border-radius:10px; padding:8px 10px; min-width:160px;">
+    <div style="font-size:0.78rem; color:#666;">Trade Read</div>
+    <div style="font-size:0.95rem; font-weight:700;">{read}</div>
+  </div>
+  <div style="border:1px solid #ddd; border-radius:10px; padding:8px 10px; min-width:120px;">
+    <div style="font-size:0.78rem; color:#666;">Strength</div>
+    <div style="font-size:1.0rem; font-weight:700;">{latest_strength:+.3f}</div>
+  </div>
+  <div style="border:1px solid #ddd; border-radius:10px; padding:8px 10px; min-width:120px;">
+    <div style="font-size:0.78rem; color:#666;">Change</div>
+    <div style="font-size:1.0rem; font-weight:700;">{latest_change:+.3f}</div>
+  </div>
+  <div style="border:1px solid #ddd; border-radius:10px; padding:8px 10px; min-width:130px;">
+    <div style="font-size:0.78rem; color:#666;">Latest Price</div>
+    <div style="font-size:1.0rem; font-weight:700;">{fmt_price_val(latest_close)}</div>
+  </div>
+  <div style="border:1px solid #ddd; border-radius:10px; padding:8px 10px; min-width:160px;">
+    <div style="font-size:0.78rem; color:#666;">As Of</div>
+    <div style="font-size:0.86rem; font-weight:700;">{rr_as_of}</div>
+  </div>
+</div>
+                """,
+                unsafe_allow_html=True
+            )
+
+            plot_rolling_return_strength(rr_df, f"{rr_symbol} — {rr_view_label} Rolling Return Strength")
+
+            with st.expander("Rolling Return Strength values", expanded=False):
+                st.dataframe(
+                    _format_rolling_return_strength_table(rr_df),
+                    use_container_width=True,
+                    hide_index=True
+                )
+    except Exception as e:
+        st.error(f"Unable to calculate Rolling Return Strength: {e}")
+
+    st.divider()
+    st.subheader("Rolling Return Strength Scanner")
+    st.caption("Ranks the current universe by latest daily 3-month Composite Strength. Tables are collapsed by default.")
+
+    run_rr_scan = st.button("Run Rolling Return Strength Scan", key="btn_run_rolling_return_strength_scan")
+    if run_rr_scan:
+        rr_rows = []
+        rr_progress = st.progress(0.0)
+        rr_status = st.empty()
+        for i, sym in enumerate(universe):
+            rr_status.text(f"Scanning {sym}...")
+            row = _rolling_return_strength_snapshot(sym, view="daily_3m")
+            if row is not None:
+                rr_rows.append(row)
+            rr_progress.progress((i + 1) / max(1, len(universe)))
+        rr_progress.empty()
+        rr_status.empty()
+
+        rr_scan_df = pd.DataFrame(rr_rows)
+        if rr_scan_df.empty:
+            st.info("No Rolling Return Strength scanner results available.")
+        else:
+            bias_order = {
+                "🟢▲ BUY / Bullish strength": 0,
+                "🟡▲ BUY Watch": 1,
+                "⏳ WAIT / Neutral": 2,
+                "🟡▼ SELL Watch": 3,
+                "🔴▼ SELL / Bearish strength": 4,
+            }
+            rr_scan_df["_bias_order"] = rr_scan_df["Trade Read"].map(bias_order).fillna(9)
+            rr_scan_df["_abs_strength"] = pd.to_numeric(rr_scan_df["Composite Strength"], errors="coerce").abs()
+            rr_scan_df = rr_scan_df.sort_values(
+                ["_bias_order", "_abs_strength", "Symbol"],
+                ascending=[True, False, True]
+            ).drop(columns=["_bias_order", "_abs_strength"])
+
+            rr_cols = [
+                "Symbol",
+                "Trade Read",
+                "Composite Strength",
+                "Strength Change",
+                "Trend Direction",
+                "Trend Slope",
+                "Last Close",
+                "As Of",
+            ]
+            st.caption(
+                f"Scanner results: {len(rr_scan_df)} total • "
+                f"{int(rr_scan_df['Trade Read'].isin(['🟢▲ BUY / Bullish strength', '🟡▲ BUY Watch']).sum())} BUY/Watch • "
+                f"{int(rr_scan_df['Trade Read'].isin(['🔴▼ SELL / Bearish strength', '🟡▼ SELL Watch']).sum())} SELL/Watch"
+            )
+
+            fmt_rr_scan = _format_rolling_strength_scanner(rr_scan_df)
+
+            with st.expander("All Rolling Return Strength results", expanded=False):
+                st.dataframe(fmt_rr_scan[rr_cols], use_container_width=True, hide_index=True)
+
+            buy_rr = rr_scan_df[rr_scan_df["Trade Read"].isin(["🟢▲ BUY / Bullish strength", "🟡▲ BUY Watch"])].copy()
+            with st.expander(f"BUY / Bullish strength candidates ({len(buy_rr)})", expanded=False):
+                if buy_rr.empty:
+                    st.info("No BUY/Bullish strength candidates found.")
+                else:
+                    buy_rr = buy_rr.sort_values(["Composite Strength", "Strength Change", "Symbol"], ascending=[False, False, True])
+                    st.dataframe(_format_rolling_strength_scanner(buy_rr)[rr_cols], use_container_width=True, hide_index=True)
+
+            sell_rr = rr_scan_df[rr_scan_df["Trade Read"].isin(["🔴▼ SELL / Bearish strength", "🟡▼ SELL Watch"])].copy()
+            with st.expander(f"SELL / Bearish strength candidates ({len(sell_rr)})", expanded=False):
+                if sell_rr.empty:
+                    st.info("No SELL/Bearish strength candidates found.")
+                else:
+                    sell_rr = sell_rr.sort_values(["Composite Strength", "Strength Change", "Symbol"], ascending=[True, True, True])
+                    st.dataframe(_format_rolling_strength_scanner(sell_rr)[rr_cols], use_container_width=True, hide_index=True)
+    else:
+        st.info("Click **Run Rolling Return Strength Scan** to rank the current universe.")
+
+
