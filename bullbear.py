@@ -1,5 +1,5 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
-# (FOCUSED VERSION) Only shows Original Forecast, Bull vs Bears, Price Trend Bars, Cumulative Frequency, and Trade Momentum.
+# (FOCUSED VERSION) Shows Original Forecast, Bull vs Bears, Price Trend Bars, Cumulative Frequency, Trade Momentum, Rolling Return Strength, and Buy/Sell Timing.
 # (UPDATED) CF latest-reading cards use compact font sizing for better readability.
 # (UPDATED) Trade Momentum result tables are collapsible/minimized for cleaner UX.
 # (UPDATED) Price Trend Bars scanner and extreme tables are collapsible/minimized for cleaner UX.
@@ -5539,14 +5539,287 @@ if 'run_all' not in st.session_state:
 if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
+def compute_buy_sell_timing(close_like,
+                            k_window: int = 14,
+                            signal_span: int = 5,
+                            smooth_span: int = 3,
+                            zone_lookback: int = 8,
+                            oversold_level: float = -0.50,
+                            overbought_level: float = 0.50) -> pd.DataFrame:
+    """
+    Normalized stochastic momentum timing model.
+
+    Momentum = -1 means price is near the low of the selected rolling range.
+    Momentum = +1 means price is near the high of the selected rolling range.
+    The signal line smooths momentum. BUY/SELL markers are produced only when
+    momentum turns out of an extreme zone and crosses its signal line.
+    """
+    close = _coerce_1d_series(close_like).dropna().astype(float)
+    if close.empty or len(close) < max(10, int(k_window) + 3):
+        return pd.DataFrame(columns=[
+            "Close", "Momentum", "Signal", "Histogram", "Buy Signal", "Sell Signal",
+            "Timing Bias", "Instruction"
+        ])
+
+    k_window = int(max(5, k_window))
+    smooth_span = int(max(1, smooth_span))
+    signal_span = int(max(1, signal_span))
+    zone_lookback = int(max(2, zone_lookback))
+
+    lo = close.rolling(k_window, min_periods=max(3, k_window // 2)).min()
+    hi = close.rolling(k_window, min_periods=max(3, k_window // 2)).max()
+    rng = (hi - lo).replace(0, np.nan)
+
+    momentum_raw = ((close - lo) / rng) * 2.0 - 1.0
+    momentum = momentum_raw.ewm(span=smooth_span, adjust=False, min_periods=1).mean().clip(-1.0, 1.0)
+    signal = momentum.ewm(span=signal_span, adjust=False, min_periods=1).mean().clip(-1.0, 1.0)
+    hist = (momentum - signal).clip(-1.0, 1.0)
+
+    cross_up = (momentum > signal) & (momentum.shift(1) <= signal.shift(1))
+    cross_down = (momentum < signal) & (momentum.shift(1) >= signal.shift(1))
+
+    recently_oversold = momentum.rolling(zone_lookback, min_periods=1).min() <= float(oversold_level)
+    recently_overbought = momentum.rolling(zone_lookback, min_periods=1).max() >= float(overbought_level)
+
+    buy_signal = cross_up & recently_oversold
+    sell_signal = cross_down & recently_overbought
+
+    out = pd.DataFrame({
+        "Close": close,
+        "Momentum": momentum,
+        "Signal": signal,
+        "Histogram": hist,
+        "Buy Signal": buy_signal.fillna(False),
+        "Sell Signal": sell_signal.fillna(False),
+    })
+
+    def _row_bias(row) -> str:
+        m = row.get("Momentum", np.nan)
+        sg = row.get("Signal", np.nan)
+        h = row.get("Histogram", np.nan)
+        if bool(row.get("Buy Signal", False)):
+            return "🟢▲ BUY Timing"
+        if bool(row.get("Sell Signal", False)):
+            return "🔴▼ SELL Timing"
+        try:
+            if np.isfinite(m) and np.isfinite(sg):
+                if m > sg and m < 0:
+                    return "🟡▲ BUY Watch"
+                if m > sg and m >= 0:
+                    return "🟢 Bullish"
+                if m < sg and m > 0:
+                    return "🟡▼ SELL Watch"
+                if m < sg and m <= 0:
+                    return "🔴 Bearish"
+        except Exception:
+            pass
+        return "⏳ WAIT"
+
+    def _row_instruction(row) -> str:
+        bias = _row_bias(row)
+        m = row.get("Momentum", np.nan)
+        if "BUY Timing" in bias:
+            return "BUY timing: momentum crossed above signal after oversold. Prefer entry near support/pullback; stop below recent swing low."
+        if "SELL Timing" in bias:
+            return "SELL timing: momentum crossed below signal after overbought. Prefer entry near resistance/retest; stop above recent swing high."
+        try:
+            mv = float(m)
+        except Exception:
+            mv = np.nan
+        if "BUY Watch" in bias:
+            return "BUY watch: momentum is improving from the lower half; wait for bullish cross/price confirmation."
+        if "SELL Watch" in bias:
+            return "SELL watch: momentum is weakening from the upper half; wait for bearish cross/price confirmation."
+        if np.isfinite(mv) and mv >= 0.80:
+            return "Overbought/extended: protect profits or wait for pullback."
+        if np.isfinite(mv) and mv <= -0.80:
+            return "Oversold/dip zone: do not buy blindly; wait for momentum turn upward."
+        return "WAIT: no clean timing edge."
+
+    out["Timing Bias"] = out.apply(_row_bias, axis=1)
+    out["Instruction"] = out.apply(_row_instruction, axis=1)
+    return out
+
+
+def _bars_since_bool_signal(bool_series_like) -> int:
+    s = pd.Series(bool_series_like).fillna(False).astype(bool)
+    if s.empty or not s.any():
+        return -1
+    last_pos = np.where(s.to_numpy())[0][-1]
+    return int(len(s) - 1 - last_pos)
+
+
+def _format_buy_sell_timing_table(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy()
+    for c in ["Momentum", "Signal", "Histogram"]:
+        if c in out.columns:
+            out[c] = pd.to_numeric(out[c], errors="coerce").map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
+    if "Close" in out.columns:
+        out["Close"] = pd.to_numeric(out["Close"], errors="coerce").map(fmt_price_val)
+    if "Period" in out.columns:
+        out["Period"] = out["Period"].astype(str)
+    if "Bars Since Signal" in out.columns:
+        out["Bars Since Signal"] = out["Bars Since Signal"].map(lambda x: "n/a" if int(x) < 0 else int(x))
+    if "Trend Slope" in out.columns:
+        out["Trend Slope"] = out["Trend Slope"].map(fmt_slope)
+    return out
+
+
+def plot_buy_sell_timing_chart(timing_df: pd.DataFrame,
+                               title: str,
+                               recent_bars: int = None):
+    """Plot normalized stochastic momentum with buy/sell timing markers."""
+    if timing_df is None or timing_df.empty:
+        st.info("Not enough data to plot Buy/Sell Timing.")
+        return
+
+    df = timing_df.copy()
+    if recent_bars is not None and int(recent_bars) > 0:
+        df = df.tail(int(recent_bars))
+    df = df.dropna(subset=["Momentum", "Signal"], how="all")
+    if df.empty:
+        st.info("Not enough timing values to plot.")
+        return
+
+    x = np.arange(len(df))
+    labels = []
+    for idx_val in df.index:
+        try:
+            if isinstance(idx_val, pd.Timestamp):
+                labels.append(idx_val.strftime("%m-%d" if len(df) <= 80 else "%Y-%m"))
+            else:
+                labels.append(str(idx_val))
+        except Exception:
+            labels.append(str(idx_val))
+
+    fig, ax = plt.subplots(figsize=(12.8, 4.8))
+    ax.plot(x, df["Momentum"].to_numpy(dtype=float), linewidth=2.2, label="Normalized Stochastic Momentum")
+    ax.plot(x, df["Signal"].to_numpy(dtype=float), linestyle="--", linewidth=1.8, label="Signal")
+    ax.bar(x, df["Histogram"].fillna(0).to_numpy(dtype=float), alpha=0.20, label="Momentum - Signal")
+
+    ax.axhline(0.0, color="black", linestyle="--", linewidth=1.0, alpha=0.60)
+    ax.axhline(0.50, color="black", linestyle="-", linewidth=1.0, alpha=0.60)
+    ax.axhline(-0.50, color="black", linestyle="-", linewidth=1.0, alpha=0.60)
+    ax.axhspan(0.50, 1.0, alpha=0.08)
+    ax.axhspan(-1.0, -0.50, alpha=0.08)
+
+    buy_mask = df["Buy Signal"].fillna(False).astype(bool)
+    sell_mask = df["Sell Signal"].fillna(False).astype(bool)
+
+    if buy_mask.any():
+        bx = x[buy_mask.to_numpy()]
+        by = df.loc[buy_mask, "Momentum"].to_numpy(dtype=float)
+        ax.scatter(bx, by, marker="^", s=110, label="BUY timing", zorder=5)
+        for xi, yi, price in zip(bx[-5:], by[-5:], df.loc[buy_mask, "Close"].tail(5)):
+            ax.annotate(f"BUY\n{fmt_price_val(price)}", xy=(xi, yi), xytext=(0, 14),
+                        textcoords="offset points", ha="center", fontsize=8,
+                        bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="none", alpha=0.75))
+
+    if sell_mask.any():
+        sx = x[sell_mask.to_numpy()]
+        sy = df.loc[sell_mask, "Momentum"].to_numpy(dtype=float)
+        ax.scatter(sx, sy, marker="v", s=110, label="SELL timing", zorder=5)
+        for xi, yi, price in zip(sx[-5:], sy[-5:], df.loc[sell_mask, "Close"].tail(5)):
+            ax.annotate(f"SELL\n{fmt_price_val(price)}", xy=(xi, yi), xytext=(0, -30),
+                        textcoords="offset points", ha="center", fontsize=8,
+                        bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="none", alpha=0.75))
+
+    latest = df.iloc[-1]
+    latest_label = (
+        f"{latest.get('Timing Bias', 'WAIT')}\\n"
+        f"M {float(latest['Momentum']):+.2f} | S {float(latest['Signal']):+.2f}\\n"
+        f"Close {fmt_price_val(latest['Close'])}"
+    )
+    ax.annotate(latest_label, xy=(x[-1], float(latest["Momentum"])),
+                xytext=(-10, 24), textcoords="offset points", ha="right",
+                fontsize=9, bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="black", alpha=0.75))
+
+    step = max(1, len(x) // 8)
+    ax.set_xticks(x[::step])
+    ax.set_xticklabels([labels[i] for i in range(0, len(labels), step)], rotation=45, ha="right")
+    ax.set_ylim(-1.12, 1.12)
+    ax.set_ylabel("Normalized momentum")
+    ax.set_title(title)
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="best")
+    fig.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+
+
+def _build_buy_sell_timing_scan_rows(symbols,
+                                     k_window: int = 14,
+                                     signal_span: int = 5,
+                                     smooth_span: int = 3,
+                                     zone_lookback: int = 8,
+                                     recent_signal_bars: int = 8) -> pd.DataFrame:
+    rows = []
+    for sym in symbols:
+        try:
+            close = _real_close_for_trend_bars(sym)
+            close_live, live_price, live_ts, live_used = _with_current_day_price_for_trend_bars(sym, close)
+            if close_live is None or close_live.empty or len(close_live) < max(30, k_window + signal_span + 5):
+                continue
+            timing = compute_buy_sell_timing(
+                close_live,
+                k_window=k_window,
+                signal_span=signal_span,
+                smooth_span=smooth_span,
+                zone_lookback=zone_lookback,
+            )
+            if timing is None or timing.empty:
+                continue
+            last = timing.dropna(subset=["Momentum", "Signal"]).iloc[-1]
+            buy_bars = _bars_since_bool_signal(timing["Buy Signal"])
+            sell_bars = _bars_since_bool_signal(timing["Sell Signal"])
+            recent_buy = buy_bars >= 0 and buy_bars <= int(recent_signal_bars)
+            recent_sell = sell_bars >= 0 and sell_bars <= int(recent_signal_bars)
+            _, tr_slope = slope_line(close_live, lookback=min(int(slope_lb_daily), len(close_live)))
+            trend_direction = "Upward" if np.isfinite(tr_slope) and tr_slope >= 0 else "Downward"
+            signal_type = "BUY" if recent_buy and (not recent_sell or buy_bars <= sell_bars) else ("SELL" if recent_sell else "WATCH")
+            bars_since_signal = buy_bars if signal_type == "BUY" else (sell_bars if signal_type == "SELL" else -1)
+            rows.append({
+                "Symbol": sym,
+                "Signal Type": signal_type,
+                "Timing Bias": last.get("Timing Bias", "WAIT"),
+                "Trend Direction": trend_direction,
+                "Momentum": float(last["Momentum"]),
+                "Signal": float(last["Signal"]),
+                "Histogram": float(last["Histogram"]),
+                "Bars Since Signal": int(bars_since_signal),
+                "Last Close": _safe_last_float(close_live),
+                "As Of": live_ts if live_used and pd.notna(live_ts) else close_live.index[-1],
+                "Trend Slope": float(tr_slope) if np.isfinite(tr_slope) else np.nan,
+                "Instruction": last.get("Instruction", ""),
+            })
+        except Exception:
+            continue
+    if not rows:
+        return pd.DataFrame()
+    df = pd.DataFrame(rows)
+    signal_order = {"BUY": 0, "SELL": 1, "WATCH": 2}
+    trend_order = {"Upward": 0, "Downward": 1}
+    df["_signal_order"] = df["Signal Type"].map(signal_order).fillna(9)
+    df["_trend_order"] = df["Trend Direction"].map(trend_order).fillna(9)
+    df["_bars_order"] = df["Bars Since Signal"].where(df["Bars Since Signal"] >= 0, 9999)
+    df["_abs_hist"] = pd.to_numeric(df["Histogram"], errors="coerce").abs()
+    df = df.sort_values(
+        ["_signal_order", "_trend_order", "_bars_order", "_abs_hist", "Symbol"],
+        ascending=[True, True, True, False, True]
+    ).drop(columns=["_signal_order", "_trend_order", "_bars_order", "_abs_hist"])
+    return df
+
 # Tabs
-tab1, tab3, tab18, tab19, tab20, tab21 = st.tabs([
+tab1, tab3, tab18, tab19, tab20, tab21, tab22 = st.tabs([
     "Original Forecast",
     "Bull vs Bears",
     "Price Trend Bars",
     "Cumulative Frequency",
     "Trade Momentum",
-    "Rolling Return Strength"
+    "Rolling Return Strength",
+    "Buy/Sell Timing"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -7178,3 +7451,210 @@ with tab21:
         st.info("Click **Run Rolling Return Strength Scan** to rank the current universe.")
 
 
+# --- Tab 22: Buy/Sell Timing ---
+with tab22:
+    st.header("Buy/Sell Timing")
+    st.caption(
+        "Normalized stochastic momentum timing chart. This tab is designed for entries and exits: "
+        "BUY timing appears when momentum turns upward from an oversold zone; SELL timing appears when momentum turns downward from an overbought zone."
+    )
+
+    with st.expander("How to trade this chart", expanded=True):
+        st.markdown(
+            """
+**BUY setup:** momentum is below `-0.5` or near `-1`, then crosses above its signal line. It is stronger when Price Trend Bars are improving and price is near support or a pullback zone.
+
+**SELL setup:** momentum is above `+0.5` or near `+1`, then crosses below its signal line. It is stronger when Price Trend Bars are weakening and price is near resistance or an extended zone.
+
+Use this tab for timing, not by itself. The best workflow is:  
+**Price Trend Bars = location**, **Cumulative/return strength = broader pressure**, **Buy/Sell Timing = entry or exit trigger**.
+            """
+        )
+
+    ctrl1, ctrl2, ctrl3, ctrl4 = st.columns(4)
+    with ctrl1:
+        timing_symbol = st.selectbox("Symbol", universe, index=0 if len(universe) else None, key="buy_sell_timing_symbol")
+    with ctrl2:
+        timing_view = st.selectbox("View", ["Daily 3M", "Daily 6M", "Monthly 12M"], index=0, key="buy_sell_timing_view")
+    with ctrl3:
+        timing_k_window = st.slider("Momentum lookback", 5, 40, 14, 1, key="buy_sell_timing_k_window")
+    with ctrl4:
+        timing_recent_bars = st.slider("Recent signal window", 2, 30, 8, 1, key="buy_sell_timing_recent_signal_bars")
+
+    opt1, opt2, opt3 = st.columns(3)
+    with opt1:
+        timing_signal_span = st.slider("Signal smoothing", 2, 20, 5, 1, key="buy_sell_timing_signal_span")
+    with opt2:
+        timing_smooth_span = st.slider("Momentum smoothing", 1, 10, 3, 1, key="buy_sell_timing_smooth_span")
+    with opt3:
+        timing_zone_lookback = st.slider("Extreme-zone lookback", 2, 20, 8, 1, key="buy_sell_timing_zone_lookback")
+
+    close_timing_base = _real_close_for_trend_bars(timing_symbol)
+    close_timing_live, timing_live_price, timing_live_ts, timing_live_used = _with_current_day_price_for_trend_bars(
+        timing_symbol,
+        close_timing_base
+    )
+
+    if close_timing_live is None or close_timing_live.empty or len(close_timing_live) < 40:
+        st.warning("Not enough price history available for this symbol.")
+    else:
+        if timing_view == "Monthly 12M":
+            timing_input = close_timing_live.resample("ME").last().dropna().tail(18)
+            recent_plot_bars = 12
+            view_title = "Monthly Buy/Sell Timing, 12 Months"
+        elif timing_view == "Daily 6M":
+            timing_input = close_timing_live.tail(132)
+            recent_plot_bars = 132
+            view_title = "Daily Buy/Sell Timing, 6 Months"
+        else:
+            timing_input = close_timing_live.tail(66)
+            recent_plot_bars = 66
+            view_title = "Daily Buy/Sell Timing, 3 Months"
+
+        timing_df = compute_buy_sell_timing(
+            timing_input,
+            k_window=int(timing_k_window),
+            signal_span=int(timing_signal_span),
+            smooth_span=int(timing_smooth_span),
+            zone_lookback=int(timing_zone_lookback),
+        )
+
+        if timing_df is None or timing_df.empty:
+            st.info("Not enough timing data for the selected view.")
+        else:
+            last_timing = timing_df.dropna(subset=["Momentum", "Signal"]).iloc[-1]
+            buy_bars_timing = _bars_since_bool_signal(timing_df["Buy Signal"])
+            sell_bars_timing = _bars_since_bool_signal(timing_df["Sell Signal"])
+            _, timing_trend_slope = slope_line(close_timing_live, lookback=min(int(slope_lb_daily), len(close_timing_live)))
+            timing_trend_direction = "Upward" if np.isfinite(timing_trend_slope) and timing_trend_slope >= 0 else "Downward"
+
+            card_cols = st.columns(5)
+            card_cols[0].metric("Timing Bias", str(last_timing.get("Timing Bias", "WAIT")))
+            card_cols[1].metric("Close", fmt_price_val(last_timing["Close"]))
+            card_cols[2].metric("Momentum", f"{float(last_timing['Momentum']):+.3f}")
+            card_cols[3].metric("Signal", f"{float(last_timing['Signal']):+.3f}")
+            card_cols[4].metric("Trend", timing_trend_direction)
+
+            st.info(str(last_timing.get("Instruction", "WAIT: no clean timing edge.")))
+
+            plot_buy_sell_timing_chart(
+                timing_df,
+                f"{timing_symbol} — {view_title}",
+                recent_bars=recent_plot_bars,
+            )
+
+            timing_table = timing_df.reset_index()
+            # Make the time/index column consistent across DatetimeIndex names
+            # (for example "Date", "Datetime", or a blank unnamed index).
+            if "Period" not in timing_table.columns and len(timing_table.columns) > 0:
+                timing_table = timing_table.rename(columns={timing_table.columns[0]: "Period"})
+
+            with st.expander("Timing chart values", expanded=False):
+                display_cols = ["Period", "Close", "Momentum", "Signal", "Histogram", "Buy Signal", "Sell Signal", "Timing Bias", "Instruction"]
+                # Defensive column fill prevents KeyError when an older cached/partial
+                # timing DataFrame is missing newer display columns.
+                for _col in display_cols:
+                    if _col not in timing_table.columns:
+                        if _col in ["Buy Signal", "Sell Signal"]:
+                            timing_table[_col] = False
+                        else:
+                            timing_table[_col] = np.nan
+                st.dataframe(
+                    _format_buy_sell_timing_table(timing_table.loc[:, display_cols]),
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+            c_buy, c_sell = st.columns(2)
+            with c_buy:
+                st.subheader("Recent BUY Timing")
+                if buy_bars_timing >= 0:
+                    st.success(f"Most recent BUY timing signal: {buy_bars_timing} bars ago.")
+                else:
+                    st.info("No BUY timing signal in this view.")
+            with c_sell:
+                st.subheader("Recent SELL Timing")
+                if sell_bars_timing >= 0:
+                    st.error(f"Most recent SELL timing signal: {sell_bars_timing} bars ago.")
+                else:
+                    st.info("No SELL timing signal in this view.")
+
+    st.markdown("---")
+    st.subheader("Buy/Sell Timing Scanner")
+    st.caption(
+        "Scans the current universe for recent normalized stochastic momentum BUY and SELL timing signals. "
+        "Tables are collapsed by default so the chart remains the primary workflow."
+    )
+
+    if st.button("Run Buy/Sell Timing Scanner", key="run_buy_sell_timing_scanner"):
+        scan_timing_df = _build_buy_sell_timing_scan_rows(
+            universe,
+            k_window=int(timing_k_window),
+            signal_span=int(timing_signal_span),
+            smooth_span=int(timing_smooth_span),
+            zone_lookback=int(timing_zone_lookback),
+            recent_signal_bars=int(timing_recent_bars),
+        )
+        st.session_state["buy_sell_timing_scan_df"] = scan_timing_df
+
+    scan_timing_df = st.session_state.get("buy_sell_timing_scan_df", pd.DataFrame())
+    if scan_timing_df is None or scan_timing_df.empty:
+        st.info("Run the scanner to see current BUY/SELL timing candidates.")
+    else:
+        timing_scan_cols = [
+            "Symbol", "Signal Type", "Timing Bias", "Trend Direction", "Momentum", "Signal",
+            "Histogram", "Bars Since Signal", "Last Close", "As Of", "Trend Slope", "Instruction"
+        ]
+        formatted_timing_scan = scan_timing_df.copy()
+        formatted_timing_scan = formatted_timing_scan.rename(columns={"Last Close": "Close"})
+        formatted_timing_scan = _format_buy_sell_timing_table(formatted_timing_scan)
+        if "As Of" in formatted_timing_scan.columns:
+            formatted_timing_scan["As Of"] = formatted_timing_scan["As Of"].astype(str)
+
+        with st.expander("All Buy/Sell Timing scan results", expanded=False):
+            st.dataframe(
+                formatted_timing_scan[[
+                    "Symbol", "Signal Type", "Timing Bias", "Trend Direction", "Momentum", "Signal",
+                    "Histogram", "Bars Since Signal", "Close", "As Of", "Trend Slope", "Instruction"
+                ]],
+                use_container_width=True,
+                hide_index=True
+            )
+
+        buy_candidates = scan_timing_df[scan_timing_df["Signal Type"].eq("BUY")].copy()
+        sell_candidates = scan_timing_df[scan_timing_df["Signal Type"].eq("SELL")].copy()
+
+        col_buy_scan, col_sell_scan = st.columns(2)
+        with col_buy_scan:
+            with st.expander("🟢 BUY timing candidates", expanded=True):
+                if buy_candidates.empty:
+                    st.info("No recent BUY timing candidates.")
+                else:
+                    out_buy = buy_candidates.rename(columns={"Last Close": "Close"})
+                    out_buy = _format_buy_sell_timing_table(out_buy)
+                    out_buy["As Of"] = out_buy["As Of"].astype(str)
+                    st.dataframe(
+                        out_buy[[
+                            "Symbol", "Timing Bias", "Trend Direction", "Momentum", "Signal",
+                            "Bars Since Signal", "Close", "As Of", "Instruction"
+                        ]],
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+        with col_sell_scan:
+            with st.expander("🔴 SELL timing candidates", expanded=True):
+                if sell_candidates.empty:
+                    st.info("No recent SELL timing candidates.")
+                else:
+                    out_sell = sell_candidates.rename(columns={"Last Close": "Close"})
+                    out_sell = _format_buy_sell_timing_table(out_sell)
+                    out_sell["As Of"] = out_sell["As Of"].astype(str)
+                    st.dataframe(
+                        out_sell[[
+                            "Symbol", "Timing Bias", "Trend Direction", "Momentum", "Signal",
+                            "Bars Since Signal", "Close", "As Of", "Instruction"
+                        ]],
+                        use_container_width=True,
+                        hide_index=True
+                    )
