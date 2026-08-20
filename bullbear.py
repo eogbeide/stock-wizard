@@ -5539,6 +5539,25 @@ if 'run_all' not in st.session_state:
 if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
+
+def _normalize_price_level_for_timing(series_like) -> pd.Series:
+    """
+    Normalize actual price level to -1..+1 over the visible timing window.
+    This is used only for plotting price-position markers so lower prices
+    always appear lower than higher prices on the Buy/Sell Timing chart.
+    """
+    s = _coerce_1d_series(series_like).astype(float)
+    if s.empty:
+        return pd.Series(index=s.index, dtype=float)
+    lo = float(np.nanmin(s.to_numpy(dtype=float)))
+    hi = float(np.nanmax(s.to_numpy(dtype=float)))
+    if not np.isfinite(lo) or not np.isfinite(hi):
+        return pd.Series(np.nan, index=s.index, dtype=float)
+    if abs(hi - lo) <= 1e-12:
+        return pd.Series(0.0, index=s.index, dtype=float)
+    return (((s - lo) / (hi - lo)) * 2.0 - 1.0).clip(-1.0, 1.0).reindex(s.index)
+
+
 def compute_buy_sell_timing(close_like,
                             k_window: int = 14,
                             signal_span: int = 5,
@@ -5589,6 +5608,7 @@ def compute_buy_sell_timing(close_like,
         "Momentum": momentum,
         "Signal": signal,
         "Histogram": hist,
+        "Price Level": _normalize_price_level_for_timing(close),
         "Buy Signal": buy_signal.fillna(False),
         "Sell Signal": sell_signal.fillna(False),
     })
@@ -5653,7 +5673,7 @@ def _format_buy_sell_timing_table(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
     out = df.copy()
-    for c in ["Momentum", "Signal", "Histogram"]:
+    for c in ["Momentum", "Signal", "Histogram", "Price Level"]:
         if c in out.columns:
             out[c] = pd.to_numeric(out[c], errors="coerce").map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
     if "Close" in out.columns:
@@ -5695,9 +5715,14 @@ def plot_buy_sell_timing_chart(timing_df: pd.DataFrame,
             labels.append(str(idx_val))
 
     fig, ax = plt.subplots(figsize=(12.8, 4.8))
+    # Momentum and signal remain the timing model. Price Level is plotted separately
+    # so BUY/SELL labels are positioned by actual relative price, not by momentum.
+    if "Price Level" not in df.columns or df["Price Level"].dropna().empty:
+        df["Price Level"] = _normalize_price_level_for_timing(df["Close"])
     ax.plot(x, df["Momentum"].to_numpy(dtype=float), linewidth=2.2, label="Normalized Stochastic Momentum")
     ax.plot(x, df["Signal"].to_numpy(dtype=float), linestyle="--", linewidth=1.8, label="Signal")
-    ax.bar(x, df["Histogram"].fillna(0).to_numpy(dtype=float), alpha=0.20, label="Momentum - Signal")
+    ax.plot(x, df["Price Level"].to_numpy(dtype=float), linewidth=1.8, alpha=0.75, label="Normalized Price Level")
+    ax.bar(x, df["Histogram"].fillna(0).to_numpy(dtype=float), alpha=0.18, label="Momentum - Signal")
 
     ax.axhline(0.0, color="black", linestyle="--", linewidth=1.0, alpha=0.60)
     ax.axhline(0.50, color="black", linestyle="-", linewidth=1.0, alpha=0.60)
@@ -5710,7 +5735,7 @@ def plot_buy_sell_timing_chart(timing_df: pd.DataFrame,
 
     if buy_mask.any():
         bx = x[buy_mask.to_numpy()]
-        by = df.loc[buy_mask, "Momentum"].to_numpy(dtype=float)
+        by = df.loc[buy_mask, "Price Level"].to_numpy(dtype=float)
         ax.scatter(bx, by, marker="^", s=110, label="BUY timing", zorder=5)
         for xi, yi, price in zip(bx[-5:], by[-5:], df.loc[buy_mask, "Close"].tail(5)):
             ax.annotate(f"BUY\n{fmt_price_val(price)}", xy=(xi, yi), xytext=(0, 14),
@@ -5719,7 +5744,7 @@ def plot_buy_sell_timing_chart(timing_df: pd.DataFrame,
 
     if sell_mask.any():
         sx = x[sell_mask.to_numpy()]
-        sy = df.loc[sell_mask, "Momentum"].to_numpy(dtype=float)
+        sy = df.loc[sell_mask, "Price Level"].to_numpy(dtype=float)
         ax.scatter(sx, sy, marker="v", s=110, label="SELL timing", zorder=5)
         for xi, yi, price in zip(sx[-5:], sy[-5:], df.loc[sell_mask, "Close"].tail(5)):
             ax.annotate(f"SELL\n{fmt_price_val(price)}", xy=(xi, yi), xytext=(0, -30),
@@ -5732,7 +5757,8 @@ def plot_buy_sell_timing_chart(timing_df: pd.DataFrame,
         f"M {float(latest['Momentum']):+.2f} | S {float(latest['Signal']):+.2f}\\n"
         f"Close {fmt_price_val(latest['Close'])}"
     )
-    ax.annotate(latest_label, xy=(x[-1], float(latest["Momentum"])),
+    latest_y = float(latest.get("Price Level", latest.get("Momentum", 0.0)))
+    ax.annotate(latest_label, xy=(x[-1], latest_y),
                 xytext=(-10, 24), textcoords="offset points", ha="right",
                 fontsize=9, bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="black", alpha=0.75))
 
