@@ -1,12 +1,19 @@
 # bullbear.py — Stocks/Forex Dashboard + Forecasts
-# (NEW) Buy/Sell Timing tab with normalized stochastic momentum signals.
-# (FOCUSED VERSION) Only shows Original Forecast, Bull vs Bears, and Price Trend Bars.
+# (FOCUSED VERSION) Only shows Original Forecast, Bull vs Bears, Price Trend Bars, Cumulative Frequency, and Trade Momentum.
+# (UPDATED) CF latest-reading cards use compact font sizing for better readability.
+# (UPDATED) Trade Momentum result tables are collapsible/minimized for cleaner UX.
+# (UPDATED) Price Trend Bars scanner and extreme tables are collapsible/minimized for cleaner UX.
+# (NEW) Rolling Return Strength tab adds normalized 5/10/20-period return strength, dip scanners, and peak/reversal price labels.
 # (UPDATED) Price Trend Bars daily views include current-day live price and labels each bar with price.
 # (UPDATED) London & New York session Open/Close markers in PST on Forex intraday charts.
 # (UPDATED) Removed MACD from NTD panels; NTD panels now use a smoothed NPX price overlay.
 # (UPDATED) NTD panels are less noisy: green/red triangles now appear only after confirmed S/R reversals.
 # (NEW) BB Divergence Signals (price trend vs. Bollinger band drift) with confidence gate
 # (NEW) Price Trend Bars tab shows normalized price-level bars plus current +1/-1 daily and monthly extreme tables.
+# (NEW) Cumulative Frequency tab replaces the histogram with ECDF curves of normalized price trend bars.
+# (NEW) Trade Momentum tab ranks BUY/SELL/WAIT candidates using price trend bars, percentile, and slope.
+# (UPDATED) Cumulative Frequency and Trade Momentum tabs include built-in trading interpretation guides.
+# (UPDATED) Cumulative Frequency data tables are collapsed/minimized by default for a cleaner trading view.
 # (NEW) ADX filter (period/threshold) + confluence gating for HMA, BB Divergence, and Near S/R signals
 # (UPDATED) Removed hourly Momentum chart, red/green directional PSAR price overlays, and NTD-cross triangles.
 # (UPDATED) Removed Ichimoku Kijun and Supertrend lines from price charts.
@@ -4415,6 +4422,1114 @@ def _format_price_trend_bars_table(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+def compute_price_trend_histogram(df: pd.DataFrame, bins: int = 10) -> pd.DataFrame:
+    """
+    Build a histogram summary from a Price Trend Bars dataframe.
+
+    Values are the normalized price-level bars from -1 to +1. This shows where
+    the selected symbol spent most of its time in the chosen view: lower zone,
+    mid/neutral zone, or upper zone.
+    """
+    if df is None or df.empty or "Trend Bar" not in df.columns:
+        return pd.DataFrame(columns=["Bin", "Low", "High", "Count", "Percent"])
+    vals = pd.to_numeric(df["Trend Bar"], errors="coerce").dropna()
+    if vals.empty:
+        return pd.DataFrame(columns=["Bin", "Low", "High", "Count", "Percent"])
+
+    bins = int(max(4, min(20, bins)))
+    edges = np.linspace(-1.0, 1.0, bins + 1)
+    counts, edges = np.histogram(vals.to_numpy(dtype=float), bins=edges)
+    total = int(counts.sum())
+
+    rows = []
+    for i, count in enumerate(counts):
+        low = float(edges[i])
+        high = float(edges[i + 1])
+        rows.append({
+            "Bin": f"{low:+.2f} to {high:+.2f}",
+            "Low": low,
+            "High": high,
+            "Count": int(count),
+            "Percent": (float(count) / total * 100.0) if total > 0 else np.nan,
+        })
+    return pd.DataFrame(rows)
+
+def plot_price_trend_histogram(df: pd.DataFrame, title: str, bins: int = 10):
+    if df is None or df.empty or "Trend Bar" not in df.columns:
+        st.info("Not enough data to draw the histogram.")
+        return
+
+    vals = pd.to_numeric(df["Trend Bar"], errors="coerce").dropna()
+    if vals.empty:
+        st.info("Not enough normalized bar values to draw the histogram.")
+        return
+
+    bins = int(max(4, min(20, bins)))
+    edges = np.linspace(-1.0, 1.0, bins + 1)
+    counts, edges = np.histogram(vals.to_numpy(dtype=float), bins=edges)
+    centers = (edges[:-1] + edges[1:]) / 2.0
+    widths = np.diff(edges) * 0.86
+
+    latest_val = float(vals.iloc[-1]) if len(vals) else np.nan
+    fig, ax = plt.subplots(figsize=(12, 4.2))
+
+    colors = ["tab:green" if c >= 0 else "tab:red" for c in centers]
+    ax.bar(centers, counts, width=widths, align="center", color=colors, alpha=0.82)
+
+    for cx, count in zip(centers, counts):
+        if int(count) <= 0:
+            continue
+        ax.text(
+            cx,
+            int(count) + max(0.15, counts.max() * 0.03),
+            str(int(count)),
+            ha="center",
+            va="bottom",
+            fontsize=9,
+            fontweight="bold",
+            clip_on=False,
+        )
+
+    ax.axvline(0.0, color="black", linewidth=1.0)
+    ax.axvline(0.5, color="tab:green", linewidth=0.9, linestyle="--", alpha=0.55)
+    ax.axvline(-0.5, color="tab:red", linewidth=0.9, linestyle="--", alpha=0.55)
+
+    if np.isfinite(latest_val):
+        ax.axvline(latest_val, color="tab:blue", linewidth=2.0, linestyle="-", alpha=0.85)
+        ax.text(
+            latest_val,
+            max(1.0, counts.max() * 0.92),
+            f"Latest {latest_val:+.3f}",
+            ha="center",
+            va="top",
+            fontsize=9,
+            fontweight="bold",
+            bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="tab:blue", alpha=0.85),
+            clip_on=False,
+        )
+
+    ax.set_xlim(-1.08, 1.08)
+    ax.set_ylim(0, max(1.0, counts.max() * 1.18))
+    ax.set_title(title)
+    ax.set_xlabel("Normalized price trend-bar zone")
+    ax.set_ylabel("Number of periods")
+    ax.grid(True, axis="y", alpha=0.25)
+    fig.tight_layout()
+    st.pyplot(fig, clear_figure=True)
+
+def _format_price_trend_histogram_table(hist_df: pd.DataFrame) -> pd.DataFrame:
+    if hist_df is None or hist_df.empty:
+        return pd.DataFrame(columns=["Bin", "Count", "Percent"])
+    out = hist_df.copy()
+    if "Percent" in out.columns:
+        out["Percent"] = out["Percent"].map(lambda x: f"{float(x):.1f}%" if np.isfinite(float(x)) else "n/a")
+    return out[["Bin", "Count", "Percent"]]
+
+
+
+
+def compute_price_trend_cumulative_frequency(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Build an empirical cumulative frequency curve from normalized Price Trend Bars.
+
+    X-axis: normalized price trend-bar value from -1 to +1.
+    Y-axis: percentage of selected-view periods at or below that value.
+
+    This is more useful than a histogram when the goal is to see whether the
+    current reading is near the bottom, middle, or top of the recent price range.
+    """
+    if df is None or df.empty or "Trend Bar" not in df.columns:
+        return pd.DataFrame(columns=["Trend Bar", "Cumulative Count", "Cumulative %"])
+
+    vals = pd.to_numeric(df["Trend Bar"], errors="coerce").dropna()
+    if vals.empty:
+        return pd.DataFrame(columns=["Trend Bar", "Cumulative Count", "Cumulative %"])
+
+    vals_sorted = np.sort(vals.to_numpy(dtype=float))
+    n = len(vals_sorted)
+    cum_count = np.arange(1, n + 1, dtype=int)
+    cum_pct = cum_count / float(n) * 100.0
+    return pd.DataFrame({
+        "Trend Bar": vals_sorted,
+        "Cumulative Count": cum_count,
+        "Cumulative %": cum_pct,
+    })
+
+def _price_trend_percentile_rank(df: pd.DataFrame) -> float:
+    """Return the percentile rank of the latest Trend Bar within the selected view."""
+    if df is None or df.empty or "Trend Bar" not in df.columns:
+        return float("nan")
+    vals = pd.to_numeric(df["Trend Bar"], errors="coerce").dropna()
+    if vals.empty:
+        return float("nan")
+    latest = float(vals.iloc[-1])
+    if not np.isfinite(latest):
+        return float("nan")
+    return float((vals <= latest).mean() * 100.0)
+
+def _price_trend_cdf_read(latest_bar: float, percentile: float, trend_direction: str) -> str:
+    try:
+        lb = float(latest_bar)
+        pr = float(percentile)
+    except Exception:
+        return "Not enough data"
+
+    if not np.isfinite(lb) or not np.isfinite(pr):
+        return "Not enough data"
+
+    trend_direction = str(trend_direction)
+    if lb >= 0.75 and trend_direction == "Upward":
+        return "Bullish continuation / upper-range strength"
+    if lb >= 0.75 and trend_direction != "Upward":
+        return "Upper-range bounce inside weaker trend"
+    if lb <= -0.75 and trend_direction == "Downward":
+        return "Bearish continuation / lower-range weakness"
+    if lb <= -0.75 and trend_direction != "Downward":
+        return "Lower-range pullback inside stronger trend"
+    if lb > 0.0 and trend_direction == "Upward":
+        return "Constructive bullish pressure"
+    if lb < 0.0 and trend_direction == "Downward":
+        return "Constructive bearish pressure"
+    if abs(lb) < 0.25:
+        return "Middle range / wait for direction"
+    return "Mixed / confirm on chart"
+
+
+def _price_trend_cdf_trade_signal(latest_bar: float,
+                                  percentile: float,
+                                  trend_direction: str,
+                                  direction: str = None) -> dict:
+    """
+    Convert the CF location into a trade-friendly instruction.
+
+    CF is location, not a standalone signal. The instruction combines:
+    - current normalized bar location,
+    - percentile rank in the selected view,
+    - daily trend direction,
+    - latest bar direction/rate-of-change.
+    """
+    try:
+        lb = float(latest_bar)
+        pr = float(percentile)
+    except Exception:
+        lb, pr = np.nan, np.nan
+
+    if not np.isfinite(lb) or not np.isfinite(pr):
+        return {
+            "Trade Bias": "WAIT",
+            "Symbol": "⏳",
+            "Instruction": "Not enough CF data. Wait.",
+            "Action Zone": "No signal",
+            "Score": 0,
+        }
+
+    trend_up = str(trend_direction) == "Upward"
+    trend_down = str(trend_direction) == "Downward"
+    dir_text = str(direction or "")
+    rising = dir_text.lower().startswith("ris") or lb > 0
+    falling = dir_text.lower().startswith("fall") or lb < 0
+
+    score = 0
+    score += 2 if trend_up else -2
+    score += 2 if lb > 0 else -2
+    score += 1 if rising else (-1 if falling else 0)
+    score += 1 if pr >= 55 else (-1 if pr <= 45 else 0)
+
+    if trend_up and lb > 0 and rising and pr < 85:
+        if pr <= 35:
+            bias = "BUY Watch"
+            symbol = "🟢"
+            instruction = "BUY WATCH — early recovery from a low/mid CF area. Wait for a green bar or pullback hold before entry."
+            zone = "Early bullish recovery"
+        else:
+            bias = "BUY / Bullish"
+            symbol = "🟢▲"
+            instruction = "BUY / BULLISH — upward trend and CF pressure are aligned. Prefer pullback entries; avoid chasing if price is extended."
+            zone = "Bullish alignment"
+    elif trend_up and lb <= -0.5:
+        bias = "BUY Watch"
+        symbol = "🟡▲"
+        instruction = "BUY WATCH — pullback inside an upward trend. Wait for CF/bar to turn upward before entry."
+        zone = "Bullish pullback watch"
+        score += 1
+    elif trend_down and lb < 0 and falling and pr > 15:
+        if pr >= 65:
+            bias = "SELL Watch"
+            symbol = "🔴"
+            instruction = "SELL WATCH — weakening from a high/mid CF area. Wait for rejection or a red continuation bar."
+            zone = "Early bearish rollover"
+        else:
+            bias = "SELL / Bearish"
+            symbol = "🔴▼"
+            instruction = "SELL / BEARISH — downward trend and CF pressure are aligned. Prefer shorts after rejection or breakdown confirmation."
+            zone = "Bearish alignment"
+    elif trend_down and lb >= 0.5:
+        bias = "SELL Watch"
+        symbol = "🟡▼"
+        instruction = "SELL WATCH — bounce inside a downward trend. Wait for CF/bar to roll over before entry."
+        zone = "Bearish bounce watch"
+        score -= 1
+    elif pr >= 85:
+        bias = "WAIT / Take Profit"
+        symbol = "⚠️"
+        instruction = "WAIT / TAKE PROFIT — CF is in the upper extreme. Avoid chasing; wait for pullback or confirmed continuation."
+        zone = "Upper extreme"
+    elif pr <= 15:
+        bias = "WAIT / Reversal Watch"
+        symbol = "⚠️"
+        instruction = "WAIT / REVERSAL WATCH — CF is in the lower extreme. Do not buy blindly; wait for a bullish turn."
+        zone = "Lower extreme"
+    else:
+        bias = "WAIT"
+        symbol = "⏳"
+        instruction = "WAIT — mixed CF and trend signals. Let price confirm direction first."
+        zone = "Neutral/mixed"
+
+    return {
+        "Trade Bias": bias,
+        "Symbol": symbol,
+        "Instruction": instruction,
+        "Action Zone": zone,
+        "Score": int(score),
+    }
+
+
+def _cf_trade_row_for_symbol(symbol: str, view: str = "daily_4w") -> dict:
+    """Build one Cumulative Frequency scanner row with BUY/SELL instructions."""
+    try:
+        close = _real_close_for_trend_bars(symbol)
+        close_live, live_price, live_ts, live_used = _with_current_day_price_for_trend_bars(symbol, close)
+        if close_live is None or close_live.empty or len(close_live) < 30:
+            return None
+
+        df = compute_price_trend_bars(close_live, view=view)
+        if df is None or df.empty:
+            return None
+
+        latest = df.iloc[-1]
+        latest_bar = float(latest["Trend Bar"])
+        pct_rank = _price_trend_percentile_rank(df)
+        latest_change = float(latest["Change"]) if "Change" in df.columns else np.nan
+        direction = "Rising" if np.isfinite(latest_change) and latest_change >= 0 else "Falling"
+
+        _, tr_slope = slope_line(close_live, lookback=min(int(slope_lb_daily), len(close_live)))
+        trend_direction = "Upward" if np.isfinite(tr_slope) and tr_slope >= 0 else "Downward"
+        signal = _price_trend_cdf_trade_signal(
+            latest_bar=latest_bar,
+            percentile=pct_rank,
+            trend_direction=trend_direction,
+            direction=direction
+        )
+
+        return {
+            "Symbol": symbol,
+            "Trade Symbol": signal["Symbol"],
+            "Trade Bias": signal["Trade Bias"],
+            "Action Zone": signal["Action Zone"],
+            "Instruction": signal["Instruction"],
+            "Score": signal["Score"],
+            "Trend Direction": trend_direction,
+            "CF Direction": direction,
+            "Latest Trend Bar": latest_bar,
+            "CF Percentile": pct_rank,
+            "Latest Return %": float(latest["Return %"]) if "Return %" in df.columns else np.nan,
+            "Trend Slope": float(tr_slope) if np.isfinite(tr_slope) else np.nan,
+            "Last Close": _safe_last_float(close_live),
+            "As Of": live_ts if live_used and pd.notna(live_ts) else close_live.index[-1],
+        }
+    except Exception:
+        return None
+
+
+def _format_cf_trade_df(df: pd.DataFrame) -> pd.DataFrame:
+    """Format Cumulative Frequency trade-instruction tables."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy()
+    if "Latest Trend Bar" in out.columns:
+        out["Latest Trend Bar"] = out["Latest Trend Bar"].map(
+            lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a"
+        )
+    if "CF Percentile" in out.columns:
+        out["CF Percentile"] = out["CF Percentile"].map(
+            lambda x: f"{float(x):.1f}%" if np.isfinite(float(x)) else "n/a"
+        )
+    if "Latest Return %" in out.columns:
+        out["Latest Return %"] = out["Latest Return %"].map(
+            lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a"
+        )
+    if "Trend Slope" in out.columns:
+        out["Trend Slope"] = out["Trend Slope"].map(fmt_slope)
+    if "Last Close" in out.columns:
+        out["Last Close"] = out["Last Close"].map(fmt_price_val)
+    if "As Of" in out.columns:
+        out["As Of"] = out["As Of"].astype(str)
+    return out
+
+
+def plot_price_trend_cumulative_frequency(df: pd.DataFrame, title: str):
+    if df is None or df.empty or "Trend Bar" not in df.columns:
+        st.info("Not enough data to draw the cumulative frequency curve.")
+        return
+
+    vals = pd.to_numeric(df["Trend Bar"], errors="coerce").dropna()
+    if vals.empty:
+        st.info("Not enough normalized bar values to draw the cumulative frequency curve.")
+        return
+
+    cdf = compute_price_trend_cumulative_frequency(df)
+    if cdf.empty:
+        st.info("Not enough normalized bar values to draw the cumulative frequency curve.")
+        return
+
+    latest_val = float(vals.iloc[-1]) if len(vals) else np.nan
+    latest_pct = _price_trend_percentile_rank(df)
+
+    fig, ax = plt.subplots(figsize=(12, 4.2))
+    ax.plot(
+        pd.to_numeric(cdf["Trend Bar"], errors="coerce"),
+        pd.to_numeric(cdf["Cumulative %"], errors="coerce"),
+        marker="o",
+        linewidth=2.0,
+        markersize=4,
+        label="Cumulative frequency"
+    )
+
+    ax.axvline(0.0, color="black", linewidth=1.0)
+    ax.axvline(0.5, color="tab:green", linewidth=0.9, linestyle="--", alpha=0.55)
+    ax.axvline(-0.5, color="tab:red", linewidth=0.9, linestyle="--", alpha=0.55)
+    ax.axhline(50.0, color="gray", linewidth=0.9, linestyle="--", alpha=0.45)
+
+    if np.isfinite(latest_val) and np.isfinite(latest_pct):
+        ax.axvline(latest_val, color="tab:blue", linewidth=2.0, linestyle="-", alpha=0.85)
+        ax.axhline(latest_pct, color="tab:blue", linewidth=1.1, linestyle=":", alpha=0.75)
+        ax.scatter([latest_val], [latest_pct], s=80, zorder=5, label="Latest")
+        latest_price_text = ""
+        latest_time_text = ""
+        try:
+            if "Close" in df.columns:
+                latest_close_val = float(pd.to_numeric(df["Close"], errors="coerce").dropna().iloc[-1])
+                if np.isfinite(latest_close_val):
+                    latest_price_text = f"\nPrice {fmt_price_val(latest_close_val)}"
+        except Exception:
+            latest_price_text = ""
+        try:
+            if "Period" in df.columns:
+                latest_time_text = f"\n{str(df.iloc[-1]['Period'])}"
+            elif hasattr(df.index[-1], "strftime"):
+                latest_time_text = f"\n{df.index[-1].strftime('%Y-%m-%d %H:%M')}"
+        except Exception:
+            latest_time_text = ""
+
+        ax.text(
+            latest_val,
+            min(98.0, max(5.0, latest_pct + 8.0)),
+            f"Latest {latest_val:+.3f}\n{latest_pct:.1f} percentile{latest_price_text}{latest_time_text}",
+            ha="center",
+            va="center",
+            fontsize=9,
+            fontweight="bold",
+            bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="tab:blue", alpha=0.90),
+            clip_on=False,
+        )
+
+    ax.set_xlim(-1.08, 1.08)
+    ax.set_ylim(0, 102)
+    ax.set_title(title)
+    ax.set_xlabel("Normalized price trend-bar value")
+    ax.set_ylabel("Cumulative frequency (%)")
+    ax.grid(True, alpha=0.25)
+    ax.legend(loc="lower right")
+    fig.tight_layout()
+    st.pyplot(fig, clear_figure=True)
+
+def _format_price_trend_cdf_table(cdf_df: pd.DataFrame) -> pd.DataFrame:
+    if cdf_df is None or cdf_df.empty:
+        return pd.DataFrame(columns=["Trend Bar", "Cumulative Count", "Cumulative %"])
+    out = cdf_df.copy()
+    if "Trend Bar" in out.columns:
+        out["Trend Bar"] = out["Trend Bar"].map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
+    if "Cumulative %" in out.columns:
+        out["Cumulative %"] = out["Cumulative %"].map(lambda x: f"{float(x):.1f}%" if np.isfinite(float(x)) else "n/a")
+    return out[["Trend Bar", "Cumulative Count", "Cumulative %"]]
+
+def compute_price_trend_cdf_observations(df: pd.DataFrame, trend_direction: str = "") -> pd.DataFrame:
+    """
+    Build a trading-friendly, time-ordered CF table.
+
+    Each row keeps the actual chart period/time, close price, normalized trend-bar
+    value, and percentile rank of that point within the selected view.
+    """
+    columns = [
+        "Period",
+        "Date/Time",
+        "Close",
+        "Trend Bar",
+        "CF Percentile",
+        "Direction",
+        "Change",
+        "Return %",
+        "Trading Read",
+    ]
+    if df is None or df.empty or "Trend Bar" not in df.columns:
+        return pd.DataFrame(columns=columns)
+
+    work = df.copy()
+    vals = pd.to_numeric(work["Trend Bar"], errors="coerce")
+    valid_vals = vals.dropna()
+    if valid_vals.empty:
+        return pd.DataFrame(columns=columns)
+
+    n = float(len(valid_vals))
+    pct_values = []
+    for v in vals:
+        try:
+            vv = float(v)
+        except Exception:
+            pct_values.append(np.nan)
+            continue
+        if not np.isfinite(vv):
+            pct_values.append(np.nan)
+        else:
+            pct_values.append(float((valid_vals <= vv).sum()) / n * 100.0)
+
+    if "Period" not in work.columns:
+        work["Period"] = [idx.strftime("%Y-%m-%d") if hasattr(idx, "strftime") else str(idx) for idx in work.index]
+
+    def _idx_to_time(idx):
+        try:
+            if hasattr(idx, "strftime"):
+                return idx.strftime("%Y-%m-%d %H:%M %Z").strip()
+        except Exception:
+            pass
+        return str(idx)
+
+    work["Date/Time"] = [_idx_to_time(idx) for idx in work.index]
+    work["CF Percentile"] = pct_values
+    work["Trading Read"] = [
+        _price_trend_cdf_read(
+            float(tb) if np.isfinite(float(tb)) else np.nan,
+            float(cp) if np.isfinite(float(cp)) else np.nan,
+            trend_direction
+        )
+        for tb, cp in zip(pd.to_numeric(work["Trend Bar"], errors="coerce").fillna(np.nan),
+                          pd.to_numeric(work["CF Percentile"], errors="coerce").fillna(np.nan))
+    ]
+
+    for col in columns:
+        if col not in work.columns:
+            work[col] = np.nan
+    return work[columns].copy()
+
+def _format_price_trend_cdf_observation_table(obs_df: pd.DataFrame) -> pd.DataFrame:
+    if obs_df is None or obs_df.empty:
+        return pd.DataFrame(columns=[
+            "Period",
+            "Date/Time",
+            "Close",
+            "Trend Bar",
+            "CF Percentile",
+            "Direction",
+            "Change",
+            "Return %",
+            "Trading Read",
+        ])
+    out = obs_df.copy()
+    if "Close" in out.columns:
+        out["Close"] = out["Close"].map(fmt_price_val)
+    if "Trend Bar" in out.columns:
+        out["Trend Bar"] = out["Trend Bar"].map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
+    if "CF Percentile" in out.columns:
+        out["CF Percentile"] = out["CF Percentile"].map(lambda x: f"{float(x):.1f}%" if np.isfinite(float(x)) else "n/a")
+    if "Change" in out.columns:
+        out["Change"] = out["Change"].map(lambda x: f"{float(x):+.5f}" if np.isfinite(float(x)) else "n/a")
+    if "Return %" in out.columns:
+        out["Return %"] = out["Return %"].map(lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a")
+    display_cols = [
+        "Period",
+        "Date/Time",
+        "Close",
+        "Trend Bar",
+        "CF Percentile",
+        "Direction",
+        "Change",
+        "Return %",
+        "Trading Read",
+    ]
+    return out[[c for c in display_cols if c in out.columns]]
+
+def render_cdf_latest_reading_box(symbol: str, view_label: str, source_df: pd.DataFrame, trend_direction: str):
+    """Show the latest price/time/percentile context and trade instruction above the CF chart."""
+    obs = compute_price_trend_cdf_observations(source_df, trend_direction=trend_direction)
+    if obs is None or obs.empty:
+        st.info("No price/time cumulative-frequency details available for this view.")
+        return obs
+
+    latest = obs.iloc[-1]
+    latest_close = _safe_last_float(pd.Series([latest.get("Close", np.nan)]))
+    latest_bar = _safe_last_float(pd.Series([latest.get("Trend Bar", np.nan)]))
+    latest_pct = _safe_last_float(pd.Series([latest.get("CF Percentile", np.nan)]))
+    latest_direction = str(latest.get("Direction", "n/a"))
+    latest_time = str(latest.get("Date/Time", latest.get("Period", "n/a")))
+    latest_read = str(latest.get("Trading Read", "n/a"))
+    cf_signal = _price_trend_cdf_trade_signal(
+        latest_bar=latest_bar,
+        percentile=latest_pct,
+        trend_direction=trend_direction,
+        direction=latest_direction
+    )
+
+    def _html_escape(value) -> str:
+        return (
+            str(value)
+            .replace("&", "&amp;")
+            .replace("<", "&lt;")
+            .replace(">", "&gt;")
+            .replace('"', "&quot;")
+            .replace("'", "&#x27;")
+        )
+
+    cards = [
+        ("As of", latest_time),
+        ("Close Price", fmt_price_val(latest_close)),
+        ("CF Percentile", f"{latest_pct:.1f}%" if np.isfinite(latest_pct) else "n/a"),
+        ("Trend Bar", f"{latest_bar:+.3f}" if np.isfinite(latest_bar) else "n/a"),
+        ("Direction", latest_direction),
+        ("Trade", f"{cf_signal['Symbol']} {cf_signal['Trade Bias']}"),
+    ]
+    cards_html = "".join(
+        f"""
+        <div class="cf-mini-card">
+            <div class="cf-mini-label">{_html_escape(label)}</div>
+            <div class="cf-mini-value" title="{_html_escape(value)}">{_html_escape(value)}</div>
+        </div>
+        """
+        for label, value in cards
+    )
+
+    st.markdown(
+        f"""
+        <style>
+          .cf-mini-grid {{
+            display: grid;
+            grid-template-columns: repeat(6, minmax(0, 1fr));
+            gap: 0.55rem;
+            margin: 0.25rem 0 0.65rem 0;
+          }}
+          .cf-mini-card {{
+            border: 1px solid rgba(128, 128, 128, 0.24);
+            border-radius: 0.65rem;
+            padding: 0.55rem 0.65rem;
+            background: rgba(128, 128, 128, 0.08);
+            min-width: 0;
+          }}
+          .cf-mini-label {{
+            font-size: 0.72rem;
+            line-height: 1.05;
+            color: rgba(250, 250, 250, 0.72);
+            font-weight: 650;
+            margin-bottom: 0.28rem;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }}
+          .cf-mini-value {{
+            font-size: clamp(0.86rem, 1.3vw, 1.14rem);
+            line-height: 1.18;
+            color: rgba(250, 250, 250, 0.96);
+            font-weight: 750;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          }}
+          @media (max-width: 1100px) {{
+            .cf-mini-grid {{ grid-template-columns: repeat(3, minmax(0, 1fr)); }}
+          }}
+          @media (max-width: 680px) {{
+            .cf-mini-grid {{ grid-template-columns: repeat(2, minmax(0, 1fr)); }}
+            .cf-mini-value {{ font-size: 0.9rem; }}
+          }}
+        </style>
+        <div style="font-weight:750; font-size:1rem; margin-top:0.5rem; margin-bottom:0.2rem;">
+          Latest CF reading — {_html_escape(symbol)} ({_html_escape(view_label)})
+        </div>
+        <div class="cf-mini-grid">
+          {cards_html}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+    st.info(f"**Instruction:** {cf_signal['Instruction']}")
+    st.caption(f"Trading read: **{latest_read}** • Action zone: **{cf_signal['Action Zone']}** • Score: **{cf_signal['Score']}**")
+    return obs
+
+
+def _trade_momentum_score_for_symbol(symbol: str) -> dict:
+    """
+    Rank symbols using the normalized price bars plus trend slope.
+
+    This is intentionally simple and transparent:
+    - Daily 4-week bar shows current location in the recent range.
+    - Monthly 12-month bar shows larger structure.
+    - Slope gives directional bias.
+    - Percentile says whether the symbol is near the lower/middle/upper part of its recent range.
+    """
+    try:
+        close = _real_close_for_trend_bars(symbol)
+        close_live, live_price, live_ts, live_used = _with_current_day_price_for_trend_bars(symbol, close)
+        if close_live is None or close_live.empty or len(close_live) < 30:
+            return None
+
+        d4 = compute_price_trend_bars(close_live, view="daily_4w")
+        m12 = compute_price_trend_bars(close_live, view="monthly_12m")
+        if d4 is None or d4.empty or m12 is None or m12.empty:
+            return None
+
+        d_last = d4.iloc[-1]
+        m_last = m12.iloc[-1]
+        d_bar = float(d_last["Trend Bar"])
+        m_bar = float(m_last["Trend Bar"])
+        d_ret = float(d_last["Return %"])
+        m_ret = float(m_last["Return %"])
+        pct_rank = _price_trend_percentile_rank(d4)
+        _, tr_slope = slope_line(close_live, lookback=min(int(slope_lb_daily), len(close_live)))
+        trend_direction = "Upward" if np.isfinite(tr_slope) and tr_slope >= 0 else "Downward"
+
+        score = 0
+        score += 2 if trend_direction == "Upward" else -2
+        score += 2 if d_bar > 0 else -2
+        score += 1 if m_bar > 0 else -1
+        score += 1 if d_ret > 0 else -1
+        score += 1 if np.isfinite(pct_rank) and pct_rank >= 60 else (-1 if np.isfinite(pct_rank) and pct_rank <= 40 else 0)
+
+        if score >= 4:
+            trade_bias = "BUY / Bullish"
+            setup = "Daily and monthly pressure align upward"
+        elif score <= -4:
+            trade_bias = "SELL / Bearish"
+            setup = "Daily and monthly pressure align downward"
+        elif d_bar <= -0.75 and trend_direction == "Upward":
+            trade_bias = "BUY Watch"
+            setup = "Pullback near lower range while larger slope is upward"
+        elif d_bar >= 0.75 and trend_direction == "Downward":
+            trade_bias = "SELL Watch"
+            setup = "Bounce near upper range while larger slope is downward"
+        else:
+            trade_bias = "WAIT"
+            setup = "Mixed conditions; wait for alignment"
+
+        return {
+            "Symbol": symbol,
+            "Trade Bias": trade_bias,
+            "Setup": setup,
+            "Score": int(score),
+            "Daily Trend Bar": d_bar,
+            "Daily Percentile": pct_rank,
+            "Daily Return %": d_ret,
+            "Monthly Trend Bar": m_bar,
+            "Monthly Return %": m_ret,
+            "Trend Direction": trend_direction,
+            "Trend Slope": float(tr_slope) if np.isfinite(tr_slope) else np.nan,
+            "Last Close": _safe_last_float(close_live),
+            "As Of": live_ts if live_used and pd.notna(live_ts) else close_live.index[-1],
+        }
+    except Exception:
+        return None
+
+def _format_trade_momentum_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy()
+    for col in ["Daily Trend Bar", "Monthly Trend Bar"]:
+        if col in out.columns:
+            out[col] = out[col].map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
+    for col in ["Daily Percentile"]:
+        if col in out.columns:
+            out[col] = out[col].map(lambda x: f"{float(x):.1f}%" if np.isfinite(float(x)) else "n/a")
+    for col in ["Daily Return %", "Monthly Return %"]:
+        if col in out.columns:
+            out[col] = out[col].map(lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a")
+    if "Trend Slope" in out.columns:
+        out["Trend Slope"] = out["Trend Slope"].map(fmt_slope)
+    if "Last Close" in out.columns:
+        out["Last Close"] = out["Last Close"].map(fmt_price_val)
+    if "As Of" in out.columns:
+        out["As Of"] = out["As Of"].astype(str)
+    return out
+
+
+
+# ---------- Rolling Return Strength helpers ----------
+def _period_close_for_return_strength(close: pd.Series, view: str = "daily_3m") -> tuple[pd.Series, list[int], str]:
+    """
+    Prepare the close series used by the Rolling Return Strength tab.
+
+    Daily views use 5/10/20-bar rolling returns.
+    Monthly views use 1/3/6-month rolling returns.
+    """
+    s = _coerce_1d_series(close).dropna().sort_index()
+    if s.empty:
+        return pd.Series(dtype=float), [5, 10, 20], "%m-%d"
+
+    view = str(view)
+    if view == "monthly_12m":
+        period_close = s.resample("ME").last().dropna()
+        if period_close.empty:
+            period_close = s.resample("M").last().dropna()
+        # Keep additional history for 6-month return calculation, then display recent months.
+        period_close = period_close.iloc[-20:]
+        return period_close, [1, 3, 6], "%Y-%m"
+
+    if view == "daily_6m":
+        return s.iloc[-160:], [5, 10, 20], "%m-%d"
+
+    # Default daily 3-month view.
+    return s.iloc[-90:], [5, 10, 20], "%m-%d"
+
+
+def compute_rolling_return_strength(close: pd.Series, view: str = "daily_3m") -> pd.DataFrame:
+    """
+    Build normalized rolling return-strength lines.
+
+    Raw returns are percentage changes over the selected windows. Each line is then
+    normalized to -1/+1 over the selected chart window so different symbols and
+    forex pairs can be compared visually.
+    """
+    period_close, windows, label_fmt = _period_close_for_return_strength(close, view=view)
+    if period_close.empty or len(period_close) < max(windows) + 2:
+        return pd.DataFrame()
+
+    data = pd.DataFrame({"Close": period_close.astype(float)})
+    for w in windows:
+        data[f"Return {w}"] = data["Close"].pct_change(w) * 100.0
+
+    # Display window after enough return history exists.
+    if view == "monthly_12m":
+        data = data.iloc[-12:].copy()
+    elif view == "daily_6m":
+        data = data.iloc[-126:].copy()
+    else:
+        data = data.iloc[-63:].copy()
+
+    norm_cols = []
+    for w in windows:
+        raw_col = f"Return {w}"
+        norm_col = f"Norm {w}"
+        raw = pd.to_numeric(data[raw_col], errors="coerce")
+        max_abs = float(raw.abs().max()) if raw.notna().any() else np.nan
+        if np.isfinite(max_abs) and max_abs > 0:
+            data[norm_col] = (raw / max_abs).clip(-1.0, 1.0)
+        else:
+            data[norm_col] = np.nan
+        norm_cols.append(norm_col)
+
+    data["Composite Strength"] = data[norm_cols].mean(axis=1, skipna=True).clip(-1.0, 1.0)
+    data["Strength Change"] = data["Composite Strength"].diff()
+    data["Direction"] = np.where(data["Composite Strength"] >= 0, "Bullish", "Bearish")
+    data["Period"] = [idx.strftime(label_fmt) if hasattr(idx, "strftime") else str(idx) for idx in data.index]
+    return data.dropna(subset=["Composite Strength"], how="all")
+
+
+def _rolling_strength_trade_read(latest_strength: float, strength_change: float) -> str:
+    try:
+        s = float(latest_strength)
+    except Exception:
+        return "WAIT"
+    try:
+        chg = float(strength_change)
+    except Exception:
+        chg = 0.0
+
+    if not np.isfinite(s):
+        return "WAIT"
+    if s >= 0.35 and chg >= 0:
+        return "🟢▲ BUY / Bullish strength"
+    if s >= 0.10:
+        return "🟡▲ BUY Watch"
+    if s <= -0.35 and chg <= 0:
+        return "🔴▼ SELL / Bearish strength"
+    if s <= -0.10:
+        return "🟡▼ SELL Watch"
+    return "⏳ WAIT / Neutral"
+
+
+def plot_rolling_return_strength(df: pd.DataFrame, title: str):
+    if df is None or df.empty or "Composite Strength" not in df.columns:
+        st.info("Not enough data to draw Rolling Return Strength.")
+        return
+
+    plot_df = df.copy()
+    x = np.arange(len(plot_df), dtype=float)
+
+    fig, ax = plt.subplots(figsize=(12, 4.4))
+    norm_cols = [c for c in plot_df.columns if c.startswith("Norm ")]
+    for col in norm_cols:
+        y = pd.to_numeric(plot_df[col], errors="coerce").to_numpy(dtype=float)
+        label = col.replace("Norm ", "Return ")
+        ax.plot(x, y, linewidth=1.4, alpha=0.60, label=label)
+
+    comp = pd.to_numeric(plot_df["Composite Strength"], errors="coerce").to_numpy(dtype=float)
+    ax.plot(x, comp, linewidth=2.8, label="Composite Strength")
+
+    ax.axhline(0.0, color="black", linewidth=1.0)
+    ax.axhline(0.35, color="tab:green", linewidth=0.8, linestyle="--", alpha=0.55)
+    ax.axhline(-0.35, color="tab:red", linewidth=0.8, linestyle="--", alpha=0.55)
+    ax.axhline(0.70, color="tab:green", linewidth=0.7, linestyle=":", alpha=0.45)
+    ax.axhline(-0.70, color="tab:red", linewidth=0.7, linestyle=":", alpha=0.45)
+
+    latest = plot_df.iloc[-1]
+    latest_strength = float(pd.to_numeric(pd.Series([latest.get("Composite Strength")]), errors="coerce").iloc[0])
+    latest_price = float(pd.to_numeric(pd.Series([latest.get("Close")]), errors="coerce").iloc[0])
+    latest_period = str(latest.get("Period", plot_df.index[-1]))
+    latest_change = float(pd.to_numeric(pd.Series([latest.get("Strength Change")]), errors="coerce").fillna(0.0).iloc[0])
+    read = _rolling_strength_trade_read(latest_strength, latest_change)
+
+    if np.isfinite(latest_strength):
+        ax.scatter([x[-1]], [latest_strength], s=70, zorder=5)
+        ax.annotate(
+            f"{read}\n{latest_period} • {fmt_price_val(latest_price)} • {latest_strength:+.2f}",
+            xy=(x[-1], latest_strength),
+            xytext=(10, 16 if latest_strength < 0.75 else -34),
+            textcoords="offset points",
+            ha="left",
+            va="center",
+            fontsize=8,
+            bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="gray", alpha=0.82),
+            arrowprops=dict(arrowstyle="->", alpha=0.55),
+        )
+
+    # Label the latest major peak and reversal low with their price values.
+    try:
+        extrema = _rolling_strength_extrema(plot_df)
+        marker_specs = [
+            ("Peak", extrema.get("Peak Period"), extrema.get("Peak Price"), extrema.get("Peak Strength"), 18),
+            ("Reversal", extrema.get("Reversal Period"), extrema.get("Reversal Price"), extrema.get("Reversal Strength"), -24),
+        ]
+        periods = plot_df["Period"].astype(str).tolist()
+        for label, period, price, strength, yoff in marker_specs:
+            if period in periods and np.isfinite(float(strength)) and np.isfinite(float(price)):
+                ix = periods.index(str(period))
+                ax.scatter([x[ix]], [float(strength)], s=46, zorder=4)
+                ax.annotate(
+                    f"{label}\n{period} • {fmt_price_val(price)}",
+                    xy=(x[ix], float(strength)),
+                    xytext=(8, yoff),
+                    textcoords="offset points",
+                    ha="left",
+                    va="center",
+                    fontsize=7,
+                    bbox=dict(boxstyle="round,pad=0.20", fc="white", ec="gray", alpha=0.70),
+                    arrowprops=dict(arrowstyle="->", alpha=0.35),
+                )
+    except Exception:
+        pass
+
+    ax.set_ylim(-1.08, 1.08)
+    ax.set_ylabel("Normalized return strength")
+    ax.set_title(title)
+    ax.set_xticks(x)
+    ax.set_xticklabels(plot_df["Period"].astype(str).tolist(), rotation=45, ha="right")
+    ax.grid(True, axis="y", alpha=0.25)
+    ax.legend(loc="upper left", fontsize=8, ncol=2)
+    ax.set_xlim(-0.75, len(plot_df) - 0.25 + max(1.0, len(plot_df) * 0.04))
+    fig.tight_layout()
+    st.pyplot(fig, clear_figure=True)
+
+
+
+def _rolling_strength_extrema(df: pd.DataFrame) -> dict:
+    """
+    Return recent price/strength values at major composite-strength peaks and reversal lows.
+
+    A "reversal low" is the most recent local trough in Composite Strength. When a clean
+    local trough is not available, this falls back to the lowest reading in the window.
+    """
+    out = {
+        "Peak Period": "",
+        "Peak Price": np.nan,
+        "Peak Strength": np.nan,
+        "Reversal Period": "",
+        "Reversal Price": np.nan,
+        "Reversal Strength": np.nan,
+    }
+    if df is None or df.empty or "Composite Strength" not in df.columns:
+        return out
+
+    d = df.copy()
+    comp = pd.to_numeric(d["Composite Strength"], errors="coerce")
+    close = pd.to_numeric(d.get("Close", pd.Series(index=d.index, dtype=float)), errors="coerce")
+    valid = comp.dropna()
+    if valid.empty:
+        return out
+
+    # Latest meaningful peak: prefer latest local peak, otherwise highest point.
+    peak_candidates = []
+    vals = comp.to_numpy(dtype=float)
+    for i in range(1, len(vals) - 1):
+        if np.isfinite(vals[i]) and np.isfinite(vals[i - 1]) and np.isfinite(vals[i + 1]):
+            if vals[i] >= vals[i - 1] and vals[i] >= vals[i + 1]:
+                peak_candidates.append(i)
+    peak_i = peak_candidates[-1] if peak_candidates else int(np.nanargmax(vals))
+
+    # Latest reversal low: prefer latest local trough, otherwise lowest point.
+    trough_candidates = []
+    for i in range(1, len(vals) - 1):
+        if np.isfinite(vals[i]) and np.isfinite(vals[i - 1]) and np.isfinite(vals[i + 1]):
+            if vals[i] <= vals[i - 1] and vals[i] <= vals[i + 1]:
+                trough_candidates.append(i)
+    trough_i = trough_candidates[-1] if trough_candidates else int(np.nanargmin(vals))
+
+    def _period_at(i):
+        try:
+            return str(d.iloc[i].get("Period", d.index[i]))
+        except Exception:
+            return ""
+
+    def _price_at(i):
+        try:
+            return float(close.iloc[i])
+        except Exception:
+            return np.nan
+
+    out.update({
+        "Peak Period": _period_at(peak_i),
+        "Peak Price": _price_at(peak_i),
+        "Peak Strength": float(comp.iloc[peak_i]) if np.isfinite(comp.iloc[peak_i]) else np.nan,
+        "Reversal Period": _period_at(trough_i),
+        "Reversal Price": _price_at(trough_i),
+        "Reversal Strength": float(comp.iloc[trough_i]) if np.isfinite(comp.iloc[trough_i]) else np.nan,
+    })
+    return out
+
+
+def _rolling_strength_dip_read(strength: float, change: float) -> str:
+    try:
+        s = float(strength)
+    except Exception:
+        return "n/a"
+    try:
+        chg = float(change)
+    except Exception:
+        chg = 0.0
+    if not np.isfinite(s):
+        return "n/a"
+    if s <= -0.50 and chg > 0:
+        return "🟢 Deep dip turning up"
+    if s <= -0.50:
+        return "🔴 Deep dip still falling"
+    if s < 0.0 and chg > 0:
+        return "🟡 Dip improving"
+    if s < 0.0:
+        return "⚠️ Dip still weakening"
+    return "n/a"
+
+
+def _rolling_return_strength_dip_snapshot(symbol: str, view: str = "daily_3m") -> dict | None:
+    try:
+        close = _real_close_for_trend_bars(symbol)
+        close_live, _, as_of, _ = _with_current_day_price_for_trend_bars(symbol, close)
+        rs = compute_rolling_return_strength(close_live, view=view)
+        if rs is None or rs.empty:
+            return None
+
+        latest = rs.iloc[-1]
+        strength = float(pd.to_numeric(pd.Series([latest.get("Composite Strength")]), errors="coerce").iloc[0])
+        change = float(pd.to_numeric(pd.Series([latest.get("Strength Change")]), errors="coerce").fillna(0.0).iloc[0])
+        last_close = float(pd.to_numeric(pd.Series([latest.get("Close")]), errors="coerce").iloc[0])
+        _, trend_slope = slope_line(close_live, lookback=slope_lb_daily)
+        trend_direction = "Upward" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward"
+
+        extrema = _rolling_strength_extrema(rs)
+        return {
+            "Symbol": symbol,
+            "View": "Daily 3M" if view == "daily_3m" else "Daily 6M" if view == "daily_6m" else str(view),
+            "Dip Read": _rolling_strength_dip_read(strength, change),
+            "Composite Strength": strength,
+            "Strength Change": change,
+            "Trend Direction": trend_direction,
+            "Trend Slope": trend_slope,
+            "Last Close": last_close,
+            "As Of": as_of if as_of is not None else (close_live.index[-1] if len(close_live) else ""),
+            **extrema,
+        }
+    except Exception:
+        return None
+
+
+def _format_rolling_strength_dip_scanner(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy()
+    for col in ["Composite Strength", "Strength Change", "Peak Strength", "Reversal Strength"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
+    for col in ["Last Close", "Peak Price", "Reversal Price"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").map(lambda x: fmt_price_val(x) if np.isfinite(float(x)) else "n/a")
+    if "Trend Slope" in out.columns:
+        out["Trend Slope"] = out["Trend Slope"].map(fmt_slope)
+    for col in ["As Of", "Peak Period", "Reversal Period", "View"]:
+        if col in out.columns:
+            out[col] = out[col].astype(str)
+    return out
+
+
+def _format_rolling_return_strength_table(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.reset_index(drop=True).copy()
+    if "Close" in out.columns:
+        out["Close"] = pd.to_numeric(out["Close"], errors="coerce").map(lambda x: fmt_price_val(x) if np.isfinite(float(x)) else "n/a")
+    for col in [c for c in out.columns if c.startswith("Return ")]:
+        out[col] = pd.to_numeric(out[col], errors="coerce").map(lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a")
+    for col in [c for c in out.columns if c.startswith("Norm ")] + ["Composite Strength", "Strength Change"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
+    return out
+
+
+def _rolling_return_strength_snapshot(symbol: str, view: str = "daily_3m") -> dict | None:
+    try:
+        close = _real_close_for_trend_bars(symbol)
+        close_live, _, as_of, _ = _with_current_day_price_for_trend_bars(symbol, close)
+        rs = compute_rolling_return_strength(close_live, view=view)
+        if rs is None or rs.empty:
+            return None
+        latest = rs.iloc[-1]
+        strength = float(pd.to_numeric(pd.Series([latest.get("Composite Strength")]), errors="coerce").iloc[0])
+        change = float(pd.to_numeric(pd.Series([latest.get("Strength Change")]), errors="coerce").fillna(0.0).iloc[0])
+        last_close = float(pd.to_numeric(pd.Series([latest.get("Close")]), errors="coerce").iloc[0])
+        _, trend_slope = slope_line(close_live, lookback=slope_lb_daily)
+        trend_direction = "Upward" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward"
+        return {
+            "Symbol": symbol,
+            "Trade Read": _rolling_strength_trade_read(strength, change),
+            "Composite Strength": strength,
+            "Strength Change": change,
+            "Trend Direction": trend_direction,
+            "Trend Slope": trend_slope,
+            "Last Close": last_close,
+            "As Of": as_of if as_of is not None else (close_live.index[-1] if len(close_live) else ""),
+        }
+    except Exception:
+        return None
+
+
+def _format_rolling_strength_scanner(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy()
+    for col in ["Composite Strength", "Strength Change"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
+    if "Trend Slope" in out.columns:
+        out["Trend Slope"] = out["Trend Slope"].map(fmt_slope)
+    if "Last Close" in out.columns:
+        out["Last Close"] = pd.to_numeric(out["Last Close"], errors="coerce").map(lambda x: fmt_price_val(x) if np.isfinite(float(x)) else "n/a")
+    if "As Of" in out.columns:
+        out["As Of"] = out["As Of"].astype(str)
+    return out
+
 
 # --- Session init ---
 if 'run_all' not in st.session_state:
@@ -4424,301 +5539,14 @@ if 'run_all' not in st.session_state:
 if 'hist_years' not in st.session_state:
     st.session_state.hist_years = 10
 
-
-
-# ---------- Buy/Sell Timing helpers ----------
-def _normalize_to_unit(series_like, window: int = 120) -> pd.Series:
-    """Rolling min/max normalization to the [-1, +1] range."""
-    s = _coerce_1d_series(series_like).astype(float)
-    if s.empty:
-        return pd.Series(index=s.index, dtype=float)
-    window = int(max(5, window))
-    minp = max(5, min(window, max(5, window // 3)))
-    lo = s.rolling(window, min_periods=minp).min()
-    hi = s.rolling(window, min_periods=minp).max()
-    rng = (hi - lo).replace(0, np.nan)
-    out = ((s - lo) / rng) * 2.0 - 1.0
-    return out.clip(-1.0, 1.0).reindex(s.index)
-
-
-def compute_buy_sell_timing(close_like,
-                            k_window: int = 14,
-                            signal_span: int = 5,
-                            smooth_span: int = 3,
-                            zone_lookback: int = 8,
-                            oversold_level: float = -0.50,
-                            overbought_level: float = 0.50) -> pd.DataFrame:
-    """
-    Normalized stochastic momentum timing model.
-
-    Momentum = -1 means price is near the low of the selected rolling range.
-    Momentum = +1 means price is near the high of the selected rolling range.
-    The signal line smooths momentum. BUY/SELL markers are produced only when
-    momentum turns out of an extreme zone and crosses its signal line.
-    """
-    close = _coerce_1d_series(close_like).dropna().astype(float)
-    if close.empty or len(close) < max(10, int(k_window) + 3):
-        return pd.DataFrame(columns=[
-            "Close", "Momentum", "Signal", "Histogram", "Buy Signal", "Sell Signal",
-            "Timing Bias", "Instruction"
-        ])
-
-    k_window = int(max(5, k_window))
-    smooth_span = int(max(1, smooth_span))
-    signal_span = int(max(1, signal_span))
-    zone_lookback = int(max(2, zone_lookback))
-
-    lo = close.rolling(k_window, min_periods=max(3, k_window // 2)).min()
-    hi = close.rolling(k_window, min_periods=max(3, k_window // 2)).max()
-    rng = (hi - lo).replace(0, np.nan)
-
-    momentum_raw = ((close - lo) / rng) * 2.0 - 1.0
-    momentum = momentum_raw.ewm(span=smooth_span, adjust=False, min_periods=1).mean().clip(-1.0, 1.0)
-    signal = momentum.ewm(span=signal_span, adjust=False, min_periods=1).mean().clip(-1.0, 1.0)
-    hist = (momentum - signal).clip(-1.0, 1.0)
-
-    cross_up = (momentum > signal) & (momentum.shift(1) <= signal.shift(1))
-    cross_down = (momentum < signal) & (momentum.shift(1) >= signal.shift(1))
-
-    recently_oversold = momentum.rolling(zone_lookback, min_periods=1).min() <= float(oversold_level)
-    recently_overbought = momentum.rolling(zone_lookback, min_periods=1).max() >= float(overbought_level)
-
-    buy_signal = cross_up & recently_oversold
-    sell_signal = cross_down & recently_overbought
-
-    out = pd.DataFrame({
-        "Close": close,
-        "Momentum": momentum,
-        "Signal": signal,
-        "Histogram": hist,
-        "Buy Signal": buy_signal.fillna(False),
-        "Sell Signal": sell_signal.fillna(False),
-    })
-
-    def _row_bias(row) -> str:
-        m = row.get("Momentum", np.nan)
-        sg = row.get("Signal", np.nan)
-        h = row.get("Histogram", np.nan)
-        if bool(row.get("Buy Signal", False)):
-            return "🟢▲ BUY Timing"
-        if bool(row.get("Sell Signal", False)):
-            return "🔴▼ SELL Timing"
-        try:
-            if np.isfinite(m) and np.isfinite(sg):
-                if m > sg and m < 0:
-                    return "🟡▲ BUY Watch"
-                if m > sg and m >= 0:
-                    return "🟢 Bullish"
-                if m < sg and m > 0:
-                    return "🟡▼ SELL Watch"
-                if m < sg and m <= 0:
-                    return "🔴 Bearish"
-        except Exception:
-            pass
-        return "⏳ WAIT"
-
-    def _row_instruction(row) -> str:
-        bias = _row_bias(row)
-        m = row.get("Momentum", np.nan)
-        if "BUY Timing" in bias:
-            return "BUY timing: momentum crossed above signal after oversold. Prefer entry near support/pullback; stop below recent swing low."
-        if "SELL Timing" in bias:
-            return "SELL timing: momentum crossed below signal after overbought. Prefer entry near resistance/retest; stop above recent swing high."
-        try:
-            mv = float(m)
-        except Exception:
-            mv = np.nan
-        if "BUY Watch" in bias:
-            return "BUY watch: momentum is improving from the lower half; wait for bullish cross/price confirmation."
-        if "SELL Watch" in bias:
-            return "SELL watch: momentum is weakening from the upper half; wait for bearish cross/price confirmation."
-        if np.isfinite(mv) and mv >= 0.80:
-            return "Overbought/extended: protect profits or wait for pullback."
-        if np.isfinite(mv) and mv <= -0.80:
-            return "Oversold/dip zone: do not buy blindly; wait for momentum turn upward."
-        return "WAIT: no clean timing edge."
-
-    out["Timing Bias"] = out.apply(_row_bias, axis=1)
-    out["Instruction"] = out.apply(_row_instruction, axis=1)
-    return out
-
-
-def _bars_since_bool_signal(bool_series_like) -> int:
-    s = pd.Series(bool_series_like).fillna(False).astype(bool)
-    if s.empty or not s.any():
-        return -1
-    last_pos = np.where(s.to_numpy())[0][-1]
-    return int(len(s) - 1 - last_pos)
-
-
-def _format_buy_sell_timing_table(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
-    out = df.copy()
-    for c in ["Momentum", "Signal", "Histogram"]:
-        if c in out.columns:
-            out[c] = pd.to_numeric(out[c], errors="coerce").map(lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a")
-    if "Close" in out.columns:
-        out["Close"] = pd.to_numeric(out["Close"], errors="coerce").map(fmt_price_val)
-    if "Period" in out.columns:
-        out["Period"] = out["Period"].astype(str)
-    if "Bars Since Signal" in out.columns:
-        out["Bars Since Signal"] = out["Bars Since Signal"].map(lambda x: "n/a" if int(x) < 0 else int(x))
-    if "Trend Slope" in out.columns:
-        out["Trend Slope"] = out["Trend Slope"].map(fmt_slope)
-    return out
-
-
-def plot_buy_sell_timing_chart(timing_df: pd.DataFrame,
-                               title: str,
-                               recent_bars: int = None):
-    """Plot normalized stochastic momentum with buy/sell timing markers."""
-    if timing_df is None or timing_df.empty:
-        st.info("Not enough data to plot Buy/Sell Timing.")
-        return
-
-    df = timing_df.copy()
-    if recent_bars is not None and int(recent_bars) > 0:
-        df = df.tail(int(recent_bars))
-    df = df.dropna(subset=["Momentum", "Signal"], how="all")
-    if df.empty:
-        st.info("Not enough timing values to plot.")
-        return
-
-    x = np.arange(len(df))
-    labels = []
-    for idx_val in df.index:
-        try:
-            if isinstance(idx_val, pd.Timestamp):
-                labels.append(idx_val.strftime("%m-%d" if len(df) <= 80 else "%Y-%m"))
-            else:
-                labels.append(str(idx_val))
-        except Exception:
-            labels.append(str(idx_val))
-
-    fig, ax = plt.subplots(figsize=(12.8, 4.8))
-    ax.plot(x, df["Momentum"].to_numpy(dtype=float), linewidth=2.2, label="Normalized Stochastic Momentum")
-    ax.plot(x, df["Signal"].to_numpy(dtype=float), linestyle="--", linewidth=1.8, label="Signal")
-    ax.bar(x, df["Histogram"].fillna(0).to_numpy(dtype=float), alpha=0.20, label="Momentum - Signal")
-
-    ax.axhline(0.0, color="black", linestyle="--", linewidth=1.0, alpha=0.60)
-    ax.axhline(0.50, color="black", linestyle="-", linewidth=1.0, alpha=0.60)
-    ax.axhline(-0.50, color="black", linestyle="-", linewidth=1.0, alpha=0.60)
-    ax.axhspan(0.50, 1.0, alpha=0.08)
-    ax.axhspan(-1.0, -0.50, alpha=0.08)
-
-    buy_mask = df["Buy Signal"].fillna(False).astype(bool)
-    sell_mask = df["Sell Signal"].fillna(False).astype(bool)
-
-    if buy_mask.any():
-        bx = x[buy_mask.to_numpy()]
-        by = df.loc[buy_mask, "Momentum"].to_numpy(dtype=float)
-        ax.scatter(bx, by, marker="^", s=110, label="BUY timing", zorder=5)
-        for xi, yi, price in zip(bx[-5:], by[-5:], df.loc[buy_mask, "Close"].tail(5)):
-            ax.annotate(f"BUY\n{fmt_price_val(price)}", xy=(xi, yi), xytext=(0, 14),
-                        textcoords="offset points", ha="center", fontsize=8,
-                        bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="none", alpha=0.75))
-
-    if sell_mask.any():
-        sx = x[sell_mask.to_numpy()]
-        sy = df.loc[sell_mask, "Momentum"].to_numpy(dtype=float)
-        ax.scatter(sx, sy, marker="v", s=110, label="SELL timing", zorder=5)
-        for xi, yi, price in zip(sx[-5:], sy[-5:], df.loc[sell_mask, "Close"].tail(5)):
-            ax.annotate(f"SELL\n{fmt_price_val(price)}", xy=(xi, yi), xytext=(0, -30),
-                        textcoords="offset points", ha="center", fontsize=8,
-                        bbox=dict(boxstyle="round,pad=0.25", fc="white", ec="none", alpha=0.75))
-
-    latest = df.iloc[-1]
-    latest_label = (
-        f"{latest.get('Timing Bias', 'WAIT')}\\n"
-        f"M {float(latest['Momentum']):+.2f} | S {float(latest['Signal']):+.2f}\\n"
-        f"Close {fmt_price_val(latest['Close'])}"
-    )
-    ax.annotate(latest_label, xy=(x[-1], float(latest["Momentum"])),
-                xytext=(-10, 24), textcoords="offset points", ha="right",
-                fontsize=9, bbox=dict(boxstyle="round,pad=0.35", fc="white", ec="black", alpha=0.75))
-
-    step = max(1, len(x) // 8)
-    ax.set_xticks(x[::step])
-    ax.set_xticklabels([labels[i] for i in range(0, len(labels), step)], rotation=45, ha="right")
-    ax.set_ylim(-1.12, 1.12)
-    ax.set_ylabel("Normalized momentum")
-    ax.set_title(title)
-    ax.grid(True, alpha=0.25)
-    ax.legend(loc="best")
-    fig.tight_layout()
-    st.pyplot(fig)
-    plt.close(fig)
-
-
-def _build_buy_sell_timing_scan_rows(symbols,
-                                     k_window: int = 14,
-                                     signal_span: int = 5,
-                                     smooth_span: int = 3,
-                                     zone_lookback: int = 8,
-                                     recent_signal_bars: int = 8) -> pd.DataFrame:
-    rows = []
-    for sym in symbols:
-        try:
-            close = _real_close_for_trend_bars(sym)
-            close_live, live_price, live_ts, live_used = _with_current_day_price_for_trend_bars(sym, close)
-            if close_live is None or close_live.empty or len(close_live) < max(30, k_window + signal_span + 5):
-                continue
-            timing = compute_buy_sell_timing(
-                close_live,
-                k_window=k_window,
-                signal_span=signal_span,
-                smooth_span=smooth_span,
-                zone_lookback=zone_lookback,
-            )
-            if timing is None or timing.empty:
-                continue
-            last = timing.dropna(subset=["Momentum", "Signal"]).iloc[-1]
-            buy_bars = _bars_since_bool_signal(timing["Buy Signal"])
-            sell_bars = _bars_since_bool_signal(timing["Sell Signal"])
-            recent_buy = buy_bars >= 0 and buy_bars <= int(recent_signal_bars)
-            recent_sell = sell_bars >= 0 and sell_bars <= int(recent_signal_bars)
-            _, tr_slope = slope_line(close_live, lookback=min(int(slope_lb_daily), len(close_live)))
-            trend_direction = "Upward" if np.isfinite(tr_slope) and tr_slope >= 0 else "Downward"
-            signal_type = "BUY" if recent_buy and (not recent_sell or buy_bars <= sell_bars) else ("SELL" if recent_sell else "WATCH")
-            bars_since_signal = buy_bars if signal_type == "BUY" else (sell_bars if signal_type == "SELL" else -1)
-            rows.append({
-                "Symbol": sym,
-                "Signal Type": signal_type,
-                "Timing Bias": last.get("Timing Bias", "WAIT"),
-                "Trend Direction": trend_direction,
-                "Momentum": float(last["Momentum"]),
-                "Signal": float(last["Signal"]),
-                "Histogram": float(last["Histogram"]),
-                "Bars Since Signal": int(bars_since_signal),
-                "Last Close": _safe_last_float(close_live),
-                "As Of": live_ts if live_used and pd.notna(live_ts) else close_live.index[-1],
-                "Trend Slope": float(tr_slope) if np.isfinite(tr_slope) else np.nan,
-                "Instruction": last.get("Instruction", ""),
-            })
-        except Exception:
-            continue
-    if not rows:
-        return pd.DataFrame()
-    df = pd.DataFrame(rows)
-    signal_order = {"BUY": 0, "SELL": 1, "WATCH": 2}
-    trend_order = {"Upward": 0, "Downward": 1}
-    df["_signal_order"] = df["Signal Type"].map(signal_order).fillna(9)
-    df["_trend_order"] = df["Trend Direction"].map(trend_order).fillna(9)
-    df["_bars_order"] = df["Bars Since Signal"].where(df["Bars Since Signal"] >= 0, 9999)
-    df["_abs_hist"] = pd.to_numeric(df["Histogram"], errors="coerce").abs()
-    df = df.sort_values(
-        ["_signal_order", "_trend_order", "_bars_order", "_abs_hist", "Symbol"],
-        ascending=[True, True, True, False, True]
-    ).drop(columns=["_signal_order", "_trend_order", "_bars_order", "_abs_hist"])
-    return df
-
 # Tabs
-tab1, tab3, tab18, tab19 = st.tabs([
+tab1, tab3, tab18, tab19, tab20, tab21 = st.tabs([
     "Original Forecast",
     "Bull vs Bears",
     "Price Trend Bars",
-    "Buy/Sell Timing"
+    "Cumulative Frequency",
+    "Trade Momentum",
+    "Rolling Return Strength"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -5450,22 +6278,23 @@ with tab18:
             fmt_scan["Last Close"] = fmt_scan["Last Close"].map(fmt_price_val)
             fmt_scan["As Of"] = fmt_scan["As Of"].astype(str)
 
-            st.dataframe(
-                fmt_scan[
-                    [
-                        "Symbol",
-                        "Direction",
-                        "Trend Direction",
-                        "Latest Trend Bar",
-                        "Latest Return %",
-                        "Trend Slope",
-                        "Last Close",
-                        "As Of",
-                    ]
-                ],
-                use_container_width=True,
-                hide_index=True
-            )
+            with st.expander(f"Quick Scanner results ({len(fmt_scan)} symbols)", expanded=False):
+                st.dataframe(
+                    fmt_scan[
+                        [
+                            "Symbol",
+                            "Direction",
+                            "Trend Direction",
+                            "Latest Trend Bar",
+                            "Latest Return %",
+                            "Trend Slope",
+                            "Last Close",
+                            "As Of",
+                        ]
+                    ],
+                    use_container_width=True,
+                    hide_index=True
+                )
 
             st.markdown("### Current Daily Extremes")
             st.caption(
@@ -5508,32 +6337,36 @@ with tab18:
                 out_extreme["As Of"] = out_extreme["As Of"].astype(str)
                 return out_extreme[extreme_cols]
 
-            col_plus, col_minus = st.columns(2)
-            with col_plus:
-                st.subheader("Currently at +1")
-                if plus_one_df.empty:
-                    st.info("No symbols currently at +1.000.")
-                else:
-                    plus_one_df["_trend_order"] = plus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
-                    plus_one_df = plus_one_df.sort_values(["_trend_order", "Latest Return %", "Symbol"], ascending=[True, False, True]).drop(columns=["_trend_order"])
-                    st.dataframe(
-                        _format_price_trend_extreme_scan(plus_one_df),
-                        use_container_width=True,
-                        hide_index=True
-                    )
+            with st.expander(
+                f"Current Daily Extremes tables (+1: {len(plus_one_df)} • -1: {len(minus_one_df)})",
+                expanded=False
+            ):
+                col_plus, col_minus = st.columns(2)
+                with col_plus:
+                    st.subheader("Currently at +1")
+                    if plus_one_df.empty:
+                        st.info("No symbols currently at +1.000.")
+                    else:
+                        plus_one_df["_trend_order"] = plus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
+                        plus_one_df = plus_one_df.sort_values(["_trend_order", "Latest Return %", "Symbol"], ascending=[True, False, True]).drop(columns=["_trend_order"])
+                        st.dataframe(
+                            _format_price_trend_extreme_scan(plus_one_df),
+                            use_container_width=True,
+                            hide_index=True
+                        )
 
-            with col_minus:
-                st.subheader("Currently at -1")
-                if minus_one_df.empty:
-                    st.info("No symbols currently at -1.000.")
-                else:
-                    minus_one_df["_trend_order"] = minus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
-                    minus_one_df = minus_one_df.sort_values(["_trend_order", "Latest Return %", "Symbol"], ascending=[True, True, True]).drop(columns=["_trend_order"])
-                    st.dataframe(
-                        _format_price_trend_extreme_scan(minus_one_df),
-                        use_container_width=True,
-                        hide_index=True
-                    )
+                with col_minus:
+                    st.subheader("Currently at -1")
+                    if minus_one_df.empty:
+                        st.info("No symbols currently at -1.000.")
+                    else:
+                        minus_one_df["_trend_order"] = minus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
+                        minus_one_df = minus_one_df.sort_values(["_trend_order", "Latest Return %", "Symbol"], ascending=[True, True, True]).drop(columns=["_trend_order"])
+                        st.dataframe(
+                            _format_price_trend_extreme_scan(minus_one_df),
+                            use_container_width=True,
+                            hide_index=True
+                        )
 
             st.markdown("### Current Monthly Extremes")
             st.caption(
@@ -5574,245 +6407,774 @@ with tab18:
                 out_extreme["As Of"] = out_extreme["As Of"].astype(str)
                 return out_extreme[monthly_extreme_cols]
 
-            col_m_plus, col_m_minus = st.columns(2)
-            with col_m_plus:
-                st.subheader("Monthly currently at +1")
-                if monthly_plus_one_df.empty:
-                    st.info("No symbols currently at monthly +1.000.")
-                else:
-                    monthly_plus_one_df["_trend_order"] = monthly_plus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
-                    monthly_plus_one_df = monthly_plus_one_df.sort_values(
-                        ["_trend_order", "Latest Monthly Return %", "Symbol"],
-                        ascending=[True, False, True]
-                    ).drop(columns=["_trend_order"])
-                    st.dataframe(
-                        _format_price_trend_monthly_extreme_scan(monthly_plus_one_df),
-                        use_container_width=True,
-                        hide_index=True
-                    )
+            with st.expander(
+                f"Current Monthly Extremes tables (+1: {len(monthly_plus_one_df)} • -1: {len(monthly_minus_one_df)})",
+                expanded=False
+            ):
+                col_m_plus, col_m_minus = st.columns(2)
+                with col_m_plus:
+                    st.subheader("Monthly currently at +1")
+                    if monthly_plus_one_df.empty:
+                        st.info("No symbols currently at monthly +1.000.")
+                    else:
+                        monthly_plus_one_df["_trend_order"] = monthly_plus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
+                        monthly_plus_one_df = monthly_plus_one_df.sort_values(
+                            ["_trend_order", "Latest Monthly Return %", "Symbol"],
+                            ascending=[True, False, True]
+                        ).drop(columns=["_trend_order"])
+                        st.dataframe(
+                            _format_price_trend_monthly_extreme_scan(monthly_plus_one_df),
+                            use_container_width=True,
+                            hide_index=True
+                        )
 
-            with col_m_minus:
-                st.subheader("Monthly currently at -1")
-                if monthly_minus_one_df.empty:
-                    st.info("No symbols currently at monthly -1.000.")
-                else:
-                    monthly_minus_one_df["_trend_order"] = monthly_minus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
-                    monthly_minus_one_df = monthly_minus_one_df.sort_values(
-                        ["_trend_order", "Latest Monthly Return %", "Symbol"],
-                        ascending=[True, True, True]
-                    ).drop(columns=["_trend_order"])
-                    st.dataframe(
-                        _format_price_trend_monthly_extreme_scan(monthly_minus_one_df),
-                        use_container_width=True,
-                        hide_index=True
-                    )
+                with col_m_minus:
+                    st.subheader("Monthly currently at -1")
+                    if monthly_minus_one_df.empty:
+                        st.info("No symbols currently at monthly -1.000.")
+                    else:
+                        monthly_minus_one_df["_trend_order"] = monthly_minus_one_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
+                        monthly_minus_one_df = monthly_minus_one_df.sort_values(
+                            ["_trend_order", "Latest Monthly Return %", "Symbol"],
+                            ascending=[True, True, True]
+                        ).drop(columns=["_trend_order"])
+                        st.dataframe(
+                            _format_price_trend_monthly_extreme_scan(monthly_minus_one_df),
+                            use_container_width=True,
+                            hide_index=True
+                        )
 
 
-
-# --- Tab 19: Buy/Sell Timing ---
+# --- Tab 19: Cumulative Frequency ---
 with tab19:
-    st.header("Buy/Sell Timing")
+    st.header("Cumulative Frequency")
     st.caption(
-        "Normalized stochastic momentum timing chart. This tab is designed for entries and exits: "
-        "BUY timing appears when momentum turns upward from an oversold zone; SELL timing appears when momentum turns downward from an overbought zone."
+        "This replaces the histogram with a cumulative frequency curve for the normalized price trend bars. "
+        "It shows where the current price sits in the selected range over time. A latest point near the upper-right "
+        "means price is near the high side of the selected range; a point near the lower-left means price is near the low side."
+    )
+
+    cf1, cf2 = st.columns([1, 2])
+    with cf1:
+        cf_symbol = st.selectbox(
+            "Symbol",
+            universe,
+            index=0 if len(universe) else None,
+            key="price_trend_cdf_symbol"
+        )
+    with cf2:
+        st.markdown(
+            "**How to use it for trading:** use the curve to judge context before acting on the bars. "
+            "CF shows location; Trade Momentum shows direction; Price Trend Bars confirm the move."
+        )
+
+    with st.expander("How to trade the Cumulative Frequency chart", expanded=True):
+        st.markdown("""
+**Cumulative Frequency (CF) = location, not a standalone buy/sell signal.**
+
+Use the current percentile to understand where price sits inside its recent distribution:
+
+| CF / Percentile area | Meaning | Trade use |
+|---:|---|---|
+| **0%–20%** | Price is near the lower end of the recent range | Look for reversal/bounce setups; do not buy blindly |
+| **20%–50%** | Price is recovering from the lower range | Good area for early long setups if momentum turns up |
+| **50%–80%** | Price is in the upper half of the range | Trend-following longs can work; avoid chasing late moves |
+| **80%–100%** | Price is extended near the upper range | Consider profit-taking, pullback entries, or rejection shorts |
+
+**Cleaner BUY setup:** CF is rising from low/mid range, Trade Momentum is **BUY Watch** or **BUY / Bullish**, and Price Trend Bars are turning green.
+
+**Cleaner SELL setup:** CF is falling from high/mid range, Trade Momentum is **SELL Watch** or **SELL / Bearish**, and Price Trend Bars are turning red.
+
+**Trade symbols used in this tab:**
+- 🟢▲ = BUY / Bullish alignment
+- 🟡▲ = BUY Watch / bullish pullback watch
+- 🔴▼ = SELL / Bearish alignment
+- 🟡▼ = SELL Watch / bearish bounce watch
+- ⚠️ = extreme zone; manage risk or wait for confirmation
+- ⏳ = WAIT
+
+A very high CF can mean strength or overextension. A very low CF can mean weakness or a bounce zone. Always use momentum and price confirmation.
+""")
+
+    cf_close = _real_close_for_trend_bars(cf_symbol)
+    cf_close_live, cf_live_price, cf_live_ts, cf_live_used = _with_current_day_price_for_trend_bars(
+        cf_symbol,
+        cf_close
+    )
+
+    if cf_close_live is None or cf_close_live.empty or len(cf_close_live) < 30:
+        st.warning("Not enough price history available for this symbol.")
+    else:
+        latest_cf_close = _safe_last_float(cf_close_live)
+        _, cf_slope = slope_line(cf_close_live, lookback=min(int(slope_lb_daily), len(cf_close_live)))
+        cf_trend_text = "Upward" if np.isfinite(cf_slope) and cf_slope >= 0 else "Downward"
+        cf_trend_icon = "🟢" if cf_trend_text == "Upward" else "🔴"
+
+        cf_live_note = ""
+        if cf_live_used and pd.notna(cf_live_ts):
+            cf_live_note = f" • Live/current price: **{fmt_price_val(cf_live_price)}** as of **{cf_live_ts.strftime('%Y-%m-%d %H:%M PST')}**"
+
+        st.info(
+            f"{cf_trend_icon} **Current daily trend:** {cf_trend_text} "
+            f"• Latest daily chart price: **{fmt_price_val(latest_cf_close)}** "
+            f"• Trend slope: **{fmt_slope(cf_slope)} / bar**"
+            f"{cf_live_note}"
+        )
+
+        cf_monthly_df = compute_price_trend_bars(cf_close_live, view="monthly_12m")
+        cf_daily_2w_df = compute_price_trend_bars(cf_close_live, view="daily_2w")
+        cf_daily_4w_df = compute_price_trend_bars(cf_close_live, view="daily_4w")
+
+        for label, source_df, title_suffix in [
+            ("Monthly Cumulative Frequency — Last 12 Months", cf_monthly_df, "Monthly"),
+            ("Daily Cumulative Frequency — Last 2 Weeks", cf_daily_2w_df, "Daily, 2 Weeks"),
+            ("Daily Cumulative Frequency — Last 4 Weeks", cf_daily_4w_df, "Daily, 4 Weeks"),
+        ]:
+            st.subheader(label)
+            latest_bar = float(pd.to_numeric(source_df["Trend Bar"], errors="coerce").dropna().iloc[-1]) if source_df is not None and not source_df.empty else np.nan
+            pct_rank = _price_trend_percentile_rank(source_df)
+            st.caption(
+                f"Latest normalized bar: **{latest_bar:+.3f}** • "
+                f"Percentile rank in this view: **{pct_rank:.1f}%** • "
+                f"Read: **{_price_trend_cdf_read(latest_bar, pct_rank, cf_trend_text)}**"
+            )
+            obs_df = render_cdf_latest_reading_box(cf_symbol, title_suffix, source_df, cf_trend_text)
+            plot_price_trend_cumulative_frequency(
+                source_df,
+                f"{cf_symbol} — {title_suffix} Price Trend Cumulative Frequency"
+            )
+            with st.expander(f"{title_suffix} recent price/time CF readings", expanded=False):
+                recent_obs = obs_df.tail(8) if obs_df is not None and not obs_df.empty else obs_df
+                st.dataframe(
+                    _format_price_trend_cdf_observation_table(recent_obs),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            with st.expander(f"{title_suffix} all price/time CF readings", expanded=False):
+                st.dataframe(
+                    _format_price_trend_cdf_observation_table(obs_df),
+                    use_container_width=True,
+                    hide_index=True
+                )
+            with st.expander(f"{title_suffix} cumulative frequency curve values", expanded=False):
+                st.dataframe(
+                    _format_price_trend_cdf_table(compute_price_trend_cumulative_frequency(source_df)),
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+        st.markdown("---")
+        st.subheader("Cumulative Frequency Scanner — Latest Daily Reading")
+        st.caption(
+            "Ranks symbols by latest 4-week normalized bar, percentile rank, and trend direction. "
+            "Use this to spot upper-range strength, lower-range weakness, and pullback candidates."
+        )
+
+        cdf_rows = []
+        cdf_progress = st.progress(0.0)
+        cdf_status = st.empty()
+        for i, sym in enumerate(universe):
+            cdf_status.text(f"Scanning {sym}...")
+            try:
+                c = _real_close_for_trend_bars(sym)
+                c_live, live_price_cdf, live_ts_cdf, live_used_cdf = _with_current_day_price_for_trend_bars(sym, c)
+                if c_live is None or c_live.empty or len(c_live) < 30:
+                    continue
+                d4 = compute_price_trend_bars(c_live, view="daily_4w")
+                if d4 is None or d4.empty:
+                    continue
+
+                vals = pd.to_numeric(d4["Trend Bar"], errors="coerce").dropna()
+                if vals.empty:
+                    continue
+                latest_bar = float(vals.iloc[-1])
+                pct_rank = _price_trend_percentile_rank(d4)
+                _, z_slope = slope_line(c_live, lookback=min(int(slope_lb_daily), len(c_live)))
+                trend_direction = "Upward" if np.isfinite(z_slope) and z_slope >= 0 else "Downward"
+
+                if latest_bar >= 0.75:
+                    zone = "Upper Extreme"
+                elif latest_bar >= 0.25:
+                    zone = "Upper Zone"
+                elif latest_bar <= -0.75:
+                    zone = "Lower Extreme"
+                elif latest_bar <= -0.25:
+                    zone = "Lower Zone"
+                else:
+                    zone = "Middle/Neutral"
+
+                cdf_rows.append({
+                    "Symbol": sym,
+                    "CDF Zone": zone,
+                    "Trend Direction": trend_direction,
+                    "Latest Trend Bar": latest_bar,
+                    "Percentile Rank": pct_rank,
+                    "Read": _price_trend_cdf_read(latest_bar, pct_rank, trend_direction),
+                    "Direction": "Rising" if float(d4.iloc[-1]["Change"]) >= 0 else "Falling",
+                    "Latest Return %": float(d4.iloc[-1]["Return %"]),
+                    "Trend Slope": float(z_slope) if np.isfinite(z_slope) else np.nan,
+                    "Last Close": _safe_last_float(c_live),
+                    "As Of": live_ts_cdf if live_used_cdf and pd.notna(live_ts_cdf) else c_live.index[-1],
+                })
+            except Exception:
+                continue
+            cdf_progress.progress((i + 1) / max(1, len(universe)))
+        cdf_progress.empty()
+        cdf_status.empty()
+
+        cdf_df = pd.DataFrame(cdf_rows)
+        if cdf_df.empty:
+            st.info("No cumulative-frequency scan results available.")
+        else:
+            zone_order = {
+                "Upper Extreme": 0,
+                "Upper Zone": 1,
+                "Middle/Neutral": 2,
+                "Lower Zone": 3,
+                "Lower Extreme": 4,
+            }
+            cdf_df["_zone_order"] = cdf_df["CDF Zone"].map(zone_order).fillna(9)
+            cdf_df["_trend_order"] = cdf_df["Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
+            cdf_df["_abs_bar"] = pd.to_numeric(cdf_df["Latest Trend Bar"], errors="coerce").abs()
+            cdf_df = cdf_df.sort_values(
+                ["_zone_order", "_trend_order", "_abs_bar", "Symbol"],
+                ascending=[True, True, False, True]
+            ).drop(columns=["_zone_order", "_trend_order", "_abs_bar"])
+
+            fmt_cdf = cdf_df.copy()
+            fmt_cdf["Latest Trend Bar"] = fmt_cdf["Latest Trend Bar"].map(
+                lambda x: f"{float(x):+.3f}" if np.isfinite(float(x)) else "n/a"
+            )
+            fmt_cdf["Percentile Rank"] = fmt_cdf["Percentile Rank"].map(
+                lambda x: f"{float(x):.1f}%" if np.isfinite(float(x)) else "n/a"
+            )
+            fmt_cdf["Latest Return %"] = fmt_cdf["Latest Return %"].map(
+                lambda x: f"{float(x):+.2f}%" if np.isfinite(float(x)) else "n/a"
+            )
+            fmt_cdf["Trend Slope"] = fmt_cdf["Trend Slope"].map(fmt_slope)
+            fmt_cdf["Last Close"] = fmt_cdf["Last Close"].map(fmt_price_val)
+            fmt_cdf["As Of"] = fmt_cdf["As Of"].astype(str)
+
+            with st.expander("Show Cumulative Frequency scanner table", expanded=False):
+                st.dataframe(
+                    fmt_cdf[
+                        [
+                            "Symbol",
+                            "CDF Zone",
+                            "Trend Direction",
+                            "Latest Trend Bar",
+                            "Percentile Rank",
+                            "Read",
+                            "Direction",
+                            "Latest Return %",
+                            "Trend Slope",
+                            "Last Close",
+                            "As Of",
+                        ]
+                    ],
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+            st.markdown("### CF Buy/Sell Instructions")
+            st.caption(
+                "Uses the latest daily 4-week CF reading to classify each symbol into BUY, SELL, Watch, or WAIT. "
+                "This mirrors the Trade Momentum workflow but focuses on CF location plus current trend direction."
+            )
+            cf_trade_df = pd.DataFrame([r for r in (_cf_trade_row_for_symbol(sym, view="daily_4w") for sym in universe) if r is not None])
+            if cf_trade_df.empty:
+                st.info("No CF Buy/Sell instruction rows available.")
+            else:
+                cf_bias_order = {
+                    "BUY / Bullish": 0,
+                    "BUY Watch": 1,
+                    "WAIT": 2,
+                    "WAIT / Take Profit": 3,
+                    "WAIT / Reversal Watch": 4,
+                    "SELL Watch": 5,
+                    "SELL / Bearish": 6,
+                }
+                cf_trade_df["_bias_order"] = cf_trade_df["Trade Bias"].map(cf_bias_order).fillna(9)
+                cf_trade_df["_abs_score"] = pd.to_numeric(cf_trade_df["Score"], errors="coerce").abs()
+                cf_trade_df = cf_trade_df.sort_values(
+                    ["_bias_order", "_abs_score", "Symbol"],
+                    ascending=[True, False, True]
+                ).drop(columns=["_bias_order", "_abs_score"])
+
+                cf_trade_cols = [
+                    "Symbol",
+                    "Trade Symbol",
+                    "Trade Bias",
+                    "Action Zone",
+                    "Instruction",
+                    "Score",
+                    "Trend Direction",
+                    "CF Direction",
+                    "Latest Trend Bar",
+                    "CF Percentile",
+                    "Latest Return %",
+                    "Trend Slope",
+                    "Last Close",
+                    "As Of",
+                ]
+
+                with st.expander("Show all CF Buy/Sell instruction rows", expanded=False):
+                    st.dataframe(
+                        _format_cf_trade_df(cf_trade_df)[cf_trade_cols],
+                        use_container_width=True,
+                        hide_index=True
+                    )
+
+                st.markdown("#### BUY candidates")
+                cf_buy_df = cf_trade_df[cf_trade_df["Trade Bias"].isin(["BUY / Bullish", "BUY Watch"])].copy()
+                if cf_buy_df.empty:
+                    st.info("No CF BUY candidates found.")
+                else:
+                    cf_buy_df = cf_buy_df.sort_values(["Score", "CF Percentile", "Symbol"], ascending=[False, True, True])
+                    with st.expander("Show CF BUY candidates table", expanded=False):
+                        st.dataframe(
+                            _format_cf_trade_df(cf_buy_df)[cf_trade_cols],
+                            use_container_width=True,
+                            hide_index=True
+                        )
+
+                st.markdown("#### SELL candidates")
+                cf_sell_df = cf_trade_df[cf_trade_df["Trade Bias"].isin(["SELL / Bearish", "SELL Watch"])].copy()
+                if cf_sell_df.empty:
+                    st.info("No CF SELL candidates found.")
+                else:
+                    cf_sell_df = cf_sell_df.sort_values(["Score", "CF Percentile", "Symbol"], ascending=[True, False, True])
+                    with st.expander("Show CF SELL candidates table", expanded=False):
+                        st.dataframe(
+                            _format_cf_trade_df(cf_sell_df)[cf_trade_cols],
+                            use_container_width=True,
+                            hide_index=True
+                        )
+
+
+# --- Tab 20: Trade Momentum ---
+with tab20:
+    st.header("Trade Momentum")
+    st.caption(
+        "Suggested trading helper: this ranks symbols using the daily price trend bar, monthly price trend bar, "
+        "daily percentile rank, and trend slope. It is a watchlist/ranking tool, not an automatic buy/sell command."
+    )
+
+    st.markdown(
+        "**Best use:** look for BUY/Bullish rows when daily and monthly pressure align upward, then enter only on a pullback "
+        "or breakout confirmation. Look for SELL/Bearish rows when daily and monthly pressure align downward, then enter only "
+        "after rejection or breakdown confirmation."
+    )
+
+    with st.expander("How to trade the Trade Momentum tab", expanded=True):
+        st.markdown("""
+**Trade Momentum = direction and ranking.**  
+Use it to decide which symbols deserve chart review first. It should not be used as an automatic market order.
+
+| Momentum read | Meaning | Trade use |
+|---|---|---|
+| **BUY / Bullish** | Daily and monthly pressure are aligned upward | Highest-priority long watchlist; enter on pullback hold or breakout confirmation |
+| **BUY Watch** | Conditions are improving but not fully confirmed | Watch for a trigger: green Price Trend Bar, reclaim of support/EMA, or higher close |
+| **WAIT** | Mixed or unclear signals | Skip unless the chart gives a very clean separate setup |
+| **SELL Watch** | Conditions are weakening but not fully confirmed | Watch for rejection, red Price Trend Bar, or breakdown |
+| **SELL / Bearish** | Daily and monthly pressure are aligned downward | Highest-priority short watchlist; enter after rejection or breakdown confirmation |
+
+**Simple long rule:** Momentum is **BUY Watch** or **BUY / Bullish**, CF is rising, and the latest normalized bar is above 0 but not already exhausted at +1.
+
+**Simple short rule:** Momentum is **SELL Watch** or **SELL / Bearish**, CF is falling, and the latest normalized bar is below 0 but not already exhausted at -1.
+
+Use the **Score** to rank candidates, then open the chart and confirm that price is near a reasonable entry zone instead of extended.
+""")
+
+    momentum_symbol_filter = st.selectbox(
+        "Symbol filter:",
+        ["All symbols"] + list(universe),
+        index=0,
+        key="trade_momentum_symbol_filter",
+        help="Choose a single symbol to inspect, or leave on All symbols to rank the full universe."
+    )
+
+    selected_momentum_symbols = list(universe) if momentum_symbol_filter == "All symbols" else [momentum_symbol_filter]
+
+    if momentum_symbol_filter != "All symbols":
+        st.markdown(f"### Selected Symbol: {momentum_symbol_filter}")
+        selected_row = _trade_momentum_score_for_symbol(momentum_symbol_filter)
+        if selected_row is None:
+            st.info(f"Not enough data to calculate Trade Momentum for {momentum_symbol_filter}.")
+        else:
+            selected_df = pd.DataFrame([selected_row])
+            selected_cols = [
+                "Symbol",
+                "Trade Bias",
+                "Setup",
+                "Score",
+                "Trend Direction",
+                "Daily Trend Bar",
+                "Daily Percentile",
+                "Daily Return %",
+                "Monthly Trend Bar",
+                "Monthly Return %",
+                "Trend Slope",
+                "Last Close",
+                "As Of",
+            ]
+            with st.expander("Selected-symbol momentum table", expanded=False):
+                st.dataframe(
+                    _format_trade_momentum_df(selected_df)[selected_cols],
+                    use_container_width=True,
+                    hide_index=True
+                )
+
+            try:
+                selected_close = _real_close_for_trend_bars(momentum_symbol_filter)
+                selected_close_live, _, _, _ = _with_current_day_price_for_trend_bars(momentum_symbol_filter, selected_close)
+                c1, c2 = st.columns(2)
+                with c1:
+                    plot_price_trend_bars(
+                        compute_price_trend_bars(selected_close_live, view="daily_4w"),
+                        f"{momentum_symbol_filter} — Daily Price Trend Bars, Last 4 Weeks"
+                    )
+                with c2:
+                    plot_price_trend_bars(
+                        compute_price_trend_bars(selected_close_live, view="monthly_12m"),
+                        f"{momentum_symbol_filter} — Monthly Price Trend Bars, Last 12 Months"
+                    )
+            except Exception:
+                st.info("Unable to draw selected-symbol momentum charts.")
+
+    run_trade_scan = st.button(
+        "Run Trade Momentum Scan" if momentum_symbol_filter == "All symbols" else f"Run Trade Momentum for {momentum_symbol_filter}",
+        key="btn_run_trade_momentum_scan"
+    )
+    if run_trade_scan:
+        tm_rows = []
+        tm_progress = st.progress(0.0)
+        tm_status = st.empty()
+        for i, sym in enumerate(selected_momentum_symbols):
+            tm_status.text(f"Scanning {sym}...")
+            row = _trade_momentum_score_for_symbol(sym)
+            if row is not None:
+                tm_rows.append(row)
+            tm_progress.progress((i + 1) / max(1, len(selected_momentum_symbols)))
+        tm_progress.empty()
+        tm_status.empty()
+
+        tm_df = pd.DataFrame(tm_rows)
+        if tm_df.empty:
+            st.info("No Trade Momentum results available.")
+        else:
+            bias_order = {
+                "BUY / Bullish": 0,
+                "BUY Watch": 1,
+                "WAIT": 2,
+                "SELL Watch": 3,
+                "SELL / Bearish": 4,
+            }
+            tm_df["_bias_order"] = tm_df["Trade Bias"].map(bias_order).fillna(9)
+            tm_df["_abs_score"] = pd.to_numeric(tm_df["Score"], errors="coerce").abs()
+            tm_df = tm_df.sort_values(
+                ["_bias_order", "_abs_score", "Symbol"],
+                ascending=[True, False, True]
+            ).drop(columns=["_bias_order", "_abs_score"])
+
+            fmt_tm = _format_trade_momentum_df(tm_df)
+            cols = [
+                "Symbol",
+                "Trade Bias",
+                "Setup",
+                "Score",
+                "Trend Direction",
+                "Daily Trend Bar",
+                "Daily Percentile",
+                "Daily Return %",
+                "Monthly Trend Bar",
+                "Monthly Return %",
+                "Trend Slope",
+                "Last Close",
+                "As Of",
+            ]
+            st.caption(
+                f"Momentum results: {len(tm_df)} total • "
+                f"{int(tm_df['Trade Bias'].isin(['BUY / Bullish', 'BUY Watch']).sum())} BUY/Watch • "
+                f"{int(tm_df['Trade Bias'].isin(['SELL / Bearish', 'SELL Watch']).sum())} SELL/Watch"
+            )
+
+            with st.expander("All Trade Momentum results", expanded=False):
+                st.dataframe(fmt_tm[cols], use_container_width=True, hide_index=True)
+
+            buy_df = tm_df[tm_df["Trade Bias"].isin(["BUY / Bullish", "BUY Watch"])].copy()
+            buy_count = len(buy_df)
+            with st.expander(f"BUY / Bullish candidates ({buy_count})", expanded=False):
+                if buy_df.empty:
+                    st.info("No BUY/Bullish candidates found.")
+                else:
+                    buy_df = buy_df.sort_values(["Score", "Daily Trend Bar", "Symbol"], ascending=[False, False, True])
+                    st.dataframe(_format_trade_momentum_df(buy_df)[cols], use_container_width=True, hide_index=True)
+
+            sell_df = tm_df[tm_df["Trade Bias"].isin(["SELL / Bearish", "SELL Watch"])].copy()
+            sell_count = len(sell_df)
+            with st.expander(f"SELL / Bearish candidates ({sell_count})", expanded=False):
+                if sell_df.empty:
+                    st.info("No SELL/Bearish candidates found.")
+                else:
+                    sell_df = sell_df.sort_values(["Score", "Daily Trend Bar", "Symbol"], ascending=[True, True, True])
+                    st.dataframe(_format_trade_momentum_df(sell_df)[cols], use_container_width=True, hide_index=True)
+    else:
+        st.info("Click **Run Trade Momentum Scan** to rank the current universe.")
+
+
+# --- Tab 21: Rolling Return Strength ---
+with tab21:
+    st.header("Rolling Return Strength")
+    st.caption(
+        "Shows whether return momentum is improving or fading over time. "
+        "Daily views use normalized 5/10/20-bar returns; monthly view uses normalized 1/3/6-month returns."
     )
 
     with st.expander("How to trade this chart", expanded=True):
         st.markdown(
             """
-**BUY setup:** momentum is below `-0.5` or near `-1`, then crosses above its signal line. It is stronger when Price Trend Bars are improving and price is near support or a pullback zone.
+**Use this tab as a momentum-acceleration filter.**
 
-**SELL setup:** momentum is above `+0.5` or near `+1`, then crosses below its signal line. It is stronger when Price Trend Bars are weakening and price is near resistance or an extended zone.
-
-Use this tab for timing, not by itself. The best workflow is:  
-**Price Trend Bars = location**, **Cumulative/return strength = broader pressure**, **Buy/Sell Timing = entry or exit trigger**.
+- **Composite Strength above 0 and rising** = bullish pressure is improving.
+- **Composite Strength below 0 and falling** = bearish pressure is increasing.
+- **+0.35 / -0.35** are practical confirmation zones.
+- **+0.70 / -0.70** are stronger/extreme zones; avoid chasing if price is already extended.
+- Best BUY setup: Price Trend Bars rising, CF not overextended near 100%, and Rolling Return Strength crossing/rising above 0.
+- Best SELL setup: Price Trend Bars falling, CF rolling down from a high zone, and Rolling Return Strength crossing/falling below 0.
+- Dip-buy watchlist: Composite Strength below 0.0, especially below -0.5, can identify oversold pullbacks; wait for Strength Change to turn positive before entering.
+- Peak/Reversal labels show the price where return strength most recently peaked or reversed from a low.
             """
         )
 
-    ctrl1, ctrl2, ctrl3, ctrl4 = st.columns(4)
-    with ctrl1:
-        timing_symbol = st.selectbox("Symbol", universe, index=0 if len(universe) else None, key="buy_sell_timing_symbol")
-    with ctrl2:
-        timing_view = st.selectbox("View", ["Daily 3M", "Daily 6M", "Monthly 12M"], index=0, key="buy_sell_timing_view")
-    with ctrl3:
-        timing_k_window = st.slider("Momentum lookback", 5, 40, 14, 1, key="buy_sell_timing_k_window")
-    with ctrl4:
-        timing_recent_bars = st.slider("Recent signal window", 2, 30, 8, 1, key="buy_sell_timing_recent_signal_bars")
-
-    opt1, opt2, opt3 = st.columns(3)
-    with opt1:
-        timing_signal_span = st.slider("Signal smoothing", 2, 20, 5, 1, key="buy_sell_timing_signal_span")
-    with opt2:
-        timing_smooth_span = st.slider("Momentum smoothing", 1, 10, 3, 1, key="buy_sell_timing_smooth_span")
-    with opt3:
-        timing_zone_lookback = st.slider("Extreme-zone lookback", 2, 20, 8, 1, key="buy_sell_timing_zone_lookback")
-
-    close_timing_base = _real_close_for_trend_bars(timing_symbol)
-    close_timing_live, timing_live_price, timing_live_ts, timing_live_used = _with_current_day_price_for_trend_bars(
-        timing_symbol,
-        close_timing_base
-    )
-
-    if close_timing_live is None or close_timing_live.empty or len(close_timing_live) < 40:
-        st.warning("Not enough price history available for this symbol.")
-    else:
-        if timing_view == "Monthly 12M":
-            timing_input = close_timing_live.resample("ME").last().dropna().tail(18)
-            recent_plot_bars = 12
-            view_title = "Monthly Buy/Sell Timing, 12 Months"
-        elif timing_view == "Daily 6M":
-            timing_input = close_timing_live.tail(132)
-            recent_plot_bars = 132
-            view_title = "Daily Buy/Sell Timing, 6 Months"
-        else:
-            timing_input = close_timing_live.tail(66)
-            recent_plot_bars = 66
-            view_title = "Daily Buy/Sell Timing, 3 Months"
-
-        timing_df = compute_buy_sell_timing(
-            timing_input,
-            k_window=int(timing_k_window),
-            signal_span=int(timing_signal_span),
-            smooth_span=int(timing_smooth_span),
-            zone_lookback=int(timing_zone_lookback),
+    rr_col1, rr_col2 = st.columns([1, 1])
+    with rr_col1:
+        rr_symbol = st.selectbox("Symbol:", universe, key="rr_strength_symbol")
+    with rr_col2:
+        rr_view_label = st.selectbox(
+            "View:",
+            ["Daily — 3 months", "Daily — 6 months", "Monthly — 12 months"],
+            index=0,
+            key="rr_strength_view"
         )
 
-        if timing_df is None or timing_df.empty:
-            st.info("Not enough timing data for the selected view.")
+    rr_view_map = {
+        "Daily — 3 months": "daily_3m",
+        "Daily — 6 months": "daily_6m",
+        "Monthly — 12 months": "monthly_12m",
+    }
+    rr_view = rr_view_map.get(rr_view_label, "daily_3m")
+
+    try:
+        rr_close = _real_close_for_trend_bars(rr_symbol)
+        rr_close_live, rr_live_price, rr_as_of, _ = _with_current_day_price_for_trend_bars(rr_symbol, rr_close)
+        rr_df = compute_rolling_return_strength(rr_close_live, view=rr_view)
+
+        if rr_df.empty:
+            st.info("Not enough data to calculate Rolling Return Strength for this symbol.")
         else:
-            last_timing = timing_df.dropna(subset=["Momentum", "Signal"]).iloc[-1]
-            buy_bars_timing = _bars_since_bool_signal(timing_df["Buy Signal"])
-            sell_bars_timing = _bars_since_bool_signal(timing_df["Sell Signal"])
-            _, timing_trend_slope = slope_line(close_timing_live, lookback=min(int(slope_lb_daily), len(close_timing_live)))
-            timing_trend_direction = "Upward" if np.isfinite(timing_trend_slope) and timing_trend_slope >= 0 else "Downward"
+            latest = rr_df.iloc[-1]
+            latest_strength = float(pd.to_numeric(pd.Series([latest.get("Composite Strength")]), errors="coerce").iloc[0])
+            latest_change = float(pd.to_numeric(pd.Series([latest.get("Strength Change")]), errors="coerce").fillna(0.0).iloc[0])
+            latest_close = float(pd.to_numeric(pd.Series([latest.get("Close")]), errors="coerce").iloc[0])
+            read = _rolling_strength_trade_read(latest_strength, latest_change)
 
-            card_cols = st.columns(5)
-            card_cols[0].metric("Timing Bias", str(last_timing.get("Timing Bias", "WAIT")))
-            card_cols[1].metric("Close", fmt_price_val(last_timing["Close"]))
-            card_cols[2].metric("Momentum", f"{float(last_timing['Momentum']):+.3f}")
-            card_cols[3].metric("Signal", f"{float(last_timing['Signal']):+.3f}")
-            card_cols[4].metric("Trend", timing_trend_direction)
-
-            st.info(str(last_timing.get("Instruction", "WAIT: no clean timing edge.")))
-
-            plot_buy_sell_timing_chart(
-                timing_df,
-                f"{timing_symbol} — {view_title}",
-                recent_bars=recent_plot_bars,
+            st.markdown(
+                f"""
+<div style="display:flex; flex-wrap:wrap; gap:10px; margin:0.25rem 0 0.75rem 0;">
+  <div style="border:1px solid #ddd; border-radius:10px; padding:8px 10px; min-width:160px;">
+    <div style="font-size:0.78rem; color:#666;">Trade Read</div>
+    <div style="font-size:0.95rem; font-weight:700;">{read}</div>
+  </div>
+  <div style="border:1px solid #ddd; border-radius:10px; padding:8px 10px; min-width:120px;">
+    <div style="font-size:0.78rem; color:#666;">Strength</div>
+    <div style="font-size:1.0rem; font-weight:700;">{latest_strength:+.3f}</div>
+  </div>
+  <div style="border:1px solid #ddd; border-radius:10px; padding:8px 10px; min-width:120px;">
+    <div style="font-size:0.78rem; color:#666;">Change</div>
+    <div style="font-size:1.0rem; font-weight:700;">{latest_change:+.3f}</div>
+  </div>
+  <div style="border:1px solid #ddd; border-radius:10px; padding:8px 10px; min-width:130px;">
+    <div style="font-size:0.78rem; color:#666;">Latest Price</div>
+    <div style="font-size:1.0rem; font-weight:700;">{fmt_price_val(latest_close)}</div>
+  </div>
+  <div style="border:1px solid #ddd; border-radius:10px; padding:8px 10px; min-width:160px;">
+    <div style="font-size:0.78rem; color:#666;">As Of</div>
+    <div style="font-size:0.86rem; font-weight:700;">{rr_as_of}</div>
+  </div>
+</div>
+                """,
+                unsafe_allow_html=True
             )
 
-            timing_table = timing_df.reset_index()
-            # Make the time/index column consistent across DatetimeIndex names
-            # (for example "Date", "Datetime", or a blank unnamed index).
-            if "Period" not in timing_table.columns and len(timing_table.columns) > 0:
-                timing_table = timing_table.rename(columns={timing_table.columns[0]: "Period"})
+            plot_rolling_return_strength(rr_df, f"{rr_symbol} — {rr_view_label} Rolling Return Strength")
 
-            with st.expander("Timing chart values", expanded=False):
-                display_cols = ["Period", "Close", "Momentum", "Signal", "Histogram", "Buy Signal", "Sell Signal", "Timing Bias", "Instruction"]
-                # Defensive column fill prevents KeyError when an older cached/partial
-                # timing DataFrame is missing newer display columns.
-                for _col in display_cols:
-                    if _col not in timing_table.columns:
-                        if _col in ["Buy Signal", "Sell Signal"]:
-                            timing_table[_col] = False
-                        else:
-                            timing_table[_col] = np.nan
+            with st.expander("Rolling Return Strength values", expanded=False):
                 st.dataframe(
-                    _format_buy_sell_timing_table(timing_table.loc[:, display_cols]),
+                    _format_rolling_return_strength_table(rr_df),
                     use_container_width=True,
                     hide_index=True
                 )
+    except Exception as e:
+        st.error(f"Unable to calculate Rolling Return Strength: {e}")
 
-            c_buy, c_sell = st.columns(2)
-            with c_buy:
-                st.subheader("Recent BUY Timing")
-                if buy_bars_timing >= 0:
-                    st.success(f"Most recent BUY timing signal: {buy_bars_timing} bars ago.")
-                else:
-                    st.info("No BUY timing signal in this view.")
-            with c_sell:
-                st.subheader("Recent SELL Timing")
-                if sell_bars_timing >= 0:
-                    st.error(f"Most recent SELL timing signal: {sell_bars_timing} bars ago.")
-                else:
-                    st.info("No SELL timing signal in this view.")
+    st.divider()
+    st.subheader("Rolling Return Strength Scanner")
+    st.caption("Ranks the current universe by latest daily 3-month Composite Strength and includes dip-buy watchlists for 3-month and 6-month views. Tables are collapsed by default.")
 
-    st.markdown("---")
-    st.subheader("Buy/Sell Timing Scanner")
-    st.caption(
-        "Scans the current universe for recent normalized stochastic momentum BUY and SELL timing signals. "
-        "Tables are collapsed by default so the chart remains the primary workflow."
-    )
+    run_rr_scan = st.button("Run Rolling Return Strength Scan", key="btn_run_rolling_return_strength_scan")
+    if run_rr_scan:
+        rr_rows = []
+        rr_progress = st.progress(0.0)
+        rr_status = st.empty()
+        for i, sym in enumerate(universe):
+            rr_status.text(f"Scanning {sym}...")
+            row = _rolling_return_strength_snapshot(sym, view="daily_3m")
+            if row is not None:
+                rr_rows.append(row)
+            rr_progress.progress((i + 1) / max(1, len(universe)))
+        rr_progress.empty()
+        rr_status.empty()
 
-    if st.button("Run Buy/Sell Timing Scanner", key="run_buy_sell_timing_scanner"):
-        scan_timing_df = _build_buy_sell_timing_scan_rows(
-            universe,
-            k_window=int(timing_k_window),
-            signal_span=int(timing_signal_span),
-            smooth_span=int(timing_smooth_span),
-            zone_lookback=int(timing_zone_lookback),
-            recent_signal_bars=int(timing_recent_bars),
-        )
-        st.session_state["buy_sell_timing_scan_df"] = scan_timing_df
+        rr_scan_df = pd.DataFrame(rr_rows)
+        if rr_scan_df.empty:
+            st.info("No Rolling Return Strength scanner results available.")
+        else:
+            bias_order = {
+                "🟢▲ BUY / Bullish strength": 0,
+                "🟡▲ BUY Watch": 1,
+                "⏳ WAIT / Neutral": 2,
+                "🟡▼ SELL Watch": 3,
+                "🔴▼ SELL / Bearish strength": 4,
+            }
+            rr_scan_df["_bias_order"] = rr_scan_df["Trade Read"].map(bias_order).fillna(9)
+            rr_scan_df["_abs_strength"] = pd.to_numeric(rr_scan_df["Composite Strength"], errors="coerce").abs()
+            rr_scan_df = rr_scan_df.sort_values(
+                ["_bias_order", "_abs_strength", "Symbol"],
+                ascending=[True, False, True]
+            ).drop(columns=["_bias_order", "_abs_strength"])
 
-    scan_timing_df = st.session_state.get("buy_sell_timing_scan_df", pd.DataFrame())
-    if scan_timing_df is None or scan_timing_df.empty:
-        st.info("Run the scanner to see current BUY/SELL timing candidates.")
-    else:
-        timing_scan_cols = [
-            "Symbol", "Signal Type", "Timing Bias", "Trend Direction", "Momentum", "Signal",
-            "Histogram", "Bars Since Signal", "Last Close", "As Of", "Trend Slope", "Instruction"
-        ]
-        formatted_timing_scan = scan_timing_df.copy()
-        formatted_timing_scan = formatted_timing_scan.rename(columns={"Last Close": "Close"})
-        formatted_timing_scan = _format_buy_sell_timing_table(formatted_timing_scan)
-        if "As Of" in formatted_timing_scan.columns:
-            formatted_timing_scan["As Of"] = formatted_timing_scan["As Of"].astype(str)
-
-        with st.expander("All Buy/Sell Timing scan results", expanded=False):
-            st.dataframe(
-                formatted_timing_scan[[
-                    "Symbol", "Signal Type", "Timing Bias", "Trend Direction", "Momentum", "Signal",
-                    "Histogram", "Bars Since Signal", "Close", "As Of", "Trend Slope", "Instruction"
-                ]],
-                use_container_width=True,
-                hide_index=True
+            rr_cols = [
+                "Symbol",
+                "Trade Read",
+                "Composite Strength",
+                "Strength Change",
+                "Trend Direction",
+                "Trend Slope",
+                "Last Close",
+                "As Of",
+            ]
+            st.caption(
+                f"Scanner results: {len(rr_scan_df)} total • "
+                f"{int(rr_scan_df['Trade Read'].isin(['🟢▲ BUY / Bullish strength', '🟡▲ BUY Watch']).sum())} BUY/Watch • "
+                f"{int(rr_scan_df['Trade Read'].isin(['🔴▼ SELL / Bearish strength', '🟡▼ SELL Watch']).sum())} SELL/Watch"
             )
 
-        buy_candidates = scan_timing_df[scan_timing_df["Signal Type"].eq("BUY")].copy()
-        sell_candidates = scan_timing_df[scan_timing_df["Signal Type"].eq("SELL")].copy()
+            fmt_rr_scan = _format_rolling_strength_scanner(rr_scan_df)
 
-        col_buy_scan, col_sell_scan = st.columns(2)
-        with col_buy_scan:
-            with st.expander("🟢 BUY timing candidates", expanded=True):
-                if buy_candidates.empty:
-                    st.info("No recent BUY timing candidates.")
+            with st.expander("All Rolling Return Strength results", expanded=False):
+                st.dataframe(fmt_rr_scan[rr_cols], use_container_width=True, hide_index=True)
+
+            buy_rr = rr_scan_df[rr_scan_df["Trade Read"].isin(["🟢▲ BUY / Bullish strength", "🟡▲ BUY Watch"])].copy()
+            with st.expander(f"BUY / Bullish strength candidates ({len(buy_rr)})", expanded=False):
+                if buy_rr.empty:
+                    st.info("No BUY/Bullish strength candidates found.")
                 else:
-                    out_buy = buy_candidates.rename(columns={"Last Close": "Close"})
-                    out_buy = _format_buy_sell_timing_table(out_buy)
-                    out_buy["As Of"] = out_buy["As Of"].astype(str)
-                    st.dataframe(
-                        out_buy[[
-                            "Symbol", "Timing Bias", "Trend Direction", "Momentum", "Signal",
-                            "Bars Since Signal", "Close", "As Of", "Instruction"
-                        ]],
-                        use_container_width=True,
-                        hide_index=True
+                    buy_rr = buy_rr.sort_values(["Composite Strength", "Strength Change", "Symbol"], ascending=[False, False, True])
+                    st.dataframe(_format_rolling_strength_scanner(buy_rr)[rr_cols], use_container_width=True, hide_index=True)
+
+            sell_rr = rr_scan_df[rr_scan_df["Trade Read"].isin(["🔴▼ SELL / Bearish strength", "🟡▼ SELL Watch"])].copy()
+            with st.expander(f"SELL / Bearish strength candidates ({len(sell_rr)})", expanded=False):
+                if sell_rr.empty:
+                    st.info("No SELL/Bearish strength candidates found.")
+                else:
+                    sell_rr = sell_rr.sort_values(["Composite Strength", "Strength Change", "Symbol"], ascending=[True, True, True])
+                    st.dataframe(_format_rolling_strength_scanner(sell_rr)[rr_cols], use_container_width=True, hide_index=True)
+
+            st.divider()
+            st.subheader("Dip-Buy Watchlists")
+            st.caption(
+                "Shows symbols where the red Composite Strength line is below 0.0 or below -0.5. "
+                "These are dip watchlists, not automatic buys; stronger candidates have Strength Change turning positive."
+            )
+
+            dip_rows = []
+            dip_progress = st.progress(0.0)
+            dip_status = st.empty()
+            dip_views = ["daily_3m", "daily_6m"]
+            total_dip_steps = max(1, len(universe) * len(dip_views))
+            step = 0
+            for view_name in dip_views:
+                for sym in universe:
+                    step += 1
+                    dip_status.text(f"Scanning dips {sym} ({'3M' if view_name == 'daily_3m' else '6M'})...")
+                    drow = _rolling_return_strength_dip_snapshot(sym, view=view_name)
+                    if drow is not None:
+                        dip_rows.append(drow)
+                    dip_progress.progress(step / total_dip_steps)
+            dip_progress.empty()
+            dip_status.empty()
+
+            dip_df = pd.DataFrame(dip_rows)
+            dip_cols = [
+                "Symbol",
+                "View",
+                "Dip Read",
+                "Composite Strength",
+                "Strength Change",
+                "Trend Direction",
+                "Trend Slope",
+                "Last Close",
+                "Peak Period",
+                "Peak Price",
+                "Peak Strength",
+                "Reversal Period",
+                "Reversal Price",
+                "Reversal Strength",
+                "As Of",
+            ]
+
+            if dip_df.empty:
+                st.info("No dip-watchlist results available.")
+            else:
+                dip_df["_strength"] = pd.to_numeric(dip_df["Composite Strength"], errors="coerce")
+                dip_df["_change"] = pd.to_numeric(dip_df["Strength Change"], errors="coerce")
+                dip_df["_turning_order"] = np.where(dip_df["_change"] > 0, 0, 1)
+
+                for view_label, view_key in [("Daily 3M", "Daily 3M"), ("Daily 6M", "Daily 6M")]:
+                    view_df = dip_df[dip_df["View"] == view_key].copy()
+                    below_zero = view_df[view_df["_strength"] < 0.0].copy()
+                    below_deep = view_df[view_df["_strength"] <= -0.5].copy()
+
+                    below_zero = below_zero.sort_values(
+                        ["_turning_order", "_strength", "Symbol"],
+                        ascending=[True, True, True]
+                    )
+                    below_deep = below_deep.sort_values(
+                        ["_turning_order", "_strength", "Symbol"],
+                        ascending=[True, True, True]
                     )
 
-        with col_sell_scan:
-            with st.expander("🔴 SELL timing candidates", expanded=True):
-                if sell_candidates.empty:
-                    st.info("No recent SELL timing candidates.")
-                else:
-                    out_sell = sell_candidates.rename(columns={"Last Close": "Close"})
-                    out_sell = _format_buy_sell_timing_table(out_sell)
-                    out_sell["As Of"] = out_sell["As Of"].astype(str)
-                    st.dataframe(
-                        out_sell[[
-                            "Symbol", "Timing Bias", "Trend Direction", "Momentum", "Signal",
-                            "Bars Since Signal", "Close", "As Of", "Instruction"
-                        ]],
-                        use_container_width=True,
-                        hide_index=True
-                    )
+                    with st.expander(f"{view_label} — Composite Strength below 0.0 ({len(below_zero)})", expanded=False):
+                        if below_zero.empty:
+                            st.info("No symbols currently below 0.0 for this view.")
+                        else:
+                            st.dataframe(
+                                _format_rolling_strength_dip_scanner(below_zero)[dip_cols],
+                                use_container_width=True,
+                                hide_index=True
+                            )
+
+                    with st.expander(f"{view_label} — Composite Strength below -0.5 ({len(below_deep)})", expanded=False):
+                        if below_deep.empty:
+                            st.info("No symbols currently below -0.5 for this view.")
+                        else:
+                            st.dataframe(
+                                _format_rolling_strength_dip_scanner(below_deep)[dip_cols],
+                                use_container_width=True,
+                                hide_index=True
+                            )
+    else:
+        st.info("Click **Run Rolling Return Strength Scan** to rank the current universe.")
+
+
