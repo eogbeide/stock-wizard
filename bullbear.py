@@ -5701,11 +5701,24 @@ Use this tab for timing, not by itself. The best workflow is:
                 recent_bars=recent_plot_bars,
             )
 
-            timing_table = timing_df.reset_index().rename(columns={"index": "Period"})
+            timing_table = timing_df.reset_index()
+            # Make the time/index column consistent across DatetimeIndex names
+            # (for example "Date", "Datetime", or a blank unnamed index).
+            if "Period" not in timing_table.columns and len(timing_table.columns) > 0:
+                timing_table = timing_table.rename(columns={timing_table.columns[0]: "Period"})
+
             with st.expander("Timing chart values", expanded=False):
                 display_cols = ["Period", "Close", "Momentum", "Signal", "Histogram", "Buy Signal", "Sell Signal", "Timing Bias", "Instruction"]
+                # Defensive column fill prevents KeyError when an older cached/partial
+                # timing DataFrame is missing newer display columns.
+                for _col in display_cols:
+                    if _col not in timing_table.columns:
+                        if _col in ["Buy Signal", "Sell Signal"]:
+                            timing_table[_col] = False
+                        else:
+                            timing_table[_col] = np.nan
                 st.dataframe(
-                    _format_buy_sell_timing_table(timing_table[display_cols]),
+                    _format_buy_sell_timing_table(timing_table.loc[:, display_cols]),
                     use_container_width=True,
                     hide_index=True
                 )
