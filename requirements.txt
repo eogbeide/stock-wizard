@@ -26,8 +26,4 @@ imageio-ffmpeg
 Pillow
 mpld3
 streamlit-autorefresh
-re
-base64
-io
-requests
-pypdf
+
