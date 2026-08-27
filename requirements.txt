@@ -2,7 +2,7 @@ streamlit
 pandas
 numpy
 yfinance
-statsmodels
+statsmodels==0.14.6
 matplotlib
 pytz
 requests
