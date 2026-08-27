@@ -30,6 +30,4 @@ import re
 base64
 io
 requests
-import streamlit as st
-from gtts import gTTS
-from pypdf import PdfReader
+pypdf
