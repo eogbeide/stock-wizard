@@ -26,3 +26,10 @@ imageio-ffmpeg
 Pillow
 mpld3
 streamlit-autorefresh
+import re
+import base64
+from io import BytesIO
+import requests
+import streamlit as st
+from gtts import gTTS
+from pypdf import PdfReader
