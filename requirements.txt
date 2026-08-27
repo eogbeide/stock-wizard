@@ -26,3 +26,5 @@ imageio-ffmpeg
 Pillow
 mpld3
 streamlit-autorefresh
+pypdf
+pytz
