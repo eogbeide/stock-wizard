@@ -409,7 +409,7 @@ def render_speedy_audio(audio_bytes: BytesIO, rate: float = 1.5, autoplay: bool 
 # ---------- Session state ----------
 defaults = {
     "loaded_url": "",
-    "items": [],
+    "study_items": [],
     "page_idx": 0,
     "playback_rate": 1.5,
     "revealed": False,
@@ -477,7 +477,7 @@ with st.sidebar:
 
 
 # ---------- Load PDF ----------
-if url != st.session_state.loaded_url:
+if url != st.session_state["loaded_url"]:
     try:
         with st.spinner("Fetching and extracting med.pdf..."):
             data = fetch_bytes(url)
@@ -491,10 +491,10 @@ if url != st.session_state.loaded_url:
             )
             st.stop()
 
-        st.session_state.items = items
-        st.session_state.page_idx = 0
-        st.session_state.loaded_url = url
-        st.session_state.revealed = False
+        st.session_state["study_items"] = items
+        st.session_state["page_idx"] = 0
+        st.session_state["loaded_url"] = url
+        st.session_state["revealed"] = False
 
     except Exception as e:
         st.error(f"Could not load/parse the PDF: {e}")
@@ -504,7 +504,7 @@ if url != st.session_state.loaded_url:
 # ---------- Filter ----------
 filtered_items = [
     item
-    for item in st.session_state.items
+    for item in st.session_state["study_items"]
     if item["category"] in selected_categories
 ]
 
@@ -513,12 +513,12 @@ if not filtered_items:
     st.stop()
 
 # Keep page index valid after filters change.
-st.session_state.page_idx = min(
-    st.session_state.page_idx,
+st.session_state["page_idx"] = min(
+    st.session_state["page_idx"],
     len(filtered_items) - 1,
 )
 
-current = filtered_items[st.session_state.page_idx]
+current = filtered_items[st.session_state["page_idx"]]
 
 
 # ---------- Sidebar item selector ----------
@@ -531,13 +531,13 @@ with st.sidebar:
     selected_label = st.selectbox(
         "Jump to",
         labels,
-        index=st.session_state.page_idx,
+        index=st.session_state["page_idx"],
     )
 
     new_idx = labels.index(selected_label)
-    if new_idx != st.session_state.page_idx:
-        st.session_state.page_idx = new_idx
-        st.session_state.revealed = False
+    if new_idx != st.session_state["page_idx"]:
+        st.session_state["page_idx"] = new_idx
+        st.session_state["revealed"] = False
         st.rerun()
 
 
@@ -546,19 +546,19 @@ st.subheader("Playback speed")
 c1, c2, c3, c4, c5, c6 = st.columns(6)
 
 if c1.button("0.75×"):
-    st.session_state.playback_rate = 0.75
+    st.session_state["playback_rate"] = 0.75
 if c2.button("1.0×"):
-    st.session_state.playback_rate = 1.0
+    st.session_state["playback_rate"] = 1.0
 if c3.button("1.5×"):
-    st.session_state.playback_rate = 1.5
+    st.session_state["playback_rate"] = 1.5
 if c4.button("2.0×"):
-    st.session_state.playback_rate = 2.0
+    st.session_state["playback_rate"] = 2.0
 if c5.button("2.5×"):
-    st.session_state.playback_rate = 2.5
+    st.session_state["playback_rate"] = 2.5
 if c6.button("3.0×"):
-    st.session_state.playback_rate = 3.0
+    st.session_state["playback_rate"] = 3.0
 
-st.caption(f"Current speed: **{st.session_state.playback_rate}×**")
+st.caption(f"Current speed: **{st.session_state["playback_rate"]}×**")
 
 
 # ---------- Navigation ----------
@@ -568,16 +568,16 @@ with left:
     if st.button(
         "⬅️ Previous",
         use_container_width=True,
-        disabled=st.session_state.page_idx == 0,
+        disabled=st.session_state["page_idx"] == 0,
     ):
-        st.session_state.page_idx -= 1
-        st.session_state.revealed = False
+        st.session_state["page_idx"] -= 1
+        st.session_state["revealed"] = False
         st.rerun()
 
 with mid:
     st.markdown(
         f"<div style='text-align:center;font-weight:700;'>"
-        f"{st.session_state.page_idx + 1} / {len(filtered_items)}"
+        f"{st.session_state["page_idx"] + 1} / {len(filtered_items)}"
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -586,10 +586,10 @@ with right:
     if st.button(
         "Next ➡️",
         use_container_width=True,
-        disabled=st.session_state.page_idx >= len(filtered_items) - 1,
+        disabled=st.session_state["page_idx"] >= len(filtered_items) - 1,
     ):
-        st.session_state.page_idx += 1
-        st.session_state.revealed = False
+        st.session_state["page_idx"] += 1
+        st.session_state["revealed"] = False
         st.rerun()
 
 
@@ -597,7 +597,7 @@ st.markdown("---")
 
 
 # ---------- Current study item ----------
-current = filtered_items[st.session_state.page_idx]
+current = filtered_items[st.session_state["page_idx"]]
 display_text = normalize_for_display(current["text"])
 
 st.markdown(f"### {current['title']}")
@@ -625,9 +625,9 @@ if practice_mode:
         "👁️ Reveal answer + coaching",
         use_container_width=True,
     ):
-        st.session_state.revealed = True
+        st.session_state["revealed"] = True
 
-    if st.session_state.revealed:
+    if st.session_state["revealed"]:
         st.markdown(body)
 else:
     st.markdown(body)
@@ -637,7 +637,7 @@ else:
 st.markdown("---")
 
 tts_text = current["title"]
-if not practice_mode or st.session_state.revealed:
+if not practice_mode or st.session_state["revealed"]:
     tts_text += "\n" + body
 
 if st.button(
@@ -650,7 +650,7 @@ if st.button(
 
         render_speedy_audio(
             audio_buf,
-            rate=st.session_state.playback_rate,
+            rate=st.session_state["playback_rate"],
             autoplay=True,
         )
 
@@ -676,7 +676,7 @@ download_text = f"{current['title']}\n\n{plain_text_for_tts(body)}"
 st.download_button(
     "⬇️ Download current item",
     data=download_text.encode("utf-8"),
-    file_name=f"interview_item_{st.session_state.page_idx + 1}.txt",
+    file_name=f"interview_item_{st.session_state["page_idx"] + 1}.txt",
     mime="text/plain",
     use_container_width=True,
 )
