@@ -466,153 +466,6 @@ def prepare_indicators(df: pd.DataFrame, cfg: dict, symbol: str) -> pd.DataFrame
     return out
 
 
-
-def compute_trade_probabilities_and_instruction(symbol: str,
-                                                state: str,
-                                                bias: str,
-                                                last: float,
-                                                ema30_last: float,
-                                                hma_last: float,
-                                                sr_last: float,
-                                                ntd_last: float,
-                                                adx_last: float,
-                                                trend_slope: float,
-                                                support: float,
-                                                resistance: float,
-                                                near_support: bool,
-                                                near_resistance: bool,
-                                                near_ema30: bool,
-                                                near_hma55: bool,
-                                                cross_up: bool,
-                                                cross_down: bool,
-                                                entry_zone: str,
-                                                stop_zone: str,
-                                                target1: str) -> dict:
-    """
-    Convert the chart conditions into actionable long/short probability estimates.
-    These are rule-based trading probabilities for ranking setups, not guaranteed outcomes.
-    """
-    trend_up = bool(np.isfinite(trend_slope) and trend_slope >= 0)
-    trend_down = bool(np.isfinite(trend_slope) and trend_slope < 0)
-    price_above_ema = bool(np.isfinite(last) and np.isfinite(ema30_last) and last >= ema30_last)
-    price_below_ema = bool(np.isfinite(last) and np.isfinite(ema30_last) and last < ema30_last)
-    price_above_hma = bool(np.isfinite(last) and np.isfinite(hma_last) and last >= hma_last)
-    price_below_hma = bool(np.isfinite(last) and np.isfinite(hma_last) and last < hma_last)
-    strong_adx = bool(np.isfinite(adx_last) and adx_last >= 20)
-    very_strong_adx = bool(np.isfinite(adx_last) and adx_last >= 25)
-
-    long_score = 10.0
-    short_score = 10.0
-
-    if trend_up:
-        long_score += 18
-    else:
-        short_score += 18
-
-    if "BUY CONFIRMED" in str(state):
-        long_score += 28
-    elif "BUY SETUP" in str(state):
-        long_score += 16
-
-    if "SELL CONFIRMED" in str(state):
-        short_score += 28
-    elif "SELL SETUP" in str(state):
-        short_score += 16
-
-    if price_above_ema:
-        long_score += 10
-    if price_below_ema:
-        short_score += 10
-    if price_above_hma:
-        long_score += 8
-    if price_below_hma:
-        short_score += 8
-
-    if bool(cross_up):
-        long_score += 10
-    if bool(cross_down):
-        short_score += 10
-
-    if np.isfinite(sr_last):
-        if sr_last > 0:
-            long_score += 10
-        if sr_last < 0:
-            short_score += 10
-        if sr_last <= -0.50 and trend_up:
-            long_score += 5  # dip in an uptrend
-        if sr_last >= 0.50 and trend_down:
-            short_score += 5  # bounce into resistance in a downtrend
-
-    if np.isfinite(ntd_last):
-        if ntd_last > 0:
-            long_score += 8
-        if ntd_last < 0:
-            short_score += 8
-        if ntd_last <= -0.50 and trend_up:
-            long_score += 4
-        if ntd_last >= 0.50 and trend_down:
-            short_score += 4
-
-    if near_support:
-        long_score += 8
-    if near_resistance:
-        short_score += 8
-    if near_ema30 or near_hma55:
-        long_score += 3
-        short_score += 3
-
-    if strong_adx:
-        if trend_up:
-            long_score += 6
-        if trend_down:
-            short_score += 6
-    if very_strong_adx:
-        if trend_up:
-            long_score += 4
-        if trend_down:
-            short_score += 4
-
-    long_prob = float(np.clip(long_score, 5, 95))
-    short_prob = float(np.clip(short_score, 5, 95))
-
-    if long_prob >= short_prob + 8 and long_prob >= 70:
-        action = "BUY"
-        instruction = (
-            f"BUY/Long: enter near {entry_zone}; stop/invalidate below {stop_zone}; "
-            f"first target {target1}. Prefer entry after a candle closes back above 30 EMA/HMA or support holds."
-        )
-    elif short_prob >= long_prob + 8 and short_prob >= 70:
-        action = "SELL"
-        instruction = (
-            f"SELL/Short: enter near {entry_zone}; stop/invalidate above {stop_zone}; "
-            f"first target {target1}. Prefer entry after rejection from resistance/30 EMA/HMA."
-        )
-    elif long_prob >= short_prob and long_prob >= 58:
-        action = "BUY WATCH"
-        instruction = (
-            f"BUY WATCH: conditions are improving, but wait for confirmation. Ideal entry zone {entry_zone}; "
-            f"invalidation {stop_zone}; target {target1}."
-        )
-    elif short_prob > long_prob and short_prob >= 58:
-        action = "SELL WATCH"
-        instruction = (
-            f"SELL WATCH: conditions are weakening, but wait for confirmation. Ideal entry zone {entry_zone}; "
-            f"invalidation {stop_zone}; target {target1}."
-        )
-    else:
-        action = "WAIT"
-        instruction = "WAIT: long/short probabilities are not sufficiently separated. Avoid forcing a trade until price confirms direction."
-
-    confidence = abs(long_prob - short_prob)
-    return {
-        "Trade Action": action,
-        "Trade Instruction": instruction,
-        "Long Probability": long_prob,
-        "Short Probability": short_prob,
-        "Probability Edge": confidence,
-    }
-
-
 def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict) -> dict:
     if df.empty:
         return {"State": "NO DATA", "Bias": "None", "Reason": "No bars returned."}
@@ -687,32 +540,7 @@ def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict)
         stop_zone = "n/a"
         target1 = "n/a"
 
-    probability_info = compute_trade_probabilities_and_instruction(
-        symbol=symbol,
-        state=state,
-        bias=bias,
-        last=last,
-        ema30_last=ema30_last,
-        hma_last=hma_last,
-        sr_last=sr_last,
-        ntd_last=ntd_last,
-        adx_last=adx_last,
-        trend_slope=trend_slope,
-        support=support,
-        resistance=resistance,
-        near_support=near_support,
-        near_resistance=near_resistance,
-        near_ema30=near_ema30,
-        near_hma55=near_hma55,
-        cross_up=cross_up,
-        cross_down=cross_down,
-        entry_zone=entry_zone,
-        stop_zone=stop_zone,
-        target1=target1,
-    )
-
     return {
-        **probability_info,
         "State": state,
         "Bias": bias,
         "Reason": reason,
@@ -869,12 +697,9 @@ def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
     state = trade.get("State", "WAIT")
     state_color = "tab:green" if "BUY" in state else ("tab:red" if "SELL" in state else "0.35")
 
-    view_name = "Daily" if str(cfg.get("interval", "")).lower() in ("1d", "1wk", "1mo") else "Hourly"
     title = (
-        f"{symbol} {view_name} Forex Trading Chart ({cfg['period']}, {cfg['interval']})  |  "
-        f"{state} / {trade.get('Trade Action', 'WAIT')}  |  "
-        f"Long {safe_float(trade.get('Long Probability')):.0f}% Short {safe_float(trade.get('Short Probability')):.0f}%  |  "
-        f"Price {fmt_price(symbol, last)}  |  30EMA {fmt_price(symbol, ema30_last)}  |  "
+        f"{symbol} Forex Trading Chart ({cfg['period']}, {cfg['interval']})  |  "
+        f"{state}  |  Price {fmt_price(symbol, last)}  |  30EMA {fmt_price(symbol, ema30_last)}  |  "
         f"S/R {sr_last:+.2f}  NTD {ntd_last:+.2f}  ADX {adx_last:.1f}"
     )
     ax.set_title(title)
@@ -883,7 +708,7 @@ def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
     ax.text(
         0.985,
         0.04,
-        f"{trade.get('Trade Action', 'WAIT')} | Entry: {trade.get('Entry Zone', 'Wait')} | Stop: {trade.get('Stop / Invalidation', 'n/a')} | Target: {trade.get('Target 1', 'n/a')}",
+        f"Entry: {trade.get('Entry Zone', 'Wait')} | Stop: {trade.get('Stop / Invalidation', 'n/a')} | Target: {trade.get('Target 1', 'n/a')}",
         transform=ax.transAxes,
         ha="right",
         va="bottom",
@@ -930,10 +755,10 @@ def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
                  linewidth=2.0, label=f"NTD trend ({ntd_slope:.4f}/bar)")
 
     ax2.set_ylim(-1.1, 1.1)
-    ax2.set_title(f"{view_name} Indicator Panel — NTD + Smoothed NPX + S/R Reversal")
+    ax2.set_title("Hourly Indicator Panel — NTD + Smoothed NPX + S/R Reversal")
     ax2.grid(True)
     ax2.legend(loc="upper left", ncol=2)
-    ax2.set_xlabel(f"Compressed real {view_name.lower()} trading bars — no weekend/closure gap")
+    ax2.set_xlabel("Compressed real trading bars — no weekend/closure gap")
 
     set_time_ticks(ax2, df, max_ticks=9, right_padding=cfg["right_padding"])
     set_time_ticks(ax, df, max_ticks=9, right_padding=cfg["right_padding"])
@@ -948,10 +773,6 @@ def format_trade_row(symbol: str, trade: dict) -> dict:
         "Symbol": symbol,
         "State": trade.get("State"),
         "Bias": trade.get("Bias"),
-        "Trade Action": trade.get("Trade Action"),
-        "Long Probability": f"{safe_float(trade.get('Long Probability')):.0f}%",
-        "Short Probability": f"{safe_float(trade.get('Short Probability')):.0f}%",
-        "Probability Edge": f"{safe_float(trade.get('Probability Edge')):.0f}%",
         "Trend": trade.get("Trend Direction"),
         "Trend Slope": round(safe_float(trade.get("Trend Slope")), 7),
         "S/R Rev": round(safe_float(trade.get("S/R Reversal")), 3),
@@ -971,7 +792,6 @@ def format_trade_row(symbol: str, trade: dict) -> dict:
         "Entry Zone": trade.get("Entry Zone"),
         "Stop / Invalidation": trade.get("Stop / Invalidation"),
         "Target 1": trade.get("Target 1"),
-        "Trade Instruction": trade.get("Trade Instruction"),
         "Reason": trade.get("Reason"),
     }
 
@@ -998,11 +818,72 @@ st.sidebar.markdown(
     f"**Next refresh:** ~{remaining}s"
 )
 
-st.sidebar.title("Forex Trading Indicator")
-symbol = st.sidebar.selectbox("Forex pair", FOREX_UNIVERSE, index=FOREX_UNIVERSE.index("EURUSD=X"))
-period = st.sidebar.selectbox("Hourly chart period", ["1d", "2d", "5d", "7d", "10d", "30d"], index=2)
-interval = st.sidebar.selectbox("Hourly bar interval", ["5m", "15m", "30m", "60m"], index=1)
-daily_period = st.sidebar.selectbox("Daily chart period", ["3mo", "6mo", "1y", "2y", "5y"], index=2)
+# --- Persistent sidebar selections ---
+# Streamlit widget state usually survives normal reruns, but a browser refresh,
+# app restart, or auto-refresh can otherwise fall back to the default pair.
+# We store the selected pair/period/interval in both session_state and URL
+# query parameters so the user's selected symbol persists instead of resetting
+# to EURUSD=X.
+PERIOD_OPTIONS = ["1d", "2d", "5d", "7d", "10d", "30d"]
+INTERVAL_OPTIONS = ["5m", "15m", "30m", "60m"]
+DEFAULT_SYMBOL = "EURUSD=X"
+DEFAULT_PERIOD = "5d"
+DEFAULT_INTERVAL = "15m"
+
+def _query_param_first(name: str, default: str) -> str:
+    try:
+        val = st.query_params.get(name, default)
+        if isinstance(val, list):
+            return val[0] if val else default
+        return val if val is not None else default
+    except Exception:
+        return default
+
+def _init_persistent_choice(key: str, query_name: str, default: str, valid_options: list[str]) -> None:
+    if key not in st.session_state:
+        candidate = _query_param_first(query_name, default)
+        if candidate not in valid_options:
+            candidate = default
+        st.session_state[key] = candidate
+
+def _persist_sidebar_choices() -> None:
+    try:
+        st.query_params["symbol"] = st.session_state.get("persist_symbol", DEFAULT_SYMBOL)
+        st.query_params["period"] = st.session_state.get("persist_period", DEFAULT_PERIOD)
+        st.query_params["interval"] = st.session_state.get("persist_interval", DEFAULT_INTERVAL)
+    except Exception:
+        # Older/hosted Streamlit environments can restrict query param writes.
+        # session_state persistence still protects ordinary reruns.
+        pass
+
+_init_persistent_choice("persist_symbol", "symbol", DEFAULT_SYMBOL, FOREX_UNIVERSE)
+_init_persistent_choice("persist_period", "period", DEFAULT_PERIOD, PERIOD_OPTIONS)
+_init_persistent_choice("persist_interval", "interval", DEFAULT_INTERVAL, INTERVAL_OPTIONS)
+
+st.sidebar.title("Forex Hourly Indicator")
+symbol = st.sidebar.selectbox(
+    "Forex pair",
+    FOREX_UNIVERSE,
+    index=FOREX_UNIVERSE.index(st.session_state["persist_symbol"]),
+    key="persist_symbol",
+    on_change=_persist_sidebar_choices,
+)
+period = st.sidebar.selectbox(
+    "Chart period",
+    PERIOD_OPTIONS,
+    index=PERIOD_OPTIONS.index(st.session_state["persist_period"]),
+    key="persist_period",
+    on_change=_persist_sidebar_choices,
+)
+interval = st.sidebar.selectbox(
+    "Bar interval",
+    INTERVAL_OPTIONS,
+    index=INTERVAL_OPTIONS.index(st.session_state["persist_interval"]),
+    key="persist_interval",
+    on_change=_persist_sidebar_choices,
+)
+
+_persist_sidebar_choices()
 
 st.sidebar.subheader("Trend / Reversal Logic")
 trend_lookback = st.sidebar.slider("Trendline lookback (bars)", 30, 360, 120, 5)
@@ -1024,7 +905,6 @@ right_padding = st.sidebar.slider("Right-edge chart padding", 2, 40, 12, 1)
 cfg = {
     "period": period,
     "interval": interval,
-    "daily_period": daily_period,
     "trend_lookback": trend_lookback,
     "sr_lookback": sr_lookback,
     "ntd_window": ntd_window,
@@ -1044,12 +924,12 @@ cfg = {
 # =========================
 # Main app
 # =========================
-st.title("💱 Forex Trading Indicator")
+st.title("💱 Forex Hourly Trading Indicator")
 st.caption(
-    "Forex-only trading chart using real trading bars only. Hourly and daily views include trade instructions and rule-based long/short probabilities."
+    "Forex-only trading chart using real trading bars only. Weekend and market-closure gaps are removed visually by plotting compressed bar positions."
 )
 
-tab_chart, tab_daily, tab_scanner, tab_rules = st.tabs(["Hourly Trading Chart", "Daily Trading Chart", "Forex Scanner", "Trading Rules"])
+tab_chart, tab_scanner, tab_rules = st.tabs(["Hourly Trading Chart", "Forex Scanner", "Trading Rules"])
 
 with tab_chart:
     data = fetch_forex_ohlc(symbol, period, interval)
@@ -1065,74 +945,27 @@ with tab_chart:
         st.markdown(
             f"""
 <div class="{css}">
-{state} / {trade.get('Trade Action', 'WAIT')} — {trade.get('Reason', '')}<br>
-Long Probability: {safe_float(trade.get('Long Probability')):.0f}% &nbsp; | &nbsp;
-Short Probability: {safe_float(trade.get('Short Probability')):.0f}% &nbsp; | &nbsp;
-Edge: {safe_float(trade.get('Probability Edge')):.0f}%<br>
-{trade.get('Trade Instruction', '')}
+{state} — {trade.get('Reason', '')}<br>
+Entry Zone: {trade.get('Entry Zone', 'Wait')} &nbsp; | &nbsp;
+Stop / Invalidation: {trade.get('Stop / Invalidation', 'n/a')} &nbsp; | &nbsp;
+Target 1: {trade.get('Target 1', 'n/a')}
 </div>
 """,
             unsafe_allow_html=True,
         )
 
-        metric_cols = st.columns(7)
+        metric_cols = st.columns(6)
         metric_cols[0].metric("Last Close", fmt_price(symbol, trade.get("Last Close")))
-        metric_cols[1].metric("Trade Action", trade.get("Trade Action", "WAIT"))
-        metric_cols[2].metric("Long Prob.", f"{safe_float(trade.get('Long Probability')):.0f}%")
-        metric_cols[3].metric("Short Prob.", f"{safe_float(trade.get('Short Probability')):.0f}%")
-        metric_cols[4].metric("Trend", trade.get("Trend Direction"), f"{safe_float(trade.get('Trend Slope')):.7f}/bar")
-        metric_cols[5].metric("S/R Reversal", f"{safe_float(trade.get('S/R Reversal')):+.2f}")
-        metric_cols[6].metric("ADX", f"{safe_float(trade.get('ADX')):.1f}")
+        metric_cols[1].metric("Trend", trade.get("Trend Direction"), f"{safe_float(trade.get('Trend Slope')):.7f}/bar")
+        metric_cols[2].metric("S/R Reversal", f"{safe_float(trade.get('S/R Reversal')):+.2f}")
+        metric_cols[3].metric("NTD", f"{safe_float(trade.get('NTD')):+.2f}")
+        metric_cols[4].metric("ADX", f"{safe_float(trade.get('ADX')):.1f}")
+        metric_cols[5].metric("30 EMA Pullback", "Yes" if trade.get("Near 30 EMA") else "No")
 
         plot_forex_chart(symbol, data, cfg, trade)
 
         with st.expander("Current setup details", expanded=False):
             st.dataframe(pd.DataFrame([format_trade_row(symbol, trade)]), use_container_width=True, hide_index=True)
-
-
-with tab_daily:
-    daily_cfg = cfg.copy()
-    daily_cfg["period"] = cfg.get("daily_period", "1y")
-    daily_cfg["interval"] = "1d"
-    daily_cfg["right_padding"] = max(4, int(cfg.get("right_padding", 12)))
-
-    daily_data = fetch_forex_ohlc(symbol, daily_cfg["period"], "1d")
-    if daily_data.empty:
-        st.error("No daily data returned by yfinance for this pair/period.")
-    else:
-        daily_data = prepare_indicators(daily_data, daily_cfg, symbol)
-        daily_trend_line, daily_trend_slope, daily_trend_r2 = regression_line(daily_data["Close"], daily_cfg["trend_lookback"])
-        daily_trade = classify_trade(symbol, daily_data, daily_trend_slope, daily_cfg)
-
-        daily_state = daily_trade.get("State", "WAIT")
-        daily_css = "signal-buy" if "BUY" in daily_state else ("signal-sell" if "SELL" in daily_state else "signal-wait")
-        st.markdown(
-            f"""
-<div class="{daily_css}">
-{daily_state} / {daily_trade.get('Trade Action', 'WAIT')} — {daily_trade.get('Reason', '')}<br>
-Long Probability: {safe_float(daily_trade.get('Long Probability')):.0f}% &nbsp; | &nbsp;
-Short Probability: {safe_float(daily_trade.get('Short Probability')):.0f}% &nbsp; | &nbsp;
-Edge: {safe_float(daily_trade.get('Probability Edge')):.0f}%<br>
-{daily_trade.get('Trade Instruction', '')}
-</div>
-""",
-            unsafe_allow_html=True,
-        )
-
-        dcols = st.columns(7)
-        dcols[0].metric("Last Close", fmt_price(symbol, daily_trade.get("Last Close")))
-        dcols[1].metric("Trade Action", daily_trade.get("Trade Action", "WAIT"))
-        dcols[2].metric("Long Prob.", f"{safe_float(daily_trade.get('Long Probability')):.0f}%")
-        dcols[3].metric("Short Prob.", f"{safe_float(daily_trade.get('Short Probability')):.0f}%")
-        dcols[4].metric("Trend", daily_trade.get("Trend Direction"), f"{safe_float(daily_trade.get('Trend Slope')):.7f}/bar")
-        dcols[5].metric("S/R Reversal", f"{safe_float(daily_trade.get('S/R Reversal')):+.2f}")
-        dcols[6].metric("ADX", f"{safe_float(daily_trade.get('ADX')):.1f}")
-
-        plot_forex_chart(symbol, daily_data, daily_cfg, daily_trade)
-
-        with st.expander("Daily setup details", expanded=False):
-            st.dataframe(pd.DataFrame([format_trade_row(symbol, daily_trade)]), use_container_width=True, hide_index=True)
-
 
 with tab_scanner:
     st.subheader("Forex Scanner")
@@ -1245,10 +1078,6 @@ and price recently crossed below the 30 EMA. This is the cleanest short conditio
 Wait for rejection or a 30 EMA loss before entry.
 
 **WAIT** means the chart is not aligned enough. Do not force a trade.
-
-**Probabilities** are rule-based estimates that rank whether current conditions favor a long or short. They are not guaranteed forecasts. A stronger setup usually has a probability of 70% or higher and a clear edge between long and short probabilities.
-
-**Daily view** should be used for the bigger directional bias. **Hourly view** should be used for timing entries, pullbacks, and confirmations.
 """
     )
     st.info(
