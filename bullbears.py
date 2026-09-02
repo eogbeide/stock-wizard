@@ -1,7 +1,7 @@
 # forex_hourly_trading_indicator.py
-# Clean Forex-only Streamlit dashboard with hourly trading indicators.
+# Clean Stocks/FX Streamlit dashboard with hourly and daily trading indicators.
 # Focus: compressed intraday chart (no weekend/closure gaps), trend-aligned support/resistance reversals,
-# 30 EMA crosses, NTD/S/R reversal confirmation, and forex scanner.
+# 30 EMA crosses, NTD/S/R reversal confirmation, and Stocks/FX scanner.
 
 import math
 import time
@@ -91,8 +91,20 @@ FOREX_UNIVERSE = [
     "EURJPY=X", "GBPJPY=X", "AUDJPY=X", "CADJPY=X", "CHFJPY=X", "NZDJPY=X",
     "EURGBP=X", "EURCAD=X", "EURAUD=X", "EURNZD=X", "GBPCAD=X", "GBPAUD=X", "GBPNZD=X",
     "AUDCAD=X", "AUDNZD=X", "NZDCAD=X", "EURCHF=X", "GBPCHF=X", "AUDCHF=X", "CADCHF=X",
-    "USDHKD=X", "EURHKD=X", "GBPHKD=X", "HKDJPY=X","AUDJPY=X",
+    "USDHKD=X", "EURHKD=X", "GBPHKD=X", "HKDJPY=X",
 ]
+
+STOCK_UNIVERSE = sorted([
+    "AAPL", "MSFT", "NVDA", "AMZN", "GOOG", "GOOGL", "META", "TSLA", "AMD", "AVGO",
+    "NFLX", "PLTR", "HOOD", "MARA", "SMCI", "ORCL", "IBM", "JPM", "BAC", "GS",
+    "SPY", "QQQ", "DIA", "IWM", "VOO", "TLT", "GLD", "SLV", "USO", "GUSH",
+    "TSM", "BABA", "AAL", "DAL", "URI", "MP", "QUBT", "BBAI", "SPGI", "VTWG",
+])
+
+ASSET_UNIVERSES = {
+    "Forex": FOREX_UNIVERSE,
+    "Stocks": STOCK_UNIVERSE,
+}
 
 
 def auto_refresh() -> None:
@@ -110,7 +122,14 @@ def auto_refresh() -> None:
 
 
 def pip_size(symbol: str) -> float:
+    """Small display/trading increment.
+
+    FX pairs use conventional pip size; stocks/ETFs use cents. The app uses
+    this as a default tolerance unit for support/resistance and pullback checks.
+    """
     s = str(symbol).upper()
+    if "=X" not in s:
+        return 0.01
     return 0.01 if "JPY" in s else 0.0001
 
 
@@ -121,7 +140,10 @@ def fmt_price(symbol: str, value) -> str:
         return "n/a"
     if not np.isfinite(v):
         return "n/a"
-    return f"{v:.3f}" if "JPY" in symbol.upper() else f"{v:.5f}"
+    s = str(symbol).upper()
+    if "=X" in s:
+        return f"{v:.3f}" if "JPY" in s else f"{v:.5f}"
+    return f"${v:,.2f}"
 
 
 def fmt_pips(symbol: str, value) -> str:
@@ -203,7 +225,7 @@ def ensure_pacific_index(df_or_series):
 
 
 @st.cache_data(ttl=120, show_spinner=False)
-def fetch_forex_ohlc(symbol: str, period: str = "5d", interval: str = "15m") -> pd.DataFrame:
+def fetch_market_ohlc(symbol: str, period: str = "5d", interval: str = "15m") -> pd.DataFrame:
     """Fetch real trading bars only. Do not forward-fill weekend/closure gaps."""
     df = yf.download(symbol, period=period, interval=interval, progress=False, auto_adjust=False)
     df = flatten_yf_columns(df, ticker=symbol)
@@ -871,7 +893,7 @@ def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
 
     view_name = "Daily" if str(cfg.get("interval", "")).lower() in ("1d", "1wk", "1mo") else "Hourly"
     title = (
-        f"{symbol} {view_name} Forex Trading Chart ({cfg['period']}, {cfg['interval']})  |  "
+        f"{symbol} {view_name} {cfg.get('asset_class', 'Market')} Trading Chart ({cfg['period']}, {cfg['interval']})  |  "
         f"{state} / {trade.get('Trade Action', 'WAIT')}  |  "
         f"Long {safe_float(trade.get('Long Probability')):.0f}% Short {safe_float(trade.get('Short Probability')):.0f}%  |  "
         f"Price {fmt_price(symbol, last)}  |  30EMA {fmt_price(symbol, ema30_last)}  |  "
@@ -977,7 +999,7 @@ def format_trade_row(symbol: str, trade: dict) -> dict:
 
 
 def scan_symbol(symbol: str, cfg: dict):
-    df = fetch_forex_ohlc(symbol, cfg["period"], cfg["interval"])
+    df = fetch_market_ohlc(symbol, cfg["period"], cfg["interval"])
     if df.empty or len(df) < max(60, cfg["trend_lookback"] // 2):
         return None
     df = prepare_indicators(df, cfg, symbol)
@@ -1000,14 +1022,15 @@ st.sidebar.markdown(
 
 # --- Persistent sidebar selections ---
 # Streamlit widget state usually survives normal reruns, but a browser refresh,
-# app restart, or auto-refresh can otherwise fall back to the default pair.
-# We store the selected pair/period/interval in both session_state and URL
-# query parameters so the user's selected symbol persists instead of resetting
-# to EURUSD=X.
+# app restart, or auto-refresh can otherwise fall back to defaults.
+# We store the selected market, symbol, periods, and interval in both
+# session_state and URL query parameters so choices persist across refreshes.
+ASSET_OPTIONS = ["Forex", "Stocks"]
 PERIOD_OPTIONS = ["1d", "2d", "5d", "7d", "10d", "30d"]
 INTERVAL_OPTIONS = ["5m", "15m", "30m", "60m"]
 DAILY_PERIOD_OPTIONS = ["3mo", "6mo", "1y", "2y", "5y"]
-DEFAULT_SYMBOL = "EURUSD=X"
+DEFAULT_ASSET_CLASS = "Forex"
+DEFAULT_SYMBOL_BY_ASSET = {"Forex": "EURUSD=X", "Stocks": "SPY"}
 DEFAULT_PERIOD = "5d"
 DEFAULT_INTERVAL = "15m"
 DEFAULT_DAILY_PERIOD = "1y"
@@ -1030,7 +1053,10 @@ def _init_persistent_choice(key: str, query_name: str, default: str, valid_optio
 
 def _persist_sidebar_choices() -> None:
     try:
-        st.query_params["symbol"] = st.session_state.get("persist_symbol", DEFAULT_SYMBOL)
+        selected_asset = st.session_state.get("persist_asset_class", DEFAULT_ASSET_CLASS)
+        default_symbol_for_asset = DEFAULT_SYMBOL_BY_ASSET.get(selected_asset, "EURUSD=X")
+        st.query_params["asset_class"] = selected_asset
+        st.query_params["symbol"] = st.session_state.get("persist_symbol", default_symbol_for_asset)
         st.query_params["period"] = st.session_state.get("persist_period", DEFAULT_PERIOD)
         st.query_params["interval"] = st.session_state.get("persist_interval", DEFAULT_INTERVAL)
         st.query_params["daily_period"] = st.session_state.get("persist_daily_period", DEFAULT_DAILY_PERIOD)
@@ -1039,16 +1065,36 @@ def _persist_sidebar_choices() -> None:
         # session_state persistence still protects ordinary reruns.
         pass
 
-_init_persistent_choice("persist_symbol", "symbol", DEFAULT_SYMBOL, FOREX_UNIVERSE)
+_init_persistent_choice("persist_asset_class", "asset_class", DEFAULT_ASSET_CLASS, ASSET_OPTIONS)
+
+st.sidebar.title("Trading Indicator")
+asset_class = st.sidebar.selectbox(
+    "Market",
+    ASSET_OPTIONS,
+    index=ASSET_OPTIONS.index(st.session_state["persist_asset_class"]),
+    key="persist_asset_class",
+    on_change=_persist_sidebar_choices,
+)
+current_universe = ASSET_UNIVERSES[asset_class]
+default_symbol = DEFAULT_SYMBOL_BY_ASSET[asset_class]
+
+# If the user switches market type, keep persistence but reset the symbol only
+# when the previously selected symbol does not belong to the selected universe.
+if "persist_symbol" not in st.session_state:
+    candidate_symbol = _query_param_first("symbol", default_symbol)
+    st.session_state["persist_symbol"] = candidate_symbol if candidate_symbol in current_universe else default_symbol
+elif st.session_state["persist_symbol"] not in current_universe:
+    st.session_state["persist_symbol"] = default_symbol
+
 _init_persistent_choice("persist_period", "period", DEFAULT_PERIOD, PERIOD_OPTIONS)
 _init_persistent_choice("persist_interval", "interval", DEFAULT_INTERVAL, INTERVAL_OPTIONS)
 _init_persistent_choice("persist_daily_period", "daily_period", DEFAULT_DAILY_PERIOD, DAILY_PERIOD_OPTIONS)
 
-st.sidebar.title("Forex Trading Indicator")
+symbol_label = "Forex pair" if asset_class == "Forex" else "Stock / ETF"
 symbol = st.sidebar.selectbox(
-    "Forex pair",
-    FOREX_UNIVERSE,
-    index=FOREX_UNIVERSE.index(st.session_state["persist_symbol"]),
+    symbol_label,
+    current_universe,
+    index=current_universe.index(st.session_state["persist_symbol"]),
     key="persist_symbol",
     on_change=_persist_sidebar_choices,
 )
@@ -1084,8 +1130,14 @@ touch_lookback = st.sidebar.slider("Touch lookback (bars)", 1, 30, 8, 1)
 confirm_bars = st.sidebar.slider("Confirmation bars", 1, 8, 3, 1)
 signal_lookback = st.sidebar.slider("Recent signal window (bars)", 5, 120, 40, 5)
 cross_lookback = st.sidebar.slider("Recent 30 EMA cross window (bars)", 3, 120, 30, 1)
-touch_tol_pips = st.sidebar.slider("S/R touch tolerance (pips)", 0.0, 20.0, 3.0, 0.5)
-pullback_tol_pips = st.sidebar.slider("Pullback proximity tolerance (pips)", 1.0, 40.0, 8.0, 0.5)
+touch_tol_pips = st.sidebar.slider(
+    "S/R touch tolerance (pips for FX, cents for Stocks)",
+    0.0, 100.0, 3.0, 0.5
+)
+pullback_tol_pips = st.sidebar.slider(
+    "Pullback proximity tolerance (pips for FX, cents for Stocks)",
+    1.0, 100.0, 8.0, 0.5
+)
 cooldown = st.sidebar.slider("Marker cooldown (bars)", 0, 60, 10, 1)
 
 st.sidebar.subheader("Display")
@@ -1110,23 +1162,24 @@ cfg = {
     "pullback_tol_pips": pullback_tol_pips,
     "cooldown": cooldown,
     "right_padding": right_padding,
+    "asset_class": asset_class,
 }
 
 
 # =========================
 # Main app
 # =========================
-st.title("💱 Forex Trading Indicator")
+st.title("📈 Stocks / FX Trading Indicator")
 st.caption(
-    "Forex-only trading chart using real trading bars only. Hourly and daily views include trade instructions and rule-based long/short probabilities."
+     "Toggle between Stocks and Forex. Hourly and daily views use real trading bars only and include trade instructions plus rule-based long/short probabilities."
 )
 
-tab_chart, tab_daily, tab_scanner, tab_rules = st.tabs(["Hourly Trading Chart", "Daily Trading Chart", "Forex Scanner", "Trading Rules"])
+tab_chart, tab_daily, tab_scanner, tab_rules = st.tabs(["Hourly Trading Chart", "Daily Trading Chart", "Scanner", "Trading Rules"])
 
 with tab_chart:
-    data = fetch_forex_ohlc(symbol, period, interval)
+    data = fetch_market_ohlc(symbol, period, interval)
     if data.empty:
-        st.error("No data returned by yfinance for this pair/period/interval.")
+        st.error("No data returned by yfinance for this symbol/period/interval.")
     else:
         data = prepare_indicators(data, cfg, symbol)
         trend_line, trend_slope, trend_r2 = regression_line(data["Close"], trend_lookback)
@@ -1168,9 +1221,9 @@ with tab_daily:
     daily_cfg["interval"] = "1d"
     daily_cfg["right_padding"] = max(4, int(cfg.get("right_padding", 12)))
 
-    daily_data = fetch_forex_ohlc(symbol, daily_cfg["period"], "1d")
+    daily_data = fetch_market_ohlc(symbol, daily_cfg["period"], "1d")
     if daily_data.empty:
-        st.error("No daily data returned by yfinance for this pair/period.")
+        st.error("No daily data returned by yfinance for this symbol/period.")
     else:
         daily_data = prepare_indicators(daily_data, daily_cfg, symbol)
         daily_trend_line, daily_trend_slope, daily_trend_r2 = regression_line(daily_data["Close"], daily_cfg["trend_lookback"])
@@ -1207,18 +1260,18 @@ Edge: {safe_float(daily_trade.get('Probability Edge')):.0f}%<br>
 
 
 with tab_scanner:
-    st.subheader("Forex Scanner")
+    st.subheader(f"{asset_class} Scanner")
     st.caption(
-        "Scans the forex universe for trend-aligned support/resistance reversals, 30 EMA crosses, and pullbacks. "
+        "Scans the selected market universe for trend-aligned support/resistance reversals, 30 EMA crosses, and pullbacks. "
         "BUY/SELL CONFIRMED rows are strongest; SETUP rows require confirmation."
     )
 
     c1, c2, c3 = st.columns([1, 1, 1])
     scan_max = int(c1.number_input("Max rows per table", min_value=5, max_value=200, value=100, step=5))
-    scan_universe = c2.multiselect("Pairs to scan", FOREX_UNIVERSE, default=FOREX_UNIVERSE)
+    scan_universe = c2.multiselect(f"{asset_class} symbols to scan", current_universe, default=current_universe, key=f"scan_universe_{asset_class}")
     show_all = c3.checkbox("Also show WAIT rows", value=False)
 
-    if st.button("Run Forex Scan", use_container_width=True):
+    if st.button(f"Run {asset_class} Scan", use_container_width=True):
         rows = []
         progress = st.progress(0)
         status = st.empty()
@@ -1320,7 +1373,7 @@ Wait for rejection or a 30 EMA loss before entry.
 
 **Probabilities** are rule-based estimates that rank whether current conditions favor a long or short. They are not guaranteed forecasts. A stronger setup usually has a probability of 70% or higher and a clear edge between long and short probabilities.
 
-**Daily view** should be used for the bigger directional bias. **Hourly view** should be used for timing entries, pullbacks, and confirmations.
+**Daily view** should be used for the bigger directional bias. **Hourly view** should be used for timing entries, pullbacks, and confirmations. Use the **Market** selector in the sidebar to switch between Forex and Stocks; the same logic applies to both, while price formatting and tolerance units adjust by symbol type.
 """
     )
     st.info(
