@@ -1313,7 +1313,7 @@ st.caption(
      "Toggle between Stocks and Forex. Hourly and daily views use real trading bars only and include trade instructions plus rule-based long/short probabilities."
 )
 
-tab_chart, tab_daily, tab_scanner, tab_rules = st.tabs(["Hourly Trading Chart", "Daily Trading Chart", "Scanner", "Trading Rules"])
+tab_chart, tab_daily, tab_scanner, tab_buy_sell, tab_rules = st.tabs(["Hourly Trading Chart", "Daily Trading Chart", "Scanner", "Buy/Sell List", "Trading Rules"])
 
 with tab_chart:
     data = fetch_market_ohlc(symbol, period, interval)
@@ -1493,6 +1493,177 @@ with tab_scanner:
                     columns=[c for c in out.columns if c.startswith("_")], errors="ignore"
                 )
                 st.dataframe(all_df, use_container_width=True, hide_index=True)
+
+
+with tab_buy_sell:
+    st.subheader(f"{asset_class} Buy/Sell List")
+    st.caption(
+        "Builds a clean trade-action list from both the Hourly and Daily trading engines. "
+        "Use the Daily rows for broader bias and the Hourly rows for entry timing."
+    )
+
+    bs_col1, bs_col2, bs_col3 = st.columns([1, 1, 1])
+    bs_max_rows = int(bs_col1.number_input(
+        "Max rows per Buy/Sell table",
+        min_value=5,
+        max_value=200,
+        value=100,
+        step=5,
+        key=f"buy_sell_max_rows_{asset_class}",
+    ))
+    bs_universe = bs_col2.multiselect(
+        f"{asset_class} symbols for Buy/Sell list",
+        current_universe,
+        default=current_universe,
+        key=f"buy_sell_universe_{asset_class}",
+    )
+    bs_include_wait = bs_col3.checkbox(
+        "Include WAIT rows in all-results table",
+        value=False,
+        key=f"buy_sell_include_wait_{asset_class}",
+    )
+
+    st.markdown(
+        """
+**How to use this tab**
+
+- **BUY list**: Long probability is stronger than short probability and the setup is BUY CONFIRMED or BUY SETUP.
+- **SELL list**: Short probability is stronger than long probability and the setup is SELL CONFIRMED or SELL SETUP.
+- **Daily timeframe**: use for market bias and swing direction.
+- **Hourly timeframe**: use for entry timing, pullbacks, and near-term confirmation.
+- Stronger rows generally have higher probability edge, aligned trend, and clearer support/resistance instructions.
+"""
+    )
+
+    def _pct_sort_value(value):
+        try:
+            return float(str(value).replace("%", "").strip())
+        except Exception:
+            return float("nan")
+
+    def _prepare_buy_sell_table(df: pd.DataFrame) -> pd.DataFrame:
+        if df is None or df.empty:
+            return pd.DataFrame()
+        preferred_cols = [
+            "Timeframe", "Symbol", "State", "Bias", "Trade Action",
+            "Long Probability", "Short Probability", "Probability Edge",
+            "Trend", "S/R Rev", "NTD", "ADX", "Last Close",
+            "Support", "Resistance", "Entry Zone", "Stop / Invalidation",
+            "Target 1", "Trade Instruction", "Reason",
+        ]
+        cols = [c for c in preferred_cols if c in df.columns]
+        other_cols = [c for c in df.columns if c not in cols and not str(c).startswith("_")]
+        return df[cols + other_cols]
+
+    def _sort_buy_sell_list(df: pd.DataFrame, side: str) -> pd.DataFrame:
+        if df is None or df.empty:
+            return pd.DataFrame()
+        out = df.copy()
+        state_order = {
+            "BUY CONFIRMED": 0,
+            "SELL CONFIRMED": 0,
+            "BUY SETUP": 1,
+            "SELL SETUP": 1,
+            "WAIT": 4,
+            "ERROR": 9,
+        }
+        timeframe_order = {"Daily": 0, "Hourly": 1}
+        out["_StateOrder"] = out.get("State", pd.Series(index=out.index, dtype=object)).map(state_order).fillna(8)
+        out["_TimeframeOrder"] = out.get("Timeframe", pd.Series(index=out.index, dtype=object)).map(timeframe_order).fillna(9)
+        out["_LongProbSort"] = out.get("Long Probability", pd.Series(index=out.index, dtype=object)).map(_pct_sort_value).fillna(-1)
+        out["_ShortProbSort"] = out.get("Short Probability", pd.Series(index=out.index, dtype=object)).map(_pct_sort_value).fillna(-1)
+        out["_EdgeSort"] = out.get("Probability Edge", pd.Series(index=out.index, dtype=object)).map(_pct_sort_value).abs().fillna(-1)
+        prob_col = "_LongProbSort" if side == "BUY" else "_ShortProbSort"
+        out = out.sort_values(
+            ["_StateOrder", "_TimeframeOrder", prob_col, "_EdgeSort", "Symbol"],
+            ascending=[True, True, False, False, True],
+        )
+        return out.drop(columns=[c for c in out.columns if str(c).startswith("_")], errors="ignore")
+
+    if st.button(f"Build {asset_class} Buy/Sell List", use_container_width=True, key=f"build_buy_sell_list_{asset_class}"):
+        rows = []
+        progress = st.progress(0)
+        status = st.empty()
+        total_steps = max(1, len(bs_universe) * 2)
+        step = 0
+
+        hourly_cfg = cfg.copy()
+        daily_cfg_for_scan = cfg.copy()
+        daily_cfg_for_scan["period"] = cfg.get("daily_period", "1y")
+        daily_cfg_for_scan["interval"] = "1d"
+        daily_cfg_for_scan["right_padding"] = max(4, int(cfg.get("right_padding", 12)))
+
+        for sym in bs_universe:
+            for timeframe_name, scan_cfg in [("Daily", daily_cfg_for_scan), ("Hourly", hourly_cfg)]:
+                status.write(f"Scanning {timeframe_name} {sym}...")
+                try:
+                    row = scan_symbol(sym, scan_cfg)
+                    if row is not None:
+                        row["Timeframe"] = timeframe_name
+                        rows.append(row)
+                except Exception as exc:
+                    rows.append({
+                        "Timeframe": timeframe_name,
+                        "Symbol": sym,
+                        "State": "ERROR",
+                        "Bias": "ERROR",
+                        "Trade Action": "WAIT",
+                        "Reason": str(exc),
+                    })
+                step += 1
+                progress.progress(step / total_steps)
+
+        status.empty()
+        progress.empty()
+
+        results = pd.DataFrame(rows)
+        st.session_state[f"buy_sell_results_{asset_class}"] = results
+
+    results = st.session_state.get(f"buy_sell_results_{asset_class}", pd.DataFrame())
+
+    if results is None or results.empty:
+        st.info("Click the button above to build the Buy/Sell list.")
+    else:
+        action_series = results.get("Trade Action", pd.Series(index=results.index, dtype=object)).astype(str).str.upper()
+        state_series = results.get("State", pd.Series(index=results.index, dtype=object)).astype(str).str.upper()
+
+        buy_mask = action_series.str.contains("BUY", na=False) | state_series.str.contains("BUY", na=False)
+        sell_mask = action_series.str.contains("SELL", na=False) | state_series.str.contains("SELL", na=False)
+
+        buy_list = _prepare_buy_sell_table(_sort_buy_sell_list(results[buy_mask], "BUY")).head(bs_max_rows)
+        sell_list = _prepare_buy_sell_table(_sort_buy_sell_list(results[sell_mask], "SELL")).head(bs_max_rows)
+
+        metric_cols = st.columns(4)
+        metric_cols[0].metric("BUY rows", int(len(buy_list)))
+        metric_cols[1].metric("SELL rows", int(len(sell_list)))
+        metric_cols[2].metric("Symbols scanned", int(results["Symbol"].nunique()) if "Symbol" in results.columns else 0)
+        metric_cols[3].metric("Rows scanned", int(len(results)))
+
+        with st.expander("🟢 BUY List — Daily bias first, Hourly timing second", expanded=True):
+            if buy_list.empty:
+                st.info("No BUY candidates found.")
+            else:
+                st.dataframe(buy_list, use_container_width=True, hide_index=True)
+
+        with st.expander("🔴 SELL List — Daily bias first, Hourly timing second", expanded=True):
+            if sell_list.empty:
+                st.info("No SELL candidates found.")
+            else:
+                st.dataframe(sell_list, use_container_width=True, hide_index=True)
+
+        all_results = results.copy()
+        if not bs_include_wait:
+            all_results = all_results[buy_mask | sell_mask]
+        all_results = _prepare_buy_sell_table(
+            _sort_buy_sell_list(all_results, "BUY")
+        ).head(max(bs_max_rows * 2, bs_max_rows))
+
+        with st.expander("All Buy/Sell scan results", expanded=False):
+            if all_results.empty:
+                st.info("No rows to show.")
+            else:
+                st.dataframe(all_results, use_container_width=True, hide_index=True)
+
 
 with tab_rules:
     st.subheader("How to use this chart")
