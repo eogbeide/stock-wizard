@@ -3,6 +3,7 @@
 # Focus: compressed intraday chart (no weekend/closure gaps), trend-aligned support/resistance reversals,
 # 30 EMA crosses, NTD/S/R reversal confirmation, Stocks/FX scanner,
 # and chart-level probability trade instructions for easier BUY/SELL decision-making.
+# (UPDATED) Symbol lists and scanner tables are alphabetized for easier browsing.
 
 import math
 import time
@@ -130,9 +131,45 @@ STOCK_UNIVERSE = sorted([
 ])
 
 ASSET_UNIVERSES = {
-    "Forex": FOREX_UNIVERSE,
-    "Stocks": STOCK_UNIVERSE,
+    "Forex": sorted(FOREX_UNIVERSE),
+    "Stocks": sorted(STOCK_UNIVERSE),
 }
+
+def _sort_symbols_alpha(symbols) -> list[str]:
+    """Return symbols sorted alphabetically, ignoring None/blank values."""
+    try:
+        return sorted([str(s) for s in symbols if str(s).strip()])
+    except Exception:
+        return []
+
+
+def _sort_table_alphabetically(df: pd.DataFrame, timeframe_first: bool = True) -> pd.DataFrame:
+    """Sort display tables by symbol A-Z, optionally keeping Daily rows before Hourly rows."""
+    if df is None or df.empty:
+        return pd.DataFrame()
+    out = df.copy()
+    sort_cols = []
+    ascending = []
+    if timeframe_first and "Timeframe" in out.columns:
+        timeframe_order = {"Daily": 0, "Hourly": 1}
+        out["_TimeframeAlphaOrder"] = out["Timeframe"].map(timeframe_order).fillna(9)
+        sort_cols.append("_TimeframeAlphaOrder")
+        ascending.append(True)
+    if "Symbol" in out.columns:
+        sort_cols.append("Symbol")
+        ascending.append(True)
+    if "State" in out.columns:
+        state_order = {
+            "BUY CONFIRMED": 0, "SELL CONFIRMED": 0,
+            "BUY SETUP": 1, "SELL SETUP": 1,
+            "WAIT": 4, "ERROR": 9,
+        }
+        out["_StateAlphaOrder"] = out["State"].map(state_order).fillna(8)
+        sort_cols.append("_StateAlphaOrder")
+        ascending.append(True)
+    if sort_cols:
+        out = out.sort_values(sort_cols, ascending=ascending, kind="mergesort")
+    return out.drop(columns=[c for c in out.columns if str(c).startswith("_")], errors="ignore")
 
 
 def auto_refresh() -> None:
@@ -1214,7 +1251,7 @@ asset_class = st.sidebar.selectbox(
     key="persist_asset_class",
     on_change=_persist_sidebar_choices,
 )
-current_universe = ASSET_UNIVERSES[asset_class]
+current_universe = _sort_symbols_alpha(ASSET_UNIVERSES[asset_class])
 default_symbol = DEFAULT_SYMBOL_BY_ASSET[asset_class]
 
 # If the user switches market type, keep persistence but reset the symbol only
@@ -1574,9 +1611,13 @@ with tab_buy_sell:
         out["_ShortProbSort"] = out.get("Short Probability", pd.Series(index=out.index, dtype=object)).map(_pct_sort_value).fillna(-1)
         out["_EdgeSort"] = out.get("Probability Edge", pd.Series(index=out.index, dtype=object)).map(_pct_sort_value).abs().fillna(-1)
         prob_col = "_LongProbSort" if side == "BUY" else "_ShortProbSort"
+        # User-facing Buy/Sell lists are alphabetized by symbol for easier browsing.
+        # Daily rows still appear before Hourly rows for the same symbol, and
+        # state/probability are retained as secondary ordering only.
         out = out.sort_values(
-            ["_StateOrder", "_TimeframeOrder", prob_col, "_EdgeSort", "Symbol"],
-            ascending=[True, True, False, False, True],
+            ["Symbol", "_TimeframeOrder", "_StateOrder", prob_col, "_EdgeSort"],
+            ascending=[True, True, True, False, False],
+            kind="mergesort",
         )
         return out.drop(columns=[c for c in out.columns if str(c).startswith("_")], errors="ignore")
 
