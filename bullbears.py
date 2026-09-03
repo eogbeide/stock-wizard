@@ -1,7 +1,8 @@
 # forex_hourly_trading_indicator.py
 # Clean Stocks/FX Streamlit dashboard with hourly and daily trading indicators.
 # Focus: compressed intraday chart (no weekend/closure gaps), trend-aligned support/resistance reversals,
-# 30 EMA crosses, NTD/S/R reversal confirmation, and Stocks/FX scanner.
+# 30 EMA crosses, NTD/S/R reversal confirmation, Stocks/FX scanner,
+# and chart-level probability trade instructions for easier BUY/SELL decision-making.
 
 import math
 import time
@@ -55,6 +56,33 @@ div[data-baseweb="tab"] { flex: 0 0 auto !important; }
     background: rgba(160, 160, 160, 0.15); border: 1px solid rgba(160,160,160,0.35);
     font-weight: 700;
 }
+
+.prob-guide {
+    margin: 0.35rem 0 0.75rem 0;
+    padding: 0.75rem 0.85rem;
+    border-radius: 0.75rem;
+    border: 1px solid rgba(90, 90, 90, 0.22);
+    background: rgba(245, 245, 245, 0.70);
+    font-size: 0.94rem;
+    line-height: 1.35;
+}
+.prob-buy {
+    border-left: 6px solid rgba(0, 150, 80, 0.80);
+}
+.prob-sell {
+    border-left: 6px solid rgba(220, 40, 40, 0.80);
+}
+.prob-watch {
+    border-left: 6px solid rgba(230, 170, 20, 0.90);
+}
+.prob-wait {
+    border-left: 6px solid rgba(130, 130, 130, 0.90);
+}
+.prob-mini {
+    font-size: 0.84rem;
+    color: #555;
+}
+
 </style>
 """,
     unsafe_allow_html=True,
@@ -635,6 +663,97 @@ def compute_trade_probabilities_and_instruction(symbol: str,
     }
 
 
+
+def probability_trade_read(trade: dict) -> dict:
+    """Translate long/short probabilities into a simple trade plan users can read quickly."""
+    long_prob = safe_float(trade.get("Long Probability"))
+    short_prob = safe_float(trade.get("Short Probability"))
+    edge = safe_float(trade.get("Probability Edge"))
+    action = str(trade.get("Trade Action", "WAIT") or "WAIT").upper()
+    state = str(trade.get("State", "WAIT") or "WAIT").upper()
+
+    if long_prob >= 75 and edge >= 12 and long_prob > short_prob:
+        symbol_icon = "🟢▲"
+        css = "prob-guide prob-buy"
+        read = "BUY / Long favored"
+        usage = "Long probability has a clear edge. Look for a pullback hold or close above 30 EMA/HMA before entry."
+    elif short_prob >= 75 and edge >= 12 and short_prob > long_prob:
+        symbol_icon = "🔴▼"
+        css = "prob-guide prob-sell"
+        read = "SELL / Short favored"
+        usage = "Short probability has a clear edge. Look for resistance rejection or a close below 30 EMA/HMA before entry."
+    elif long_prob >= 60 and long_prob >= short_prob and edge >= 5:
+        symbol_icon = "🟡▲"
+        css = "prob-guide prob-watch"
+        read = "BUY Watch"
+        usage = "Long side is improving, but confirmation is still needed. Avoid chasing; wait for support/EMA hold."
+    elif short_prob >= 60 and short_prob > long_prob and edge >= 5:
+        symbol_icon = "🟡▼"
+        css = "prob-guide prob-watch"
+        read = "SELL Watch"
+        usage = "Short side is improving, but confirmation is still needed. Avoid chasing; wait for resistance/EMA rejection."
+    else:
+        symbol_icon = "⏳"
+        css = "prob-guide prob-wait"
+        read = "WAIT"
+        usage = "Probabilities are mixed or too close. Do not force a trade until one side reaches a clearer edge."
+
+    if edge < 8:
+        risk_note = "Low edge: use as watchlist only."
+    elif edge < 15:
+        risk_note = "Moderate edge: wait for price confirmation."
+    else:
+        risk_note = "Clear edge: still use the listed stop/invalidation."
+
+    if "CONFIRMED" in state:
+        confirmation = "Confirmed setup: the probability edge agrees with a completed chart signal."
+    elif "SETUP" in state or "WATCH" in action:
+        confirmation = "Setup/watch: wait for the next candle confirmation before entry."
+    else:
+        confirmation = "No confirmed setup yet."
+
+    return {
+        "Icon": symbol_icon,
+        "Read": read,
+        "CSS": css,
+        "Usage": usage,
+        "Risk Note": risk_note,
+        "Confirmation": confirmation,
+        "Long Probability": long_prob,
+        "Short Probability": short_prob,
+        "Probability Edge": edge,
+    }
+
+
+def render_probability_action_panel(trade: dict, view_label: str = "Chart") -> None:
+    """Compact user-facing probability interpretation panel shown above each chart."""
+    read = probability_trade_read(trade)
+    st.markdown(
+        f"""
+<div class="{read['CSS']}">
+  <b>{read['Icon']} {view_label} Probability Trade Plan: {read['Read']}</b><br>
+  Long: <b>{read['Long Probability']:.0f}%</b> &nbsp; | &nbsp;
+  Short: <b>{read['Short Probability']:.0f}%</b> &nbsp; | &nbsp;
+  Edge: <b>{read['Probability Edge']:.0f}%</b><br>
+  <span class="prob-mini">{read['Usage']} {read['Confirmation']} {read['Risk Note']}</span><br>
+  <span class="prob-mini">Entry: <b>{trade.get('Entry Zone', 'Wait')}</b> &nbsp; | &nbsp;
+  Stop/Invalidation: <b>{trade.get('Stop / Invalidation', 'n/a')}</b> &nbsp; | &nbsp;
+  Target: <b>{trade.get('Target 1', 'n/a')}</b></span>
+</div>
+""",
+        unsafe_allow_html=True,
+    )
+
+
+def probability_bar_values(trade: dict) -> tuple[float, float, float]:
+    """Return sanitized long/short/edge values for chart annotation."""
+    long_prob = float(np.clip(safe_float(trade.get("Long Probability")), 0, 100))
+    short_prob = float(np.clip(safe_float(trade.get("Short Probability")), 0, 100))
+    edge = float(abs(long_prob - short_prob))
+    return long_prob, short_prob, edge
+
+
+
 def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict) -> dict:
     if df.empty:
         return {"State": "NO DATA", "Bias": "None", "Reason": "No bars returned."}
@@ -913,6 +1032,26 @@ def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
         fontweight="bold",
         color=state_color,
         bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=state_color, alpha=0.8),
+    )
+    long_prob, short_prob, prob_edge = probability_bar_values(trade)
+    prob_read = probability_trade_read(trade)
+    prob_color = "tab:green" if "BUY" in prob_read["Read"] else ("tab:red" if "SELL" in prob_read["Read"] else "0.35")
+    ax.text(
+        0.985,
+        0.965,
+        (
+            f"{prob_read['Icon']} {prob_read['Read']}\n"
+            f"Long {long_prob:.0f}% vs Short {short_prob:.0f}% | Edge {prob_edge:.0f}%\n"
+            f"Use: {'Enter only after confirmation' if prob_edge < 15 else 'Higher-priority setup; confirm entry'}"
+        ),
+        transform=ax.transAxes,
+        ha="right",
+        va="top",
+        fontsize=9,
+        fontweight="bold",
+        color=prob_color,
+        bbox=dict(boxstyle="round,pad=0.28", fc="white", ec=prob_color, alpha=0.82),
+        zorder=10,
     )
     ax.text(
         0.50,
@@ -1209,6 +1348,7 @@ Edge: {safe_float(trade.get('Probability Edge')):.0f}%<br>
         metric_cols[5].metric("S/R Reversal", f"{safe_float(trade.get('S/R Reversal')):+.2f}")
         metric_cols[6].metric("ADX", f"{safe_float(trade.get('ADX')):.1f}")
 
+        render_probability_action_panel(trade, view_label="Hourly")
         plot_forex_chart(symbol, data, cfg, trade)
 
         with st.expander("Current setup details", expanded=False):
@@ -1253,6 +1393,7 @@ Edge: {safe_float(daily_trade.get('Probability Edge')):.0f}%<br>
         dcols[5].metric("S/R Reversal", f"{safe_float(daily_trade.get('S/R Reversal')):+.2f}")
         dcols[6].metric("ADX", f"{safe_float(daily_trade.get('ADX')):.1f}")
 
+        render_probability_action_panel(daily_trade, view_label="Daily")
         plot_forex_chart(symbol, daily_data, daily_cfg, daily_trade)
 
         with st.expander("Daily setup details", expanded=False):
@@ -1371,7 +1512,13 @@ Wait for rejection or a 30 EMA loss before entry.
 
 **WAIT** means the chart is not aligned enough. Do not force a trade.
 
-**Probabilities** are rule-based estimates that rank whether current conditions favor a long or short. They are not guaranteed forecasts. A stronger setup usually has a probability of 70% or higher and a clear edge between long and short probabilities.
+**Probabilities** are rule-based estimates that rank whether current conditions favor a long or short. They are not guaranteed forecasts. Use them as a ranking and confirmation layer, not as a blind entry trigger.
+
+**How to trade the probabilities:**
+- **70%+ probability with 12%+ edge** = high-priority setup, but still wait for price confirmation.
+- **60%–69% probability or small edge** = watchlist only; wait for a support/EMA hold or resistance/EMA rejection.
+- **Probabilities close together** = WAIT; avoid forcing a trade.
+- Prefer trades where the probability direction agrees with the chart state, trend direction, S/R Reversal, and 30 EMA/HMA behavior.
 
 **Daily view** should be used for the bigger directional bias. **Hourly view** should be used for timing entries, pullbacks, and confirmations. Use the **Market** selector in the sidebar to switch between Forex and Stocks; the same logic applies to both, while price formatting and tolerance units adjust by symbol type.
 """
