@@ -125,7 +125,7 @@ FOREX_UNIVERSE = [
 
 STOCK_UNIVERSE = sorted([
     "AAPL", "MSFT", "NVDA", "AMZN", "GOOG", "GOOGL", "META", "TSLA", "AMD", "AVGO",
-    "NFLX", "PLTR", "HOOD", "MARA", "SMCI", "ORCL", "IBM", "JPM", "BAC", "GS",
+    "NFLX", "PLTR", "HOOD", "MARA", "SMCI", "ORCL", "IBM", "JPM", "BAC", "GS", "SITM",
     "SPY", "QQQ", "DIA", "IWM", "VOO", "TLT", "GLD", "SLV", "USO", "GUSH",
     "TSM", "BABA", "AAL", "DAL", "URI", "MP", "QUBT", "BBAI", "SPGI", "VTWG",
 ])
