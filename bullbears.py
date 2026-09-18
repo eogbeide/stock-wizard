@@ -1578,6 +1578,30 @@ with tab_buy_sell:
         except Exception:
             return float("nan")
 
+    def _column_as_series(df: pd.DataFrame, column: str, default_value="") -> pd.Series:
+        """
+        Return exactly one Series for a possibly missing or duplicate-named column.
+        Streamlit reruns/session-state can occasionally preserve older DataFrames
+        with duplicate columns; pandas then returns a DataFrame instead of a Series,
+        which breaks .str/.map calls. This helper normalizes that safely.
+        """
+        if df is None or df.empty:
+            return pd.Series(dtype=object)
+        if column not in df.columns:
+            return pd.Series(default_value, index=df.index, dtype=object)
+        values = df.loc[:, column]
+        if isinstance(values, pd.DataFrame):
+            if values.shape[1] == 0:
+                return pd.Series(default_value, index=df.index, dtype=object)
+            values = values.iloc[:, 0]
+        return pd.Series(values, index=df.index)
+
+    def _upper_text_series(df: pd.DataFrame, column: str) -> pd.Series:
+        return _column_as_series(df, column, "").fillna("").astype(str).str.upper()
+
+    def _text_series(df: pd.DataFrame, column: str) -> pd.Series:
+        return _column_as_series(df, column, "").fillna("").astype(str)
+
     def _prepare_buy_sell_table(df: pd.DataFrame) -> pd.DataFrame:
         if df is None or df.empty:
             return pd.DataFrame()
@@ -1605,11 +1629,11 @@ with tab_buy_sell:
             "ERROR": 9,
         }
         timeframe_order = {"Daily": 0, "Hourly": 1}
-        out["_StateOrder"] = out.get("State", pd.Series(index=out.index, dtype=object)).map(state_order).fillna(8)
-        out["_TimeframeOrder"] = out.get("Timeframe", pd.Series(index=out.index, dtype=object)).map(timeframe_order).fillna(9)
-        out["_LongProbSort"] = out.get("Long Probability", pd.Series(index=out.index, dtype=object)).map(_pct_sort_value).fillna(-1)
-        out["_ShortProbSort"] = out.get("Short Probability", pd.Series(index=out.index, dtype=object)).map(_pct_sort_value).fillna(-1)
-        out["_EdgeSort"] = out.get("Probability Edge", pd.Series(index=out.index, dtype=object)).map(_pct_sort_value).abs().fillna(-1)
+        out["_StateOrder"] = _column_as_series(out, "State", "").map(state_order).fillna(8)
+        out["_TimeframeOrder"] = _column_as_series(out, "Timeframe", "").map(timeframe_order).fillna(9)
+        out["_LongProbSort"] = _column_as_series(out, "Long Probability", "").map(_pct_sort_value).fillna(-1)
+        out["_ShortProbSort"] = _column_as_series(out, "Short Probability", "").map(_pct_sort_value).fillna(-1)
+        out["_EdgeSort"] = _column_as_series(out, "Probability Edge", "").map(_pct_sort_value).abs().fillna(-1)
         prob_col = "_LongProbSort" if side == "BUY" else "_ShortProbSort"
         # User-facing Buy/Sell lists are alphabetized by symbol for easier browsing.
         # Daily rows still appear before Hourly rows for the same symbol, and
@@ -1665,13 +1689,13 @@ with tab_buy_sell:
     if results is None or results.empty:
         st.info("Click the button above to build the Buy/Sell list.")
     else:
-        action_series = results.get("Trade Action", pd.Series(index=results.index, dtype=object)).astype(str).str.upper()
-        state_series = results.get("State", pd.Series(index=results.index, dtype=object)).astype(str).str.upper()
+        action_series = _upper_text_series(results, "Trade Action")
+        state_series = _upper_text_series(results, "State")
 
         buy_mask = action_series.str.contains("BUY", na=False) | state_series.str.contains("BUY", na=False)
         sell_mask = action_series.str.contains("SELL", na=False) | state_series.str.contains("SELL", na=False)
 
-        timeframe_series = results.get("Timeframe", pd.Series(index=results.index, dtype=object)).astype(str)
+        timeframe_series = _text_series(results, "Timeframe")
 
         buy_daily = _prepare_buy_sell_table(
             _sort_buy_sell_list(results[buy_mask & timeframe_series.str.eq("Daily")], "BUY")
@@ -1691,7 +1715,7 @@ with tab_buy_sell:
         metric_cols[1].metric("Hourly BUY", int(len(buy_hourly)))
         metric_cols[2].metric("Daily SELL", int(len(sell_daily)))
         metric_cols[3].metric("Hourly SELL", int(len(sell_hourly)))
-        metric_cols[4].metric("Symbols scanned", int(results["Symbol"].nunique()) if "Symbol" in results.columns else 0)
+        metric_cols[4].metric("Symbols scanned", int(_column_as_series(results, "Symbol", "").replace("", np.nan).dropna().nunique()) if "Symbol" in results.columns else 0)
         metric_cols[5].metric("Rows scanned", int(len(results)))
 
         buy_tab_daily, buy_tab_hourly, sell_tab_daily, sell_tab_hourly = st.tabs([
@@ -1737,7 +1761,7 @@ with tab_buy_sell:
         if not bs_include_wait:
             all_results = all_results[buy_mask | sell_mask]
 
-        all_timeframe_series = all_results.get("Timeframe", pd.Series(index=all_results.index, dtype=object)).astype(str)
+        all_timeframe_series = _text_series(all_results, "Timeframe")
         all_daily = _prepare_buy_sell_table(
             _sort_buy_sell_list(all_results[all_timeframe_series.str.eq("Daily")], "BUY")
         ).head(max(bs_max_rows * 2, bs_max_rows))
