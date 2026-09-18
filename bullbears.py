@@ -1774,10 +1774,10 @@ with tab_buy_sell:
 
         all_timeframe_series = _text_series(all_results, "Timeframe")
         all_daily = _prepare_buy_sell_table(
-            _sort_buy_sell_list(all_results[all__text_eq_mask(results, "Timeframe", "Daily")], "BUY")
+            _sort_buy_sell_list(all_results[_text_eq_mask(all_results, "Timeframe", "Daily")], "BUY")
         ).head(max(bs_max_rows * 2, bs_max_rows))
         all_hourly = _prepare_buy_sell_table(
-            _sort_buy_sell_list(all_results[all__text_eq_mask(results, "Timeframe", "Hourly")], "BUY")
+            _sort_buy_sell_list(all_results[_text_eq_mask(all_results, "Timeframe", "Hourly")], "BUY")
         ).head(max(bs_max_rows * 2, bs_max_rows))
 
         with st.expander("All Daily scan results", expanded=False):
