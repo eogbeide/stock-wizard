@@ -3,7 +3,7 @@
 # Focus: compressed intraday chart (no weekend/closure gaps), trend-aligned support/resistance reversals,
 # 30 EMA crosses, NTD/S/R reversal confirmation, Stocks/FX scanner,
 # and chart-level probability trade instructions for easier BUY/SELL decision-making.
-# (UPDATED) Symbol lists and scanner tables are alphabetized for easier browsing.
+# (UPDATED) Symbol lists and scanner tables are alphabetized; Buy/Sell List is split into Daily and Hourly tables.
 
 import math
 import time
@@ -1671,39 +1671,91 @@ with tab_buy_sell:
         buy_mask = action_series.str.contains("BUY", na=False) | state_series.str.contains("BUY", na=False)
         sell_mask = action_series.str.contains("SELL", na=False) | state_series.str.contains("SELL", na=False)
 
-        buy_list = _prepare_buy_sell_table(_sort_buy_sell_list(results[buy_mask], "BUY")).head(bs_max_rows)
-        sell_list = _prepare_buy_sell_table(_sort_buy_sell_list(results[sell_mask], "SELL")).head(bs_max_rows)
+        timeframe_series = results.get("Timeframe", pd.Series(index=results.index, dtype=object)).astype(str)
 
-        metric_cols = st.columns(4)
-        metric_cols[0].metric("BUY rows", int(len(buy_list)))
-        metric_cols[1].metric("SELL rows", int(len(sell_list)))
-        metric_cols[2].metric("Symbols scanned", int(results["Symbol"].nunique()) if "Symbol" in results.columns else 0)
-        metric_cols[3].metric("Rows scanned", int(len(results)))
+        buy_daily = _prepare_buy_sell_table(
+            _sort_buy_sell_list(results[buy_mask & timeframe_series.str.eq("Daily")], "BUY")
+        ).head(bs_max_rows)
+        buy_hourly = _prepare_buy_sell_table(
+            _sort_buy_sell_list(results[buy_mask & timeframe_series.str.eq("Hourly")], "BUY")
+        ).head(bs_max_rows)
+        sell_daily = _prepare_buy_sell_table(
+            _sort_buy_sell_list(results[sell_mask & timeframe_series.str.eq("Daily")], "SELL")
+        ).head(bs_max_rows)
+        sell_hourly = _prepare_buy_sell_table(
+            _sort_buy_sell_list(results[sell_mask & timeframe_series.str.eq("Hourly")], "SELL")
+        ).head(bs_max_rows)
 
-        with st.expander("🟢 BUY List — Daily bias first, Hourly timing second", expanded=True):
-            if buy_list.empty:
-                st.info("No BUY candidates found.")
+        metric_cols = st.columns(6)
+        metric_cols[0].metric("Daily BUY", int(len(buy_daily)))
+        metric_cols[1].metric("Hourly BUY", int(len(buy_hourly)))
+        metric_cols[2].metric("Daily SELL", int(len(sell_daily)))
+        metric_cols[3].metric("Hourly SELL", int(len(sell_hourly)))
+        metric_cols[4].metric("Symbols scanned", int(results["Symbol"].nunique()) if "Symbol" in results.columns else 0)
+        metric_cols[5].metric("Rows scanned", int(len(results)))
+
+        buy_tab_daily, buy_tab_hourly, sell_tab_daily, sell_tab_hourly = st.tabs([
+            "🟢 Daily BUY",
+            "🟢 Hourly BUY",
+            "🔴 Daily SELL",
+            "🔴 Hourly SELL",
+        ])
+
+        with buy_tab_daily:
+            st.markdown("#### Daily BUY List")
+            st.caption("Daily BUY candidates show broader bullish bias and swing-trade setup context.")
+            if buy_daily.empty:
+                st.info("No Daily BUY candidates found.")
             else:
-                st.dataframe(buy_list, use_container_width=True, hide_index=True)
+                st.dataframe(buy_daily, use_container_width=True, hide_index=True)
 
-        with st.expander("🔴 SELL List — Daily bias first, Hourly timing second", expanded=True):
-            if sell_list.empty:
-                st.info("No SELL candidates found.")
+        with buy_tab_hourly:
+            st.markdown("#### Hourly BUY List")
+            st.caption("Hourly BUY candidates show shorter-term entry timing and intraday confirmation.")
+            if buy_hourly.empty:
+                st.info("No Hourly BUY candidates found.")
             else:
-                st.dataframe(sell_list, use_container_width=True, hide_index=True)
+                st.dataframe(buy_hourly, use_container_width=True, hide_index=True)
+
+        with sell_tab_daily:
+            st.markdown("#### Daily SELL List")
+            st.caption("Daily SELL candidates show broader bearish bias and swing-trade setup context.")
+            if sell_daily.empty:
+                st.info("No Daily SELL candidates found.")
+            else:
+                st.dataframe(sell_daily, use_container_width=True, hide_index=True)
+
+        with sell_tab_hourly:
+            st.markdown("#### Hourly SELL List")
+            st.caption("Hourly SELL candidates show shorter-term entry timing and intraday confirmation.")
+            if sell_hourly.empty:
+                st.info("No Hourly SELL candidates found.")
+            else:
+                st.dataframe(sell_hourly, use_container_width=True, hide_index=True)
 
         all_results = results.copy()
         if not bs_include_wait:
             all_results = all_results[buy_mask | sell_mask]
-        all_results = _prepare_buy_sell_table(
-            _sort_buy_sell_list(all_results, "BUY")
+
+        all_timeframe_series = all_results.get("Timeframe", pd.Series(index=all_results.index, dtype=object)).astype(str)
+        all_daily = _prepare_buy_sell_table(
+            _sort_buy_sell_list(all_results[all_timeframe_series.str.eq("Daily")], "BUY")
+        ).head(max(bs_max_rows * 2, bs_max_rows))
+        all_hourly = _prepare_buy_sell_table(
+            _sort_buy_sell_list(all_results[all_timeframe_series.str.eq("Hourly")], "BUY")
         ).head(max(bs_max_rows * 2, bs_max_rows))
 
-        with st.expander("All Buy/Sell scan results", expanded=False):
-            if all_results.empty:
-                st.info("No rows to show.")
+        with st.expander("All Daily scan results", expanded=False):
+            if all_daily.empty:
+                st.info("No Daily rows to show.")
             else:
-                st.dataframe(all_results, use_container_width=True, hide_index=True)
+                st.dataframe(all_daily, use_container_width=True, hide_index=True)
+
+        with st.expander("All Hourly scan results", expanded=False):
+            if all_hourly.empty:
+                st.info("No Hourly rows to show.")
+            else:
+                st.dataframe(all_hourly, use_container_width=True, hide_index=True)
 
 
 with tab_rules:
