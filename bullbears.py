@@ -1602,6 +1602,17 @@ with tab_buy_sell:
     def _text_series(df: pd.DataFrame, column: str) -> pd.Series:
         return _column_as_series(df, column, "").fillna("").astype(str)
 
+    def _text_eq_mask(df: pd.DataFrame, column: str, value: str) -> pd.Series:
+        """
+        Safe equality mask for text columns that may be missing or duplicated.
+        Always returns a boolean Series aligned to df.index, avoiding DataFrame.str errors.
+        """
+        if df is None or df.empty:
+            return pd.Series(dtype=bool)
+        s = _column_as_series(df, column, "").fillna("").astype(str)
+        target = str(value)
+        return pd.Series(s.to_numpy(dtype=object) == target, index=df.index, dtype=bool)
+
     def _prepare_buy_sell_table(df: pd.DataFrame) -> pd.DataFrame:
         if df is None or df.empty:
             return pd.DataFrame()
@@ -1698,16 +1709,16 @@ with tab_buy_sell:
         timeframe_series = _text_series(results, "Timeframe")
 
         buy_daily = _prepare_buy_sell_table(
-            _sort_buy_sell_list(results[buy_mask & timeframe_series.str.eq("Daily")], "BUY")
+            _sort_buy_sell_list(results[buy_mask & _text_eq_mask(results, "Timeframe", "Daily")], "BUY")
         ).head(bs_max_rows)
         buy_hourly = _prepare_buy_sell_table(
-            _sort_buy_sell_list(results[buy_mask & timeframe_series.str.eq("Hourly")], "BUY")
+            _sort_buy_sell_list(results[buy_mask & _text_eq_mask(results, "Timeframe", "Hourly")], "BUY")
         ).head(bs_max_rows)
         sell_daily = _prepare_buy_sell_table(
-            _sort_buy_sell_list(results[sell_mask & timeframe_series.str.eq("Daily")], "SELL")
+            _sort_buy_sell_list(results[sell_mask & _text_eq_mask(results, "Timeframe", "Daily")], "SELL")
         ).head(bs_max_rows)
         sell_hourly = _prepare_buy_sell_table(
-            _sort_buy_sell_list(results[sell_mask & timeframe_series.str.eq("Hourly")], "SELL")
+            _sort_buy_sell_list(results[sell_mask & _text_eq_mask(results, "Timeframe", "Hourly")], "SELL")
         ).head(bs_max_rows)
 
         metric_cols = st.columns(6)
@@ -1763,10 +1774,10 @@ with tab_buy_sell:
 
         all_timeframe_series = _text_series(all_results, "Timeframe")
         all_daily = _prepare_buy_sell_table(
-            _sort_buy_sell_list(all_results[all_timeframe_series.str.eq("Daily")], "BUY")
+            _sort_buy_sell_list(all_results[all__text_eq_mask(results, "Timeframe", "Daily")], "BUY")
         ).head(max(bs_max_rows * 2, bs_max_rows))
         all_hourly = _prepare_buy_sell_table(
-            _sort_buy_sell_list(all_results[all_timeframe_series.str.eq("Hourly")], "BUY")
+            _sort_buy_sell_list(all_results[all__text_eq_mask(results, "Timeframe", "Hourly")], "BUY")
         ).head(max(bs_max_rows * 2, bs_max_rows))
 
         with st.expander("All Daily scan results", expanded=False):
