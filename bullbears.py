@@ -4,6 +4,7 @@
 # 30 EMA crosses, NTD/S/R reversal confirmation, Stocks/FX scanner,
 # and chart-level probability trade instructions for easier BUY/SELL decision-making.
 # (UPDATED) Symbol lists and scanner tables are alphabetized; Buy/Sell List is split into Daily and Hourly tables.
+# (NEW) Trade Setup Dashboard combines Daily bias with Hourly timing into actionable aligned BUY/SELL setups.
 
 import math
 import time
@@ -1184,6 +1185,224 @@ def scan_symbol(symbol: str, cfg: dict):
     return format_trade_row(symbol, trade)
 
 
+def _parse_pct_value(value) -> float:
+    """Convert values like '74%' or 74 into float percentages."""
+    try:
+        if value is None:
+            return float("nan")
+        if isinstance(value, str):
+            value = value.replace("%", "").replace(",", "").strip()
+        return float(value)
+    except Exception:
+        return float("nan")
+
+
+def _row_trade_side(row) -> str:
+    """Return BUY, SELL, or WAIT for a scan row."""
+    try:
+        action = str(row.get("Trade Action", "") or "").upper()
+        state = str(row.get("State", "") or "").upper()
+        bias = str(row.get("Bias", "") or "").upper()
+    except Exception:
+        return "WAIT"
+
+    if "BUY" in action or "BUY" in state or bias == "LONG":
+        return "BUY"
+    if "SELL" in action or "SELL" in state or bias == "SHORT":
+        return "SELL"
+    return "WAIT"
+
+
+def _row_prob(row, side: str) -> float:
+    col = "Long Probability" if side == "BUY" else "Short Probability"
+    return _parse_pct_value(row.get(col, np.nan))
+
+
+def _row_edge(row) -> float:
+    return _parse_pct_value(row.get("Probability Edge", np.nan))
+
+
+def _row_float(row, col: str) -> float:
+    try:
+        v = row.get(col, np.nan)
+        if isinstance(v, str):
+            v = v.replace(",", "").strip()
+        return float(v)
+    except Exception:
+        return float("nan")
+
+
+def _alignment_score(daily_row: dict, hourly_row: dict) -> float:
+    """Score how well Daily bias and Hourly timing agree."""
+    daily_side = _row_trade_side(daily_row)
+    hourly_side = _row_trade_side(hourly_row)
+
+    score = 0.0
+    if daily_side in ("BUY", "SELL") and daily_side == hourly_side:
+        score += 45.0
+        score += min(25.0, max(0.0, (_row_prob(daily_row, daily_side) - 50.0) * 0.55))
+        score += min(20.0, max(0.0, (_row_prob(hourly_row, hourly_side) - 50.0) * 0.45))
+    elif daily_side in ("BUY", "SELL") and hourly_side == "WAIT":
+        score += 35.0
+        score += min(30.0, max(0.0, (_row_prob(daily_row, daily_side) - 50.0) * 0.60))
+    elif daily_side == "WAIT" and hourly_side in ("BUY", "SELL"):
+        score += 25.0
+        score += min(25.0, max(0.0, (_row_prob(hourly_row, hourly_side) - 50.0) * 0.50))
+    elif daily_side in ("BUY", "SELL") and hourly_side in ("BUY", "SELL") and daily_side != hourly_side:
+        score += 20.0
+    else:
+        score += 10.0
+
+    daily_trend = str(daily_row.get("Trend", "") or "").upper()
+    hourly_trend = str(hourly_row.get("Trend", "") or "").upper()
+    if daily_trend and daily_trend == hourly_trend and daily_trend in ("UPWARD", "DOWNWARD"):
+        score += 8.0
+
+    score += min(12.0, max(0.0, (_row_edge(daily_row) + _row_edge(hourly_row)) / 4.0))
+    return float(np.clip(score, 0.0, 100.0))
+
+
+def _trade_setup_dashboard_row(symbol: str, daily_row: dict, hourly_row: dict) -> dict:
+    """Combine daily bias and hourly timing into one actionable row."""
+    daily_side = _row_trade_side(daily_row)
+    hourly_side = _row_trade_side(hourly_row)
+    score = _alignment_score(daily_row, hourly_row)
+
+    daily_long = _row_prob(daily_row, "BUY")
+    daily_short = _row_prob(daily_row, "SELL")
+    hourly_long = _row_prob(hourly_row, "BUY")
+    hourly_short = _row_prob(hourly_row, "SELL")
+
+    if daily_side == "BUY" and hourly_side == "BUY":
+        category = "Strong BUY Setup"
+        action = "BUY"
+        instruction = (
+            "Daily bias and hourly timing both favor a long. Look for entry near the hourly "
+            "support/30 EMA/HMA zone; use the listed daily/hourly invalidation as the stop reference."
+        )
+    elif daily_side == "SELL" and hourly_side == "SELL":
+        category = "Strong SELL Setup"
+        action = "SELL"
+        instruction = (
+            "Daily bias and hourly timing both favor a short. Look for entry near the hourly "
+            "resistance/30 EMA/HMA rejection zone; use the listed daily/hourly invalidation as the stop reference."
+        )
+    elif daily_side == "BUY" and hourly_side in ("WAIT", "SELL"):
+        category = "Pullback BUY Watch"
+        action = "WATCH BUY"
+        instruction = (
+            "Daily bias is bullish, but hourly is not confirmed yet. Treat hourly weakness as a possible pullback; "
+            "wait for hourly BUY/30 EMA reclaim before entry."
+        )
+    elif daily_side == "SELL" and hourly_side in ("WAIT", "BUY"):
+        category = "Pullback SELL Watch"
+        action = "WATCH SELL"
+        instruction = (
+            "Daily bias is bearish, but hourly is not confirmed yet. Treat hourly strength as a possible bounce; "
+            "wait for hourly SELL/30 EMA loss or resistance rejection before entry."
+        )
+    elif daily_side == "WAIT" and hourly_side == "BUY":
+        category = "Early BUY Timing"
+        action = "WATCH BUY"
+        instruction = (
+            "Hourly timing is bullish but daily bias is not aligned. Use smaller size or wait for daily bias to improve."
+        )
+    elif daily_side == "WAIT" and hourly_side == "SELL":
+        category = "Early SELL Timing"
+        action = "WATCH SELL"
+        instruction = (
+            "Hourly timing is bearish but daily bias is not aligned. Use smaller size or wait for daily bias to weaken."
+        )
+    else:
+        category = "Conflicting / WAIT"
+        action = "WAIT"
+        instruction = "Daily and hourly signals are mixed or weak. Wait for alignment before placing a trade."
+
+    daily_entry = str(daily_row.get("Entry Zone", "") or "")
+    hourly_entry = str(hourly_row.get("Entry Zone", "") or "")
+    daily_stop = str(daily_row.get("Stop / Invalidation", "") or "")
+    hourly_stop = str(hourly_row.get("Stop / Invalidation", "") or "")
+    daily_target = str(daily_row.get("Target 1", "") or "")
+    hourly_target = str(hourly_row.get("Target 1", "") or "")
+
+    if action in ("BUY", "WATCH BUY"):
+        entry_zone = hourly_entry if hourly_entry and hourly_entry != "Wait" else daily_entry
+        stop_zone = hourly_stop if hourly_stop and hourly_stop != "n/a" else daily_stop
+        target_zone = daily_target if daily_target and daily_target != "n/a" else hourly_target
+        probability = np.nanmean([daily_long, hourly_long])
+    elif action in ("SELL", "WATCH SELL"):
+        entry_zone = hourly_entry if hourly_entry and hourly_entry != "Wait" else daily_entry
+        stop_zone = hourly_stop if hourly_stop and hourly_stop != "n/a" else daily_stop
+        target_zone = daily_target if daily_target and daily_target != "n/a" else hourly_target
+        probability = np.nanmean([daily_short, hourly_short])
+    else:
+        entry_zone = "Wait"
+        stop_zone = "n/a"
+        target_zone = "n/a"
+        probability = np.nanmax([daily_long, daily_short, hourly_long, hourly_short])
+
+    return {
+        "Symbol": symbol,
+        "Category": category,
+        "Action": action,
+        "Alignment Score": round(score, 1),
+        "Avg Direction Probability": round(float(probability), 1) if np.isfinite(probability) else np.nan,
+        "Daily Side": daily_side,
+        "Hourly Side": hourly_side,
+        "Daily Action": daily_row.get("Trade Action", daily_row.get("State", "WAIT")),
+        "Hourly Action": hourly_row.get("Trade Action", hourly_row.get("State", "WAIT")),
+        "Daily Long %": daily_row.get("Long Probability"),
+        "Daily Short %": daily_row.get("Short Probability"),
+        "Hourly Long %": hourly_row.get("Long Probability"),
+        "Hourly Short %": hourly_row.get("Short Probability"),
+        "Daily Trend": daily_row.get("Trend"),
+        "Hourly Trend": hourly_row.get("Trend"),
+        "Daily S/R Rev": daily_row.get("S/R Rev"),
+        "Hourly S/R Rev": hourly_row.get("S/R Rev"),
+        "Daily NTD": daily_row.get("NTD"),
+        "Hourly NTD": hourly_row.get("NTD"),
+        "Entry Zone": entry_zone,
+        "Stop / Invalidation": stop_zone,
+        "Target 1": target_zone,
+        "Trade Instruction": instruction,
+        "Daily Reason": daily_row.get("Reason", ""),
+        "Hourly Reason": hourly_row.get("Reason", ""),
+    }
+
+
+def _sort_trade_setup_dashboard(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+    category_order = {
+        "Strong BUY Setup": 0,
+        "Strong SELL Setup": 1,
+        "Pullback BUY Watch": 2,
+        "Pullback SELL Watch": 3,
+        "Early BUY Timing": 4,
+        "Early SELL Timing": 5,
+        "Conflicting / WAIT": 6,
+    }
+    out = df.copy()
+    out["_CategoryOrder"] = out["Category"].map(category_order).fillna(9)
+    out["_ScoreSort"] = pd.to_numeric(out["Alignment Score"], errors="coerce").fillna(-1)
+    out["_ProbSort"] = pd.to_numeric(out["Avg Direction Probability"], errors="coerce").fillna(-1)
+    out = out.sort_values(
+        ["_CategoryOrder", "_ScoreSort", "_ProbSort", "Symbol"],
+        ascending=[True, False, False, True],
+        kind="mergesort",
+    )
+    return out.drop(columns=["_CategoryOrder", "_ScoreSort", "_ProbSort"], errors="ignore")
+
+
+def _render_setup_table(title: str, df: pd.DataFrame, empty_message: str, max_rows: int):
+    st.markdown(f"#### {title}")
+    if df is None or df.empty:
+        st.info(empty_message)
+        return
+    st.dataframe(df.head(max_rows), use_container_width=True, hide_index=True)
+
+
+
 # =========================
 # Sidebar
 # =========================
@@ -1350,7 +1569,7 @@ st.caption(
      "Toggle between Stocks and Forex. Hourly and daily views use real trading bars only and include trade instructions plus rule-based long/short probabilities."
 )
 
-tab_chart, tab_daily, tab_scanner, tab_buy_sell, tab_rules = st.tabs(["Hourly Trading Chart", "Daily Trading Chart", "Scanner", "Buy/Sell List", "Trading Rules"])
+tab_chart, tab_daily, tab_scanner, tab_setup, tab_buy_sell, tab_rules = st.tabs(["Hourly Trading Chart", "Daily Trading Chart", "Scanner", "Trade Setup Dashboard", "Buy/Sell List", "Trading Rules"])
 
 with tab_chart:
     data = fetch_market_ohlc(symbol, period, interval)
@@ -1530,6 +1749,208 @@ with tab_scanner:
                     columns=[c for c in out.columns if c.startswith("_")], errors="ignore"
                 )
                 st.dataframe(all_df, use_container_width=True, hide_index=True)
+
+
+with tab_setup:
+    st.subheader(f"{asset_class} Trade Setup Dashboard")
+    st.caption(
+        "Combines the Daily chart bias with Hourly entry timing so users can quickly see aligned trades, "
+        "pullback watch setups, and conflicting signals. Daily = bigger direction; Hourly = entry timing."
+    )
+
+    st.markdown(
+        """
+**How to use this dashboard**
+
+- **Strong BUY Setup**: Daily and Hourly both favor BUY. This is the cleanest long alignment.
+- **Strong SELL Setup**: Daily and Hourly both favor SELL. This is the cleanest short alignment.
+- **Pullback BUY Watch**: Daily is bullish but Hourly is weak or neutral. Wait for hourly reversal/30 EMA reclaim.
+- **Pullback SELL Watch**: Daily is bearish but Hourly is bouncing or neutral. Wait for hourly rejection/30 EMA loss.
+- **Conflicting / WAIT**: Signals are mixed; avoid forcing a trade.
+"""
+    )
+
+    ts_col1, ts_col2, ts_col3 = st.columns([1, 1, 1])
+    ts_max_rows = int(ts_col1.number_input(
+        "Max rows per setup table",
+        min_value=5,
+        max_value=200,
+        value=100,
+        step=5,
+        key=f"setup_dashboard_max_rows_{asset_class}",
+    ))
+    ts_universe = ts_col2.multiselect(
+        f"{asset_class} symbols for setup dashboard",
+        current_universe,
+        default=current_universe,
+        key=f"setup_dashboard_universe_{asset_class}",
+    )
+    ts_show_wait = ts_col3.checkbox(
+        "Show conflicting / WAIT rows",
+        value=False,
+        key=f"setup_dashboard_show_wait_{asset_class}",
+    )
+
+    if st.button(f"Build {asset_class} Trade Setup Dashboard", use_container_width=True, key=f"build_setup_dashboard_{asset_class}"):
+        rows = []
+        progress = st.progress(0)
+        status = st.empty()
+        total_steps = max(1, len(ts_universe) * 2)
+        step = 0
+
+        hourly_cfg = cfg.copy()
+        daily_cfg_for_setup = cfg.copy()
+        daily_cfg_for_setup["period"] = cfg.get("daily_period", "1y")
+        daily_cfg_for_setup["interval"] = "1d"
+        daily_cfg_for_setup["right_padding"] = max(4, int(cfg.get("right_padding", 12)))
+
+        for sym in ts_universe:
+            daily_row = None
+            hourly_row = None
+
+            status.write(f"Scanning Daily {sym}...")
+            try:
+                daily_row = scan_symbol(sym, daily_cfg_for_setup)
+            except Exception as exc:
+                daily_row = {
+                    "Symbol": sym,
+                    "State": "ERROR",
+                    "Trade Action": "WAIT",
+                    "Reason": f"Daily scan error: {exc}",
+                }
+            step += 1
+            progress.progress(step / total_steps)
+
+            status.write(f"Scanning Hourly {sym}...")
+            try:
+                hourly_row = scan_symbol(sym, hourly_cfg)
+            except Exception as exc:
+                hourly_row = {
+                    "Symbol": sym,
+                    "State": "ERROR",
+                    "Trade Action": "WAIT",
+                    "Reason": f"Hourly scan error: {exc}",
+                }
+            step += 1
+            progress.progress(step / total_steps)
+
+            if daily_row is None:
+                daily_row = {
+                    "Symbol": sym,
+                    "State": "NO DATA",
+                    "Trade Action": "WAIT",
+                    "Reason": "No Daily data returned.",
+                }
+            if hourly_row is None:
+                hourly_row = {
+                    "Symbol": sym,
+                    "State": "NO DATA",
+                    "Trade Action": "WAIT",
+                    "Reason": "No Hourly data returned.",
+                }
+
+            rows.append(_trade_setup_dashboard_row(sym, daily_row, hourly_row))
+
+        status.empty()
+        progress.empty()
+
+        setup_results = _sort_trade_setup_dashboard(pd.DataFrame(rows))
+        st.session_state[f"trade_setup_dashboard_results_{asset_class}"] = setup_results
+
+    setup_results = st.session_state.get(f"trade_setup_dashboard_results_{asset_class}", pd.DataFrame())
+
+    if setup_results is None or setup_results.empty:
+        st.info("Click the button above to build the Trade Setup Dashboard.")
+    else:
+        ordered_results = _sort_trade_setup_dashboard(setup_results)
+
+        strong_buy = ordered_results[ordered_results["Category"].eq("Strong BUY Setup")]
+        strong_sell = ordered_results[ordered_results["Category"].eq("Strong SELL Setup")]
+        pullback_buy = ordered_results[ordered_results["Category"].eq("Pullback BUY Watch")]
+        pullback_sell = ordered_results[ordered_results["Category"].eq("Pullback SELL Watch")]
+        early_buy = ordered_results[ordered_results["Category"].eq("Early BUY Timing")]
+        early_sell = ordered_results[ordered_results["Category"].eq("Early SELL Timing")]
+        wait_rows = ordered_results[ordered_results["Category"].eq("Conflicting / WAIT")]
+
+        setup_metrics = st.columns(7)
+        setup_metrics[0].metric("Strong BUY", int(len(strong_buy)))
+        setup_metrics[1].metric("Strong SELL", int(len(strong_sell)))
+        setup_metrics[2].metric("BUY Pullbacks", int(len(pullback_buy)))
+        setup_metrics[3].metric("SELL Pullbacks", int(len(pullback_sell)))
+        setup_metrics[4].metric("Early BUY", int(len(early_buy)))
+        setup_metrics[5].metric("Early SELL", int(len(early_sell)))
+        setup_metrics[6].metric("WAIT / Conflict", int(len(wait_rows)))
+
+        priority_cols = [
+            "Symbol", "Category", "Action", "Alignment Score", "Avg Direction Probability",
+            "Daily Side", "Hourly Side", "Daily Action", "Hourly Action",
+            "Daily Long %", "Daily Short %", "Hourly Long %", "Hourly Short %",
+            "Daily Trend", "Hourly Trend", "Daily S/R Rev", "Hourly S/R Rev",
+            "Entry Zone", "Stop / Invalidation", "Target 1", "Trade Instruction",
+        ]
+        display_cols = [c for c in priority_cols if c in ordered_results.columns]
+
+        _render_setup_table(
+            "🟢 Strong BUY Setups — Daily bias + Hourly timing aligned",
+            strong_buy[display_cols],
+            "No Strong BUY setups found.",
+            ts_max_rows,
+        )
+        _render_setup_table(
+            "🔴 Strong SELL Setups — Daily bias + Hourly timing aligned",
+            strong_sell[display_cols],
+            "No Strong SELL setups found.",
+            ts_max_rows,
+        )
+
+        watch_tab_buy, watch_tab_sell, early_tab_buy, early_tab_sell = st.tabs([
+            "🟡 Pullback BUY Watch",
+            "🟡 Pullback SELL Watch",
+            "🟢 Early BUY Timing",
+            "🔴 Early SELL Timing",
+        ])
+
+        with watch_tab_buy:
+            _render_setup_table(
+                "Pullback BUY Watch — bullish daily bias, waiting for hourly confirmation",
+                pullback_buy[display_cols],
+                "No Pullback BUY watch rows found.",
+                ts_max_rows,
+            )
+
+        with watch_tab_sell:
+            _render_setup_table(
+                "Pullback SELL Watch — bearish daily bias, waiting for hourly confirmation",
+                pullback_sell[display_cols],
+                "No Pullback SELL watch rows found.",
+                ts_max_rows,
+            )
+
+        with early_tab_buy:
+            _render_setup_table(
+                "Early BUY Timing — hourly long timing before daily alignment",
+                early_buy[display_cols],
+                "No Early BUY timing rows found.",
+                ts_max_rows,
+            )
+
+        with early_tab_sell:
+            _render_setup_table(
+                "Early SELL Timing — hourly short timing before daily alignment",
+                early_sell[display_cols],
+                "No Early SELL timing rows found.",
+                ts_max_rows,
+            )
+
+        if ts_show_wait:
+            with st.expander("Conflicting / WAIT rows", expanded=False):
+                if wait_rows.empty:
+                    st.info("No conflicting / WAIT rows.")
+                else:
+                    st.dataframe(wait_rows[display_cols].head(ts_max_rows), use_container_width=True, hide_index=True)
+
+        with st.expander("All Trade Setup Dashboard results", expanded=False):
+            st.dataframe(ordered_results[display_cols].head(max(ts_max_rows * 2, ts_max_rows)), use_container_width=True, hide_index=True)
 
 
 with tab_buy_sell:
