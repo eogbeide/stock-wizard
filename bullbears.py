@@ -3,6 +3,7 @@
 # Focus: compressed intraday chart (no weekend/closure gaps), trend-aligned support/resistance reversals,
 # 30 EMA crosses, NTD/S/R reversal confirmation, Stocks/FX scanner,
 # and chart-level probability trade instructions for easier BUY/SELL decision-making.
+# (UPDATED) Structure metric now uses directional red/green trend badges and action/trend alignment text.
 # (UPDATED) Symbol lists and scanner tables are alphabetized; Buy/Sell List is split into Daily and Hourly tables.
 
 import math
@@ -82,6 +83,53 @@ div[data-baseweb="tab"] { flex: 0 0 auto !important; }
 .prob-mini {
     font-size: 0.84rem;
     color: #555;
+}
+
+
+.trend-badge {
+    display: inline-block;
+    margin-top: 0.25rem;
+    padding: 0.22rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.78rem;
+    font-weight: 700;
+    line-height: 1.15;
+    white-space: nowrap;
+}
+.trend-badge-up {
+    color: #0f7a3a;
+    background: rgba(0, 150, 80, 0.13);
+    border: 1px solid rgba(0, 150, 80, 0.30);
+}
+.trend-badge-down {
+    color: #b42318;
+    background: rgba(220, 40, 40, 0.13);
+    border: 1px solid rgba(220, 40, 40, 0.30);
+}
+.trend-badge-flat {
+    color: #6b7280;
+    background: rgba(120, 120, 120, 0.13);
+    border: 1px solid rgba(120, 120, 120, 0.30);
+}
+.alignment-badge {
+    display: inline-block;
+    margin-top: 0.18rem;
+    padding: 0.20rem 0.50rem;
+    border-radius: 0.55rem;
+    font-size: 0.74rem;
+    font-weight: 650;
+}
+.alignment-ok {
+    color: #0f7a3a;
+    background: rgba(0, 150, 80, 0.10);
+}
+.alignment-caution {
+    color: #b26a00;
+    background: rgba(230, 170, 20, 0.12);
+}
+.alignment-wait {
+    color: #6b7280;
+    background: rgba(120, 120, 120, 0.12);
 }
 
 </style>
@@ -870,6 +918,90 @@ def probability_bar_values(trade: dict) -> tuple[float, float, float]:
 
 
 
+def trade_trend_alignment(trade: dict) -> dict:
+    """Describe whether the trade action and current trend direction agree.
+
+    This keeps the UI from showing a bearish structure with a green/up-looking
+    trend badge, which can make SELL setups look bullish.
+    """
+    action = str(trade.get("Trade Action", "WAIT") or "WAIT").upper()
+    trend_dir = str(trade.get("Trend Direction", "Mixed") or "Mixed")
+    slope = safe_float(trade.get("Trend Slope"))
+    structure = str(trade.get("Current Structure", "") or "")
+
+    if np.isfinite(slope):
+        if slope > 0:
+            icon = "↑"
+            trend_class = "trend-badge-up"
+            slope_dir = "Upward"
+        elif slope < 0:
+            icon = "↓"
+            trend_class = "trend-badge-down"
+            slope_dir = "Downward"
+        else:
+            icon = "→"
+            trend_class = "trend-badge-flat"
+            slope_dir = "Flat"
+    else:
+        icon = "→"
+        trend_class = "trend-badge-flat"
+        slope_dir = "Mixed"
+
+    # Prefer the numeric slope direction over a stale text value if they differ.
+    if slope_dir in ("Upward", "Downward", "Flat"):
+        trend_dir_display = slope_dir
+    else:
+        trend_dir_display = trend_dir
+
+    if "BUY" in action and trend_dir_display == "Upward":
+        align_text = "BUY aligned with upward trend"
+        align_class = "alignment-ok"
+    elif "SELL" in action and trend_dir_display == "Downward":
+        align_text = "SELL aligned with downward trend"
+        align_class = "alignment-ok"
+    elif action == "WAIT" or "WAIT" in action:
+        align_text = "WAIT until trend and structure align"
+        align_class = "alignment-wait"
+    elif "BUY" in action and trend_dir_display == "Downward":
+        align_text = "Caution: BUY conflicts with downward trend"
+        align_class = "alignment-caution"
+    elif "SELL" in action and trend_dir_display == "Upward":
+        align_text = "Caution: SELL conflicts with upward trend"
+        align_class = "alignment-caution"
+    else:
+        align_text = "Check chart confirmation"
+        align_class = "alignment-caution"
+
+    return {
+        "Icon": icon,
+        "Trend Direction": trend_dir_display,
+        "Trend Class": trend_class,
+        "Alignment Text": align_text,
+        "Alignment Class": align_class,
+        "Trend Slope": slope,
+        "Structure": structure,
+    }
+
+
+def render_structure_trend_badge(container, trade: dict) -> None:
+    """Render trend/structure alignment without Streamlit's green metric delta arrow."""
+    info = trade_trend_alignment(trade)
+    slope = info["Trend Slope"]
+    slope_txt = f"{slope:.7f}/bar" if np.isfinite(slope) else "n/a"
+    container.markdown(
+        f'''
+<div class="trend-badge {info['Trend Class']}">
+  {info['Icon']} Trend {info['Trend Direction']} • {slope_txt}
+</div><br>
+<div class="alignment-badge {info['Alignment Class']}">
+  {info['Alignment Text']}
+</div>
+''',
+        unsafe_allow_html=True,
+    )
+
+
+
 def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict) -> dict:
     if df.empty:
         return {"State": "NO DATA", "Bias": "None", "Reason": "No bars returned."}
@@ -1290,7 +1422,8 @@ def format_trade_row(symbol: str, trade: dict) -> dict:
         "Long Probability": f"{safe_float(trade.get('Long Probability')):.0f}%",
         "Short Probability": f"{safe_float(trade.get('Short Probability')):.0f}%",
         "Probability Edge": f"{safe_float(trade.get('Probability Edge')):.0f}%",
-        "Trend": trade.get("Trend Direction"),
+        "Trend": trade_trend_alignment(trade).get("Trend Direction"),
+        "Action / Trend Alignment": trade_trend_alignment(trade).get("Alignment Text"),
         "Current Structure": trade.get("Current Structure"),
         "Trend Slope": round(safe_float(trade.get("Trend Slope")), 7),
         "S/R Rev": round(safe_float(trade.get("S/R Reversal")), 3),
@@ -1522,7 +1655,8 @@ Edge: {safe_float(trade.get('Probability Edge')):.0f}%<br>
         metric_cols[1].metric("Trade Action", trade.get("Trade Action", "WAIT"))
         metric_cols[2].metric("Long Prob.", f"{safe_float(trade.get('Long Probability')):.0f}%")
         metric_cols[3].metric("Short Prob.", f"{safe_float(trade.get('Short Probability')):.0f}%")
-        metric_cols[4].metric("Structure", trade.get("Current Structure", trade.get("Trend Direction")), f"Trend {trade.get('Trend Direction')} • {safe_float(trade.get('Trend Slope')):.7f}/bar")
+        metric_cols[4].metric("Structure", trade.get("Current Structure", trade.get("Trend Direction")))
+        render_structure_trend_badge(metric_cols[4], trade)
         metric_cols[5].metric("S/R Reversal", f"{safe_float(trade.get('S/R Reversal')):+.2f}")
         metric_cols[6].metric("ADX", f"{safe_float(trade.get('ADX')):.1f}")
 
@@ -1567,7 +1701,8 @@ Edge: {safe_float(daily_trade.get('Probability Edge')):.0f}%<br>
         dcols[1].metric("Trade Action", daily_trade.get("Trade Action", "WAIT"))
         dcols[2].metric("Long Prob.", f"{safe_float(daily_trade.get('Long Probability')):.0f}%")
         dcols[3].metric("Short Prob.", f"{safe_float(daily_trade.get('Short Probability')):.0f}%")
-        dcols[4].metric("Structure", daily_trade.get("Current Structure", daily_trade.get("Trend Direction")), f"Trend {daily_trade.get('Trend Direction')} • {safe_float(daily_trade.get('Trend Slope')):.7f}/bar")
+        dcols[4].metric("Structure", daily_trade.get("Current Structure", daily_trade.get("Trend Direction")))
+        render_structure_trend_badge(dcols[4], daily_trade)
         dcols[5].metric("S/R Reversal", f"{safe_float(daily_trade.get('S/R Reversal')):+.2f}")
         dcols[6].metric("ADX", f"{safe_float(daily_trade.get('ADX')):.1f}")
 
