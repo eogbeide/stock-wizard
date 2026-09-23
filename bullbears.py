@@ -4,7 +4,6 @@
 # 30 EMA crosses, NTD/S/R reversal confirmation, Stocks/FX scanner,
 # and chart-level probability trade instructions for easier BUY/SELL decision-making.
 # (UPDATED) Symbol lists and scanner tables are alphabetized; Buy/Sell List is split into Daily and Hourly tables.
-# (NEW) Trade Setup Dashboard combines Daily bias with Hourly timing into actionable aligned BUY/SELL setups.
 
 import math
 import time
@@ -559,6 +558,7 @@ def compute_trade_probabilities_and_instruction(symbol: str,
                                                 state: str,
                                                 bias: str,
                                                 last: float,
+                                                ema20_last: float,
                                                 ema30_last: float,
                                                 hma_last: float,
                                                 sr_last: float,
@@ -575,123 +575,201 @@ def compute_trade_probabilities_and_instruction(symbol: str,
                                                 cross_down: bool,
                                                 entry_zone: str,
                                                 stop_zone: str,
-                                                target1: str) -> dict:
+                                                target1: str,
+                                                current_structure: str = "Mixed",
+                                                sr_delta: float = np.nan,
+                                                ntd_delta: float = np.nan) -> dict:
     """
-    Convert the chart conditions into actionable long/short probability estimates.
-    These are rule-based trading probabilities for ranking setups, not guaranteed outcomes.
+    Convert chart conditions into actionable long/short probability estimates.
+
+    Important: the probability model separates the long-term regression slope from
+    the current trade structure. A slightly positive slope should not make a chart
+    look bullish when price is trading below the 20 EMA, 30 EMA, and HMA.
     """
     trend_up = bool(np.isfinite(trend_slope) and trend_slope >= 0)
     trend_down = bool(np.isfinite(trend_slope) and trend_slope < 0)
-    price_above_ema = bool(np.isfinite(last) and np.isfinite(ema30_last) and last >= ema30_last)
-    price_below_ema = bool(np.isfinite(last) and np.isfinite(ema30_last) and last < ema30_last)
+
+    price_above_ema20 = bool(np.isfinite(last) and np.isfinite(ema20_last) and last >= ema20_last)
+    price_below_ema20 = bool(np.isfinite(last) and np.isfinite(ema20_last) and last < ema20_last)
+    price_above_ema30 = bool(np.isfinite(last) and np.isfinite(ema30_last) and last >= ema30_last)
+    price_below_ema30 = bool(np.isfinite(last) and np.isfinite(ema30_last) and last < ema30_last)
     price_above_hma = bool(np.isfinite(last) and np.isfinite(hma_last) and last >= hma_last)
     price_below_hma = bool(np.isfinite(last) and np.isfinite(hma_last) and last < hma_last)
+
+    bullish_structure = bool(str(current_structure).startswith("Bullish"))
+    bearish_structure = bool(str(current_structure).startswith("Bearish"))
+    sr_rising = bool(np.isfinite(sr_delta) and sr_delta > 0)
+    sr_falling = bool(np.isfinite(sr_delta) and sr_delta < 0)
+    ntd_rising = bool(np.isfinite(ntd_delta) and ntd_delta > 0)
+    ntd_falling = bool(np.isfinite(ntd_delta) and ntd_delta < 0)
+
     strong_adx = bool(np.isfinite(adx_last) and adx_last >= 20)
     very_strong_adx = bool(np.isfinite(adx_last) and adx_last >= 25)
 
     long_score = 10.0
     short_score = 10.0
 
+    # Long-term slope is useful, but it is intentionally a smaller input than
+    # current price structure.
     if trend_up:
-        long_score += 18
+        long_score += 10
+    elif trend_down:
+        short_score += 10
+
+    # Current structure is the most important part of the trade read.
+    if bullish_structure:
+        long_score += 24
+        short_score -= 4
+    elif bearish_structure:
+        short_score += 24
+        long_score -= 4
     else:
-        short_score += 18
+        long_score += 4
+        short_score += 4
 
     if "BUY CONFIRMED" in str(state):
-        long_score += 28
+        long_score += 24
     elif "BUY SETUP" in str(state):
-        long_score += 16
+        long_score += 14
+    elif "BUY WATCH" in str(state):
+        long_score += 8
 
     if "SELL CONFIRMED" in str(state):
-        short_score += 28
+        short_score += 24
     elif "SELL SETUP" in str(state):
-        short_score += 16
+        short_score += 14
+    elif "SELL WATCH" in str(state):
+        short_score += 8
 
-    if price_above_ema:
-        long_score += 10
-    if price_below_ema:
-        short_score += 10
+    # EMA/HMA structure. Being below all three should meaningfully reduce long
+    # confidence even if the regression slope is slightly positive.
+    if price_above_ema20:
+        long_score += 6
+    if price_below_ema20:
+        short_score += 6
+        long_score -= 2
+    if price_above_ema30:
+        long_score += 9
+    if price_below_ema30:
+        short_score += 9
+        long_score -= 3
     if price_above_hma:
         long_score += 8
     if price_below_hma:
         short_score += 8
+        long_score -= 3
 
     if bool(cross_up):
-        long_score += 10
+        long_score += 8
     if bool(cross_down):
-        short_score += 10
+        short_score += 8
 
     if np.isfinite(sr_last):
         if sr_last > 0:
-            long_score += 10
+            long_score += 7
         if sr_last < 0:
-            short_score += 10
-        if sr_last <= -0.50 and trend_up:
-            long_score += 5  # dip in an uptrend
-        if sr_last >= 0.50 and trend_down:
-            short_score += 5  # bounce into resistance in a downtrend
+            short_score += 7
+        if sr_rising:
+            long_score += 5
+        if sr_falling:
+            short_score += 5
+        if sr_last <= -0.50 and (trend_up or bullish_structure):
+            long_score += 4  # dip in an otherwise constructive setup
+        if sr_last >= 0.50 and (trend_down or bearish_structure):
+            short_score += 4  # bounce into resistance in a weak setup
 
     if np.isfinite(ntd_last):
         if ntd_last > 0:
-            long_score += 8
+            long_score += 5
         if ntd_last < 0:
-            short_score += 8
-        if ntd_last <= -0.50 and trend_up:
-            long_score += 4
-        if ntd_last >= 0.50 and trend_down:
+            short_score += 5
+        if ntd_rising:
+            long_score += 5
+        if ntd_falling:
+            short_score += 5
+        # Penalize longs when NTD is rolling down from an elevated area.
+        if ntd_last > 0.25 and ntd_falling and bearish_structure:
             short_score += 4
+            long_score -= 4
 
     if near_support:
-        long_score += 8
+        long_score += 5
     if near_resistance:
-        short_score += 8
+        short_score += 5
     if near_ema30 or near_hma55:
-        long_score += 3
-        short_score += 3
+        long_score += 2
+        short_score += 2
 
     if strong_adx:
-        if trend_up:
-            long_score += 6
-        if trend_down:
-            short_score += 6
+        if bullish_structure:
+            long_score += 5
+        elif bearish_structure:
+            short_score += 5
+        elif trend_up:
+            long_score += 3
+        elif trend_down:
+            short_score += 3
     if very_strong_adx:
-        if trend_up:
-            long_score += 4
-        if trend_down:
-            short_score += 4
+        if bullish_structure:
+            long_score += 3
+        elif bearish_structure:
+            short_score += 3
+
+    # Final safety gates: avoid showing a confident BUY when price is below the
+    # main moving-average cluster; avoid showing a confident SELL when price is
+    # above it.
+    if bearish_structure:
+        long_score = min(long_score, 62)
+    if bullish_structure:
+        short_score = min(short_score, 62)
 
     long_prob = float(np.clip(long_score, 5, 95))
     short_prob = float(np.clip(short_score, 5, 95))
+    confidence = abs(long_prob - short_prob)
 
-    if long_prob >= short_prob + 8 and long_prob >= 70:
+    if long_prob >= short_prob + 10 and long_prob >= 70 and bullish_structure:
         action = "BUY"
         instruction = (
             f"BUY/Long: enter near {entry_zone}; stop/invalidate below {stop_zone}; "
-            f"first target {target1}. Prefer entry after a candle closes back above 30 EMA/HMA or support holds."
+            f"first target {target1}. Best when price holds above 30 EMA/HMA after confirmation."
         )
-    elif short_prob >= long_prob + 8 and short_prob >= 70:
+    elif short_prob >= long_prob + 10 and short_prob >= 70 and bearish_structure:
         action = "SELL"
         instruction = (
             f"SELL/Short: enter near {entry_zone}; stop/invalidate above {stop_zone}; "
-            f"first target {target1}. Prefer entry after rejection from resistance/30 EMA/HMA."
+            f"first target {target1}. Best after rejection from resistance or failure below 30 EMA/HMA."
         )
-    elif long_prob >= short_prob and long_prob >= 58:
+    elif long_prob >= short_prob + 6 and long_prob >= 58 and not bearish_structure:
         action = "BUY WATCH"
         instruction = (
-            f"BUY WATCH: conditions are improving, but wait for confirmation. Ideal entry zone {entry_zone}; "
+            f"BUY WATCH: wait for price to reclaim/hold 30 EMA and HMA. Ideal entry zone {entry_zone}; "
             f"invalidation {stop_zone}; target {target1}."
         )
-    elif short_prob > long_prob and short_prob >= 58:
+    elif short_prob >= long_prob + 6 and short_prob >= 58 and not bullish_structure:
         action = "SELL WATCH"
         instruction = (
-            f"SELL WATCH: conditions are weakening, but wait for confirmation. Ideal entry zone {entry_zone}; "
-            f"invalidation {stop_zone}; target {target1}."
+            f"SELL WATCH: current structure is weak. Look for rejection/failure near 30 EMA/HMA or resistance. "
+            f"Ideal entry zone {entry_zone}; invalidation {stop_zone}; target {target1}."
+        )
+    elif bearish_structure and long_prob >= short_prob:
+        action = "WAIT / SELL WATCH"
+        instruction = (
+            "WAIT / SELL WATCH: price is below the EMA/HMA structure, so avoid buying until price reclaims "
+            "30 EMA and HMA. Watch for a rejection continuation lower."
+        )
+    elif bullish_structure and short_prob > long_prob:
+        action = "WAIT / BUY WATCH"
+        instruction = (
+            "WAIT / BUY WATCH: price is above the EMA/HMA structure, so avoid shorting until price loses "
+            "30 EMA and HMA. Watch for a pullback hold."
         )
     else:
         action = "WAIT"
-        instruction = "WAIT: long/short probabilities are not sufficiently separated. Avoid forcing a trade until price confirms direction."
+        instruction = (
+            "WAIT: long/short probabilities are not sufficiently separated or current structure is mixed. "
+            "Avoid forcing a trade until price confirms direction."
+        )
 
-    confidence = abs(long_prob - short_prob)
     return {
         "Trade Action": action,
         "Trade Instruction": instruction,
@@ -798,12 +876,23 @@ def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict)
 
     close = coerce_series(df["Close"])
     last = safe_float(close.iloc[-1])
+    ema20_last = safe_float(df["EMA20"].iloc[-1])
     ema30_last = safe_float(df["EMA30"].iloc[-1])
     hma_last = safe_float(df["HMA55"].iloc[-1])
     sr_last = safe_float(df["SR_REV"].iloc[-1])
     ntd_last = safe_float(df["NTD"].iloc[-1])
     adx_last = safe_float(df["ADX14"].iloc[-1])
     support, resistance = support_resistance(df, cfg["sr_lookback"])
+
+    # Short recent deltas help detect whether S/R and NTD are improving or rolling over.
+    sr_series = coerce_series(df["SR_REV"]).dropna()
+    ntd_series = coerce_series(df["NTD"]).dropna()
+    sr_delta = safe_float(sr_series.iloc[-1] - sr_series.iloc[-4]) if len(sr_series) >= 4 else np.nan
+    ntd_delta = safe_float(ntd_series.iloc[-1] - ntd_series.iloc[-4]) if len(ntd_series) >= 4 else np.nan
+    sr_rising = bool(np.isfinite(sr_delta) and sr_delta > 0)
+    sr_falling = bool(np.isfinite(sr_delta) and sr_delta < 0)
+    ntd_rising = bool(np.isfinite(ntd_delta) and ntd_delta > 0)
+    ntd_falling = bool(np.isfinite(ntd_delta) and ntd_delta < 0)
 
     cross_up, cross_up_bars, cross_up_time = recent_cross_up(close, df["EMA30"], cfg["cross_lookback"])
     cross_down, cross_down_bars, cross_down_time = recent_cross_down(close, df["EMA30"], cfg["cross_lookback"])
@@ -828,29 +917,69 @@ def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict)
     near_ema30 = abs(last - ema30_last) <= cfg["pullback_tol_pips"] * pip_size(symbol) if np.isfinite(ema30_last) else False
     near_hma55 = abs(last - hma_last) <= cfg["pullback_tol_pips"] * pip_size(symbol) if np.isfinite(hma_last) else False
 
-    trend_up = trend_slope >= 0
-    trend_down = trend_slope < 0
+    trend_up = bool(np.isfinite(trend_slope) and trend_slope >= 0)
+    trend_down = bool(np.isfinite(trend_slope) and trend_slope < 0)
 
-    if trend_up and bull_bars is not None and cross_up:
+    price_above_ema20 = bool(np.isfinite(last) and np.isfinite(ema20_last) and last >= ema20_last)
+    price_below_ema20 = bool(np.isfinite(last) and np.isfinite(ema20_last) and last < ema20_last)
+    price_above_ema30 = bool(np.isfinite(last) and np.isfinite(ema30_last) and last >= ema30_last)
+    price_below_ema30 = bool(np.isfinite(last) and np.isfinite(ema30_last) and last < ema30_last)
+    price_above_hma = bool(np.isfinite(last) and np.isfinite(hma_last) and last >= hma_last)
+    price_below_hma = bool(np.isfinite(last) and np.isfinite(hma_last) and last < hma_last)
+
+    above_count = int(price_above_ema20) + int(price_above_ema30) + int(price_above_hma)
+    below_count = int(price_below_ema20) + int(price_below_ema30) + int(price_below_hma)
+
+    if below_count >= 3:
+        current_structure = "Bearish — below 20/30 EMA and HMA"
+    elif above_count >= 3:
+        current_structure = "Bullish — above 20/30 EMA and HMA"
+    elif below_count >= 2:
+        current_structure = "Weak / Bearish pullback"
+    elif above_count >= 2:
+        current_structure = "Constructive / Bullish pullback"
+    else:
+        current_structure = "Mixed"
+
+    bearish_structure = current_structure.startswith("Bearish") or current_structure.startswith("Weak")
+    bullish_structure = current_structure.startswith("Bullish") or current_structure.startswith("Constructive")
+
+    # Trade state is based on current structure first and regression slope second.
+    # This prevents a slightly positive daily slope from overriding a clearly weak
+    # price structure below EMA/HMA.
+    if bullish_structure and trend_up and bull_bars is not None and cross_up and sr_last >= 0:
         state = "BUY CONFIRMED"
         bias = "Long"
-        reason = "Uptrend + support reversal + recent 30 EMA cross upward."
-    elif trend_up and (near_support or near_ema30 or near_hma55) and sr_last > -0.75:
+        reason = "Bullish structure + upward trend + support reversal + recent 30 EMA cross upward."
+    elif bullish_structure and (near_support or near_ema30 or near_hma55 or sr_rising or ntd_rising) and not ntd_falling:
+        state = "BUY SETUP"
+        bias = "Long"
+        reason = "Constructive structure; wait for support/EMA/HMA hold or upward confirmation."
+    elif bearish_structure and (bear_bars is not None or cross_down) and (sr_last <= 0 or sr_falling or ntd_falling):
+        state = "SELL CONFIRMED" if trend_down else "SELL SETUP"
+        bias = "Short"
+        reason = "Bearish structure below EMA/HMA with rejection/weakening confirmation."
+    elif bearish_structure and (near_resistance or near_ema30 or near_hma55 or sr_falling or ntd_falling):
+        state = "SELL SETUP"
+        bias = "Short"
+        reason = "Weak structure below EMA/HMA; watch for resistance/EMA/HMA rejection."
+    elif trend_up and not bearish_structure and (near_support or near_ema30 or near_hma55) and sr_last > -0.75:
         state = "BUY SETUP"
         bias = "Long"
         reason = "Uptrend pullback near support/EMA/HMA; wait for upward confirmation."
-    elif trend_down and bear_bars is not None and cross_down:
-        state = "SELL CONFIRMED"
-        bias = "Short"
-        reason = "Downtrend + resistance rejection + recent 30 EMA cross downward."
-    elif trend_down and (near_resistance or near_ema30 or near_hma55) and sr_last < 0.75:
+    elif trend_down and not bullish_structure and (near_resistance or near_ema30 or near_hma55) and sr_last < 0.75:
         state = "SELL SETUP"
         bias = "Short"
         reason = "Downtrend pullback near resistance/EMA/HMA; wait for downward confirmation."
     else:
         state = "WAIT"
         bias = "Neutral"
-        reason = "No clean trend-aligned pullback/reversal confirmation."
+        if bearish_structure and trend_up:
+            reason = "Long-term slope is upward, but current price structure is weak below EMA/HMA; avoid buying until reclaim."
+        elif bullish_structure and trend_down:
+            reason = "Long-term slope is downward, but current price structure is constructive above EMA/HMA; avoid shorting until breakdown."
+        else:
+            reason = "No clean trend-aligned pullback/reversal confirmation."
 
     atr_last = safe_float(df["ATR14"].iloc[-1])
     if bias == "Long":
@@ -871,6 +1000,7 @@ def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict)
         state=state,
         bias=bias,
         last=last,
+        ema20_last=ema20_last,
         ema30_last=ema30_last,
         hma_last=hma_last,
         sr_last=sr_last,
@@ -888,6 +1018,9 @@ def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict)
         entry_zone=entry_zone,
         stop_zone=stop_zone,
         target1=target1,
+        current_structure=current_structure,
+        sr_delta=sr_delta,
+        ntd_delta=ntd_delta,
     )
 
     return {
@@ -896,10 +1029,13 @@ def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict)
         "Bias": bias,
         "Reason": reason,
         "Last Close": last,
+        "Current Structure": current_structure,
         "Trend Direction": "Upward" if trend_up else "Downward",
         "Trend Slope": trend_slope,
         "S/R Reversal": sr_last,
+        "S/R Delta": sr_delta,
         "NTD": ntd_last,
+        "NTD Delta": ntd_delta,
         "ADX": adx_last,
         "Support": support,
         "Resistance": resistance,
@@ -907,6 +1043,9 @@ def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict)
         "Near Resistance": bool(near_resistance),
         "Near 30 EMA": bool(near_ema30),
         "Near HMA55": bool(near_hma55),
+        "Price Above 20 EMA": bool(price_above_ema20),
+        "Price Above 30 EMA": bool(price_above_ema30),
+        "Price Above HMA55": bool(price_above_hma),
         "30 EMA Cross Up": bool(cross_up),
         "Bars Since 30 EMA Cross Up": cross_up_bars,
         "30 EMA Cross Down": bool(cross_down),
@@ -1152,6 +1291,7 @@ def format_trade_row(symbol: str, trade: dict) -> dict:
         "Short Probability": f"{safe_float(trade.get('Short Probability')):.0f}%",
         "Probability Edge": f"{safe_float(trade.get('Probability Edge')):.0f}%",
         "Trend": trade.get("Trend Direction"),
+        "Current Structure": trade.get("Current Structure"),
         "Trend Slope": round(safe_float(trade.get("Trend Slope")), 7),
         "S/R Rev": round(safe_float(trade.get("S/R Reversal")), 3),
         "NTD": round(safe_float(trade.get("NTD")), 3),
@@ -1183,224 +1323,6 @@ def scan_symbol(symbol: str, cfg: dict):
     _, trend_slope, _ = regression_line(df["Close"], cfg["trend_lookback"])
     trade = classify_trade(symbol, df, trend_slope, cfg)
     return format_trade_row(symbol, trade)
-
-
-def _parse_pct_value(value) -> float:
-    """Convert values like '74%' or 74 into float percentages."""
-    try:
-        if value is None:
-            return float("nan")
-        if isinstance(value, str):
-            value = value.replace("%", "").replace(",", "").strip()
-        return float(value)
-    except Exception:
-        return float("nan")
-
-
-def _row_trade_side(row) -> str:
-    """Return BUY, SELL, or WAIT for a scan row."""
-    try:
-        action = str(row.get("Trade Action", "") or "").upper()
-        state = str(row.get("State", "") or "").upper()
-        bias = str(row.get("Bias", "") or "").upper()
-    except Exception:
-        return "WAIT"
-
-    if "BUY" in action or "BUY" in state or bias == "LONG":
-        return "BUY"
-    if "SELL" in action or "SELL" in state or bias == "SHORT":
-        return "SELL"
-    return "WAIT"
-
-
-def _row_prob(row, side: str) -> float:
-    col = "Long Probability" if side == "BUY" else "Short Probability"
-    return _parse_pct_value(row.get(col, np.nan))
-
-
-def _row_edge(row) -> float:
-    return _parse_pct_value(row.get("Probability Edge", np.nan))
-
-
-def _row_float(row, col: str) -> float:
-    try:
-        v = row.get(col, np.nan)
-        if isinstance(v, str):
-            v = v.replace(",", "").strip()
-        return float(v)
-    except Exception:
-        return float("nan")
-
-
-def _alignment_score(daily_row: dict, hourly_row: dict) -> float:
-    """Score how well Daily bias and Hourly timing agree."""
-    daily_side = _row_trade_side(daily_row)
-    hourly_side = _row_trade_side(hourly_row)
-
-    score = 0.0
-    if daily_side in ("BUY", "SELL") and daily_side == hourly_side:
-        score += 45.0
-        score += min(25.0, max(0.0, (_row_prob(daily_row, daily_side) - 50.0) * 0.55))
-        score += min(20.0, max(0.0, (_row_prob(hourly_row, hourly_side) - 50.0) * 0.45))
-    elif daily_side in ("BUY", "SELL") and hourly_side == "WAIT":
-        score += 35.0
-        score += min(30.0, max(0.0, (_row_prob(daily_row, daily_side) - 50.0) * 0.60))
-    elif daily_side == "WAIT" and hourly_side in ("BUY", "SELL"):
-        score += 25.0
-        score += min(25.0, max(0.0, (_row_prob(hourly_row, hourly_side) - 50.0) * 0.50))
-    elif daily_side in ("BUY", "SELL") and hourly_side in ("BUY", "SELL") and daily_side != hourly_side:
-        score += 20.0
-    else:
-        score += 10.0
-
-    daily_trend = str(daily_row.get("Trend", "") or "").upper()
-    hourly_trend = str(hourly_row.get("Trend", "") or "").upper()
-    if daily_trend and daily_trend == hourly_trend and daily_trend in ("UPWARD", "DOWNWARD"):
-        score += 8.0
-
-    score += min(12.0, max(0.0, (_row_edge(daily_row) + _row_edge(hourly_row)) / 4.0))
-    return float(np.clip(score, 0.0, 100.0))
-
-
-def _trade_setup_dashboard_row(symbol: str, daily_row: dict, hourly_row: dict) -> dict:
-    """Combine daily bias and hourly timing into one actionable row."""
-    daily_side = _row_trade_side(daily_row)
-    hourly_side = _row_trade_side(hourly_row)
-    score = _alignment_score(daily_row, hourly_row)
-
-    daily_long = _row_prob(daily_row, "BUY")
-    daily_short = _row_prob(daily_row, "SELL")
-    hourly_long = _row_prob(hourly_row, "BUY")
-    hourly_short = _row_prob(hourly_row, "SELL")
-
-    if daily_side == "BUY" and hourly_side == "BUY":
-        category = "Strong BUY Setup"
-        action = "BUY"
-        instruction = (
-            "Daily bias and hourly timing both favor a long. Look for entry near the hourly "
-            "support/30 EMA/HMA zone; use the listed daily/hourly invalidation as the stop reference."
-        )
-    elif daily_side == "SELL" and hourly_side == "SELL":
-        category = "Strong SELL Setup"
-        action = "SELL"
-        instruction = (
-            "Daily bias and hourly timing both favor a short. Look for entry near the hourly "
-            "resistance/30 EMA/HMA rejection zone; use the listed daily/hourly invalidation as the stop reference."
-        )
-    elif daily_side == "BUY" and hourly_side in ("WAIT", "SELL"):
-        category = "Pullback BUY Watch"
-        action = "WATCH BUY"
-        instruction = (
-            "Daily bias is bullish, but hourly is not confirmed yet. Treat hourly weakness as a possible pullback; "
-            "wait for hourly BUY/30 EMA reclaim before entry."
-        )
-    elif daily_side == "SELL" and hourly_side in ("WAIT", "BUY"):
-        category = "Pullback SELL Watch"
-        action = "WATCH SELL"
-        instruction = (
-            "Daily bias is bearish, but hourly is not confirmed yet. Treat hourly strength as a possible bounce; "
-            "wait for hourly SELL/30 EMA loss or resistance rejection before entry."
-        )
-    elif daily_side == "WAIT" and hourly_side == "BUY":
-        category = "Early BUY Timing"
-        action = "WATCH BUY"
-        instruction = (
-            "Hourly timing is bullish but daily bias is not aligned. Use smaller size or wait for daily bias to improve."
-        )
-    elif daily_side == "WAIT" and hourly_side == "SELL":
-        category = "Early SELL Timing"
-        action = "WATCH SELL"
-        instruction = (
-            "Hourly timing is bearish but daily bias is not aligned. Use smaller size or wait for daily bias to weaken."
-        )
-    else:
-        category = "Conflicting / WAIT"
-        action = "WAIT"
-        instruction = "Daily and hourly signals are mixed or weak. Wait for alignment before placing a trade."
-
-    daily_entry = str(daily_row.get("Entry Zone", "") or "")
-    hourly_entry = str(hourly_row.get("Entry Zone", "") or "")
-    daily_stop = str(daily_row.get("Stop / Invalidation", "") or "")
-    hourly_stop = str(hourly_row.get("Stop / Invalidation", "") or "")
-    daily_target = str(daily_row.get("Target 1", "") or "")
-    hourly_target = str(hourly_row.get("Target 1", "") or "")
-
-    if action in ("BUY", "WATCH BUY"):
-        entry_zone = hourly_entry if hourly_entry and hourly_entry != "Wait" else daily_entry
-        stop_zone = hourly_stop if hourly_stop and hourly_stop != "n/a" else daily_stop
-        target_zone = daily_target if daily_target and daily_target != "n/a" else hourly_target
-        probability = np.nanmean([daily_long, hourly_long])
-    elif action in ("SELL", "WATCH SELL"):
-        entry_zone = hourly_entry if hourly_entry and hourly_entry != "Wait" else daily_entry
-        stop_zone = hourly_stop if hourly_stop and hourly_stop != "n/a" else daily_stop
-        target_zone = daily_target if daily_target and daily_target != "n/a" else hourly_target
-        probability = np.nanmean([daily_short, hourly_short])
-    else:
-        entry_zone = "Wait"
-        stop_zone = "n/a"
-        target_zone = "n/a"
-        probability = np.nanmax([daily_long, daily_short, hourly_long, hourly_short])
-
-    return {
-        "Symbol": symbol,
-        "Category": category,
-        "Action": action,
-        "Alignment Score": round(score, 1),
-        "Avg Direction Probability": round(float(probability), 1) if np.isfinite(probability) else np.nan,
-        "Daily Side": daily_side,
-        "Hourly Side": hourly_side,
-        "Daily Action": daily_row.get("Trade Action", daily_row.get("State", "WAIT")),
-        "Hourly Action": hourly_row.get("Trade Action", hourly_row.get("State", "WAIT")),
-        "Daily Long %": daily_row.get("Long Probability"),
-        "Daily Short %": daily_row.get("Short Probability"),
-        "Hourly Long %": hourly_row.get("Long Probability"),
-        "Hourly Short %": hourly_row.get("Short Probability"),
-        "Daily Trend": daily_row.get("Trend"),
-        "Hourly Trend": hourly_row.get("Trend"),
-        "Daily S/R Rev": daily_row.get("S/R Rev"),
-        "Hourly S/R Rev": hourly_row.get("S/R Rev"),
-        "Daily NTD": daily_row.get("NTD"),
-        "Hourly NTD": hourly_row.get("NTD"),
-        "Entry Zone": entry_zone,
-        "Stop / Invalidation": stop_zone,
-        "Target 1": target_zone,
-        "Trade Instruction": instruction,
-        "Daily Reason": daily_row.get("Reason", ""),
-        "Hourly Reason": hourly_row.get("Reason", ""),
-    }
-
-
-def _sort_trade_setup_dashboard(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
-    category_order = {
-        "Strong BUY Setup": 0,
-        "Strong SELL Setup": 1,
-        "Pullback BUY Watch": 2,
-        "Pullback SELL Watch": 3,
-        "Early BUY Timing": 4,
-        "Early SELL Timing": 5,
-        "Conflicting / WAIT": 6,
-    }
-    out = df.copy()
-    out["_CategoryOrder"] = out["Category"].map(category_order).fillna(9)
-    out["_ScoreSort"] = pd.to_numeric(out["Alignment Score"], errors="coerce").fillna(-1)
-    out["_ProbSort"] = pd.to_numeric(out["Avg Direction Probability"], errors="coerce").fillna(-1)
-    out = out.sort_values(
-        ["_CategoryOrder", "_ScoreSort", "_ProbSort", "Symbol"],
-        ascending=[True, False, False, True],
-        kind="mergesort",
-    )
-    return out.drop(columns=["_CategoryOrder", "_ScoreSort", "_ProbSort"], errors="ignore")
-
-
-def _render_setup_table(title: str, df: pd.DataFrame, empty_message: str, max_rows: int):
-    st.markdown(f"#### {title}")
-    if df is None or df.empty:
-        st.info(empty_message)
-        return
-    st.dataframe(df.head(max_rows), use_container_width=True, hide_index=True)
-
 
 
 # =========================
@@ -1569,7 +1491,7 @@ st.caption(
      "Toggle between Stocks and Forex. Hourly and daily views use real trading bars only and include trade instructions plus rule-based long/short probabilities."
 )
 
-tab_chart, tab_daily, tab_scanner, tab_setup, tab_buy_sell, tab_rules = st.tabs(["Hourly Trading Chart", "Daily Trading Chart", "Scanner", "Trade Setup Dashboard", "Buy/Sell List", "Trading Rules"])
+tab_chart, tab_daily, tab_scanner, tab_buy_sell, tab_rules = st.tabs(["Hourly Trading Chart", "Daily Trading Chart", "Scanner", "Buy/Sell List", "Trading Rules"])
 
 with tab_chart:
     data = fetch_market_ohlc(symbol, period, interval)
@@ -1600,7 +1522,7 @@ Edge: {safe_float(trade.get('Probability Edge')):.0f}%<br>
         metric_cols[1].metric("Trade Action", trade.get("Trade Action", "WAIT"))
         metric_cols[2].metric("Long Prob.", f"{safe_float(trade.get('Long Probability')):.0f}%")
         metric_cols[3].metric("Short Prob.", f"{safe_float(trade.get('Short Probability')):.0f}%")
-        metric_cols[4].metric("Trend", trade.get("Trend Direction"), f"{safe_float(trade.get('Trend Slope')):.7f}/bar")
+        metric_cols[4].metric("Structure", trade.get("Current Structure", trade.get("Trend Direction")), f"Trend {trade.get('Trend Direction')} • {safe_float(trade.get('Trend Slope')):.7f}/bar")
         metric_cols[5].metric("S/R Reversal", f"{safe_float(trade.get('S/R Reversal')):+.2f}")
         metric_cols[6].metric("ADX", f"{safe_float(trade.get('ADX')):.1f}")
 
@@ -1645,7 +1567,7 @@ Edge: {safe_float(daily_trade.get('Probability Edge')):.0f}%<br>
         dcols[1].metric("Trade Action", daily_trade.get("Trade Action", "WAIT"))
         dcols[2].metric("Long Prob.", f"{safe_float(daily_trade.get('Long Probability')):.0f}%")
         dcols[3].metric("Short Prob.", f"{safe_float(daily_trade.get('Short Probability')):.0f}%")
-        dcols[4].metric("Trend", daily_trade.get("Trend Direction"), f"{safe_float(daily_trade.get('Trend Slope')):.7f}/bar")
+        dcols[4].metric("Structure", daily_trade.get("Current Structure", daily_trade.get("Trend Direction")), f"Trend {daily_trade.get('Trend Direction')} • {safe_float(daily_trade.get('Trend Slope')):.7f}/bar")
         dcols[5].metric("S/R Reversal", f"{safe_float(daily_trade.get('S/R Reversal')):+.2f}")
         dcols[6].metric("ADX", f"{safe_float(daily_trade.get('ADX')):.1f}")
 
@@ -1751,208 +1673,6 @@ with tab_scanner:
                 st.dataframe(all_df, use_container_width=True, hide_index=True)
 
 
-with tab_setup:
-    st.subheader(f"{asset_class} Trade Setup Dashboard")
-    st.caption(
-        "Combines the Daily chart bias with Hourly entry timing so users can quickly see aligned trades, "
-        "pullback watch setups, and conflicting signals. Daily = bigger direction; Hourly = entry timing."
-    )
-
-    st.markdown(
-        """
-**How to use this dashboard**
-
-- **Strong BUY Setup**: Daily and Hourly both favor BUY. This is the cleanest long alignment.
-- **Strong SELL Setup**: Daily and Hourly both favor SELL. This is the cleanest short alignment.
-- **Pullback BUY Watch**: Daily is bullish but Hourly is weak or neutral. Wait for hourly reversal/30 EMA reclaim.
-- **Pullback SELL Watch**: Daily is bearish but Hourly is bouncing or neutral. Wait for hourly rejection/30 EMA loss.
-- **Conflicting / WAIT**: Signals are mixed; avoid forcing a trade.
-"""
-    )
-
-    ts_col1, ts_col2, ts_col3 = st.columns([1, 1, 1])
-    ts_max_rows = int(ts_col1.number_input(
-        "Max rows per setup table",
-        min_value=5,
-        max_value=200,
-        value=100,
-        step=5,
-        key=f"setup_dashboard_max_rows_{asset_class}",
-    ))
-    ts_universe = ts_col2.multiselect(
-        f"{asset_class} symbols for setup dashboard",
-        current_universe,
-        default=current_universe,
-        key=f"setup_dashboard_universe_{asset_class}",
-    )
-    ts_show_wait = ts_col3.checkbox(
-        "Show conflicting / WAIT rows",
-        value=False,
-        key=f"setup_dashboard_show_wait_{asset_class}",
-    )
-
-    if st.button(f"Build {asset_class} Trade Setup Dashboard", use_container_width=True, key=f"build_setup_dashboard_{asset_class}"):
-        rows = []
-        progress = st.progress(0)
-        status = st.empty()
-        total_steps = max(1, len(ts_universe) * 2)
-        step = 0
-
-        hourly_cfg = cfg.copy()
-        daily_cfg_for_setup = cfg.copy()
-        daily_cfg_for_setup["period"] = cfg.get("daily_period", "1y")
-        daily_cfg_for_setup["interval"] = "1d"
-        daily_cfg_for_setup["right_padding"] = max(4, int(cfg.get("right_padding", 12)))
-
-        for sym in ts_universe:
-            daily_row = None
-            hourly_row = None
-
-            status.write(f"Scanning Daily {sym}...")
-            try:
-                daily_row = scan_symbol(sym, daily_cfg_for_setup)
-            except Exception as exc:
-                daily_row = {
-                    "Symbol": sym,
-                    "State": "ERROR",
-                    "Trade Action": "WAIT",
-                    "Reason": f"Daily scan error: {exc}",
-                }
-            step += 1
-            progress.progress(step / total_steps)
-
-            status.write(f"Scanning Hourly {sym}...")
-            try:
-                hourly_row = scan_symbol(sym, hourly_cfg)
-            except Exception as exc:
-                hourly_row = {
-                    "Symbol": sym,
-                    "State": "ERROR",
-                    "Trade Action": "WAIT",
-                    "Reason": f"Hourly scan error: {exc}",
-                }
-            step += 1
-            progress.progress(step / total_steps)
-
-            if daily_row is None:
-                daily_row = {
-                    "Symbol": sym,
-                    "State": "NO DATA",
-                    "Trade Action": "WAIT",
-                    "Reason": "No Daily data returned.",
-                }
-            if hourly_row is None:
-                hourly_row = {
-                    "Symbol": sym,
-                    "State": "NO DATA",
-                    "Trade Action": "WAIT",
-                    "Reason": "No Hourly data returned.",
-                }
-
-            rows.append(_trade_setup_dashboard_row(sym, daily_row, hourly_row))
-
-        status.empty()
-        progress.empty()
-
-        setup_results = _sort_trade_setup_dashboard(pd.DataFrame(rows))
-        st.session_state[f"trade_setup_dashboard_results_{asset_class}"] = setup_results
-
-    setup_results = st.session_state.get(f"trade_setup_dashboard_results_{asset_class}", pd.DataFrame())
-
-    if setup_results is None or setup_results.empty:
-        st.info("Click the button above to build the Trade Setup Dashboard.")
-    else:
-        ordered_results = _sort_trade_setup_dashboard(setup_results)
-
-        strong_buy = ordered_results[ordered_results["Category"].eq("Strong BUY Setup")]
-        strong_sell = ordered_results[ordered_results["Category"].eq("Strong SELL Setup")]
-        pullback_buy = ordered_results[ordered_results["Category"].eq("Pullback BUY Watch")]
-        pullback_sell = ordered_results[ordered_results["Category"].eq("Pullback SELL Watch")]
-        early_buy = ordered_results[ordered_results["Category"].eq("Early BUY Timing")]
-        early_sell = ordered_results[ordered_results["Category"].eq("Early SELL Timing")]
-        wait_rows = ordered_results[ordered_results["Category"].eq("Conflicting / WAIT")]
-
-        setup_metrics = st.columns(7)
-        setup_metrics[0].metric("Strong BUY", int(len(strong_buy)))
-        setup_metrics[1].metric("Strong SELL", int(len(strong_sell)))
-        setup_metrics[2].metric("BUY Pullbacks", int(len(pullback_buy)))
-        setup_metrics[3].metric("SELL Pullbacks", int(len(pullback_sell)))
-        setup_metrics[4].metric("Early BUY", int(len(early_buy)))
-        setup_metrics[5].metric("Early SELL", int(len(early_sell)))
-        setup_metrics[6].metric("WAIT / Conflict", int(len(wait_rows)))
-
-        priority_cols = [
-            "Symbol", "Category", "Action", "Alignment Score", "Avg Direction Probability",
-            "Daily Side", "Hourly Side", "Daily Action", "Hourly Action",
-            "Daily Long %", "Daily Short %", "Hourly Long %", "Hourly Short %",
-            "Daily Trend", "Hourly Trend", "Daily S/R Rev", "Hourly S/R Rev",
-            "Entry Zone", "Stop / Invalidation", "Target 1", "Trade Instruction",
-        ]
-        display_cols = [c for c in priority_cols if c in ordered_results.columns]
-
-        _render_setup_table(
-            "🟢 Strong BUY Setups — Daily bias + Hourly timing aligned",
-            strong_buy[display_cols],
-            "No Strong BUY setups found.",
-            ts_max_rows,
-        )
-        _render_setup_table(
-            "🔴 Strong SELL Setups — Daily bias + Hourly timing aligned",
-            strong_sell[display_cols],
-            "No Strong SELL setups found.",
-            ts_max_rows,
-        )
-
-        watch_tab_buy, watch_tab_sell, early_tab_buy, early_tab_sell = st.tabs([
-            "🟡 Pullback BUY Watch",
-            "🟡 Pullback SELL Watch",
-            "🟢 Early BUY Timing",
-            "🔴 Early SELL Timing",
-        ])
-
-        with watch_tab_buy:
-            _render_setup_table(
-                "Pullback BUY Watch — bullish daily bias, waiting for hourly confirmation",
-                pullback_buy[display_cols],
-                "No Pullback BUY watch rows found.",
-                ts_max_rows,
-            )
-
-        with watch_tab_sell:
-            _render_setup_table(
-                "Pullback SELL Watch — bearish daily bias, waiting for hourly confirmation",
-                pullback_sell[display_cols],
-                "No Pullback SELL watch rows found.",
-                ts_max_rows,
-            )
-
-        with early_tab_buy:
-            _render_setup_table(
-                "Early BUY Timing — hourly long timing before daily alignment",
-                early_buy[display_cols],
-                "No Early BUY timing rows found.",
-                ts_max_rows,
-            )
-
-        with early_tab_sell:
-            _render_setup_table(
-                "Early SELL Timing — hourly short timing before daily alignment",
-                early_sell[display_cols],
-                "No Early SELL timing rows found.",
-                ts_max_rows,
-            )
-
-        if ts_show_wait:
-            with st.expander("Conflicting / WAIT rows", expanded=False):
-                if wait_rows.empty:
-                    st.info("No conflicting / WAIT rows.")
-                else:
-                    st.dataframe(wait_rows[display_cols].head(ts_max_rows), use_container_width=True, hide_index=True)
-
-        with st.expander("All Trade Setup Dashboard results", expanded=False):
-            st.dataframe(ordered_results[display_cols].head(max(ts_max_rows * 2, ts_max_rows)), use_container_width=True, hide_index=True)
-
-
 with tab_buy_sell:
     st.subheader(f"{asset_class} Buy/Sell List")
     st.caption(
@@ -2040,7 +1760,7 @@ with tab_buy_sell:
         preferred_cols = [
             "Timeframe", "Symbol", "State", "Bias", "Trade Action",
             "Long Probability", "Short Probability", "Probability Edge",
-            "Trend", "S/R Rev", "NTD", "ADX", "Last Close",
+            "Trend", "Current Structure", "S/R Rev", "NTD", "ADX", "Last Close",
             "Support", "Resistance", "Entry Zone", "Stop / Invalidation",
             "Target 1", "Trade Instruction", "Reason",
         ]
