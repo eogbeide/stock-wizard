@@ -36,6 +36,7 @@
 # (NEW) S/R 0.0 Up Cross tab mirrors Smoothed NPX line tab
 # (NEW) Buy/Sell Picks tab scans daily bullish confirmations and bearish continuation/rejection setups with Upward/Downward trend groups for Daily and 48h Hourly charts.
 # (NEW) S/R +0.5 Cross tab scans daily upward crosses through +0.5 on the S/R Reversal Index.
+# (NEW) Daily -0.75 Picks tab scans S/R Reversal Index upward crosses through -0.75 grouped by NTD trend direction and sorted by pips since cross.
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -5837,15 +5838,163 @@ def _build_buy_sell_timing_scan_rows(symbols,
     ).drop(columns=["_signal_order", "_trend_order", "_bars_order", "_abs_hist"])
     return df
 
+
+# ========= Daily -0.75 Picks helpers =========
+def _price_move_units_since_cross(symbol: str, current_price: float, cross_price: float):
+    """
+    Return signed move since cross in pips for FX symbols and price points for stocks/ETFs.
+    """
+    try:
+        cur = float(current_price)
+        cr = float(cross_price)
+    except Exception:
+        return float("nan"), float("nan"), "points"
+    if not np.isfinite(cur) or not np.isfinite(cr):
+        return float("nan"), float("nan"), "points"
+    ps = pip_size_for_symbol(symbol)
+    if ps is not None and ps > 0:
+        signed = (cur - cr) / ps
+        return float(signed), float(abs(signed)), "pips"
+    signed = cur - cr
+    return float(signed), float(abs(signed)), "points"
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def daily_minus075_pick_info(symbol: str,
+                             sr_smooth_span: int = 8,
+                             recent_bars: int = 30,
+                             confirm_bars: int = 2,
+                             threshold: float = -0.75,
+                             ntd_window_for_pick: int = 60,
+                             ntd_trend_lookback: int = 90,
+                             price_trend_lookback: int = 90):
+    """
+    Daily scanner row for symbols where:
+      1) S/R Reversal Index was below -0.75,
+      2) S/R Reversal Index recently crossed upward through -0.75,
+      3) row is grouped by the NTD trendline direction.
+    """
+    try:
+        close = fetch_hist(symbol)
+        close = _coerce_1d_series(close).dropna()
+        if close.empty or close.shape[0] < max(45, int(ntd_window_for_pick), int(ntd_trend_lookback)//2):
+            return None
+
+        support = close.rolling(30, min_periods=1).min()
+        resistance = close.rolling(30, min_periods=1).max()
+        sri = compute_sr_reversal_index(
+            price=close,
+            support=support,
+            resistance=resistance,
+            smooth_span=int(sr_smooth_span),
+        )
+
+        ev = _last_threshold_up_cross_after_reversal_info(
+            sri,
+            threshold=float(threshold),
+            recent_bars=int(recent_bars),
+            confirm_bars=int(confirm_bars),
+        )
+        if ev is None:
+            return None
+
+        cross_time = ev.get("time")
+        try:
+            cross_price = float(close.loc[cross_time]) if cross_time in close.index else float(close.loc[:cross_time].iloc[-1])
+        except Exception:
+            cross_price = float("nan")
+        last_close = _safe_last_float(close)
+        signed_move, abs_move, unit = _price_move_units_since_cross(symbol, last_close, cross_price)
+
+        ntd = compute_normalized_trend(close, window=int(ntd_window_for_pick)).dropna()
+        if ntd.empty or ntd.shape[0] < 3:
+            return None
+        _, ntd_slope = slope_line(ntd, int(ntd_trend_lookback))
+        ntd_direction = "Upward" if np.isfinite(ntd_slope) and ntd_slope >= 0 else "Downward"
+
+        _, price_slope = slope_line(close, int(price_trend_lookback))
+        price_direction = "Upward" if np.isfinite(price_slope) and price_slope >= 0 else "Downward"
+
+        row = {
+            "Symbol": symbol,
+            "NTD Trend Direction": ntd_direction,
+            "Bars Since -0.75 Cross": int(ev.get("bars_since", 0)),
+            "Cross Date": cross_time,
+            "Price at Cross": cross_price,
+            "Last Close": last_close,
+            "Move Since Cross": signed_move,
+            "Abs Move Since Cross": abs_move,
+            "Move Unit": unit,
+            "Current S/R Reversal": float(ev.get("current_value", np.nan)),
+            "S/R Value at Cross": float(ev.get("value_at_cross", np.nan)),
+            "Recent Minimum Below -0.75": float(ev.get("recent_min", np.nan)),
+            "Current NTD": _safe_last_float(ntd),
+            "NTD Trend Slope": float(ntd_slope) if np.isfinite(ntd_slope) else float("nan"),
+            "Price Trend Direction": price_direction,
+            "Price Trend Slope": float(price_slope) if np.isfinite(price_slope) else float("nan"),
+        }
+        return row
+    except Exception:
+        return None
+
+
+def _format_daily_minus075_picks(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy()
+    if out.empty:
+        return out
+    if "Cross Date" in out.columns:
+        out["Cross Date"] = out["Cross Date"].astype(str)
+    for col in [
+        "Price at Cross", "Last Close", "Move Since Cross", "Abs Move Since Cross",
+        "Current S/R Reversal", "S/R Value at Cross", "Recent Minimum Below -0.75",
+        "Current NTD", "NTD Trend Slope", "Price Trend Slope"
+    ]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+    return out
+
+
+def _render_daily_minus075_pick_table(title: str, df: pd.DataFrame):
+    st.subheader(title)
+    if df is None or df.empty:
+        st.info("No matching symbols found.")
+        return
+    sort_cols = [c for c in ["Abs Move Since Cross", "Bars Since -0.75 Cross", "Symbol"] if c in df.columns]
+    ascending = [True] * len(sort_cols)
+    show_df = df.sort_values(sort_cols, ascending=ascending) if sort_cols else df.copy()
+    show_df = _format_daily_minus075_picks(show_df)
+    display_cols = [
+        "Symbol",
+        "NTD Trend Direction",
+        "Bars Since -0.75 Cross",
+        "Move Since Cross",
+        "Abs Move Since Cross",
+        "Move Unit",
+        "Cross Date",
+        "Price at Cross",
+        "Last Close",
+        "Current S/R Reversal",
+        "S/R Value at Cross",
+        "Recent Minimum Below -0.75",
+        "Current NTD",
+        "NTD Trend Slope",
+        "Price Trend Direction",
+        "Price Trend Slope",
+    ]
+    display_cols = [c for c in display_cols if c in show_df.columns]
+    st.dataframe(show_df[display_cols], use_container_width=True, hide_index=True)
+
+
 # Tabs
-tab1, tab3, tab18, tab19, tab20, tab21, tab22 = st.tabs([
+tab1, tab3, tab18, tab19, tab20, tab21, tab22, tab23 = st.tabs([
     "Original Forecast",
     "Bull vs Bears",
     "Price Trend Bars",
     "Cumulative Frequency",
     "Trade Momentum",
     "Rolling Return Strength",
-    "Buy/Sell Timing"
+    "Buy/Sell Timing",
+    "Daily -0.75 Picks"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -7684,3 +7833,92 @@ Use this tab for timing, not by itself. The best workflow is:
                         use_container_width=True,
                         hide_index=True
                     )
+
+
+# --- Tab 23: Daily -0.75 Picks ---
+with tab23:
+    st.header("Daily -0.75 Picks")
+    st.caption(
+        "Finds symbols where the Daily S/R Reversal Index was below -0.75, recently crossed "
+        "upward through -0.75, then groups the results by the Daily NTD trendline direction. "
+        "Rows are sorted by the absolute move since the cross, so the earliest/closest moves appear first."
+    )
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1:
+        d075_recent_bars = st.slider(
+            "Recent cross window (daily bars)",
+            1, 120, 30, 1,
+            key="daily_minus075_picks_recent_bars"
+        )
+    with c2:
+        d075_confirm_bars = st.slider(
+            "Rising confirmation bars",
+            1, 6, 2, 1,
+            key="daily_minus075_picks_confirm_bars"
+        )
+    with c3:
+        d075_ntd_window = st.slider(
+            "NTD window",
+            10, 300, int(ntd_window), 5,
+            key="daily_minus075_picks_ntd_window"
+        )
+    with c4:
+        d075_ntd_trend_lb = st.slider(
+            "NTD trendline lookback",
+            10, 240, 90, 5,
+            key="daily_minus075_picks_ntd_trend_lb"
+        )
+
+    st.info(
+        "Trade use: Upward NTD trendline rows are stronger buy-reversal candidates. "
+        "Downward NTD trendline rows are early/countertrend bounces and generally need more confirmation."
+    )
+
+    rows = []
+    scan_progress = st.progress(0)
+    scan_status = st.empty()
+    for i, sym in enumerate(universe):
+        scan_status.caption(f"Scanning {sym} ({i + 1}/{len(universe)})...")
+        row = daily_minus075_pick_info(
+            sym,
+            sr_smooth_span=int(sr_rev_smooth),
+            recent_bars=int(d075_recent_bars),
+            confirm_bars=int(d075_confirm_bars),
+            threshold=-0.75,
+            ntd_window_for_pick=int(d075_ntd_window),
+            ntd_trend_lookback=int(d075_ntd_trend_lb),
+            price_trend_lookback=int(slope_lb_daily),
+        )
+        if row is not None:
+            rows.append(row)
+        scan_progress.progress((i + 1) / max(1, len(universe)))
+    scan_status.empty()
+    scan_progress.empty()
+
+    picks_df = pd.DataFrame(rows)
+    if picks_df.empty:
+        st.info("No Daily -0.75 upward-cross picks found for the current universe/settings.")
+    else:
+        up_df = picks_df[picks_df["NTD Trend Direction"].eq("Upward")].copy()
+        down_df = picks_df[picks_df["NTD Trend Direction"].eq("Downward")].copy()
+
+        up_count = len(up_df)
+        down_count = len(down_df)
+        st.markdown(f"**Matches found:** {len(picks_df)} • **NTD Upward:** {up_count} • **NTD Downward:** {down_count}")
+
+        _render_daily_minus075_pick_table(
+            "1) Recently crossed upward through -0.75 — NTD Trendline Upward",
+            up_df
+        )
+        _render_daily_minus075_pick_table(
+            "2) Recently crossed upward through -0.75 — NTD Trendline Downward",
+            down_df
+        )
+
+        with st.expander("All Daily -0.75 picks", expanded=False):
+            all_df = picks_df.copy()
+            all_df["_ntd_order"] = all_df["NTD Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
+            all_df = all_df.sort_values(["_ntd_order", "Abs Move Since Cross", "Bars Since -0.75 Cross", "Symbol"]).drop(columns=["_ntd_order"])
+            all_df = _format_daily_minus075_picks(all_df)
+            st.dataframe(all_df, use_container_width=True, hide_index=True)
