@@ -2089,6 +2089,97 @@ def _top_daily_sr_buy_opportunities(*dfs: pd.DataFrame, limit: int = 3) -> pd.Da
     return candidates[cols].reset_index(drop=True)
 
 
+def _top_downtrend_sr_ntd_upward_reversal_candidates(sr_ntd_df: pd.DataFrame, limit: int = 3) -> pd.DataFrame:
+    """Top rows from the Price Trend Downward S/R-vs-NTD table where both
+    the current S/R direction and the NTD trend direction are upward.
+
+    These are possible early reversal / bounce candidates inside a still-downward
+    price trend, so they are shown separately from the main top-buy table.
+    """
+    if sr_ntd_df is None or sr_ntd_df.empty:
+        return pd.DataFrame()
+
+    df = sr_ntd_df.copy()
+    for col in [
+        "Price Trend Direction",
+        "S/R Direction",
+        "NTD Trend Direction",
+        "Current S/R Reversal",
+        "Current NTD",
+        "Abs Pips/Points Since Cross",
+        "Bars Since Cross",
+        "Symbol",
+        "Cross Type",
+    ]:
+        if col not in df.columns:
+            df[col] = np.nan
+
+    candidates = df[
+        df["Price Trend Direction"].astype(str).eq("Downward")
+        & df["S/R Direction"].astype(str).eq("Upward")
+        & df["NTD Trend Direction"].astype(str).eq("Upward")
+    ].copy()
+
+    if candidates.empty:
+        return pd.DataFrame()
+
+    sr_val = pd.to_numeric(candidates["Current S/R Reversal"], errors="coerce")
+    ntd_val = pd.to_numeric(candidates["Current NTD"], errors="coerce")
+    abs_units = pd.to_numeric(candidates["Abs Pips/Points Since Cross"], errors="coerce")
+    bars = pd.to_numeric(candidates["Bars Since Cross"], errors="coerce")
+
+    # This score rewards improving S/R and NTD conditions while still treating
+    # these as countertrend/early reversal candidates because the price trend is downward.
+    candidates["Reversal Watch Score"] = (
+        3.0
+        + 1.5 * candidates["S/R Direction"].astype(str).eq("Upward").astype(float)
+        + 1.5 * candidates["NTD Trend Direction"].astype(str).eq("Upward").astype(float)
+        + 1.0 * (sr_val > 0.0).astype(float)
+        + 0.75 * (ntd_val > -0.25).astype(float)
+    ).round(1)
+
+    candidates["Reversal Watch Explanation"] = candidates.apply(
+        lambda r: (
+            "Price trend is still downward, but S/R Direction and NTD Trend Direction are both upward. "
+            f"{r.get('Cross Type', 'S/R crossed NTD')} occurred {r.get('Bars Since Cross', 'n/a')} daily bars ago. "
+            "Treat as an early reversal/bounce watch candidate, not a confirmed trend-following buy."
+        ),
+        axis=1,
+    )
+
+    candidates["_AbsSort"] = abs_units.fillna(np.inf)
+    candidates["_BarsSort"] = bars.fillna(np.inf)
+    candidates = candidates.sort_values(
+        by=["Reversal Watch Score", "_AbsSort", "_BarsSort", "Symbol"],
+        ascending=[False, True, True, True],
+        kind="mergesort",
+    )
+    candidates = candidates.drop_duplicates(subset=["Symbol"], keep="first").head(int(max(1, limit)))
+
+    preferred = [
+        "Symbol",
+        "Reversal Watch Score",
+        "Cross Type",
+        "S/R Direction",
+        "Price Trend Direction",
+        "NTD Trend Direction",
+        "Bars Since Cross",
+        "Pips/Points Since Cross",
+        "Abs Pips/Points Since Cross",
+        "Cross Time",
+        "Price at Cross",
+        "Last Close",
+        "Current S/R Reversal",
+        "Current NTD",
+        "Reversal Watch Explanation",
+    ]
+    cols = [c for c in preferred if c in candidates.columns] + [
+        c for c in candidates.columns
+        if c not in preferred and not c.startswith("_") and not c.endswith(" Raw")
+    ]
+    return candidates[cols].reset_index(drop=True)
+
+
 # =========================
 # Main app
 # =========================
@@ -2731,6 +2822,7 @@ with tab_daily_sr_cross:
 
         top_buy_df = _top_daily_sr_buy_opportunities(sr_ntd_df, minus05_df, zero_df, limit=3)
         top_level_cross_buy_df = _top_daily_sr_buy_opportunities(minus05_df, zero_df, limit=3)
+        top_downtrend_reversal_watch_df = _top_downtrend_sr_ntd_upward_reversal_candidates(sr_ntd_df, limit=3)
 
         st.markdown("### Top 3 Buy Opportunities")
         st.caption(
@@ -2753,6 +2845,18 @@ with tab_daily_sr_cross:
             st.info("No top buy opportunities found from the -0.5 and 0.0 upward-cross tables.")
         else:
             st.dataframe(top_level_cross_buy_df, use_container_width=True, hide_index=True)
+
+        st.markdown("### Top 3 Downtrend Reversal Watch — S/R Upward + NTD Trend Upward")
+        st.caption(
+            "This quick table is pulled only from the **Price Trend Downward — S/R crossed NTD** table. "
+            "It shows symbols where the broader price trend is still downward, but both **S/R Direction** "
+            "and **NTD Trend Direction** are upward. Treat these as early bounce/reversal watch candidates, "
+            "not confirmed trend-following buys."
+        )
+        if top_downtrend_reversal_watch_df.empty:
+            st.info("No Price Trend Downward S/R-vs-NTD rows currently have both S/R Direction and NTD Trend Direction upward.")
+        else:
+            st.dataframe(top_downtrend_reversal_watch_df, use_container_width=True, hide_index=True)
 
         st.markdown("### (a) S/R Reversal Line crossing the NTD Line")
         st.caption("These tables show the most recent daily S/R-vs-NTD line cross, split by daily price trend direction and ordered by pips/points since the cross.")
