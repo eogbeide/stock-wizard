@@ -1709,7 +1709,7 @@ def daily_ntd_dip_scan_row(symbol: str, threshold: float, cfg: dict, lookback: i
             if np.isfinite(current_price) and np.isfinite(cross_price):
                 move_since_cross = current_price - cross_price
 
-        ntd_slope_line, ntd_slope = regression_line(ntd, min(30, max(5, len(ntd))))
+        ntd_slope_line, ntd_slope, ntd_slope_r2 = regression_line(ntd, min(30, max(5, len(ntd))))
         ntd_direction = _trend_direction_from_slope(ntd_slope)
 
         support, resistance = support_resistance(df, int(cfg.get("sr_lookback", 120)))
