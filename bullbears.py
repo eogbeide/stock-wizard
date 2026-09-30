@@ -4,7 +4,8 @@
 # 30 EMA crosses, NTD/S/R reversal confirmation, Stocks/FX scanner,
 # and chart-level probability trade instructions for easier BUY/SELL decision-making.
 # (UPDATED) Structure metric now uses directional red/green trend badges and action/trend alignment text.
-# (UPDATED) Symbol lists and scanner tables are alphabetized; Buy/Sell List is split into Daily/Hourly tables with Top 3 picks, confirmation timestamps, and confirmation explanations.
+# (UPDATED) Symbol lists and scanner tables are alphabetized; Buy/Sell List is split into Daily and Hourly tables.
+# (UPDATED) Buy/Sell List probabilities now use the same current config/data signature as charts and show Top 3 picks with confirmation timing.
 
 import math
 import time
@@ -917,6 +918,116 @@ def probability_bar_values(trade: dict) -> tuple[float, float, float]:
     return long_prob, short_prob, edge
 
 
+def format_timestamp(value) -> str:
+    """Format a timestamp for user-facing scanner/chart tables."""
+    try:
+        if value is None or (isinstance(value, float) and not np.isfinite(value)):
+            return ""
+        ts = pd.Timestamp(value)
+        if pd.isna(ts):
+            return ""
+        if ts.tzinfo is None:
+            ts = ts.tz_localize(PACIFIC)
+        else:
+            ts = ts.tz_convert(PACIFIC)
+        return ts.strftime("%Y-%m-%d %H:%M %Z")
+    except Exception:
+        try:
+            return str(value)
+        except Exception:
+            return ""
+
+
+def _latest_nonempty_timestamp(*values):
+    """Return the latest non-empty timestamp-like value from inputs."""
+    candidates = []
+    for val in values:
+        try:
+            if val is None:
+                continue
+            ts = pd.Timestamp(val)
+            if pd.isna(ts):
+                continue
+            candidates.append(ts)
+        except Exception:
+            continue
+    if not candidates:
+        return None
+    return max(candidates)
+
+
+def build_confirmation_details(state: str,
+                               current_structure: str,
+                               trend_slope: float,
+                               sr_last: float,
+                               sr_delta: float,
+                               ntd_last: float,
+                               ntd_delta: float,
+                               cross_up: bool,
+                               cross_up_time,
+                               cross_down: bool,
+                               cross_down_time,
+                               bull_bars,
+                               bull_time,
+                               bear_bars,
+                               bear_time) -> tuple:
+    """Explain what confirmed or warned the current trade state."""
+    state_text = str(state or "WAIT").upper()
+    trend_text = "upward" if np.isfinite(trend_slope) and trend_slope >= 0 else "downward"
+    sources = []
+    times = []
+    details = []
+
+    if "BUY" in state_text:
+        if bull_bars is not None:
+            sources.append("Support reversal")
+            times.append(bull_time)
+            details.append(f"support-reversal marker {bull_bars} bars ago")
+        if cross_up:
+            sources.append("30 EMA cross up")
+            times.append(cross_up_time)
+            details.append("price recently crossed above 30 EMA")
+        if np.isfinite(sr_last) and sr_last >= 0:
+            sources.append("S/R above 0")
+            details.append(f"S/R Reversal positive ({sr_last:.2f})")
+        if np.isfinite(sr_delta) and sr_delta > 0:
+            sources.append("S/R rising")
+            details.append("S/R Reversal is rising")
+        if np.isfinite(ntd_delta) and ntd_delta > 0:
+            sources.append("NTD rising")
+            details.append("NTD is improving")
+    elif "SELL" in state_text:
+        if bear_bars is not None:
+            sources.append("Resistance rejection")
+            times.append(bear_time)
+            details.append(f"resistance-rejection marker {bear_bars} bars ago")
+        if cross_down:
+            sources.append("30 EMA cross down")
+            times.append(cross_down_time)
+            details.append("price recently crossed below 30 EMA")
+        if np.isfinite(sr_last) and sr_last <= 0:
+            sources.append("S/R below 0")
+            details.append(f"S/R Reversal negative ({sr_last:.2f})")
+        if np.isfinite(sr_delta) and sr_delta < 0:
+            sources.append("S/R falling")
+            details.append("S/R Reversal is falling")
+        if np.isfinite(ntd_delta) and ntd_delta < 0:
+            sources.append("NTD falling")
+            details.append("NTD is weakening")
+    else:
+        sources.append("No confirmed setup")
+        details.append("probability edge or price-structure confirmation is not strong enough")
+
+    if current_structure:
+        details.append(f"structure: {current_structure}")
+    details.append(f"trendline direction: {trend_text}")
+
+    confirmation_time = _latest_nonempty_timestamp(*times)
+    source_text = " + ".join(dict.fromkeys([s for s in sources if s])) if sources else "No confirmed setup"
+    explanation = "; ".join(dict.fromkeys([d for d in details if d])) if details else "No clean confirmation."
+    return confirmation_time, source_text, explanation
+
+
 
 def trade_trend_alignment(trade: dict) -> dict:
     """Describe whether the trade action and current trend direction agree.
@@ -1155,30 +1266,26 @@ def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict)
         ntd_delta=ntd_delta,
     )
 
-    confirmation_details = build_confirmation_details(
+    confirmation_time, confirmation_source, confirmation_explanation = build_confirmation_details(
         state=state,
-        bias=bias,
-        bull_time=bull_time,
-        bear_time=bear_time,
-        cross_up_time=cross_up_time,
-        cross_down_time=cross_down_time,
-        current_time=df.index[-1] if len(df.index) else None,
         current_structure=current_structure,
-        trend_up=trend_up,
-        trend_down=trend_down,
+        trend_slope=trend_slope,
         sr_last=sr_last,
-        ntd_last=ntd_last,
         sr_delta=sr_delta,
+        ntd_last=ntd_last,
         ntd_delta=ntd_delta,
-        price_above_ema30=price_above_ema30,
-        price_below_ema30=price_below_ema30,
-        price_above_hma=price_above_hma,
-        price_below_hma=price_below_hma,
+        cross_up=cross_up,
+        cross_up_time=cross_up_time,
+        cross_down=cross_down,
+        cross_down_time=cross_down_time,
+        bull_bars=bull_bars,
+        bull_time=bull_time,
+        bear_bars=bear_bars,
+        bear_time=bear_time,
     )
 
     return {
         **probability_info,
-        **confirmation_details,
         "State": state,
         "Bias": bias,
         "Reason": reason,
@@ -1206,6 +1313,10 @@ def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict)
         "Bars Since 30 EMA Cross Down": cross_down_bars,
         "Bull S/R Bars": bull_bars,
         "Bear S/R Bars": bear_bars,
+        "Last Bar Time": close.index[-1] if len(close.index) else None,
+        "Confirmation Time": confirmation_time,
+        "Confirmation Source": confirmation_source,
+        "Confirmation Explanation": confirmation_explanation,
         "Entry Zone": entry_zone,
         "Stop / Invalidation": stop_zone,
         "Target 1": target1,
@@ -1435,126 +1546,6 @@ def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
     plt.close(fig)
 
 
-
-
-def format_confirmation_time(ts) -> str:
-    """Format signal/confirmation timestamps in Pacific time for scanner tables."""
-    if ts is None or (isinstance(ts, float) and not np.isfinite(ts)):
-        return "n/a"
-    try:
-        t = pd.Timestamp(ts)
-        if pd.isna(t):
-            return "n/a"
-        if t.tzinfo is None:
-            t = t.tz_localize(PACIFIC)
-        else:
-            t = t.tz_convert(PACIFIC)
-        return t.strftime("%Y-%m-%d %H:%M PST")
-    except Exception:
-        return str(ts)
-
-
-def _latest_timestamp(*timestamps):
-    """Return the latest non-null pandas timestamp from a set of candidate timestamps."""
-    clean = []
-    for ts in timestamps:
-        try:
-            if ts is None:
-                continue
-            t = pd.Timestamp(ts)
-            if pd.isna(t):
-                continue
-            clean.append(t)
-        except Exception:
-            continue
-    if not clean:
-        return None
-    try:
-        return max(clean)
-    except Exception:
-        return clean[-1]
-
-
-def build_confirmation_details(state: str,
-                               bias: str,
-                               bull_time=None,
-                               bear_time=None,
-                               cross_up_time=None,
-                               cross_down_time=None,
-                               current_time=None,
-                               current_structure: str = "",
-                               trend_up: bool = False,
-                               trend_down: bool = False,
-                               sr_last: float = np.nan,
-                               ntd_last: float = np.nan,
-                               sr_delta: float = np.nan,
-                               ntd_delta: float = np.nan,
-                               price_above_ema30: bool = False,
-                               price_below_ema30: bool = False,
-                               price_above_hma: bool = False,
-                               price_below_hma: bool = False) -> dict:
-    """Create a user-facing confirmation timestamp and concise explanation."""
-    state_text = str(state or "WAIT").upper()
-    bias_text = str(bias or "Neutral")
-    source = "Latest bar / no confirmation"
-    when = current_time
-    explanation = "No confirmed trade trigger yet. Wait for price, trend, and indicator confirmation."
-
-    sr_txt = "rising" if np.isfinite(sr_delta) and sr_delta > 0 else "falling" if np.isfinite(sr_delta) and sr_delta < 0 else "flat/unknown"
-    ntd_txt = "rising" if np.isfinite(ntd_delta) and ntd_delta > 0 else "falling" if np.isfinite(ntd_delta) and ntd_delta < 0 else "flat/unknown"
-
-    if "BUY" in state_text:
-        when = _latest_timestamp(bull_time, cross_up_time, current_time)
-        parts = []
-        if cross_up_time is not None:
-            parts.append("30 EMA cross up")
-        if bull_time is not None:
-            parts.append("support/S-R reversal")
-        if not parts:
-            parts.append("bullish setup conditions")
-        source = " + ".join(parts)
-        explanation = (
-            f"{state}: {current_structure}. Price is "
-            f"{'above' if price_above_ema30 else 'not above'} 30 EMA and "
-            f"{'above' if price_above_hma else 'not above'} HMA; "
-            f"S/R Reversal is {safe_float(sr_last):+.2f} and {sr_txt}; "
-            f"NTD is {safe_float(ntd_last):+.2f} and {ntd_txt}. "
-            f"Use this as BUY confirmation only if price holds the entry zone."
-        )
-    elif "SELL" in state_text:
-        when = _latest_timestamp(bear_time, cross_down_time, current_time)
-        parts = []
-        if cross_down_time is not None:
-            parts.append("30 EMA cross down")
-        if bear_time is not None:
-            parts.append("resistance/S-R rejection")
-        if not parts:
-            parts.append("bearish setup conditions")
-        source = " + ".join(parts)
-        explanation = (
-            f"{state}: {current_structure}. Price is "
-            f"{'below' if price_below_ema30 else 'not below'} 30 EMA and "
-            f"{'below' if price_below_hma else 'not below'} HMA; "
-            f"S/R Reversal is {safe_float(sr_last):+.2f} and {sr_txt}; "
-            f"NTD is {safe_float(ntd_last):+.2f} and {ntd_txt}. "
-            f"Use this as SELL confirmation only if price rejects or loses the entry zone."
-        )
-    elif "SETUP" in state_text:
-        when = current_time
-        source = f"{bias_text} setup watch"
-        explanation = (
-            f"{state}: setup is forming but not fully confirmed. "
-            f"Structure: {current_structure}; S/R Reversal {safe_float(sr_last):+.2f} ({sr_txt}); "
-            f"NTD {safe_float(ntd_last):+.2f} ({ntd_txt}). Wait for a candle close/EMA confirmation."
-        )
-
-    return {
-        "Confirmation Time": format_confirmation_time(when),
-        "Confirmation Source": source,
-        "Confirmation Explanation": explanation,
-    }
-
-
 def format_trade_row(symbol: str, trade: dict) -> dict:
     return {
         "Symbol": symbol,
@@ -1564,6 +1555,9 @@ def format_trade_row(symbol: str, trade: dict) -> dict:
         "Long Probability": f"{safe_float(trade.get('Long Probability')):.0f}%",
         "Short Probability": f"{safe_float(trade.get('Short Probability')):.0f}%",
         "Probability Edge": f"{safe_float(trade.get('Probability Edge')):.0f}%",
+        "Long Probability Raw": round(safe_float(trade.get('Long Probability')), 4),
+        "Short Probability Raw": round(safe_float(trade.get('Short Probability')), 4),
+        "Probability Edge Raw": round(safe_float(trade.get('Probability Edge')), 4),
         "Trend": trade_trend_alignment(trade).get("Trend Direction"),
         "Action / Trend Alignment": trade_trend_alignment(trade).get("Alignment Text"),
         "Current Structure": trade.get("Current Structure"),
@@ -1582,12 +1576,13 @@ def format_trade_row(symbol: str, trade: dict) -> dict:
         "Bars Since 30 EMA Down": trade.get("Bars Since 30 EMA Cross Down"),
         "Bull S/R Bars": trade.get("Bull S/R Bars"),
         "Bear S/R Bars": trade.get("Bear S/R Bars"),
+        "Last Bar Time": format_timestamp(trade.get("Last Bar Time")),
+        "Confirmation Time": format_timestamp(trade.get("Confirmation Time")),
+        "Confirmation Source": trade.get("Confirmation Source"),
+        "Confirmation Explanation": trade.get("Confirmation Explanation"),
         "Entry Zone": trade.get("Entry Zone"),
         "Stop / Invalidation": trade.get("Stop / Invalidation"),
         "Target 1": trade.get("Target 1"),
-        "Confirmation Time": trade.get("Confirmation Time"),
-        "Confirmation Source": trade.get("Confirmation Source"),
-        "Confirmation Explanation": trade.get("Confirmation Explanation"),
         "Trade Instruction": trade.get("Trade Instruction"),
         "Reason": trade.get("Reason"),
     }
@@ -1600,7 +1595,11 @@ def scan_symbol(symbol: str, cfg: dict):
     df = prepare_indicators(df, cfg, symbol)
     _, trend_slope, _ = regression_line(df["Close"], cfg["trend_lookback"])
     trade = classify_trade(symbol, df, trend_slope, cfg)
-    return format_trade_row(symbol, trade)
+    row = format_trade_row(symbol, trade)
+    row["Scan Period"] = cfg.get("period", "")
+    row["Scan Interval"] = cfg.get("interval", "")
+    row["Scan Time"] = format_timestamp(datetime.now(PACIFIC))
+    return row
 
 
 # =========================
@@ -2040,13 +2039,19 @@ with tab_buy_sell:
         preferred_cols = [
             "Timeframe", "Symbol", "State", "Bias", "Trade Action",
             "Long Probability", "Short Probability", "Probability Edge",
-            "Trend", "Current Structure", "S/R Rev", "NTD", "ADX", "Last Close",
+            "Trend", "Action / Trend Alignment", "Current Structure",
+            "S/R Rev", "NTD", "ADX", "Last Close",
+            "Last Bar Time", "Confirmation Time", "Confirmation Source", "Confirmation Explanation",
             "Support", "Resistance", "Entry Zone", "Stop / Invalidation",
-            "Target 1", "Confirmation Time", "Confirmation Source",
-            "Confirmation Explanation", "Trade Instruction", "Reason",
+            "Target 1", "Trade Instruction", "Reason",
+            "Scan Period", "Scan Interval", "Scan Time",
         ]
         cols = [c for c in preferred_cols if c in df.columns]
-        other_cols = [c for c in df.columns if c not in cols and not str(c).startswith("_")]
+        hidden_cols = {"Long Probability Raw", "Short Probability Raw", "Probability Edge Raw"}
+        other_cols = [
+            c for c in df.columns
+            if c not in cols and c not in hidden_cols and not str(c).startswith("_")
+        ]
         return df[cols + other_cols]
 
     def _sort_buy_sell_list(df: pd.DataFrame, side: str) -> pd.DataFrame:
@@ -2078,8 +2083,12 @@ with tab_buy_sell:
         )
         return out.drop(columns=[c for c in out.columns if str(c).startswith("_")], errors="ignore")
 
-    def _top_pick_table(df: pd.DataFrame, side: str, n: int = 3) -> pd.DataFrame:
-        """Rank top picks by confirmed state, probability, edge, ADX, then symbol."""
+    def _rank_top_picks(df: pd.DataFrame, side: str, n: int = 3) -> pd.DataFrame:
+        """
+        Top picks are ranked by the exact same probability values that the charts use.
+        This intentionally does not alphabetize, because it is the user's quick-decision
+        shortlist. Full tables below remain alphabetized for browsing.
+        """
         if df is None or df.empty:
             return pd.DataFrame()
         out = df.copy()
@@ -2091,18 +2100,50 @@ with tab_buy_sell:
             "WAIT": 4,
             "ERROR": 9,
         }
+        prob_column = "Long Probability" if side == "BUY" else "Short Probability"
+        raw_column = f"{prob_column} Raw"
+        if raw_column in out.columns:
+            out["_ProbSort"] = pd.to_numeric(_column_as_series(out, raw_column, np.nan), errors="coerce")
+        else:
+            out["_ProbSort"] = _column_as_series(out, prob_column, "").map(_pct_sort_value)
+        if "Probability Edge Raw" in out.columns:
+            out["_EdgeSort"] = pd.to_numeric(_column_as_series(out, "Probability Edge Raw", np.nan), errors="coerce").abs()
+        else:
+            out["_EdgeSort"] = _column_as_series(out, "Probability Edge", "").map(_pct_sort_value).abs()
         out["_StateOrder"] = _column_as_series(out, "State", "").map(state_order).fillna(8)
-        out["_LongProbSort"] = _column_as_series(out, "Long Probability", "").map(_pct_sort_value).fillna(-1)
-        out["_ShortProbSort"] = _column_as_series(out, "Short Probability", "").map(_pct_sort_value).fillna(-1)
-        out["_EdgeSort"] = _column_as_series(out, "Probability Edge", "").map(_pct_sort_value).abs().fillna(-1)
         out["_ADXSort"] = pd.to_numeric(_column_as_series(out, "ADX", np.nan), errors="coerce").fillna(-1)
-        prob_col = "_LongProbSort" if side == "BUY" else "_ShortProbSort"
         out = out.sort_values(
-            ["_StateOrder", prob_col, "_EdgeSort", "_ADXSort", "Symbol"],
+            ["_StateOrder", "_ProbSort", "_EdgeSort", "_ADXSort", "Symbol"],
             ascending=[True, False, False, False, True],
             kind="mergesort",
         ).head(n)
         return _prepare_buy_sell_table(out.drop(columns=[c for c in out.columns if str(c).startswith("_")], errors="ignore"))
+
+    def _buy_sell_config_signature(universe_symbols: list[str]) -> tuple:
+        """
+        Fingerprint the exact inputs used by the Buy/Sell List. If the user changes
+        period/interval/tolerances or selected universe, old rows are hidden so table
+        probabilities cannot disagree with chart probabilities because of stale scans.
+        """
+        return (
+            asset_class,
+            tuple(_sort_symbols_alpha(list(universe_symbols))),
+            cfg.get("period"),
+            cfg.get("interval"),
+            cfg.get("daily_period"),
+            int(cfg.get("trend_lookback", 0)),
+            int(cfg.get("sr_lookback", 0)),
+            int(cfg.get("ntd_window", 0)),
+            int(cfg.get("touch_lookback", 0)),
+            int(cfg.get("confirm_bars", 0)),
+            int(cfg.get("signal_lookback", 0)),
+            int(cfg.get("cross_lookback", 0)),
+            float(cfg.get("touch_tol_pips", 0.0)),
+            float(cfg.get("pullback_tol_pips", 0.0)),
+            int(cfg.get("cooldown", 0)),
+            int(cfg.get("npx_smooth", 0)),
+            int(cfg.get("sr_smooth", 0)),
+        )
 
     if st.button(f"Build {asset_class} Buy/Sell List", use_container_width=True, key=f"build_buy_sell_list_{asset_class}"):
         rows = []
@@ -2142,12 +2183,26 @@ with tab_buy_sell:
 
         results = pd.DataFrame(rows)
         st.session_state[f"buy_sell_results_{asset_class}"] = results
+        st.session_state[f"buy_sell_signature_{asset_class}"] = _buy_sell_config_signature(bs_universe)
+        st.session_state[f"buy_sell_built_at_{asset_class}"] = format_timestamp(datetime.now(PACIFIC))
 
     results = st.session_state.get(f"buy_sell_results_{asset_class}", pd.DataFrame())
+    current_buy_sell_signature = _buy_sell_config_signature(bs_universe)
+    stored_buy_sell_signature = st.session_state.get(f"buy_sell_signature_{asset_class}")
+    buy_sell_built_at = st.session_state.get(f"buy_sell_built_at_{asset_class}", "")
+
+    if stored_buy_sell_signature is not None and stored_buy_sell_signature != current_buy_sell_signature:
+        st.warning(
+            "The Buy/Sell List was built with older settings or a different symbol universe. "
+            "Click **Build Buy/Sell List** again so table probabilities match the current Hourly/Daily chart settings."
+        )
+        results = pd.DataFrame()
 
     if results is None or results.empty:
         st.info("Click the button above to build the Buy/Sell list.")
     else:
+        if buy_sell_built_at:
+            st.caption(f"Buy/Sell probabilities use the same engine/config as the charts. Last built: {buy_sell_built_at}.")
         action_series = _upper_text_series(results, "Trade Action")
         state_series = _upper_text_series(results, "State")
 
@@ -2179,43 +2234,40 @@ with tab_buy_sell:
 
         st.markdown("### Top 3 Picks")
         st.caption(
-            "Quick-view tables rank the strongest current picks first. "
-            "Confirmation Time shows when the most recent trigger occurred; "
-            "Confirmation Source and Explanation describe why the row qualified."
+            "These quick-view picks use the same probability engine and the same stored scan rows as the full tables below. "
+            "If chart settings change, the table is hidden until rebuilt so probabilities do not become stale."
         )
-        top_buy_daily = _top_pick_table(results[buy_mask & _text_eq_mask(results, "Timeframe", "Daily")], "BUY", 3)
-        top_buy_hourly = _top_pick_table(results[buy_mask & _text_eq_mask(results, "Timeframe", "Hourly")], "BUY", 3)
-        top_sell_daily = _top_pick_table(results[sell_mask & _text_eq_mask(results, "Timeframe", "Daily")], "SELL", 3)
-        top_sell_hourly = _top_pick_table(results[sell_mask & _text_eq_mask(results, "Timeframe", "Hourly")], "SELL", 3)
+        top_daily_buy = _rank_top_picks(results[buy_mask & _text_eq_mask(results, "Timeframe", "Daily")], "BUY", 3)
+        top_hourly_buy = _rank_top_picks(results[buy_mask & _text_eq_mask(results, "Timeframe", "Hourly")], "BUY", 3)
+        top_daily_sell = _rank_top_picks(results[sell_mask & _text_eq_mask(results, "Timeframe", "Daily")], "SELL", 3)
+        top_hourly_sell = _rank_top_picks(results[sell_mask & _text_eq_mask(results, "Timeframe", "Hourly")], "SELL", 3)
 
-        top_cols = st.columns(2)
-        with top_cols[0]:
+        top_col1, top_col2 = st.columns(2)
+        with top_col1:
             st.markdown("#### 🟢 Top 3 Daily BUY")
-            if top_buy_daily.empty:
+            if top_daily_buy.empty:
                 st.info("No Daily BUY picks.")
             else:
-                st.dataframe(top_buy_daily, use_container_width=True, hide_index=True)
+                st.dataframe(top_daily_buy, use_container_width=True, hide_index=True)
 
-            st.markdown("#### 🟢 Top 3 Hourly BUY")
-            if top_buy_hourly.empty:
-                st.info("No Hourly BUY picks.")
-            else:
-                st.dataframe(top_buy_hourly, use_container_width=True, hide_index=True)
-
-        with top_cols[1]:
             st.markdown("#### 🔴 Top 3 Daily SELL")
-            if top_sell_daily.empty:
+            if top_daily_sell.empty:
                 st.info("No Daily SELL picks.")
             else:
-                st.dataframe(top_sell_daily, use_container_width=True, hide_index=True)
+                st.dataframe(top_daily_sell, use_container_width=True, hide_index=True)
+
+        with top_col2:
+            st.markdown("#### 🟢 Top 3 Hourly BUY")
+            if top_hourly_buy.empty:
+                st.info("No Hourly BUY picks.")
+            else:
+                st.dataframe(top_hourly_buy, use_container_width=True, hide_index=True)
 
             st.markdown("#### 🔴 Top 3 Hourly SELL")
-            if top_sell_hourly.empty:
+            if top_hourly_sell.empty:
                 st.info("No Hourly SELL picks.")
             else:
-                st.dataframe(top_sell_hourly, use_container_width=True, hide_index=True)
-
-        st.divider()
+                st.dataframe(top_hourly_sell, use_container_width=True, hide_index=True)
 
         buy_tab_daily, buy_tab_hourly, sell_tab_daily, sell_tab_hourly = st.tabs([
             "🟢 Daily BUY",
