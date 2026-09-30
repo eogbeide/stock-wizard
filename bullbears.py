@@ -5,7 +5,6 @@
 # and chart-level probability trade instructions for easier BUY/SELL decision-making.
 # (UPDATED) Structure metric now uses directional red/green trend badges and action/trend alignment text.
 # (UPDATED) Symbol lists and scanner tables are alphabetized; Buy/Sell List is split into Daily and Hourly tables.
-# (UPDATED) Buy/Sell List probabilities now use the same current config/data signature as charts and show Top 3 picks with confirmation timing.
 
 import math
 import time
@@ -918,116 +917,6 @@ def probability_bar_values(trade: dict) -> tuple[float, float, float]:
     return long_prob, short_prob, edge
 
 
-def format_timestamp(value) -> str:
-    """Format a timestamp for user-facing scanner/chart tables."""
-    try:
-        if value is None or (isinstance(value, float) and not np.isfinite(value)):
-            return ""
-        ts = pd.Timestamp(value)
-        if pd.isna(ts):
-            return ""
-        if ts.tzinfo is None:
-            ts = ts.tz_localize(PACIFIC)
-        else:
-            ts = ts.tz_convert(PACIFIC)
-        return ts.strftime("%Y-%m-%d %H:%M %Z")
-    except Exception:
-        try:
-            return str(value)
-        except Exception:
-            return ""
-
-
-def _latest_nonempty_timestamp(*values):
-    """Return the latest non-empty timestamp-like value from inputs."""
-    candidates = []
-    for val in values:
-        try:
-            if val is None:
-                continue
-            ts = pd.Timestamp(val)
-            if pd.isna(ts):
-                continue
-            candidates.append(ts)
-        except Exception:
-            continue
-    if not candidates:
-        return None
-    return max(candidates)
-
-
-def build_confirmation_details(state: str,
-                               current_structure: str,
-                               trend_slope: float,
-                               sr_last: float,
-                               sr_delta: float,
-                               ntd_last: float,
-                               ntd_delta: float,
-                               cross_up: bool,
-                               cross_up_time,
-                               cross_down: bool,
-                               cross_down_time,
-                               bull_bars,
-                               bull_time,
-                               bear_bars,
-                               bear_time) -> tuple:
-    """Explain what confirmed or warned the current trade state."""
-    state_text = str(state or "WAIT").upper()
-    trend_text = "upward" if np.isfinite(trend_slope) and trend_slope >= 0 else "downward"
-    sources = []
-    times = []
-    details = []
-
-    if "BUY" in state_text:
-        if bull_bars is not None:
-            sources.append("Support reversal")
-            times.append(bull_time)
-            details.append(f"support-reversal marker {bull_bars} bars ago")
-        if cross_up:
-            sources.append("30 EMA cross up")
-            times.append(cross_up_time)
-            details.append("price recently crossed above 30 EMA")
-        if np.isfinite(sr_last) and sr_last >= 0:
-            sources.append("S/R above 0")
-            details.append(f"S/R Reversal positive ({sr_last:.2f})")
-        if np.isfinite(sr_delta) and sr_delta > 0:
-            sources.append("S/R rising")
-            details.append("S/R Reversal is rising")
-        if np.isfinite(ntd_delta) and ntd_delta > 0:
-            sources.append("NTD rising")
-            details.append("NTD is improving")
-    elif "SELL" in state_text:
-        if bear_bars is not None:
-            sources.append("Resistance rejection")
-            times.append(bear_time)
-            details.append(f"resistance-rejection marker {bear_bars} bars ago")
-        if cross_down:
-            sources.append("30 EMA cross down")
-            times.append(cross_down_time)
-            details.append("price recently crossed below 30 EMA")
-        if np.isfinite(sr_last) and sr_last <= 0:
-            sources.append("S/R below 0")
-            details.append(f"S/R Reversal negative ({sr_last:.2f})")
-        if np.isfinite(sr_delta) and sr_delta < 0:
-            sources.append("S/R falling")
-            details.append("S/R Reversal is falling")
-        if np.isfinite(ntd_delta) and ntd_delta < 0:
-            sources.append("NTD falling")
-            details.append("NTD is weakening")
-    else:
-        sources.append("No confirmed setup")
-        details.append("probability edge or price-structure confirmation is not strong enough")
-
-    if current_structure:
-        details.append(f"structure: {current_structure}")
-    details.append(f"trendline direction: {trend_text}")
-
-    confirmation_time = _latest_nonempty_timestamp(*times)
-    source_text = " + ".join(dict.fromkeys([s for s in sources if s])) if sources else "No confirmed setup"
-    explanation = "; ".join(dict.fromkeys([d for d in details if d])) if details else "No clean confirmation."
-    return confirmation_time, source_text, explanation
-
-
 
 def trade_trend_alignment(trade: dict) -> dict:
     """Describe whether the trade action and current trend direction agree.
@@ -1266,24 +1155,6 @@ def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict)
         ntd_delta=ntd_delta,
     )
 
-    confirmation_time, confirmation_source, confirmation_explanation = build_confirmation_details(
-        state=state,
-        current_structure=current_structure,
-        trend_slope=trend_slope,
-        sr_last=sr_last,
-        sr_delta=sr_delta,
-        ntd_last=ntd_last,
-        ntd_delta=ntd_delta,
-        cross_up=cross_up,
-        cross_up_time=cross_up_time,
-        cross_down=cross_down,
-        cross_down_time=cross_down_time,
-        bull_bars=bull_bars,
-        bull_time=bull_time,
-        bear_bars=bear_bars,
-        bear_time=bear_time,
-    )
-
     return {
         **probability_info,
         "State": state,
@@ -1313,10 +1184,6 @@ def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict)
         "Bars Since 30 EMA Cross Down": cross_down_bars,
         "Bull S/R Bars": bull_bars,
         "Bear S/R Bars": bear_bars,
-        "Last Bar Time": close.index[-1] if len(close.index) else None,
-        "Confirmation Time": confirmation_time,
-        "Confirmation Source": confirmation_source,
-        "Confirmation Explanation": confirmation_explanation,
         "Entry Zone": entry_zone,
         "Stop / Invalidation": stop_zone,
         "Target 1": target1,
@@ -1555,9 +1422,6 @@ def format_trade_row(symbol: str, trade: dict) -> dict:
         "Long Probability": f"{safe_float(trade.get('Long Probability')):.0f}%",
         "Short Probability": f"{safe_float(trade.get('Short Probability')):.0f}%",
         "Probability Edge": f"{safe_float(trade.get('Probability Edge')):.0f}%",
-        "Long Probability Raw": round(safe_float(trade.get('Long Probability')), 4),
-        "Short Probability Raw": round(safe_float(trade.get('Short Probability')), 4),
-        "Probability Edge Raw": round(safe_float(trade.get('Probability Edge')), 4),
         "Trend": trade_trend_alignment(trade).get("Trend Direction"),
         "Action / Trend Alignment": trade_trend_alignment(trade).get("Alignment Text"),
         "Current Structure": trade.get("Current Structure"),
@@ -1576,10 +1440,6 @@ def format_trade_row(symbol: str, trade: dict) -> dict:
         "Bars Since 30 EMA Down": trade.get("Bars Since 30 EMA Cross Down"),
         "Bull S/R Bars": trade.get("Bull S/R Bars"),
         "Bear S/R Bars": trade.get("Bear S/R Bars"),
-        "Last Bar Time": format_timestamp(trade.get("Last Bar Time")),
-        "Confirmation Time": format_timestamp(trade.get("Confirmation Time")),
-        "Confirmation Source": trade.get("Confirmation Source"),
-        "Confirmation Explanation": trade.get("Confirmation Explanation"),
         "Entry Zone": trade.get("Entry Zone"),
         "Stop / Invalidation": trade.get("Stop / Invalidation"),
         "Target 1": trade.get("Target 1"),
@@ -1595,11 +1455,7 @@ def scan_symbol(symbol: str, cfg: dict):
     df = prepare_indicators(df, cfg, symbol)
     _, trend_slope, _ = regression_line(df["Close"], cfg["trend_lookback"])
     trade = classify_trade(symbol, df, trend_slope, cfg)
-    row = format_trade_row(symbol, trade)
-    row["Scan Period"] = cfg.get("period", "")
-    row["Scan Interval"] = cfg.get("interval", "")
-    row["Scan Time"] = format_timestamp(datetime.now(PACIFIC))
-    return row
+    return format_trade_row(symbol, trade)
 
 
 # =========================
@@ -1761,424 +1617,199 @@ cfg = {
 
 
 
-
 # =========================
-# Daily S/R Cross Scanner Helpers
+# Daily NTD Dip Scanner helpers
 # =========================
-def _direction_from_slope(value) -> str:
+def _trend_direction_from_slope(value) -> str:
     v = safe_float(value)
     if not np.isfinite(v):
-        return "Neutral"
+        return "Unknown"
     return "Upward" if v >= 0 else "Downward"
 
 
-def _last_value(series_like):
-    s = coerce_series(series_like).dropna()
-    return float(s.iloc[-1]) if len(s) else float("nan")
+def _recent_level_cross_down(series: pd.Series, level: float, lookback: int):
+    """Most recent downward cross through a level within the tail lookback window."""
+    s = coerce_series(series).dropna()
+    if s.empty:
+        return False, None, None
+    cross = (s.shift(1) >= float(level)) & (s < float(level))
+    recent = cross.tail(int(max(1, lookback)))
+    if recent.any():
+        pos = np.where(recent.to_numpy(dtype=bool))[0][-1]
+        bars_since = len(recent) - 1 - pos
+        ts = recent.index[pos]
+        return True, int(bars_since), ts
+    return False, None, None
 
 
-def _latest_recent_cross_event(a: pd.Series, b: pd.Series, lookback: int, upward_only: bool = False):
-    """Return the most recent crossing event between a and b inside the lookback window.
+def _last_level_cross_down(series: pd.Series, level: float):
+    """Most recent downward cross through a level across the available history."""
+    s = coerce_series(series).dropna()
+    if s.empty:
+        return None, None
+    cross = (s.shift(1) >= float(level)) & (s < float(level))
+    if cross.fillna(False).any():
+        arr = cross.to_numpy(dtype=bool)
+        pos = np.where(arr)[0][-1]
+        return int(len(s) - 1 - pos), s.index[pos]
+    return None, None
 
-    If upward_only=True, only returns events where a crossed upward through b.
-    Otherwise returns the most recent upward or downward cross.
+
+def _format_cross_time(ts) -> str:
+    if ts is None or pd.isna(ts):
+        return ""
+    try:
+        return pd.Timestamp(ts).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        return str(ts)
+
+
+def daily_ntd_dip_scan_row(symbol: str, threshold: float, cfg: dict, lookback: int = 180):
+    """Return a row when daily NTD is currently below the chosen dip threshold.
+
+    The row includes the most recent downward drop through the threshold when
+    available, plus price move since that dip in pips for FX or points for stocks.
     """
-    aa = coerce_series(a)
-    bb = coerce_series(b)
-    idx = aa.index.intersection(bb.index)
-    aa = aa.reindex(idx)
-    bb = bb.reindex(idx)
-    if len(idx) < 3:
-        return None
+    try:
+        scan_cfg = cfg.copy()
+        scan_cfg["period"] = "5y"
+        scan_cfg["interval"] = "1d"
+        df = fetch_market_ohlc(symbol, "5y", "1d")
+        if df.empty or len(df) < max(80, int(scan_cfg.get("ntd_window", 60)) + 10):
+            return None
+        df = prepare_indicators(df, scan_cfg, symbol)
+        ntd = coerce_series(df["NTD"]).dropna()
+        close = coerce_series(df["Close"]).dropna()
+        if ntd.empty or close.empty:
+            return None
 
-    cross_up = (aa.shift(1) <= bb.shift(1)) & (aa > bb)
-    cross_down = (aa.shift(1) >= bb.shift(1)) & (aa < bb)
-    events = cross_up if upward_only else (cross_up | cross_down)
-    recent = events.tail(int(max(1, lookback))).fillna(False)
+        current_ntd = safe_float(ntd.iloc[-1])
+        if not np.isfinite(current_ntd) or current_ntd > float(threshold):
+            return None
 
-    if not bool(recent.any()):
-        return None
+        trend_line, trend_slope, trend_r2 = regression_line(df["Close"], int(cfg.get("trend_lookback", 120)))
+        trend_direction = _trend_direction_from_slope(trend_slope)
 
-    rel_pos = np.where(recent.to_numpy(dtype=bool))[0][-1]
-    pos = len(events) - len(recent) + int(rel_pos)
-    ts = events.index[pos]
-    direction = "Upward" if bool(cross_up.iloc[pos]) else "Downward"
-    bars_since = len(events) - 1 - pos
-    return {
-        "pos": int(pos),
-        "timestamp": ts,
-        "direction": direction,
-        "bars_since": int(bars_since),
-    }
+        recent_cross, recent_bars, recent_ts = _recent_level_cross_down(ntd, threshold, lookback)
+        bars_since, cross_ts = _last_level_cross_down(ntd, threshold)
+        if recent_cross:
+            bars_since, cross_ts = recent_bars, recent_ts
 
+        current_price = safe_float(close.iloc[-1])
+        cross_price = np.nan
+        move_since_cross = np.nan
+        if cross_ts is not None:
+            try:
+                cross_price = safe_float(close.loc[:cross_ts].iloc[-1])
+            except Exception:
+                try:
+                    cross_price = safe_float(close.loc[cross_ts])
+                except Exception:
+                    cross_price = np.nan
+            if np.isfinite(current_price) and np.isfinite(cross_price):
+                move_since_cross = current_price - cross_price
 
-def _move_since_cross(symbol: str, current_price: float, cross_price: float) -> tuple[float, float]:
-    cur = safe_float(current_price)
-    cp = safe_float(cross_price)
-    unit = pip_size(symbol)
-    if not np.isfinite(cur) or not np.isfinite(cp) or unit <= 0:
-        return float("nan"), float("nan")
-    signed = (cur - cp) / unit
-    return float(signed), float(abs(signed))
+        ntd_slope_line, ntd_slope = regression_line(ntd, min(30, max(5, len(ntd))))
+        ntd_direction = _trend_direction_from_slope(ntd_slope)
 
+        support, resistance = support_resistance(df, int(cfg.get("sr_lookback", 120)))
+        sr_current = safe_float(df["SR_REV"].iloc[-1]) if "SR_REV" in df.columns and len(df) else np.nan
 
-def _daily_sr_cross_row(symbol: str, cfg: dict, lookback: int):
-    daily_cfg = cfg.copy()
-    daily_cfg["period"] = cfg.get("daily_period", "1y")
-    daily_cfg["interval"] = "1d"
-
-    df = fetch_market_ohlc(symbol, daily_cfg["period"], "1d")
-    if df.empty or len(df) < max(80, int(cfg.get("trend_lookback", 120)) // 2):
-        return None
-
-    df = prepare_indicators(df, daily_cfg, symbol)
-    if df.empty or not {"Close", "SR_REV", "NTD"}.issubset(df.columns):
-        return None
-
-    close = coerce_series(df["Close"]).dropna()
-    sr = coerce_series(df["SR_REV"]).reindex(df.index)
-    ntd = coerce_series(df["NTD"]).reindex(df.index)
-    if close.empty or sr.dropna().empty or ntd.dropna().empty:
-        return None
-
-    _, price_trend_slope, _ = regression_line(close, int(cfg.get("trend_lookback", 120)))
-    ntd_lb = min(int(cfg.get("trend_lookback", 120)), max(10, len(ntd.dropna())))
-    _, ntd_trend_slope, _ = regression_line(ntd.dropna(), ntd_lb)
-
-    current_price = float(close.iloc[-1])
-    sr_last = _last_value(sr)
-    ntd_last = _last_value(ntd)
-
-    base = {
-        "Symbol": symbol,
-        "Last Close": fmt_price(symbol, current_price),
-        "Last Close Raw": current_price,
-        "Current S/R Reversal": round(sr_last, 4) if np.isfinite(sr_last) else np.nan,
-        "Current NTD": round(ntd_last, 4) if np.isfinite(ntd_last) else np.nan,
-        "S/R Direction": "Upward" if len(sr.dropna()) >= 2 and sr.dropna().iloc[-1] >= sr.dropna().iloc[-2] else "Downward",
-        "Price Trend Direction": _direction_from_slope(price_trend_slope),
-        "NTD Trend Direction": _direction_from_slope(ntd_trend_slope),
-        "Price Trend Slope": round(safe_float(price_trend_slope), 7),
-        "NTD Trend Slope": round(safe_float(ntd_trend_slope), 7),
-        "Last Bar Time": format_timestamp(df.index[-1]),
-    }
-
-    out = {
-        "sr_ntd_cross": None,
-        "minus05_up": None,
-        "zero_up": None,
-    }
-
-    # (a) S/R Reversal line crossing the NTD line, either direction.
-    ev = _latest_recent_cross_event(sr, ntd, lookback, upward_only=False)
-    if ev is not None:
-        pos = ev["pos"]
-        cross_price = safe_float(close.iloc[pos])
-        signed_units, abs_units = _move_since_cross(symbol, current_price, cross_price)
-        out["sr_ntd_cross"] = {
-            **base,
-            "Cross Type": "S/R crossed NTD",
-            "Cross Direction": ev["direction"],
-            "Cross Time": format_timestamp(ev["timestamp"]),
-            "Bars Since Cross": ev["bars_since"],
-            "Price at Cross": fmt_price(symbol, cross_price),
-            "Price at Cross Raw": cross_price,
-            "Pips/Points Since Cross": round(signed_units, 1) if np.isfinite(signed_units) else np.nan,
-            "Abs Pips/Points Since Cross": round(abs_units, 1) if np.isfinite(abs_units) else np.nan,
-            "Explanation": f"S/R Reversal line crossed the NTD line {ev['direction'].lower()} {ev['bars_since']} daily bars ago.",
+        return {
+            "Symbol": symbol,
+            "Threshold": f"{threshold:+.2f}",
+            "Price Trend Direction": trend_direction,
+            "NTD Direction": ntd_direction,
+            "Current NTD": current_ntd,
+            "NTD Slope": safe_float(ntd_slope),
+            "Current S/R Reversal": sr_current,
+            "Current Price": current_price,
+            "Cross Time": cross_ts,
+            "Bars Since Dip": bars_since if bars_since is not None else np.nan,
+            "Price at Dip": cross_price,
+            "Move Since Dip": move_since_cross,
+            "Move Since Dip (pips/pts)": (move_since_cross / pip_size(symbol)) if np.isfinite(move_since_cross) else np.nan,
+            "Support": support,
+            "Resistance": resistance,
+            "Trend Slope": safe_float(trend_slope),
+            "Trend R²": safe_float(trend_r2),
+            "Recent Dip": "Yes" if recent_cross else "No",
+            "Explanation": (
+                f"Daily NTD is below {threshold:+.2f}. "
+                f"Price trend is {trend_direction.lower()}; NTD direction is {ntd_direction.lower()}."
+            ),
+        }
+    except Exception as exc:
+        return {
+            "Symbol": symbol,
+            "Threshold": f"{threshold:+.2f}",
+            "Price Trend Direction": "Error",
+            "NTD Direction": "Error",
+            "Explanation": f"Scan error: {exc}",
         }
 
-    # (b1) S/R Reversal line crossing -0.5 upward.
-    minus05_line = pd.Series(-0.5, index=df.index)
-    ev = _latest_recent_cross_event(sr, minus05_line, lookback, upward_only=True)
-    if ev is not None:
-        pos = ev["pos"]
-        cross_price = safe_float(close.iloc[pos])
-        signed_units, abs_units = _move_since_cross(symbol, current_price, cross_price)
-        out["minus05_up"] = {
-            **base,
-            "Cross Type": "S/R crossed -0.5 upward",
-            "Cross Direction": "Upward",
-            "Cross Time": format_timestamp(ev["timestamp"]),
-            "Bars Since Cross": ev["bars_since"],
-            "Price at Cross": fmt_price(symbol, cross_price),
-            "Price at Cross Raw": cross_price,
-            "Pips/Points Since Cross": round(signed_units, 1) if np.isfinite(signed_units) else np.nan,
-            "Abs Pips/Points Since Cross": round(abs_units, 1) if np.isfinite(abs_units) else np.nan,
-            "Explanation": f"S/R Reversal line recently crossed upward through -0.5 {ev['bars_since']} daily bars ago.",
-        }
 
-    # (b2) S/R Reversal line crossing 0.0 upward.
-    zero_line = pd.Series(0.0, index=df.index)
-    ev = _latest_recent_cross_event(sr, zero_line, lookback, upward_only=True)
-    if ev is not None:
-        pos = ev["pos"]
-        cross_price = safe_float(close.iloc[pos])
-        signed_units, abs_units = _move_since_cross(symbol, current_price, cross_price)
-        out["zero_up"] = {
-            **base,
-            "Cross Type": "S/R crossed 0.0 upward",
-            "Cross Direction": "Upward",
-            "Cross Time": format_timestamp(ev["timestamp"]),
-            "Bars Since Cross": ev["bars_since"],
-            "Price at Cross": fmt_price(symbol, cross_price),
-            "Price at Cross Raw": cross_price,
-            "Pips/Points Since Cross": round(signed_units, 1) if np.isfinite(signed_units) else np.nan,
-            "Abs Pips/Points Since Cross": round(abs_units, 1) if np.isfinite(abs_units) else np.nan,
-            "Explanation": f"S/R Reversal line recently crossed upward through 0.0 {ev['bars_since']} daily bars ago.",
-        }
-
-    return out
-
-
-def _sort_daily_sr_cross_table(df: pd.DataFrame) -> pd.DataFrame:
+def _format_daily_ntd_dip_table(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
     out = df.copy()
-    for col in ["Abs Pips/Points Since Cross", "Bars Since Cross"]:
-        if col not in out.columns:
-            out[col] = np.nan
-    out["_TrendOrder"] = out.get("Price Trend Direction", "").map({"Upward": 0, "Neutral": 1, "Downward": 2}).fillna(3)
-    out["_SRDirOrder"] = out.get("S/R Direction", "").map({"Upward": 0, "Downward": 1}).fillna(2)
-    out = out.sort_values(
-        by=["_TrendOrder", "_SRDirOrder", "Abs Pips/Points Since Cross", "Bars Since Cross", "Symbol"],
-        ascending=[True, True, True, True, True],
-        kind="mergesort",
-    )
-    return out.drop(columns=["_TrendOrder", "_SRDirOrder"], errors="ignore")
+    if "Cross Time" in out.columns:
+        out["Cross Time"] = out["Cross Time"].map(_format_cross_time)
+    for col in ["Current NTD", "NTD Slope", "Current S/R Reversal", "Trend Slope", "Trend R²"]:
+        if col in out.columns:
+            out[col] = out[col].map(lambda x: "" if not np.isfinite(safe_float(x)) else f"{safe_float(x):+.4f}")
+    for col in ["Current Price", "Price at Dip", "Support", "Resistance"]:
+        if col in out.columns:
+            out[col] = [
+                fmt_price(sym, val) for sym, val in zip(out.get("Symbol", pd.Series("", index=out.index)), out[col])
+            ]
+    if "Move Since Dip (pips/pts)" in out.columns:
+        labels = []
+        for sym, val in zip(out.get("Symbol", pd.Series("", index=out.index)), out["Move Since Dip (pips/pts)"]):
+            v = safe_float(val)
+            if not np.isfinite(v):
+                labels.append("")
+            elif "=X" in str(sym).upper():
+                labels.append(f"{v:+.1f} pips")
+            else:
+                labels.append(f"{v:+.2f} pts")
+        out["Move Since Dip"] = labels
+        out = out.drop(columns=["Move Since Dip (pips/pts)"], errors="ignore")
+    if "Bars Since Dip" in out.columns:
+        out["Bars Since Dip"] = out["Bars Since Dip"].map(lambda x: "" if not np.isfinite(safe_float(x)) else int(safe_float(x)))
+    preferred = [
+        "Symbol", "Threshold", "Price Trend Direction", "NTD Direction", "Current NTD", "Recent Dip",
+        "Cross Time", "Bars Since Dip", "Current Price", "Price at Dip", "Move Since Dip",
+        "Current S/R Reversal", "Support", "Resistance", "NTD Slope", "Trend Slope", "Trend R²", "Explanation"
+    ]
+    cols = [c for c in preferred if c in out.columns] + [c for c in out.columns if c not in preferred]
+    return out[cols]
 
 
-def _display_daily_sr_cross_table(title: str, df: pd.DataFrame, empty_text: str) -> None:
-    st.markdown(f"#### {title}")
+def _sort_daily_ntd_dips(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
-        st.info(empty_text)
+        return pd.DataFrame()
+    out = df.copy()
+    # Most actionable dip list: deeper NTD first, recent dips before stale dips,
+    # then closest price move since dip.
+    out["_RecentOrder"] = out.get("Recent Dip", "").map({"Yes": 0, "No": 1}).fillna(2)
+    out["_NTDOrder"] = pd.to_numeric(out.get("Current NTD", np.nan), errors="coerce")
+    out["_BarsOrder"] = pd.to_numeric(out.get("Bars Since Dip", np.nan), errors="coerce").fillna(9999)
+    out["_MoveAbsOrder"] = pd.to_numeric(out.get("Move Since Dip (pips/pts)", np.nan), errors="coerce").abs().fillna(999999)
+    out = out.sort_values(["_RecentOrder", "_NTDOrder", "_BarsOrder", "_MoveAbsOrder", "Symbol"], ascending=[True, True, True, True, True], kind="mergesort")
+    return out.drop(columns=[c for c in out.columns if str(c).startswith("_")], errors="ignore")
+
+
+def _render_dip_section(title: str, df: pd.DataFrame, top_n: int = 3):
+    st.markdown(f"### {title}")
+    if df is None or df.empty:
+        st.info("No symbols found.")
         return
-    preferred = [
-        "Symbol",
-        "S/R Direction",
-        "Price Trend Direction",
-        "NTD Trend Direction",
-        "Cross Direction",
-        "Bars Since Cross",
-        "Pips/Points Since Cross",
-        "Abs Pips/Points Since Cross",
-        "Cross Time",
-        "Price at Cross",
-        "Last Close",
-        "Current S/R Reversal",
-        "Current NTD",
-        "Price Trend Slope",
-        "NTD Trend Slope",
-        "Last Bar Time",
-        "Explanation",
-    ]
-    cols = [c for c in preferred if c in df.columns] + [c for c in df.columns if c not in preferred and not c.endswith(" Raw")]
-    st.dataframe(df[cols], use_container_width=True, hide_index=True)
-
-
-def _top_daily_sr_buy_opportunities(*dfs: pd.DataFrame, limit: int = 3) -> pd.DataFrame:
-    """Rank the strongest Daily S/R Cross rows as quick buy opportunities.
-
-    This is intentionally conservative: it prefers upward S/R crosses, upward current
-    S/R direction, upward price trend, and upward/improving NTD trend.  Rows are then
-    ordered by higher setup score and fewer pips/points since the cross so users see
-    the freshest actionable opportunities first.
-    """
-    frames = [df.copy() for df in dfs if df is not None and not df.empty]
-    if not frames:
-        return pd.DataFrame()
-
-    combined = pd.concat(frames, ignore_index=True)
-    if combined.empty:
-        return pd.DataFrame()
-
-    for col in [
-        "Cross Direction",
-        "S/R Direction",
-        "Price Trend Direction",
-        "NTD Trend Direction",
-        "Current S/R Reversal",
-        "Current NTD",
-        "Abs Pips/Points Since Cross",
-        "Bars Since Cross",
-        "Cross Type",
-    ]:
-        if col not in combined.columns:
-            combined[col] = np.nan
-
-    cross_type = combined["Cross Type"].astype(str)
-    cross_dir = combined["Cross Direction"].astype(str)
-    sr_dir = combined["S/R Direction"].astype(str)
-    trend_dir = combined["Price Trend Direction"].astype(str)
-    ntd_trend_dir = combined["NTD Trend Direction"].astype(str)
-
-    upward_cross = cross_dir.eq("Upward") | cross_type.str.contains("upward", case=False, na=False)
-    bullish_structure = trend_dir.eq("Upward")
-    improving_sr = sr_dir.eq("Upward")
-
-    candidates = combined[upward_cross & bullish_structure & improving_sr].copy()
-    if candidates.empty:
-        # If the strict filter is empty, still show useful early buy candidates:
-        # upward crosses with an upward price trend.
-        candidates = combined[upward_cross & bullish_structure].copy()
-    if candidates.empty:
-        return pd.DataFrame()
-
-    sr_val = pd.to_numeric(candidates["Current S/R Reversal"], errors="coerce")
-    ntd_val = pd.to_numeric(candidates["Current NTD"], errors="coerce")
-    abs_units = pd.to_numeric(candidates["Abs Pips/Points Since Cross"], errors="coerce")
-    bars = pd.to_numeric(candidates["Bars Since Cross"], errors="coerce")
-
-    type_score = pd.Series(0, index=candidates.index, dtype=float)
-    type_text = candidates["Cross Type"].astype(str)
-    type_score += np.where(type_text.str.contains("0.0", case=False, na=False), 3.0, 0.0)
-    type_score += np.where(type_text.str.contains("-0.5", case=False, na=False), 2.0, 0.0)
-    type_score += np.where(type_text.str.contains("NTD", case=False, na=False), 1.0, 0.0)
-
-    setup_score = (
-        3.0 * candidates["Price Trend Direction"].astype(str).eq("Upward").astype(float)
-        + 2.0 * candidates["NTD Trend Direction"].astype(str).eq("Upward").astype(float)
-        + 2.0 * candidates["S/R Direction"].astype(str).eq("Upward").astype(float)
-        + 1.5 * (sr_val > 0.0).astype(float)
-        + 1.0 * (ntd_val > 0.0).astype(float)
-        + type_score
-    )
-
-    candidates["Buy Opportunity Score"] = setup_score.round(1)
-    candidates["Buy Opportunity Explanation"] = candidates.apply(
-        lambda r: (
-            f"{r.get('Cross Type', 'S/R cross')} with {r.get('S/R Direction', 'n/a')} S/R direction, "
-            f"{r.get('Price Trend Direction', 'n/a')} price trend, and "
-            f"{r.get('NTD Trend Direction', 'n/a')} NTD trend. "
-            f"Cross occurred {r.get('Bars Since Cross', 'n/a')} daily bars ago."
-        ),
-        axis=1,
-    )
-
-    # Keep the best row per symbol so the top-three table is not dominated by one symbol.
-    candidates["_AbsSort"] = abs_units.fillna(np.inf)
-    candidates["_BarsSort"] = bars.fillna(np.inf)
-    candidates = candidates.sort_values(
-        by=["Buy Opportunity Score", "_AbsSort", "_BarsSort", "Symbol"],
-        ascending=[False, True, True, True],
-        kind="mergesort",
-    )
-    candidates = candidates.drop_duplicates(subset=["Symbol"], keep="first").head(int(max(1, limit)))
-
-    preferred = [
-        "Symbol",
-        "Buy Opportunity Score",
-        "Cross Type",
-        "S/R Direction",
-        "Price Trend Direction",
-        "NTD Trend Direction",
-        "Bars Since Cross",
-        "Pips/Points Since Cross",
-        "Abs Pips/Points Since Cross",
-        "Cross Time",
-        "Price at Cross",
-        "Last Close",
-        "Current S/R Reversal",
-        "Current NTD",
-        "Buy Opportunity Explanation",
-    ]
-    cols = [c for c in preferred if c in candidates.columns] + [
-        c for c in candidates.columns
-        if c not in preferred and not c.startswith("_") and not c.endswith(" Raw")
-    ]
-    return candidates[cols].reset_index(drop=True)
-
-
-def _top_downtrend_sr_ntd_upward_reversal_candidates(sr_ntd_df: pd.DataFrame, limit: int = 3) -> pd.DataFrame:
-    """Top rows from the Price Trend Downward S/R-vs-NTD table where both
-    the current S/R direction and the NTD trend direction are upward.
-
-    These are possible early reversal / bounce candidates inside a still-downward
-    price trend, so they are shown separately from the main top-buy table.
-    """
-    if sr_ntd_df is None or sr_ntd_df.empty:
-        return pd.DataFrame()
-
-    df = sr_ntd_df.copy()
-    for col in [
-        "Price Trend Direction",
-        "S/R Direction",
-        "NTD Trend Direction",
-        "Current S/R Reversal",
-        "Current NTD",
-        "Abs Pips/Points Since Cross",
-        "Bars Since Cross",
-        "Symbol",
-        "Cross Type",
-    ]:
-        if col not in df.columns:
-            df[col] = np.nan
-
-    candidates = df[
-        df["Price Trend Direction"].astype(str).eq("Downward")
-        & df["S/R Direction"].astype(str).eq("Upward")
-        & df["NTD Trend Direction"].astype(str).eq("Upward")
-    ].copy()
-
-    if candidates.empty:
-        return pd.DataFrame()
-
-    sr_val = pd.to_numeric(candidates["Current S/R Reversal"], errors="coerce")
-    ntd_val = pd.to_numeric(candidates["Current NTD"], errors="coerce")
-    abs_units = pd.to_numeric(candidates["Abs Pips/Points Since Cross"], errors="coerce")
-    bars = pd.to_numeric(candidates["Bars Since Cross"], errors="coerce")
-
-    # This score rewards improving S/R and NTD conditions while still treating
-    # these as countertrend/early reversal candidates because the price trend is downward.
-    candidates["Reversal Watch Score"] = (
-        3.0
-        + 1.5 * candidates["S/R Direction"].astype(str).eq("Upward").astype(float)
-        + 1.5 * candidates["NTD Trend Direction"].astype(str).eq("Upward").astype(float)
-        + 1.0 * (sr_val > 0.0).astype(float)
-        + 0.75 * (ntd_val > -0.25).astype(float)
-    ).round(1)
-
-    candidates["Reversal Watch Explanation"] = candidates.apply(
-        lambda r: (
-            "Price trend is still downward, but S/R Direction and NTD Trend Direction are both upward. "
-            f"{r.get('Cross Type', 'S/R crossed NTD')} occurred {r.get('Bars Since Cross', 'n/a')} daily bars ago. "
-            "Treat as an early reversal/bounce watch candidate, not a confirmed trend-following buy."
-        ),
-        axis=1,
-    )
-
-    candidates["_AbsSort"] = abs_units.fillna(np.inf)
-    candidates["_BarsSort"] = bars.fillna(np.inf)
-    candidates = candidates.sort_values(
-        by=["Reversal Watch Score", "_AbsSort", "_BarsSort", "Symbol"],
-        ascending=[False, True, True, True],
-        kind="mergesort",
-    )
-    candidates = candidates.drop_duplicates(subset=["Symbol"], keep="first").head(int(max(1, limit)))
-
-    preferred = [
-        "Symbol",
-        "Reversal Watch Score",
-        "Cross Type",
-        "S/R Direction",
-        "Price Trend Direction",
-        "NTD Trend Direction",
-        "Bars Since Cross",
-        "Pips/Points Since Cross",
-        "Abs Pips/Points Since Cross",
-        "Cross Time",
-        "Price at Cross",
-        "Last Close",
-        "Current S/R Reversal",
-        "Current NTD",
-        "Reversal Watch Explanation",
-    ]
-    cols = [c for c in preferred if c in candidates.columns] + [
-        c for c in candidates.columns
-        if c not in preferred and not c.startswith("_") and not c.endswith(" Raw")
-    ]
-    return candidates[cols].reset_index(drop=True)
-
+    sorted_df = _sort_daily_ntd_dips(df)
+    st.markdown(f"**Top {top_n}**")
+    st.dataframe(_format_daily_ntd_dip_table(sorted_df.head(top_n)), use_container_width=True, hide_index=True)
+    with st.expander(f"Show all {title}", expanded=False):
+        st.dataframe(_format_daily_ntd_dip_table(sorted_df), use_container_width=True, hide_index=True)
 
 # =========================
 # Main app
@@ -2188,7 +1819,7 @@ st.caption(
      "Toggle between Stocks and Forex. Hourly and daily views use real trading bars only and include trade instructions plus rule-based long/short probabilities."
 )
 
-tab_chart, tab_daily, tab_scanner, tab_buy_sell, tab_daily_sr_cross, tab_rules = st.tabs(["Hourly Trading Chart", "Daily Trading Chart", "Scanner", "Buy/Sell List", "Daily S/R Cross", "Trading Rules"])
+tab_chart, tab_daily, tab_scanner, tab_buy_sell, tab_daily_dips, tab_rules = st.tabs(["Hourly Trading Chart", "Daily Trading Chart", "Scanner", "Buy/Sell List", "-0.75 Long-term Dips", "Trading Rules"])
 
 with tab_chart:
     data = fetch_market_ohlc(symbol, period, interval)
@@ -2459,19 +2090,12 @@ with tab_buy_sell:
         preferred_cols = [
             "Timeframe", "Symbol", "State", "Bias", "Trade Action",
             "Long Probability", "Short Probability", "Probability Edge",
-            "Trend", "Action / Trend Alignment", "Current Structure",
-            "S/R Rev", "NTD", "ADX", "Last Close",
-            "Last Bar Time", "Confirmation Time", "Confirmation Source", "Confirmation Explanation",
+            "Trend", "Current Structure", "S/R Rev", "NTD", "ADX", "Last Close",
             "Support", "Resistance", "Entry Zone", "Stop / Invalidation",
             "Target 1", "Trade Instruction", "Reason",
-            "Scan Period", "Scan Interval", "Scan Time",
         ]
         cols = [c for c in preferred_cols if c in df.columns]
-        hidden_cols = {"Long Probability Raw", "Short Probability Raw", "Probability Edge Raw"}
-        other_cols = [
-            c for c in df.columns
-            if c not in cols and c not in hidden_cols and not str(c).startswith("_")
-        ]
+        other_cols = [c for c in df.columns if c not in cols and not str(c).startswith("_")]
         return df[cols + other_cols]
 
     def _sort_buy_sell_list(df: pd.DataFrame, side: str) -> pd.DataFrame:
@@ -2502,68 +2126,6 @@ with tab_buy_sell:
             kind="mergesort",
         )
         return out.drop(columns=[c for c in out.columns if str(c).startswith("_")], errors="ignore")
-
-    def _rank_top_picks(df: pd.DataFrame, side: str, n: int = 3) -> pd.DataFrame:
-        """
-        Top picks are ranked by the exact same probability values that the charts use.
-        This intentionally does not alphabetize, because it is the user's quick-decision
-        shortlist. Full tables below remain alphabetized for browsing.
-        """
-        if df is None or df.empty:
-            return pd.DataFrame()
-        out = df.copy()
-        state_order = {
-            "BUY CONFIRMED": 0,
-            "SELL CONFIRMED": 0,
-            "BUY SETUP": 1,
-            "SELL SETUP": 1,
-            "WAIT": 4,
-            "ERROR": 9,
-        }
-        prob_column = "Long Probability" if side == "BUY" else "Short Probability"
-        raw_column = f"{prob_column} Raw"
-        if raw_column in out.columns:
-            out["_ProbSort"] = pd.to_numeric(_column_as_series(out, raw_column, np.nan), errors="coerce")
-        else:
-            out["_ProbSort"] = _column_as_series(out, prob_column, "").map(_pct_sort_value)
-        if "Probability Edge Raw" in out.columns:
-            out["_EdgeSort"] = pd.to_numeric(_column_as_series(out, "Probability Edge Raw", np.nan), errors="coerce").abs()
-        else:
-            out["_EdgeSort"] = _column_as_series(out, "Probability Edge", "").map(_pct_sort_value).abs()
-        out["_StateOrder"] = _column_as_series(out, "State", "").map(state_order).fillna(8)
-        out["_ADXSort"] = pd.to_numeric(_column_as_series(out, "ADX", np.nan), errors="coerce").fillna(-1)
-        out = out.sort_values(
-            ["_StateOrder", "_ProbSort", "_EdgeSort", "_ADXSort", "Symbol"],
-            ascending=[True, False, False, False, True],
-            kind="mergesort",
-        ).head(n)
-        return _prepare_buy_sell_table(out.drop(columns=[c for c in out.columns if str(c).startswith("_")], errors="ignore"))
-
-    def _buy_sell_config_signature(universe_symbols: list[str]) -> tuple:
-        """
-        Fingerprint the exact inputs used by the Buy/Sell List. If the user changes
-        period/interval/tolerances or selected universe, old rows are hidden so table
-        probabilities cannot disagree with chart probabilities because of stale scans.
-        """
-        return (
-            asset_class,
-            tuple(_sort_symbols_alpha(list(universe_symbols))),
-            cfg.get("period"),
-            cfg.get("interval"),
-            cfg.get("daily_period"),
-            int(cfg.get("trend_lookback", 0)),
-            int(cfg.get("sr_lookback", 0)),
-            int(cfg.get("ntd_window", 0)),
-            int(cfg.get("touch_lookback", 0)),
-            int(cfg.get("confirm_bars", 0)),
-            int(cfg.get("signal_lookback", 0)),
-            int(cfg.get("cross_lookback", 0)),
-            float(cfg.get("touch_tol_pips", 0.0)),
-            float(cfg.get("pullback_tol_pips", 0.0)),
-            int(cfg.get("cooldown", 0)),
-            int(cfg.get("npx_smooth", 0)),
-            int(cfg.get("sr_smooth", 0)),
-        )
 
     if st.button(f"Build {asset_class} Buy/Sell List", use_container_width=True, key=f"build_buy_sell_list_{asset_class}"):
         rows = []
@@ -2603,26 +2165,12 @@ with tab_buy_sell:
 
         results = pd.DataFrame(rows)
         st.session_state[f"buy_sell_results_{asset_class}"] = results
-        st.session_state[f"buy_sell_signature_{asset_class}"] = _buy_sell_config_signature(bs_universe)
-        st.session_state[f"buy_sell_built_at_{asset_class}"] = format_timestamp(datetime.now(PACIFIC))
 
     results = st.session_state.get(f"buy_sell_results_{asset_class}", pd.DataFrame())
-    current_buy_sell_signature = _buy_sell_config_signature(bs_universe)
-    stored_buy_sell_signature = st.session_state.get(f"buy_sell_signature_{asset_class}")
-    buy_sell_built_at = st.session_state.get(f"buy_sell_built_at_{asset_class}", "")
-
-    if stored_buy_sell_signature is not None and stored_buy_sell_signature != current_buy_sell_signature:
-        st.warning(
-            "The Buy/Sell List was built with older settings or a different symbol universe. "
-            "Click **Build Buy/Sell List** again so table probabilities match the current Hourly/Daily chart settings."
-        )
-        results = pd.DataFrame()
 
     if results is None or results.empty:
         st.info("Click the button above to build the Buy/Sell list.")
     else:
-        if buy_sell_built_at:
-            st.caption(f"Buy/Sell probabilities use the same engine/config as the charts. Last built: {buy_sell_built_at}.")
         action_series = _upper_text_series(results, "Trade Action")
         state_series = _upper_text_series(results, "State")
 
@@ -2651,43 +2199,6 @@ with tab_buy_sell:
         metric_cols[3].metric("Hourly SELL", int(len(sell_hourly)))
         metric_cols[4].metric("Symbols scanned", int(_column_as_series(results, "Symbol", "").replace("", np.nan).dropna().nunique()) if "Symbol" in results.columns else 0)
         metric_cols[5].metric("Rows scanned", int(len(results)))
-
-        st.markdown("### Top 3 Picks")
-        st.caption(
-            "These quick-view picks use the same probability engine and the same stored scan rows as the full tables below. "
-            "If chart settings change, the table is hidden until rebuilt so probabilities do not become stale."
-        )
-        top_daily_buy = _rank_top_picks(results[buy_mask & _text_eq_mask(results, "Timeframe", "Daily")], "BUY", 3)
-        top_hourly_buy = _rank_top_picks(results[buy_mask & _text_eq_mask(results, "Timeframe", "Hourly")], "BUY", 3)
-        top_daily_sell = _rank_top_picks(results[sell_mask & _text_eq_mask(results, "Timeframe", "Daily")], "SELL", 3)
-        top_hourly_sell = _rank_top_picks(results[sell_mask & _text_eq_mask(results, "Timeframe", "Hourly")], "SELL", 3)
-
-        top_col1, top_col2 = st.columns(2)
-        with top_col1:
-            st.markdown("#### 🟢 Top 3 Daily BUY")
-            if top_daily_buy.empty:
-                st.info("No Daily BUY picks.")
-            else:
-                st.dataframe(top_daily_buy, use_container_width=True, hide_index=True)
-
-            st.markdown("#### 🔴 Top 3 Daily SELL")
-            if top_daily_sell.empty:
-                st.info("No Daily SELL picks.")
-            else:
-                st.dataframe(top_daily_sell, use_container_width=True, hide_index=True)
-
-        with top_col2:
-            st.markdown("#### 🟢 Top 3 Hourly BUY")
-            if top_hourly_buy.empty:
-                st.info("No Hourly BUY picks.")
-            else:
-                st.dataframe(top_hourly_buy, use_container_width=True, hide_index=True)
-
-            st.markdown("#### 🔴 Top 3 Hourly SELL")
-            if top_hourly_sell.empty:
-                st.info("No Hourly SELL picks.")
-            else:
-                st.dataframe(top_hourly_sell, use_container_width=True, hide_index=True)
 
         buy_tab_daily, buy_tab_hourly, sell_tab_daily, sell_tab_hourly = st.tabs([
             "🟢 Daily BUY",
@@ -2753,161 +2264,78 @@ with tab_buy_sell:
                 st.dataframe(all_hourly, use_container_width=True, hide_index=True)
 
 
-with tab_daily_sr_cross:
-    st.subheader(f"{asset_class} Daily S/R Cross")
+
+with tab_daily_dips:
+    st.subheader(f"{asset_class} Daily Long-term NTD Dips")
     st.caption(
-        "Daily scan for S/R Reversal line crosses. "
-        "Section (a) finds recent S/R-vs-NTD line crosses and groups them by price trend direction. "
-        "Section (b) finds recent S/R Reversal crosses upward through -0.5 and 0.0. "
-        "Pips are used for FX pairs; points/cents-equivalent units are used for stocks/ETFs."
+        "Daily-chart scanner for symbols where the NTD line is currently below the selected dip line. "
+        "Each threshold is split into upward and downward price-trend groups, with Top 3 tables shown first."
     )
 
-    sr_col1, sr_col2, sr_col3 = st.columns([1, 1, 1])
-    daily_sr_lookback = int(sr_col1.slider(
-        "Recent cross window (daily bars)",
-        min_value=5,
-        max_value=180,
-        value=min(60, max(5, int(cfg.get("signal_lookback", 40)))),
-        step=5,
-        key="daily_sr_cross_recent_window",
+    dips_col1, dips_col2 = st.columns([1, 2])
+    dips_lookback = int(dips_col1.slider(
+        "Recent dip/cross lookback (daily bars)",
+        10, 360, 180, 10,
+        key=f"daily_ntd_dip_lookback_{asset_class}",
     ))
-    daily_sr_max_symbols = int(sr_col2.number_input(
-        "Max symbols to scan",
-        min_value=5,
-        max_value=len(current_universe),
-        value=min(len(current_universe), 80),
-        step=5,
-        key="daily_sr_cross_max_symbols",
-    ))
-    daily_sr_sort_note = sr_col3.empty()
-    daily_sr_sort_note.markdown("**Sort:** trend/S/R direction, then pips since cross.")
-
-    daily_sr_symbols = st.multiselect(
-        "Symbols to scan for Daily S/R Cross",
+    dips_universe = dips_col2.multiselect(
+        f"{asset_class} symbols for Daily NTD dips",
         current_universe,
-        default=current_universe[:daily_sr_max_symbols],
-        key="daily_sr_cross_symbols",
+        default=current_universe,
+        key=f"daily_ntd_dip_universe_{asset_class}",
     )
 
-    if not daily_sr_symbols:
-        st.info("Select at least one symbol to scan.")
-    elif st.button("Build Daily S/R Cross tables", key="build_daily_sr_cross_tables"):
-        sr_ntd_rows = []
-        minus05_rows = []
-        zero_rows = []
+    st.markdown(
+        """
+**How to use this tab**
 
-        progress = st.progress(0.0)
-        status = st.empty()
-        with st.spinner("Scanning daily S/R cross conditions..."):
-            for i, sym in enumerate(daily_sr_symbols):
-                status.write(f"Scanning {sym} ({i + 1}/{len(daily_sr_symbols)})")
-                try:
-                    result = _daily_sr_cross_row(sym, cfg, daily_sr_lookback)
-                    if result:
-                        if result.get("sr_ntd_cross") is not None:
-                            sr_ntd_rows.append(result["sr_ntd_cross"])
-                        if result.get("minus05_up") is not None:
-                            minus05_rows.append(result["minus05_up"])
-                        if result.get("zero_up") is not None:
-                            zero_rows.append(result["zero_up"])
-                except Exception as exc:
-                    st.warning(f"{sym}: scan skipped ({exc})")
-                progress.progress((i + 1) / max(1, len(daily_sr_symbols)))
-            status.empty()
+- **Upward trend + NTD below -0.75 / -0.5**: potential long-term dip watchlist. Wait for NTD/S/R to turn up before entering.
+- **Downward trend + NTD below -0.75 / -0.5**: higher-risk dip or early reversal watchlist. Use confirmation before buying.
+- **Recent Dip = Yes** means the NTD line crossed downward through the threshold within the selected lookback window.
+- **Move Since Dip** shows pips for FX and points for stocks/ETFs from the threshold-cross bar to the latest daily close.
+"""
+    )
+
+    if not dips_universe:
+        st.info("Select at least one symbol to scan.")
+    else:
+        with st.spinner("Scanning daily NTD long-term dips..."):
+            rows = []
+            progress = st.progress(0)
+            total = max(1, len(dips_universe) * 2)
+            done = 0
+            for threshold in [-0.75, -0.50]:
+                for sym in dips_universe:
+                    row = daily_ntd_dip_scan_row(sym, threshold, cfg, lookback=dips_lookback)
+                    if row is not None:
+                        rows.append(row)
+                    done += 1
+                    progress.progress(min(1.0, done / total))
             progress.empty()
 
-        sr_ntd_df = _sort_daily_sr_cross_table(pd.DataFrame(sr_ntd_rows))
-        minus05_df = _sort_daily_sr_cross_table(pd.DataFrame(minus05_rows))
-        zero_df = _sort_daily_sr_cross_table(pd.DataFrame(zero_rows))
-
-        top_buy_df = _top_daily_sr_buy_opportunities(sr_ntd_df, minus05_df, zero_df, limit=3)
-        top_level_cross_buy_df = _top_daily_sr_buy_opportunities(minus05_df, zero_df, limit=3)
-        top_downtrend_reversal_watch_df = _top_downtrend_sr_ntd_upward_reversal_candidates(sr_ntd_df, limit=3)
-
-        st.markdown("### Top 3 Buy Opportunities")
-        st.caption(
-            "Quick view of the strongest Daily S/R Cross buy candidates. "
-            "Ranking favors upward S/R crosses, upward S/R direction, upward price trend, "
-            "upward NTD trend, and fewer pips/points since the cross."
-        )
-        if top_buy_df.empty:
-            st.info("No top buy opportunities found from the current Daily S/R Cross scan.")
+        dip_df = pd.DataFrame(rows)
+        if dip_df.empty:
+            st.info("No symbols currently below -0.75 or -0.5 on the daily NTD line.")
         else:
-            st.dataframe(top_buy_df, use_container_width=True, hide_index=True)
+            threshold_order = ["-0.75", "-0.50"]
 
-        st.markdown("### Top 3 Buy Opportunities from -0.5 / 0.0 Crosses")
-        st.caption(
-            "This quick table only uses the S/R Reversal level-cross signals: "
-            "crossing -0.5 upward and crossing 0.0 upward. "
-            "It ranks the strongest level-cross symbols so users can review them without opening each detailed table."
-        )
-        if top_level_cross_buy_df.empty:
-            st.info("No top buy opportunities found from the -0.5 and 0.0 upward-cross tables.")
-        else:
-            st.dataframe(top_level_cross_buy_df, use_container_width=True, hide_index=True)
+            for threshold_label, threshold_value in [("-0.75", -0.75), ("-0.5", -0.50)]:
+                st.markdown("---")
+                st.header(f"Daily NTD {threshold_label} Dips")
 
-        st.markdown("### Top 3 Downtrend Reversal Watch — S/R Upward + NTD Trend Upward")
-        st.caption(
-            "This quick table is pulled only from the **Price Trend Downward — S/R crossed NTD** table. "
-            "It shows symbols where the broader price trend is still downward, but both **S/R Direction** "
-            "and **NTD Trend Direction** are upward. Treat these as early bounce/reversal watch candidates, "
-            "not confirmed trend-following buys."
-        )
-        if top_downtrend_reversal_watch_df.empty:
-            st.info("No Price Trend Downward S/R-vs-NTD rows currently have both S/R Direction and NTD Trend Direction upward.")
-        else:
-            st.dataframe(top_downtrend_reversal_watch_df, use_container_width=True, hide_index=True)
+                threshold_df = dip_df[dip_df["Threshold"].astype(str).eq(f"{threshold_value:+.2f}")].copy()
+                up_df = threshold_df[threshold_df["Price Trend Direction"].astype(str).eq("Upward")].copy()
+                down_df = threshold_df[threshold_df["Price Trend Direction"].astype(str).eq("Downward")].copy()
 
-        st.markdown("### (a) S/R Reversal Line crossing the NTD Line")
-        st.caption("These tables show the most recent daily S/R-vs-NTD line cross, split by daily price trend direction and ordered by pips/points since the cross.")
+                c1, c2 = st.columns(2)
+                with c1:
+                    _render_dip_section(f"{threshold_label} Dips — Price Trend Upward", up_df, top_n=3)
+                with c2:
+                    _render_dip_section(f"{threshold_label} Dips — Price Trend Downward", down_df, top_n=3)
 
-        sr_ntd_up = sr_ntd_df[sr_ntd_df["Price Trend Direction"].eq("Upward")] if not sr_ntd_df.empty else pd.DataFrame()
-        sr_ntd_down = sr_ntd_df[sr_ntd_df["Price Trend Direction"].eq("Downward")] if not sr_ntd_df.empty else pd.DataFrame()
-
-        _display_daily_sr_cross_table(
-            "Price Trend Upward — S/R crossed NTD",
-            sr_ntd_up,
-            "No symbols found where S/R Reversal recently crossed the NTD line while the daily price trend is upward.",
-        )
-        _display_daily_sr_cross_table(
-            "Price Trend Downward — S/R crossed NTD",
-            sr_ntd_down,
-            "No symbols found where S/R Reversal recently crossed the NTD line while the daily price trend is downward.",
-        )
-
-        st.markdown("### (b) S/R Reversal Line upward level crosses")
-        level_tab1, level_tab2 = st.tabs(["S/R crossed -0.5 upward", "S/R crossed 0.0 upward"])
-
-        with level_tab1:
-            _display_daily_sr_cross_table(
-                "Daily — S/R Reversal crossed -0.5 upward",
-                minus05_df,
-                "No symbols found where S/R Reversal recently crossed -0.5 upward.",
-            )
-
-        with level_tab2:
-            _display_daily_sr_cross_table(
-                "Daily — S/R Reversal crossed 0.0 upward",
-                zero_df,
-                "No symbols found where S/R Reversal recently crossed 0.0 upward.",
-            )
-
-        with st.expander("Show combined Daily S/R Cross results", expanded=False):
-            combined = pd.concat(
-                [
-                    sr_ntd_df.assign(Section="S/R crossed NTD") if not sr_ntd_df.empty else pd.DataFrame(),
-                    minus05_df.assign(Section="S/R crossed -0.5 upward") if not minus05_df.empty else pd.DataFrame(),
-                    zero_df.assign(Section="S/R crossed 0.0 upward") if not zero_df.empty else pd.DataFrame(),
-                ],
-                ignore_index=True,
-            )
-            if combined.empty:
-                st.info("No combined results to show.")
-            else:
-                _display_daily_sr_cross_table("Combined results", _sort_daily_sr_cross_table(combined), "No combined results to show.")
-    else:
-        st.info("Click **Build Daily S/R Cross tables** to scan the selected symbols.")
-
+            with st.expander("Show all daily NTD dip rows", expanded=False):
+                all_sorted = _sort_daily_ntd_dips(dip_df)
+                st.dataframe(_format_daily_ntd_dip_table(all_sorted), use_container_width=True, hide_index=True)
 
 
 with tab_rules:
