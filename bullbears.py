@@ -4,8 +4,7 @@
 # 30 EMA crosses, NTD/S/R reversal confirmation, Stocks/FX scanner,
 # and chart-level probability trade instructions for easier BUY/SELL decision-making.
 # (UPDATED) Structure metric now uses directional red/green trend badges and action/trend alignment text.
-# (UPDATED) Symbol lists and scanner tables are alphabetized; Buy/Sell List is split into Daily and Hourly tables.
-# (UPDATED) Buy/Sell List includes Top 3 Daily/Hourly BUY/SELL picks for quick trade review.
+# (UPDATED) Symbol lists and scanner tables are alphabetized; Buy/Sell List is split into Daily/Hourly tables with Top 3 picks, confirmation timestamps, and confirmation explanations.
 
 import math
 import time
@@ -1156,8 +1155,30 @@ def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict)
         ntd_delta=ntd_delta,
     )
 
+    confirmation_details = build_confirmation_details(
+        state=state,
+        bias=bias,
+        bull_time=bull_time,
+        bear_time=bear_time,
+        cross_up_time=cross_up_time,
+        cross_down_time=cross_down_time,
+        current_time=df.index[-1] if len(df.index) else None,
+        current_structure=current_structure,
+        trend_up=trend_up,
+        trend_down=trend_down,
+        sr_last=sr_last,
+        ntd_last=ntd_last,
+        sr_delta=sr_delta,
+        ntd_delta=ntd_delta,
+        price_above_ema30=price_above_ema30,
+        price_below_ema30=price_below_ema30,
+        price_above_hma=price_above_hma,
+        price_below_hma=price_below_hma,
+    )
+
     return {
         **probability_info,
+        **confirmation_details,
         "State": state,
         "Bias": bias,
         "Reason": reason,
@@ -1414,6 +1435,126 @@ def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
     plt.close(fig)
 
 
+
+
+def format_confirmation_time(ts) -> str:
+    """Format signal/confirmation timestamps in Pacific time for scanner tables."""
+    if ts is None or (isinstance(ts, float) and not np.isfinite(ts)):
+        return "n/a"
+    try:
+        t = pd.Timestamp(ts)
+        if pd.isna(t):
+            return "n/a"
+        if t.tzinfo is None:
+            t = t.tz_localize(PACIFIC)
+        else:
+            t = t.tz_convert(PACIFIC)
+        return t.strftime("%Y-%m-%d %H:%M PST")
+    except Exception:
+        return str(ts)
+
+
+def _latest_timestamp(*timestamps):
+    """Return the latest non-null pandas timestamp from a set of candidate timestamps."""
+    clean = []
+    for ts in timestamps:
+        try:
+            if ts is None:
+                continue
+            t = pd.Timestamp(ts)
+            if pd.isna(t):
+                continue
+            clean.append(t)
+        except Exception:
+            continue
+    if not clean:
+        return None
+    try:
+        return max(clean)
+    except Exception:
+        return clean[-1]
+
+
+def build_confirmation_details(state: str,
+                               bias: str,
+                               bull_time=None,
+                               bear_time=None,
+                               cross_up_time=None,
+                               cross_down_time=None,
+                               current_time=None,
+                               current_structure: str = "",
+                               trend_up: bool = False,
+                               trend_down: bool = False,
+                               sr_last: float = np.nan,
+                               ntd_last: float = np.nan,
+                               sr_delta: float = np.nan,
+                               ntd_delta: float = np.nan,
+                               price_above_ema30: bool = False,
+                               price_below_ema30: bool = False,
+                               price_above_hma: bool = False,
+                               price_below_hma: bool = False) -> dict:
+    """Create a user-facing confirmation timestamp and concise explanation."""
+    state_text = str(state or "WAIT").upper()
+    bias_text = str(bias or "Neutral")
+    source = "Latest bar / no confirmation"
+    when = current_time
+    explanation = "No confirmed trade trigger yet. Wait for price, trend, and indicator confirmation."
+
+    sr_txt = "rising" if np.isfinite(sr_delta) and sr_delta > 0 else "falling" if np.isfinite(sr_delta) and sr_delta < 0 else "flat/unknown"
+    ntd_txt = "rising" if np.isfinite(ntd_delta) and ntd_delta > 0 else "falling" if np.isfinite(ntd_delta) and ntd_delta < 0 else "flat/unknown"
+
+    if "BUY" in state_text:
+        when = _latest_timestamp(bull_time, cross_up_time, current_time)
+        parts = []
+        if cross_up_time is not None:
+            parts.append("30 EMA cross up")
+        if bull_time is not None:
+            parts.append("support/S-R reversal")
+        if not parts:
+            parts.append("bullish setup conditions")
+        source = " + ".join(parts)
+        explanation = (
+            f"{state}: {current_structure}. Price is "
+            f"{'above' if price_above_ema30 else 'not above'} 30 EMA and "
+            f"{'above' if price_above_hma else 'not above'} HMA; "
+            f"S/R Reversal is {safe_float(sr_last):+.2f} and {sr_txt}; "
+            f"NTD is {safe_float(ntd_last):+.2f} and {ntd_txt}. "
+            f"Use this as BUY confirmation only if price holds the entry zone."
+        )
+    elif "SELL" in state_text:
+        when = _latest_timestamp(bear_time, cross_down_time, current_time)
+        parts = []
+        if cross_down_time is not None:
+            parts.append("30 EMA cross down")
+        if bear_time is not None:
+            parts.append("resistance/S-R rejection")
+        if not parts:
+            parts.append("bearish setup conditions")
+        source = " + ".join(parts)
+        explanation = (
+            f"{state}: {current_structure}. Price is "
+            f"{'below' if price_below_ema30 else 'not below'} 30 EMA and "
+            f"{'below' if price_below_hma else 'not below'} HMA; "
+            f"S/R Reversal is {safe_float(sr_last):+.2f} and {sr_txt}; "
+            f"NTD is {safe_float(ntd_last):+.2f} and {ntd_txt}. "
+            f"Use this as SELL confirmation only if price rejects or loses the entry zone."
+        )
+    elif "SETUP" in state_text:
+        when = current_time
+        source = f"{bias_text} setup watch"
+        explanation = (
+            f"{state}: setup is forming but not fully confirmed. "
+            f"Structure: {current_structure}; S/R Reversal {safe_float(sr_last):+.2f} ({sr_txt}); "
+            f"NTD {safe_float(ntd_last):+.2f} ({ntd_txt}). Wait for a candle close/EMA confirmation."
+        )
+
+    return {
+        "Confirmation Time": format_confirmation_time(when),
+        "Confirmation Source": source,
+        "Confirmation Explanation": explanation,
+    }
+
+
 def format_trade_row(symbol: str, trade: dict) -> dict:
     return {
         "Symbol": symbol,
@@ -1444,6 +1585,9 @@ def format_trade_row(symbol: str, trade: dict) -> dict:
         "Entry Zone": trade.get("Entry Zone"),
         "Stop / Invalidation": trade.get("Stop / Invalidation"),
         "Target 1": trade.get("Target 1"),
+        "Confirmation Time": trade.get("Confirmation Time"),
+        "Confirmation Source": trade.get("Confirmation Source"),
+        "Confirmation Explanation": trade.get("Confirmation Explanation"),
         "Trade Instruction": trade.get("Trade Instruction"),
         "Reason": trade.get("Reason"),
     }
@@ -1813,8 +1957,7 @@ with tab_buy_sell:
     st.subheader(f"{asset_class} Buy/Sell List")
     st.caption(
         "Builds a clean trade-action list from both the Hourly and Daily trading engines. "
-        "Use the Daily rows for broader bias and the Hourly rows for entry timing. "
-        "The Top 3 panel highlights the strongest candidates first so users do not need to scroll."
+        "Use the Daily rows for broader bias and the Hourly rows for entry timing."
     )
 
     bs_col1, bs_col2, bs_col3 = st.columns([1, 1, 1])
@@ -1846,8 +1989,7 @@ with tab_buy_sell:
 - **SELL list**: Short probability is stronger than long probability and the setup is SELL CONFIRMED or SELL SETUP.
 - **Daily timeframe**: use for market bias and swing direction.
 - **Hourly timeframe**: use for entry timing, pullbacks, and near-term confirmation.
-- **Top 3 picks**: ranked by confirmed/setup state, side-specific probability, probability edge, structure alignment, and ADX.
-- Full Daily/Hourly tables remain alphabetized for browsing after the Top 3 panel.
+- Stronger rows generally have higher probability edge, aligned trend, and clearer support/resistance instructions.
 """
     )
 
@@ -1900,7 +2042,8 @@ with tab_buy_sell:
             "Long Probability", "Short Probability", "Probability Edge",
             "Trend", "Current Structure", "S/R Rev", "NTD", "ADX", "Last Close",
             "Support", "Resistance", "Entry Zone", "Stop / Invalidation",
-            "Target 1", "Trade Instruction", "Reason",
+            "Target 1", "Confirmation Time", "Confirmation Source",
+            "Confirmation Explanation", "Trade Instruction", "Reason",
         ]
         cols = [c for c in preferred_cols if c in df.columns]
         other_cols = [c for c in df.columns if c not in cols and not str(c).startswith("_")]
@@ -1935,74 +2078,31 @@ with tab_buy_sell:
         )
         return out.drop(columns=[c for c in out.columns if str(c).startswith("_")], errors="ignore")
 
-
-    def _rank_top_buy_sell_picks(df: pd.DataFrame, side: str, top_n: int = 3) -> pd.DataFrame:
-        """
-        Rank the strongest actionable rows for the quick Top Picks panel.
-
-        The full Buy/Sell tables stay alphabetized for browsing. This helper ranks
-        separately by trade quality so users can immediately see the strongest
-        Daily BUY, Hourly BUY, Daily SELL, and Hourly SELL candidates.
-        """
+    def _top_pick_table(df: pd.DataFrame, side: str, n: int = 3) -> pd.DataFrame:
+        """Rank top picks by confirmed state, probability, edge, ADX, then symbol."""
         if df is None or df.empty:
             return pd.DataFrame()
-
         out = df.copy()
         state_order = {
             "BUY CONFIRMED": 0,
             "SELL CONFIRMED": 0,
             "BUY SETUP": 1,
             "SELL SETUP": 1,
-            "WATCH": 3,
             "WAIT": 4,
             "ERROR": 9,
         }
-        structure_order = {
-            "BULLISH": 0,
-            "BULLISH PULLBACK": 1,
-            "MIXED": 3,
-            "NEUTRAL": 4,
-            "BEARISH PULLBACK": 5,
-            "BEARISH": 6,
-        }
-        if side.upper() == "SELL":
-            structure_order = {
-                "BEARISH": 0,
-                "BEARISH PULLBACK": 1,
-                "MIXED": 3,
-                "NEUTRAL": 4,
-                "BULLISH PULLBACK": 5,
-                "BULLISH": 6,
-            }
-
-        out["_StateOrder"] = _column_as_series(out, "State", "").astype(str).str.upper().map(state_order).fillna(8)
+        out["_StateOrder"] = _column_as_series(out, "State", "").map(state_order).fillna(8)
         out["_LongProbSort"] = _column_as_series(out, "Long Probability", "").map(_pct_sort_value).fillna(-1)
         out["_ShortProbSort"] = _column_as_series(out, "Short Probability", "").map(_pct_sort_value).fillna(-1)
         out["_EdgeSort"] = _column_as_series(out, "Probability Edge", "").map(_pct_sort_value).abs().fillna(-1)
         out["_ADXSort"] = pd.to_numeric(_column_as_series(out, "ADX", np.nan), errors="coerce").fillna(-1)
-        out["_StructureOrder"] = (
-            _column_as_series(out, "Current Structure", "")
-            .astype(str)
-            .str.upper()
-            .map(structure_order)
-            .fillna(9)
-        )
-        prob_col = "_LongProbSort" if side.upper() == "BUY" else "_ShortProbSort"
-
+        prob_col = "_LongProbSort" if side == "BUY" else "_ShortProbSort"
         out = out.sort_values(
-            ["_StateOrder", prob_col, "_EdgeSort", "_StructureOrder", "_ADXSort", "Symbol"],
-            ascending=[True, False, False, True, False, True],
+            ["_StateOrder", prob_col, "_EdgeSort", "_ADXSort", "Symbol"],
+            ascending=[True, False, False, False, True],
             kind="mergesort",
-        ).head(int(top_n))
-
-        top_cols = [
-            "Symbol", "Trade Action", "State", "Long Probability", "Short Probability",
-            "Probability Edge", "Current Structure", "Trend", "S/R Rev", "NTD", "ADX",
-            "Last Close", "Entry Zone", "Stop / Invalidation", "Target 1",
-            "Trade Instruction", "Reason",
-        ]
-        cols = [c for c in top_cols if c in out.columns]
-        return out[cols].drop(columns=[c for c in out.columns if str(c).startswith("_")], errors="ignore")
+        ).head(n)
+        return _prepare_buy_sell_table(out.drop(columns=[c for c in out.columns if str(c).startswith("_")], errors="ignore"))
 
     if st.button(f"Build {asset_class} Buy/Sell List", use_container_width=True, key=f"build_buy_sell_list_{asset_class}"):
         rows = []
@@ -2077,62 +2177,43 @@ with tab_buy_sell:
         metric_cols[4].metric("Symbols scanned", int(_column_as_series(results, "Symbol", "").replace("", np.nan).dropna().nunique()) if "Symbol" in results.columns else 0)
         metric_cols[5].metric("Rows scanned", int(len(results)))
 
-        top_daily_buy = _rank_top_buy_sell_picks(
-            results[buy_mask & _text_eq_mask(results, "Timeframe", "Daily")],
-            "BUY",
-            top_n=3,
-        )
-        top_hourly_buy = _rank_top_buy_sell_picks(
-            results[buy_mask & _text_eq_mask(results, "Timeframe", "Hourly")],
-            "BUY",
-            top_n=3,
-        )
-        top_daily_sell = _rank_top_buy_sell_picks(
-            results[sell_mask & _text_eq_mask(results, "Timeframe", "Daily")],
-            "SELL",
-            top_n=3,
-        )
-        top_hourly_sell = _rank_top_buy_sell_picks(
-            results[sell_mask & _text_eq_mask(results, "Timeframe", "Hourly")],
-            "SELL",
-            top_n=3,
-        )
-
         st.markdown("### Top 3 Picks")
         st.caption(
-            "Quick view of the strongest candidates from each Daily/Hourly BUY/SELL group. "
-            "Use Daily picks for bias and Hourly picks for timing; open the full tables below for the complete scan."
+            "Quick-view tables rank the strongest current picks first. "
+            "Confirmation Time shows when the most recent trigger occurred; "
+            "Confirmation Source and Explanation describe why the row qualified."
         )
+        top_buy_daily = _top_pick_table(results[buy_mask & _text_eq_mask(results, "Timeframe", "Daily")], "BUY", 3)
+        top_buy_hourly = _top_pick_table(results[buy_mask & _text_eq_mask(results, "Timeframe", "Hourly")], "BUY", 3)
+        top_sell_daily = _top_pick_table(results[sell_mask & _text_eq_mask(results, "Timeframe", "Daily")], "SELL", 3)
+        top_sell_hourly = _top_pick_table(results[sell_mask & _text_eq_mask(results, "Timeframe", "Hourly")], "SELL", 3)
 
-        top_buy_daily_col, top_buy_hourly_col = st.columns(2)
-        with top_buy_daily_col:
+        top_cols = st.columns(2)
+        with top_cols[0]:
             st.markdown("#### 🟢 Top 3 Daily BUY")
-            if top_daily_buy.empty:
+            if top_buy_daily.empty:
                 st.info("No Daily BUY picks.")
             else:
-                st.dataframe(top_daily_buy, use_container_width=True, hide_index=True)
+                st.dataframe(top_buy_daily, use_container_width=True, hide_index=True)
 
-        with top_buy_hourly_col:
             st.markdown("#### 🟢 Top 3 Hourly BUY")
-            if top_hourly_buy.empty:
+            if top_buy_hourly.empty:
                 st.info("No Hourly BUY picks.")
             else:
-                st.dataframe(top_hourly_buy, use_container_width=True, hide_index=True)
+                st.dataframe(top_buy_hourly, use_container_width=True, hide_index=True)
 
-        top_sell_daily_col, top_sell_hourly_col = st.columns(2)
-        with top_sell_daily_col:
+        with top_cols[1]:
             st.markdown("#### 🔴 Top 3 Daily SELL")
-            if top_daily_sell.empty:
+            if top_sell_daily.empty:
                 st.info("No Daily SELL picks.")
             else:
-                st.dataframe(top_daily_sell, use_container_width=True, hide_index=True)
+                st.dataframe(top_sell_daily, use_container_width=True, hide_index=True)
 
-        with top_sell_hourly_col:
             st.markdown("#### 🔴 Top 3 Hourly SELL")
-            if top_hourly_sell.empty:
+            if top_sell_hourly.empty:
                 st.info("No Hourly SELL picks.")
             else:
-                st.dataframe(top_hourly_sell, use_container_width=True, hide_index=True)
+                st.dataframe(top_sell_hourly, use_container_width=True, hide_index=True)
 
         st.divider()
 
