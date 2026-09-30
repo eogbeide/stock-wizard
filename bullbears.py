@@ -2730,6 +2730,7 @@ with tab_daily_sr_cross:
         zero_df = _sort_daily_sr_cross_table(pd.DataFrame(zero_rows))
 
         top_buy_df = _top_daily_sr_buy_opportunities(sr_ntd_df, minus05_df, zero_df, limit=3)
+        top_level_cross_buy_df = _top_daily_sr_buy_opportunities(minus05_df, zero_df, limit=3)
 
         st.markdown("### Top 3 Buy Opportunities")
         st.caption(
@@ -2741,6 +2742,17 @@ with tab_daily_sr_cross:
             st.info("No top buy opportunities found from the current Daily S/R Cross scan.")
         else:
             st.dataframe(top_buy_df, use_container_width=True, hide_index=True)
+
+        st.markdown("### Top 3 Buy Opportunities from -0.5 / 0.0 Crosses")
+        st.caption(
+            "This quick table only uses the S/R Reversal level-cross signals: "
+            "crossing -0.5 upward and crossing 0.0 upward. "
+            "It ranks the strongest level-cross symbols so users can review them without opening each detailed table."
+        )
+        if top_level_cross_buy_df.empty:
+            st.info("No top buy opportunities found from the -0.5 and 0.0 upward-cross tables.")
+        else:
+            st.dataframe(top_level_cross_buy_df, use_container_width=True, hide_index=True)
 
         st.markdown("### (a) S/R Reversal Line crossing the NTD Line")
         st.caption("These tables show the most recent daily S/R-vs-NTD line cross, split by daily price trend direction and ordered by pips/points since the cross.")
