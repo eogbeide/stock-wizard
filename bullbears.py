@@ -1749,6 +1749,97 @@ def daily_ntd_dip_scan_row(symbol: str, threshold: float, cfg: dict, lookback: i
         }
 
 
+
+def hourly_ntd_dip_scan_row(symbol: str, threshold: float, cfg: dict, lookback: int = 120):
+    """Return a row when the hourly NTD is currently below the chosen dip threshold.
+
+    This mirrors the daily NTD dip scanner, but uses the active hourly period/interval
+    so Top 3 daily dip tables can be paired with short-term hourly symbols.
+    """
+    try:
+        scan_cfg = cfg.copy()
+        scan_cfg["period"] = cfg.get("period", "10d")
+        scan_cfg["interval"] = cfg.get("interval", "1h")
+        df = fetch_market_ohlc(symbol, scan_cfg["period"], scan_cfg["interval"])
+        min_bars = max(40, min(120, int(scan_cfg.get("ntd_window", 60)) + 10))
+        if df.empty or len(df) < min_bars:
+            return None
+        df = prepare_indicators(df, scan_cfg, symbol)
+        ntd = coerce_series(df["NTD"]).dropna()
+        close = coerce_series(df["Close"]).dropna()
+        if ntd.empty or close.empty:
+            return None
+
+        current_ntd = safe_float(ntd.iloc[-1])
+        if not np.isfinite(current_ntd) or current_ntd > float(threshold):
+            return None
+
+        trend_lb = min(int(cfg.get("trend_lookback", 120)), max(10, len(close)))
+        _, trend_slope, trend_r2 = regression_line(close, trend_lb)
+        trend_direction = _trend_direction_from_slope(trend_slope)
+
+        recent_cross, recent_bars, recent_ts = _recent_level_cross_down(ntd, threshold, lookback)
+        bars_since, cross_ts = _last_level_cross_down(ntd, threshold)
+        if recent_cross:
+            bars_since, cross_ts = recent_bars, recent_ts
+
+        current_price = safe_float(close.iloc[-1])
+        cross_price = np.nan
+        move_since_cross = np.nan
+        if cross_ts is not None:
+            try:
+                cross_price = safe_float(close.loc[:cross_ts].iloc[-1])
+            except Exception:
+                try:
+                    cross_price = safe_float(close.loc[cross_ts])
+                except Exception:
+                    cross_price = np.nan
+            if np.isfinite(current_price) and np.isfinite(cross_price):
+                move_since_cross = current_price - cross_price
+
+        ntd_lb = min(30, max(5, len(ntd)))
+        _, ntd_slope, _ = regression_line(ntd, ntd_lb)
+        ntd_direction = _trend_direction_from_slope(ntd_slope)
+
+        support, resistance = support_resistance(df, int(cfg.get("sr_lookback", 120)))
+        sr_current = safe_float(df["SR_REV"].iloc[-1]) if "SR_REV" in df.columns and len(df) else np.nan
+
+        return {
+            "Symbol": symbol,
+            "Timeframe": f"Hourly ({scan_cfg.get('interval', '1h')})",
+            "Threshold": f"{threshold:+.2f}",
+            "Price Trend Direction": trend_direction,
+            "NTD Direction": ntd_direction,
+            "Current NTD": current_ntd,
+            "NTD Slope": safe_float(ntd_slope),
+            "Current S/R Reversal": sr_current,
+            "Current Price": current_price,
+            "Cross Time": cross_ts,
+            "Bars Since Dip": bars_since if bars_since is not None else np.nan,
+            "Price at Dip": cross_price,
+            "Move Since Dip": move_since_cross,
+            "Move Since Dip (pips/pts)": (move_since_cross / pip_size(symbol)) if np.isfinite(move_since_cross) else np.nan,
+            "Support": support,
+            "Resistance": resistance,
+            "Trend Slope": safe_float(trend_slope),
+            "Trend R²": safe_float(trend_r2),
+            "Recent Dip": "Yes" if recent_cross else "No",
+            "Explanation": (
+                f"Hourly NTD is below {threshold:+.2f}. "
+                f"Price trend is {trend_direction.lower()}; NTD direction is {ntd_direction.lower()}."
+            ),
+        }
+    except Exception as exc:
+        return {
+            "Symbol": symbol,
+            "Timeframe": "Hourly",
+            "Threshold": f"{threshold:+.2f}",
+            "Price Trend Direction": "Error",
+            "NTD Direction": "Error",
+            "Explanation": f"Hourly scan error: {exc}",
+        }
+
+
 def _format_daily_ntd_dip_table(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty:
         return pd.DataFrame()
@@ -1778,7 +1869,7 @@ def _format_daily_ntd_dip_table(df: pd.DataFrame) -> pd.DataFrame:
     if "Bars Since Dip" in out.columns:
         out["Bars Since Dip"] = out["Bars Since Dip"].map(lambda x: "" if not np.isfinite(safe_float(x)) else int(safe_float(x)))
     preferred = [
-        "Symbol", "Threshold", "Price Trend Direction", "NTD Direction", "Current NTD", "Recent Dip",
+        "Symbol", "Timeframe", "Threshold", "Price Trend Direction", "NTD Direction", "Current NTD", "Recent Dip",
         "Cross Time", "Bars Since Dip", "Current Price", "Price at Dip", "Move Since Dip",
         "Current S/R Reversal", "Support", "Resistance", "NTD Slope", "Trend Slope", "Trend R²", "Explanation"
     ]
@@ -1989,6 +2080,114 @@ def _daily_sr_cross_row(symbol: str, cfg: dict, lookback: int):
             "Pips/Points Since Cross": round(signed_units, 1) if np.isfinite(signed_units) else np.nan,
             "Abs Pips/Points Since Cross": round(abs_units, 1) if np.isfinite(abs_units) else np.nan,
             "Explanation": f"S/R Reversal line recently crossed upward through 0.0 {ev['bars_since']} daily bars ago.",
+        }
+
+    return out
+
+
+
+def _hourly_sr_cross_row(symbol: str, cfg: dict, lookback: int):
+    """Hourly version of the S/R cross scanner used for Top 3 quick-pick tables."""
+    hourly_cfg = cfg.copy()
+    hourly_cfg["period"] = cfg.get("period", "10d")
+    hourly_cfg["interval"] = cfg.get("interval", "1h")
+
+    df = fetch_market_ohlc(symbol, hourly_cfg["period"], hourly_cfg["interval"])
+    min_bars = max(40, min(120, int(cfg.get("trend_lookback", 120)) // 2))
+    if df.empty or len(df) < min_bars:
+        return None
+
+    df = prepare_indicators(df, hourly_cfg, symbol)
+    if df.empty or not {"Close", "SR_REV", "NTD"}.issubset(df.columns):
+        return None
+
+    close = coerce_series(df["Close"]).dropna()
+    sr = coerce_series(df["SR_REV"]).reindex(df.index)
+    ntd = coerce_series(df["NTD"]).reindex(df.index)
+    if close.empty or sr.dropna().empty or ntd.dropna().empty:
+        return None
+
+    price_lb = min(int(cfg.get("trend_lookback", 120)), max(10, len(close)))
+    _, price_trend_slope, _ = regression_line(close, price_lb)
+    ntd_lb = min(int(cfg.get("trend_lookback", 120)), max(10, len(ntd.dropna())))
+    _, ntd_trend_slope, _ = regression_line(ntd.dropna(), ntd_lb)
+
+    current_price = float(close.iloc[-1])
+    sr_last = _last_value(sr)
+    ntd_last = _last_value(ntd)
+    interval_label = str(hourly_cfg.get("interval", "1h"))
+
+    base = {
+        "Symbol": symbol,
+        "Timeframe": f"Hourly ({interval_label})",
+        "Last Close": fmt_price(symbol, current_price),
+        "Last Close Raw": current_price,
+        "Current S/R Reversal": round(sr_last, 4) if np.isfinite(sr_last) else np.nan,
+        "Current NTD": round(ntd_last, 4) if np.isfinite(ntd_last) else np.nan,
+        "S/R Direction": "Upward" if len(sr.dropna()) >= 2 and sr.dropna().iloc[-1] >= sr.dropna().iloc[-2] else "Downward",
+        "Price Trend Direction": _direction_from_slope(price_trend_slope),
+        "NTD Trend Direction": _direction_from_slope(ntd_trend_slope),
+        "Price Trend Slope": round(safe_float(price_trend_slope), 7),
+        "NTD Trend Slope": round(safe_float(ntd_trend_slope), 7),
+        "Last Bar Time": _format_cross_time(df.index[-1]),
+    }
+
+    out = {"sr_ntd_cross": None, "minus05_up": None, "zero_up": None}
+
+    ev = _latest_recent_cross_event(sr, ntd, lookback, upward_only=False)
+    if ev is not None:
+        pos = ev["pos"]
+        cross_price = safe_float(close.iloc[pos])
+        signed_units, abs_units = _move_since_cross(symbol, current_price, cross_price)
+        out["sr_ntd_cross"] = {
+            **base,
+            "Cross Type": "S/R crossed NTD",
+            "Cross Direction": ev["direction"],
+            "Cross Time": _format_cross_time(ev["timestamp"]),
+            "Bars Since Cross": ev["bars_since"],
+            "Price at Cross": fmt_price(symbol, cross_price),
+            "Price at Cross Raw": cross_price,
+            "Pips/Points Since Cross": round(signed_units, 1) if np.isfinite(signed_units) else np.nan,
+            "Abs Pips/Points Since Cross": round(abs_units, 1) if np.isfinite(abs_units) else np.nan,
+            "Explanation": f"Hourly S/R Reversal line crossed the NTD line {ev['direction'].lower()} {ev['bars_since']} bars ago.",
+        }
+
+    minus05_line = pd.Series(-0.5, index=df.index)
+    ev = _latest_recent_cross_event(sr, minus05_line, lookback, upward_only=True)
+    if ev is not None:
+        pos = ev["pos"]
+        cross_price = safe_float(close.iloc[pos])
+        signed_units, abs_units = _move_since_cross(symbol, current_price, cross_price)
+        out["minus05_up"] = {
+            **base,
+            "Cross Type": "S/R crossed -0.5 upward",
+            "Cross Direction": "Upward",
+            "Cross Time": _format_cross_time(ev["timestamp"]),
+            "Bars Since Cross": ev["bars_since"],
+            "Price at Cross": fmt_price(symbol, cross_price),
+            "Price at Cross Raw": cross_price,
+            "Pips/Points Since Cross": round(signed_units, 1) if np.isfinite(signed_units) else np.nan,
+            "Abs Pips/Points Since Cross": round(abs_units, 1) if np.isfinite(abs_units) else np.nan,
+            "Explanation": f"Hourly S/R Reversal line recently crossed upward through -0.5 {ev['bars_since']} bars ago.",
+        }
+
+    zero_line = pd.Series(0.0, index=df.index)
+    ev = _latest_recent_cross_event(sr, zero_line, lookback, upward_only=True)
+    if ev is not None:
+        pos = ev["pos"]
+        cross_price = safe_float(close.iloc[pos])
+        signed_units, abs_units = _move_since_cross(symbol, current_price, cross_price)
+        out["zero_up"] = {
+            **base,
+            "Cross Type": "S/R crossed 0.0 upward",
+            "Cross Direction": "Upward",
+            "Cross Time": _format_cross_time(ev["timestamp"]),
+            "Bars Since Cross": ev["bars_since"],
+            "Price at Cross": fmt_price(symbol, cross_price),
+            "Price at Cross Raw": cross_price,
+            "Pips/Points Since Cross": round(signed_units, 1) if np.isfinite(signed_units) else np.nan,
+            "Abs Pips/Points Since Cross": round(abs_units, 1) if np.isfinite(abs_units) else np.nan,
+            "Explanation": f"Hourly S/R Reversal line recently crossed upward through 0.0 {ev['bars_since']} bars ago.",
         }
 
     return out
@@ -2749,12 +2948,18 @@ with tab_daily_sr_cross:
         sr_ntd_rows = []
         minus05_rows = []
         zero_rows = []
+        hourly_sr_ntd_rows = []
+        hourly_minus05_rows = []
+        hourly_zero_rows = []
 
+        hourly_sr_lookback = max(10, int(daily_sr_lookback))
         progress = st.progress(0.0)
         status = st.empty()
-        with st.spinner("Scanning daily S/R cross conditions..."):
+        with st.spinner("Scanning daily and hourly S/R cross conditions..."):
+            total_steps = max(1, len(daily_sr_symbols) * 2)
+            step = 0
             for i, sym in enumerate(daily_sr_symbols):
-                status.write(f"Scanning {sym} ({i + 1}/{len(daily_sr_symbols)})")
+                status.write(f"Scanning Daily {sym} ({i + 1}/{len(daily_sr_symbols)})")
                 try:
                     result = _daily_sr_cross_row(sym, cfg, daily_sr_lookback)
                     if result:
@@ -2765,8 +2970,24 @@ with tab_daily_sr_cross:
                         if result.get("zero_up") is not None:
                             zero_rows.append(result["zero_up"])
                 except Exception as exc:
-                    st.warning(f"{sym}: scan skipped ({exc})")
-                progress.progress((i + 1) / max(1, len(daily_sr_symbols)))
+                    st.warning(f"{sym}: daily scan skipped ({exc})")
+                step += 1
+                progress.progress(step / total_steps)
+
+                status.write(f"Scanning Hourly {sym} ({i + 1}/{len(daily_sr_symbols)})")
+                try:
+                    hourly_result = _hourly_sr_cross_row(sym, cfg, hourly_sr_lookback)
+                    if hourly_result:
+                        if hourly_result.get("sr_ntd_cross") is not None:
+                            hourly_sr_ntd_rows.append(hourly_result["sr_ntd_cross"])
+                        if hourly_result.get("minus05_up") is not None:
+                            hourly_minus05_rows.append(hourly_result["minus05_up"])
+                        if hourly_result.get("zero_up") is not None:
+                            hourly_zero_rows.append(hourly_result["zero_up"])
+                except Exception as exc:
+                    st.warning(f"{sym}: hourly scan skipped ({exc})")
+                step += 1
+                progress.progress(step / total_steps)
             status.empty()
             progress.empty()
 
@@ -2774,9 +2995,17 @@ with tab_daily_sr_cross:
         minus05_df = _sort_daily_sr_cross_table(pd.DataFrame(minus05_rows))
         zero_df = _sort_daily_sr_cross_table(pd.DataFrame(zero_rows))
 
+        hourly_sr_ntd_df = _sort_daily_sr_cross_table(pd.DataFrame(hourly_sr_ntd_rows))
+        hourly_minus05_df = _sort_daily_sr_cross_table(pd.DataFrame(hourly_minus05_rows))
+        hourly_zero_df = _sort_daily_sr_cross_table(pd.DataFrame(hourly_zero_rows))
+
         top_buy_df = _top_daily_sr_buy_opportunities(sr_ntd_df, minus05_df, zero_df, limit=3)
         top_level_cross_buy_df = _top_daily_sr_buy_opportunities(minus05_df, zero_df, limit=3)
         top_downtrend_reversal_watch_df = _top_downtrend_sr_ntd_upward_reversal_candidates(sr_ntd_df, limit=3)
+
+        top_hourly_buy_df = _top_daily_sr_buy_opportunities(hourly_sr_ntd_df, hourly_minus05_df, hourly_zero_df, limit=3)
+        top_hourly_level_cross_buy_df = _top_daily_sr_buy_opportunities(hourly_minus05_df, hourly_zero_df, limit=3)
+        top_hourly_downtrend_reversal_watch_df = _top_downtrend_sr_ntd_upward_reversal_candidates(hourly_sr_ntd_df, limit=3)
 
         st.markdown("### Top 3 Buy Opportunities")
         st.caption(
@@ -2811,6 +3040,28 @@ with tab_daily_sr_cross:
             st.info("No Price Trend Downward S/R-vs-NTD rows currently have both S/R Direction and NTD Trend Direction upward.")
         else:
             st.dataframe(top_downtrend_reversal_watch_df, use_container_width=True, hide_index=True)
+
+        st.markdown("### Top 3 Hourly S/R Cross Buy Opportunities")
+        st.caption(
+            "Short-term quick view using the active hourly period/interval. "
+            "Use this to find hourly entries that may pair with the daily setup."
+        )
+        if top_hourly_buy_df.empty:
+            st.info("No hourly S/R Cross buy opportunities found.")
+        else:
+            st.dataframe(top_hourly_buy_df, use_container_width=True, hide_index=True)
+
+        st.markdown("### Top 3 Hourly Buy Opportunities from -0.5 / 0.0 Crosses")
+        if top_hourly_level_cross_buy_df.empty:
+            st.info("No hourly -0.5 / 0.0 upward level-cross opportunities found.")
+        else:
+            st.dataframe(top_hourly_level_cross_buy_df, use_container_width=True, hide_index=True)
+
+        st.markdown("### Top 3 Hourly Downtrend Reversal Watch — S/R Upward + NTD Trend Upward")
+        if top_hourly_downtrend_reversal_watch_df.empty:
+            st.info("No hourly downtrend reversal-watch rows currently have both S/R Direction and NTD Trend Direction upward.")
+        else:
+            st.dataframe(top_hourly_downtrend_reversal_watch_df, use_container_width=True, hide_index=True)
 
         st.markdown("### (a) S/R Reversal Line crossing the NTD Line")
         st.caption("These tables show the most recent daily S/R-vs-NTD line cross, split by daily price trend direction and ordered by pips/points since the cross.")
@@ -2859,6 +3110,20 @@ with tab_daily_sr_cross:
                 st.info("No combined results to show.")
             else:
                 _display_daily_sr_cross_table("Combined results", _sort_daily_sr_cross_table(combined), "No combined results to show.")
+
+        with st.expander("Show combined Hourly S/R Cross results", expanded=False):
+            hourly_combined = pd.concat(
+                [
+                    hourly_sr_ntd_df.assign(Section="Hourly S/R crossed NTD") if not hourly_sr_ntd_df.empty else pd.DataFrame(),
+                    hourly_minus05_df.assign(Section="Hourly S/R crossed -0.5 upward") if not hourly_minus05_df.empty else pd.DataFrame(),
+                    hourly_zero_df.assign(Section="Hourly S/R crossed 0.0 upward") if not hourly_zero_df.empty else pd.DataFrame(),
+                ],
+                ignore_index=True,
+            )
+            if hourly_combined.empty:
+                st.info("No hourly combined results to show.")
+            else:
+                _display_daily_sr_cross_table("Combined hourly results", _sort_daily_sr_cross_table(hourly_combined), "No hourly combined results to show.")
     else:
         st.info("Click **Build Daily S/R Cross tables** to scan the selected symbols.")
 
@@ -2899,10 +3164,11 @@ with tab_daily_dips:
     if not dips_universe:
         st.info("Select at least one symbol to scan.")
     else:
-        with st.spinner("Scanning daily NTD long-term dips..."):
+        with st.spinner("Scanning daily and hourly NTD long-term dips..."):
             rows = []
+            hourly_rows = []
             progress = st.progress(0)
-            total = max(1, len(dips_universe) * 2)
+            total = max(1, len(dips_universe) * 4)
             done = 0
             for threshold in [-0.75, -0.50]:
                 for sym in dips_universe:
@@ -2911,11 +3177,18 @@ with tab_daily_dips:
                         rows.append(row)
                     done += 1
                     progress.progress(min(1.0, done / total))
+
+                    hrow = hourly_ntd_dip_scan_row(sym, threshold, cfg, lookback=max(10, int(dips_lookback)))
+                    if hrow is not None:
+                        hourly_rows.append(hrow)
+                    done += 1
+                    progress.progress(min(1.0, done / total))
             progress.empty()
 
         dip_df = pd.DataFrame(rows)
-        if dip_df.empty:
-            st.info("No symbols currently below -0.75 or -0.5 on the daily NTD line.")
+        hourly_dip_df = pd.DataFrame(hourly_rows)
+        if dip_df.empty and hourly_dip_df.empty:
+            st.info("No symbols currently below -0.75 or -0.5 on the NTD line.")
         else:
             threshold_order = ["-0.75", "-0.50"]
 
@@ -2923,9 +3196,9 @@ with tab_daily_dips:
                 st.markdown("---")
                 st.header(f"Daily NTD {threshold_label} Dips")
 
-                threshold_df = dip_df[dip_df["Threshold"].astype(str).eq(f"{threshold_value:+.2f}")].copy()
-                up_df = threshold_df[threshold_df["Price Trend Direction"].astype(str).eq("Upward")].copy()
-                down_df = threshold_df[threshold_df["Price Trend Direction"].astype(str).eq("Downward")].copy()
+                threshold_df = dip_df[dip_df["Threshold"].astype(str).eq(f"{threshold_value:+.2f}")].copy() if not dip_df.empty else pd.DataFrame()
+                up_df = threshold_df[threshold_df["Price Trend Direction"].astype(str).eq("Upward")].copy() if not threshold_df.empty else pd.DataFrame()
+                down_df = threshold_df[threshold_df["Price Trend Direction"].astype(str).eq("Downward")].copy() if not threshold_df.empty else pd.DataFrame()
 
                 c1, c2 = st.columns(2)
                 with c1:
@@ -2933,9 +3206,23 @@ with tab_daily_dips:
                 with c2:
                     _render_dip_section(f"{threshold_label} Dips — Price Trend Downward", down_df, top_n=3)
 
+                st.subheader(f"Hourly NTD {threshold_label} Dips — Top 3")
+                hourly_threshold_df = hourly_dip_df[hourly_dip_df["Threshold"].astype(str).eq(f"{threshold_value:+.2f}")].copy() if not hourly_dip_df.empty else pd.DataFrame()
+                hourly_up_df = hourly_threshold_df[hourly_threshold_df["Price Trend Direction"].astype(str).eq("Upward")].copy() if not hourly_threshold_df.empty else pd.DataFrame()
+                hourly_down_df = hourly_threshold_df[hourly_threshold_df["Price Trend Direction"].astype(str).eq("Downward")].copy() if not hourly_threshold_df.empty else pd.DataFrame()
+                hc1, hc2 = st.columns(2)
+                with hc1:
+                    _render_dip_section(f"Hourly {threshold_label} Dips — Price Trend Upward", hourly_up_df, top_n=3)
+                with hc2:
+                    _render_dip_section(f"Hourly {threshold_label} Dips — Price Trend Downward", hourly_down_df, top_n=3)
+
             with st.expander("Show all daily NTD dip rows", expanded=False):
                 all_sorted = _sort_daily_ntd_dips(dip_df)
                 st.dataframe(_format_daily_ntd_dip_table(all_sorted), use_container_width=True, hide_index=True)
+
+            with st.expander("Show all hourly NTD dip rows", expanded=False):
+                all_hourly_sorted = _sort_daily_ntd_dips(hourly_dip_df)
+                st.dataframe(_format_daily_ntd_dip_table(all_hourly_sorted), use_container_width=True, hide_index=True)
 
 
 with tab_rules:
