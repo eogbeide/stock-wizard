@@ -2942,6 +2942,15 @@ with tab_daily_sr_cross:
         key="daily_sr_cross_symbols",
     )
 
+    daily_sr_top3_view = st.radio(
+        "Top 3 timeframe view",
+        ["Both", "Daily only", "Hourly only"],
+        index=0,
+        horizontal=True,
+        key="daily_sr_cross_top3_timeframe_filter",
+        help="Choose whether the Top 3 quick-pick sections show Daily tables, Hourly tables, or both."
+    )
+
     if not daily_sr_symbols:
         st.info("Select at least one symbol to scan.")
     elif st.button("Build Daily S/R Cross tables", key="build_daily_sr_cross_tables"):
@@ -3007,61 +3016,70 @@ with tab_daily_sr_cross:
         top_hourly_level_cross_buy_df = _top_daily_sr_buy_opportunities(hourly_minus05_df, hourly_zero_df, limit=3)
         top_hourly_downtrend_reversal_watch_df = _top_downtrend_sr_ntd_upward_reversal_candidates(hourly_sr_ntd_df, limit=3)
 
-        st.markdown("### Top 3 Buy Opportunities")
+        show_daily_top3 = daily_sr_top3_view in ("Both", "Daily only")
+        show_hourly_top3 = daily_sr_top3_view in ("Both", "Hourly only")
+
+        st.markdown("### Top 3 Quick Picks")
         st.caption(
-            "Quick view of the strongest Daily S/R Cross buy candidates. "
-            "Ranking favors upward S/R crosses, upward S/R direction, upward price trend, "
-            "upward NTD trend, and fewer pips/points since the cross."
+            f"Showing **{daily_sr_top3_view}** Top 3 tables. "
+            "Use this filter to focus on Daily swing candidates, Hourly entry candidates, or both."
         )
-        if top_buy_df.empty:
-            st.info("No top buy opportunities found from the current Daily S/R Cross scan.")
-        else:
-            st.dataframe(top_buy_df, use_container_width=True, hide_index=True)
 
-        st.markdown("### Top 3 Buy Opportunities from -0.5 / 0.0 Crosses")
-        st.caption(
-            "This quick table only uses the S/R Reversal level-cross signals: "
-            "crossing -0.5 upward and crossing 0.0 upward. "
-            "It ranks the strongest level-cross symbols so users can review them without opening each detailed table."
-        )
-        if top_level_cross_buy_df.empty:
-            st.info("No top buy opportunities found from the -0.5 and 0.0 upward-cross tables.")
-        else:
-            st.dataframe(top_level_cross_buy_df, use_container_width=True, hide_index=True)
+        if show_daily_top3:
+            st.markdown("#### Daily Top 3 Buy Opportunities")
+            st.caption(
+                "Quick view of the strongest Daily S/R Cross buy candidates. "
+                "Ranking favors upward S/R crosses, upward S/R direction, upward price trend, "
+                "upward NTD trend, and fewer pips/points since the cross."
+            )
+            if top_buy_df.empty:
+                st.info("No Daily top buy opportunities found from the current Daily S/R Cross scan.")
+            else:
+                st.dataframe(top_buy_df, use_container_width=True, hide_index=True)
 
-        st.markdown("### Top 3 Downtrend Reversal Watch — S/R Upward + NTD Trend Upward")
-        st.caption(
-            "This quick table is pulled only from the **Price Trend Downward — S/R crossed NTD** table. "
-            "It shows symbols where the broader price trend is still downward, but both **S/R Direction** "
-            "and **NTD Trend Direction** are upward. Treat these as early bounce/reversal watch candidates, "
-            "not confirmed trend-following buys."
-        )
-        if top_downtrend_reversal_watch_df.empty:
-            st.info("No Price Trend Downward S/R-vs-NTD rows currently have both S/R Direction and NTD Trend Direction upward.")
-        else:
-            st.dataframe(top_downtrend_reversal_watch_df, use_container_width=True, hide_index=True)
+            st.markdown("#### Daily Top 3 Buy Opportunities from -0.5 / 0.0 Crosses")
+            st.caption(
+                "This quick table only uses the Daily S/R Reversal level-cross signals: "
+                "crossing -0.5 upward and crossing 0.0 upward."
+            )
+            if top_level_cross_buy_df.empty:
+                st.info("No Daily top buy opportunities found from the -0.5 and 0.0 upward-cross tables.")
+            else:
+                st.dataframe(top_level_cross_buy_df, use_container_width=True, hide_index=True)
 
-        st.markdown("### Top 3 Hourly S/R Cross Buy Opportunities")
-        st.caption(
-            "Short-term quick view using the active hourly period/interval. "
-            "Use this to find hourly entries that may pair with the daily setup."
-        )
-        if top_hourly_buy_df.empty:
-            st.info("No hourly S/R Cross buy opportunities found.")
-        else:
-            st.dataframe(top_hourly_buy_df, use_container_width=True, hide_index=True)
+            st.markdown("#### Daily Top 3 Downtrend Reversal Watch — S/R Upward + NTD Trend Upward")
+            st.caption(
+                "This quick table is pulled only from the **Daily Price Trend Downward — S/R crossed NTD** table. "
+                "It shows symbols where the broader price trend is still downward, but both **S/R Direction** "
+                "and **NTD Trend Direction** are upward."
+            )
+            if top_downtrend_reversal_watch_df.empty:
+                st.info("No Daily Price Trend Downward S/R-vs-NTD rows currently have both S/R Direction and NTD Trend Direction upward.")
+            else:
+                st.dataframe(top_downtrend_reversal_watch_df, use_container_width=True, hide_index=True)
 
-        st.markdown("### Top 3 Hourly Buy Opportunities from -0.5 / 0.0 Crosses")
-        if top_hourly_level_cross_buy_df.empty:
-            st.info("No hourly -0.5 / 0.0 upward level-cross opportunities found.")
-        else:
-            st.dataframe(top_hourly_level_cross_buy_df, use_container_width=True, hide_index=True)
+        if show_hourly_top3:
+            st.markdown("#### Hourly Top 3 S/R Cross Buy Opportunities")
+            st.caption(
+                "Short-term quick view using the active hourly period/interval. "
+                "Use this to find hourly entries that may pair with the daily setup."
+            )
+            if top_hourly_buy_df.empty:
+                st.info("No hourly S/R Cross buy opportunities found.")
+            else:
+                st.dataframe(top_hourly_buy_df, use_container_width=True, hide_index=True)
 
-        st.markdown("### Top 3 Hourly Downtrend Reversal Watch — S/R Upward + NTD Trend Upward")
-        if top_hourly_downtrend_reversal_watch_df.empty:
-            st.info("No hourly downtrend reversal-watch rows currently have both S/R Direction and NTD Trend Direction upward.")
-        else:
-            st.dataframe(top_hourly_downtrend_reversal_watch_df, use_container_width=True, hide_index=True)
+            st.markdown("#### Hourly Top 3 Buy Opportunities from -0.5 / 0.0 Crosses")
+            if top_hourly_level_cross_buy_df.empty:
+                st.info("No hourly -0.5 / 0.0 upward level-cross opportunities found.")
+            else:
+                st.dataframe(top_hourly_level_cross_buy_df, use_container_width=True, hide_index=True)
+
+            st.markdown("#### Hourly Top 3 Downtrend Reversal Watch — S/R Upward + NTD Trend Upward")
+            if top_hourly_downtrend_reversal_watch_df.empty:
+                st.info("No hourly downtrend reversal-watch rows currently have both S/R Direction and NTD Trend Direction upward.")
+            else:
+                st.dataframe(top_hourly_downtrend_reversal_watch_df, use_container_width=True, hide_index=True)
 
         st.markdown("### (a) S/R Reversal Line crossing the NTD Line")
         st.caption("These tables show the most recent daily S/R-vs-NTD line cross, split by daily price trend direction and ordered by pips/points since the cross.")
@@ -3137,7 +3155,7 @@ with tab_daily_dips:
         "Each threshold is split into upward and downward price-trend groups, with Top 3 tables shown first."
     )
 
-    dips_col1, dips_col2 = st.columns([1, 2])
+    dips_col1, dips_col2, dips_col3 = st.columns([1, 2, 1])
     dips_lookback = int(dips_col1.slider(
         "Recent dip/cross lookback (daily bars)",
         10, 360, 180, 10,
@@ -3148,6 +3166,13 @@ with tab_daily_dips:
         current_universe,
         default=current_universe,
         key=f"daily_ntd_dip_universe_{asset_class}",
+    )
+    dips_top3_view = dips_col3.radio(
+        "Top 3 timeframe view",
+        ["Both", "Daily only", "Hourly only"],
+        index=0,
+        key=f"daily_ntd_dip_top3_timeframe_filter_{asset_class}",
+        help="Choose whether Top 3 dip sections show Daily tables, Hourly tables, or both."
     )
 
     st.markdown(
@@ -3192,29 +3217,38 @@ with tab_daily_dips:
         else:
             threshold_order = ["-0.75", "-0.50"]
 
+            show_daily_dip_top3 = dips_top3_view in ("Both", "Daily only")
+            show_hourly_dip_top3 = dips_top3_view in ("Both", "Hourly only")
+
             for threshold_label, threshold_value in [("-0.75", -0.75), ("-0.5", -0.50)]:
                 st.markdown("---")
-                st.header(f"Daily NTD {threshold_label} Dips")
+                st.header(f"NTD {threshold_label} Dips — Top 3 Quick Picks")
+                st.caption(
+                    f"Showing **{dips_top3_view}** Top 3 dip tables for the {threshold_label} threshold."
+                )
 
-                threshold_df = dip_df[dip_df["Threshold"].astype(str).eq(f"{threshold_value:+.2f}")].copy() if not dip_df.empty else pd.DataFrame()
-                up_df = threshold_df[threshold_df["Price Trend Direction"].astype(str).eq("Upward")].copy() if not threshold_df.empty else pd.DataFrame()
-                down_df = threshold_df[threshold_df["Price Trend Direction"].astype(str).eq("Downward")].copy() if not threshold_df.empty else pd.DataFrame()
+                if show_daily_dip_top3:
+                    st.subheader(f"Daily NTD {threshold_label} Dips — Top 3")
+                    threshold_df = dip_df[dip_df["Threshold"].astype(str).eq(f"{threshold_value:+.2f}")].copy() if not dip_df.empty else pd.DataFrame()
+                    up_df = threshold_df[threshold_df["Price Trend Direction"].astype(str).eq("Upward")].copy() if not threshold_df.empty else pd.DataFrame()
+                    down_df = threshold_df[threshold_df["Price Trend Direction"].astype(str).eq("Downward")].copy() if not threshold_df.empty else pd.DataFrame()
 
-                c1, c2 = st.columns(2)
-                with c1:
-                    _render_dip_section(f"{threshold_label} Dips — Price Trend Upward", up_df, top_n=3)
-                with c2:
-                    _render_dip_section(f"{threshold_label} Dips — Price Trend Downward", down_df, top_n=3)
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        _render_dip_section(f"Daily {threshold_label} Dips — Price Trend Upward", up_df, top_n=3)
+                    with c2:
+                        _render_dip_section(f"Daily {threshold_label} Dips — Price Trend Downward", down_df, top_n=3)
 
-                st.subheader(f"Hourly NTD {threshold_label} Dips — Top 3")
-                hourly_threshold_df = hourly_dip_df[hourly_dip_df["Threshold"].astype(str).eq(f"{threshold_value:+.2f}")].copy() if not hourly_dip_df.empty else pd.DataFrame()
-                hourly_up_df = hourly_threshold_df[hourly_threshold_df["Price Trend Direction"].astype(str).eq("Upward")].copy() if not hourly_threshold_df.empty else pd.DataFrame()
-                hourly_down_df = hourly_threshold_df[hourly_threshold_df["Price Trend Direction"].astype(str).eq("Downward")].copy() if not hourly_threshold_df.empty else pd.DataFrame()
-                hc1, hc2 = st.columns(2)
-                with hc1:
-                    _render_dip_section(f"Hourly {threshold_label} Dips — Price Trend Upward", hourly_up_df, top_n=3)
-                with hc2:
-                    _render_dip_section(f"Hourly {threshold_label} Dips — Price Trend Downward", hourly_down_df, top_n=3)
+                if show_hourly_dip_top3:
+                    st.subheader(f"Hourly NTD {threshold_label} Dips — Top 3")
+                    hourly_threshold_df = hourly_dip_df[hourly_dip_df["Threshold"].astype(str).eq(f"{threshold_value:+.2f}")].copy() if not hourly_dip_df.empty else pd.DataFrame()
+                    hourly_up_df = hourly_threshold_df[hourly_threshold_df["Price Trend Direction"].astype(str).eq("Upward")].copy() if not hourly_threshold_df.empty else pd.DataFrame()
+                    hourly_down_df = hourly_threshold_df[hourly_threshold_df["Price Trend Direction"].astype(str).eq("Downward")].copy() if not hourly_threshold_df.empty else pd.DataFrame()
+                    hc1, hc2 = st.columns(2)
+                    with hc1:
+                        _render_dip_section(f"Hourly {threshold_label} Dips — Price Trend Upward", hourly_up_df, top_n=3)
+                    with hc2:
+                        _render_dip_section(f"Hourly {threshold_label} Dips — Price Trend Downward", hourly_down_df, top_n=3)
 
             with st.expander("Show all daily NTD dip rows", expanded=False):
                 all_sorted = _sort_daily_ntd_dips(dip_df)
