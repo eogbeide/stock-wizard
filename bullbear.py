@@ -37,7 +37,6 @@
 # (NEW) Buy/Sell Picks tab scans daily bullish confirmations and bearish continuation/rejection setups with Upward/Downward trend groups for Daily and 48h Hourly charts.
 # (NEW) S/R +0.5 Cross tab scans daily upward crosses through +0.5 on the S/R Reversal Index.
 # (NEW) Daily -0.75 Picks tab scans S/R Reversal Index upward crosses through -0.75 grouped by NTD trend direction and sorted by pips since cross.
-# (NEW) Hourly -0.75 Picks tab mirrors Daily -0.75 Picks using a 48h intraday/hourly view.
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -5986,12 +5985,10 @@ def _render_daily_minus075_pick_table(title: str, df: pd.DataFrame):
     st.dataframe(show_df[display_cols], use_container_width=True, hide_index=True)
 
 
-
-# ========= Hourly -0.75 Picks helpers =========
 @st.cache_data(ttl=120, show_spinner=False)
 def hourly_minus075_pick_info(symbol: str,
                               sr_smooth_span: int = 8,
-                              recent_bars: int = 120,
+                              recent_bars: int = 72,
                               confirm_bars: int = 2,
                               threshold: float = -0.75,
                               ntd_window_for_pick: int = 60,
@@ -6003,14 +6000,13 @@ def hourly_minus075_pick_info(symbol: str,
       1) S/R Reversal Index was below -0.75,
       2) S/R Reversal Index recently crossed upward through -0.75,
       3) row is grouped by the intraday NTD trendline direction.
-    Uses fetch_intraday() data for a 48h-style view by default.
+    The chart app uses 5-minute Yahoo bars for the selected intraday period.
     """
     try:
-        intraday = fetch_intraday(symbol, period=period)
-        if intraday is None or intraday.empty or "Close" not in intraday.columns:
+        raw = fetch_intraday(symbol, period=period)
+        if raw is None or raw.empty or "Close" not in raw.columns:
             return None
-
-        close = _coerce_1d_series(intraday["Close"]).dropna()
+        close = _coerce_1d_series(raw["Close"]).dropna()
         if close.empty or close.shape[0] < max(45, int(ntd_window_for_pick), int(ntd_trend_lookback)//2):
             return None
 
@@ -6037,25 +6033,23 @@ def hourly_minus075_pick_info(symbol: str,
             cross_price = float(close.loc[cross_time]) if cross_time in close.index else float(close.loc[:cross_time].iloc[-1])
         except Exception:
             cross_price = float("nan")
-
         last_close = _safe_last_float(close)
         signed_move, abs_move, unit = _price_move_units_since_cross(symbol, last_close, cross_price)
 
         ntd = compute_normalized_trend(close, window=int(ntd_window_for_pick)).dropna()
         if ntd.empty or ntd.shape[0] < 3:
             return None
-
         _, ntd_slope = slope_line(ntd, int(ntd_trend_lookback))
         ntd_direction = "Upward" if np.isfinite(ntd_slope) and ntd_slope >= 0 else "Downward"
 
         _, price_slope = slope_line(close, int(price_trend_lookback))
         price_direction = "Upward" if np.isfinite(price_slope) and price_slope >= 0 else "Downward"
 
-        row = {
+        return {
             "Symbol": symbol,
             "NTD Trend Direction": ntd_direction,
             "Bars Since -0.75 Cross": int(ev.get("bars_since", 0)),
-            "Cross Time": cross_time,
+            "Cross Date": cross_time,
             "Price at Cross": cross_price,
             "Last Close": last_close,
             "Move Since Cross": signed_move,
@@ -6068,59 +6062,195 @@ def hourly_minus075_pick_info(symbol: str,
             "NTD Trend Slope": float(ntd_slope) if np.isfinite(ntd_slope) else float("nan"),
             "Price Trend Direction": price_direction,
             "Price Trend Slope": float(price_slope) if np.isfinite(price_slope) else float("nan"),
-            "View": "48h Hourly/Intraday",
+            "Timeframe": "Hourly",
         }
-        return row
     except Exception:
         return None
 
 
-def _format_hourly_minus075_picks(df: pd.DataFrame) -> pd.DataFrame:
+def _format_minus075_picks(df: pd.DataFrame) -> pd.DataFrame:
+    # Reuse the daily formatter because the hourly and daily pick tables share columns.
+    return _format_daily_minus075_picks(df)
+
+
+def _render_minus075_pick_table(title: str, df: pd.DataFrame):
+    # Reuse the daily renderer because the hourly and daily pick tables share columns.
+    return _render_daily_minus075_pick_table(title, df)
+
+
+def _last_up_cross_info(series_like: pd.Series,
+                        threshold: float = 0.0,
+                        recent_bars: int = 30,
+                        confirm_bars: int = 1):
+    """
+    Return the most recent upward cross through threshold within recent_bars.
+    Designed for Smoothed NPX zero-line scans.
+    """
+    s = _coerce_1d_series(series_like).replace([np.inf, -np.inf], np.nan).dropna()
+    if s.shape[0] < max(3, int(confirm_bars) + 2):
+        return None
+    try:
+        th = float(threshold)
+    except Exception:
+        th = 0.0
+    try:
+        rb = max(1, int(recent_bars))
+    except Exception:
+        rb = 30
+    try:
+        cb = max(1, int(confirm_bars))
+    except Exception:
+        cb = 1
+
+    vals = s.to_numpy(dtype=float)
+    idx = s.index
+    events = []
+    for i in range(1, len(vals)):
+        if not np.all(np.isfinite([vals[i - 1], vals[i]])):
+            continue
+        if vals[i - 1] < th and vals[i] >= th:
+            events.append({"bar_index": i, "time": idx[i], "value_at_cross": float(vals[i])})
+    if not events:
+        return None
+    ev = events[-1]
+    bars_since = (len(s) - 1) - int(ev["bar_index"])
+    if bars_since > rb:
+        return None
+    current_value = float(vals[-1])
+    if not np.isfinite(current_value) or current_value < th:
+        return None
+
+    confirm_start = max(0, len(vals) - cb - 1)
+    confirm_slice = vals[confirm_start:]
+    if confirm_slice.size >= cb + 1 and np.all(np.isfinite(confirm_slice)):
+        if not np.all(np.diff(confirm_slice) >= 0):
+            return None
+
+    ev["bars_since"] = int(bars_since)
+    ev["current_value"] = current_value
+    ev["change_since_cross"] = current_value - float(ev["value_at_cross"])
+    return ev
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def smoothed_npx_zero_up_cross_info(symbol: str,
+                                    timeframe: str = "Daily",
+                                    recent_bars: int = 30,
+                                    confirm_bars: int = 1,
+                                    npx_window_for_pick: int = 60,
+                                    npx_smooth_span_for_pick: int = 9,
+                                    price_trend_lookback: int = 90,
+                                    hourly_period: str = "2d"):
+    """
+    Scanner row for symbols where the Smoothed NPX line recently crossed upward
+    through 0.0. Rows are grouped by the price chart trend direction.
+    """
+    try:
+        tf = str(timeframe or "Daily")
+        if tf.lower().startswith("hour"):
+            raw = fetch_intraday(symbol, period=hourly_period)
+            if raw is None or raw.empty or "Close" not in raw.columns:
+                return None
+            close = _coerce_1d_series(raw["Close"]).dropna()
+            tf_label = "Hourly"
+        else:
+            close = fetch_hist(symbol)
+            close = _coerce_1d_series(close).dropna()
+            tf_label = "Daily"
+
+        if close.empty or close.shape[0] < max(30, int(npx_window_for_pick), int(price_trend_lookback)//2):
+            return None
+
+        npx = smooth_npx(
+            compute_normalized_price(close, window=int(npx_window_for_pick)),
+            span=int(npx_smooth_span_for_pick),
+        ).dropna()
+        if npx.empty:
+            return None
+
+        ev = _last_up_cross_info(
+            npx,
+            threshold=0.0,
+            recent_bars=int(recent_bars),
+            confirm_bars=int(confirm_bars),
+        )
+        if ev is None:
+            return None
+
+        cross_time = ev.get("time")
+        try:
+            cross_price = float(close.loc[cross_time]) if cross_time in close.index else float(close.loc[:cross_time].iloc[-1])
+        except Exception:
+            cross_price = float("nan")
+        last_close = _safe_last_float(close)
+        signed_move, abs_move, unit = _price_move_units_since_cross(symbol, last_close, cross_price)
+
+        _, price_slope = slope_line(close, int(price_trend_lookback))
+        price_direction = "Upward" if np.isfinite(price_slope) and price_slope >= 0 else "Downward"
+
+        return {
+            "Symbol": symbol,
+            "Timeframe": tf_label,
+            "Price Trend Direction": price_direction,
+            "Bars Since NPX 0.0 Cross": int(ev.get("bars_since", 0)),
+            "Cross Date": cross_time,
+            "Price at Cross": cross_price,
+            "Last Close": last_close,
+            "Move Since Cross": signed_move,
+            "Abs Move Since Cross": abs_move,
+            "Move Unit": unit,
+            "Smoothed NPX at Cross": float(ev.get("value_at_cross", np.nan)),
+            "Current Smoothed NPX": float(ev.get("current_value", np.nan)),
+            "NPX Change Since Cross": float(ev.get("change_since_cross", np.nan)),
+            "Price Trend Slope": float(price_slope) if np.isfinite(price_slope) else float("nan"),
+        }
+    except Exception:
+        return None
+
+
+def _format_smoothed_npx_crosses(df: pd.DataFrame) -> pd.DataFrame:
     out = df.copy()
     if out.empty:
         return out
-    if "Cross Time" in out.columns:
-        out["Cross Time"] = out["Cross Time"].astype(str)
+    if "Cross Date" in out.columns:
+        out["Cross Date"] = out["Cross Date"].astype(str)
     for col in [
         "Price at Cross", "Last Close", "Move Since Cross", "Abs Move Since Cross",
-        "Current S/R Reversal", "S/R Value at Cross", "Recent Minimum Below -0.75",
-        "Current NTD", "NTD Trend Slope", "Price Trend Slope"
+        "Smoothed NPX at Cross", "Current Smoothed NPX", "NPX Change Since Cross",
+        "Price Trend Slope"
     ]:
         if col in out.columns:
             out[col] = pd.to_numeric(out[col], errors="coerce")
     return out
 
 
-def _render_hourly_minus075_pick_table(title: str, df: pd.DataFrame):
+def _render_smoothed_npx_cross_table(title: str, df: pd.DataFrame):
     st.subheader(title)
     if df is None or df.empty:
         st.info("No matching symbols found.")
         return
-    sort_cols = [c for c in ["Abs Move Since Cross", "Bars Since -0.75 Cross", "Symbol"] if c in df.columns]
-    ascending = [True] * len(sort_cols)
-    show_df = df.sort_values(sort_cols, ascending=ascending) if sort_cols else df.copy()
-    show_df = _format_hourly_minus075_picks(show_df)
+    sort_cols = [c for c in ["Bars Since NPX 0.0 Cross", "Abs Move Since Cross", "Symbol"] if c in df.columns]
+    show_df = df.sort_values(sort_cols, ascending=[True] * len(sort_cols)) if sort_cols else df.copy()
+    show_df = _format_smoothed_npx_crosses(show_df)
     display_cols = [
         "Symbol",
-        "NTD Trend Direction",
-        "Bars Since -0.75 Cross",
+        "Timeframe",
+        "Price Trend Direction",
+        "Bars Since NPX 0.0 Cross",
+        "Cross Date",
+        "Price at Cross",
+        "Last Close",
         "Move Since Cross",
         "Abs Move Since Cross",
         "Move Unit",
-        "Cross Time",
-        "Price at Cross",
-        "Last Close",
-        "Current S/R Reversal",
-        "S/R Value at Cross",
-        "Recent Minimum Below -0.75",
-        "Current NTD",
-        "NTD Trend Slope",
-        "Price Trend Direction",
+        "Smoothed NPX at Cross",
+        "Current Smoothed NPX",
+        "NPX Change Since Cross",
         "Price Trend Slope",
-        "View",
     ]
     display_cols = [c for c in display_cols if c in show_df.columns]
     st.dataframe(show_df[display_cols], use_container_width=True, hide_index=True)
+
 
 
 # Tabs
@@ -6132,8 +6262,8 @@ tab1, tab3, tab18, tab19, tab20, tab21, tab22, tab23, tab24 = st.tabs([
     "Trade Momentum",
     "Rolling Return Strength",
     "Buy/Sell Timing",
-    "Daily -0.75 Picks",
-    "Hourly -0.75 Picks"
+    "-0.75 Picks",
+    "Smoothed NPX Cross"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -7976,41 +8106,54 @@ Use this tab for timing, not by itself. The best workflow is:
 
 # --- Tab 23: Daily -0.75 Picks ---
 with tab23:
-    st.header("Daily -0.75 Picks")
+    st.header("-0.75 Picks")
     st.caption(
-        "Finds symbols where the Daily S/R Reversal Index was below -0.75, recently crossed "
-        "upward through -0.75, then groups the results by the Daily NTD trendline direction. "
-        "Rows are sorted by the absolute move since the cross, so the earliest/closest moves appear first."
+        "Shows symbols where the S/R Reversal Index was below -0.75 and recently crossed upward through -0.75. "
+        "Use the selector to switch between Daily picks and Hourly/48h picks. Results are grouped by the NTD trendline direction."
     )
+
+    pick_view = st.selectbox(
+        "Pick view",
+        ["Daily Picks", "Hourly Picks"],
+        index=0,
+        key="minus075_picks_view_selector",
+        help="Daily uses daily bars. Hourly uses the 48h intraday view from 5-minute bars."
+    )
+    is_hourly_pick_view = pick_view == "Hourly Picks"
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        d075_recent_bars = st.slider(
-            "Recent cross window (daily bars)",
-            1, 120, 30, 1,
-            key="daily_minus075_picks_recent_bars"
+        pick_recent_bars = st.slider(
+            "Recent cross window (bars)",
+            1, 240 if is_hourly_pick_view else 120,
+            72 if is_hourly_pick_view else 30,
+            1,
+            key="combined_minus075_picks_recent_bars"
         )
     with c2:
-        d075_confirm_bars = st.slider(
+        pick_confirm_bars = st.slider(
             "Rising confirmation bars",
             1, 6, 2, 1,
-            key="daily_minus075_picks_confirm_bars"
+            key="combined_minus075_picks_confirm_bars"
         )
     with c3:
-        d075_ntd_window = st.slider(
+        pick_ntd_window = st.slider(
             "NTD window",
             10, 300, int(ntd_window), 5,
-            key="daily_minus075_picks_ntd_window"
+            key="combined_minus075_picks_ntd_window"
         )
     with c4:
-        d075_ntd_trend_lb = st.slider(
+        pick_ntd_trend_lb = st.slider(
             "NTD trendline lookback",
-            10, 240, 90, 5,
-            key="daily_minus075_picks_ntd_trend_lb"
+            10, 300 if is_hourly_pick_view else 240,
+            120 if is_hourly_pick_view else 90,
+            5,
+            key="combined_minus075_picks_ntd_trend_lb"
         )
 
+    timeframe_label = "Hourly/48h" if is_hourly_pick_view else "Daily"
     st.info(
-        "Trade use: Upward NTD trendline rows are stronger buy-reversal candidates. "
+        f"{timeframe_label} trade use: Upward NTD trendline rows are stronger buy-reversal candidates. "
         "Downward NTD trendline rows are early/countertrend bounces and generally need more confirmation."
     )
 
@@ -8019,16 +8162,31 @@ with tab23:
     scan_status = st.empty()
     for i, sym in enumerate(universe):
         scan_status.caption(f"Scanning {sym} ({i + 1}/{len(universe)})...")
-        row = daily_minus075_pick_info(
-            sym,
-            sr_smooth_span=int(sr_rev_smooth),
-            recent_bars=int(d075_recent_bars),
-            confirm_bars=int(d075_confirm_bars),
-            threshold=-0.75,
-            ntd_window_for_pick=int(d075_ntd_window),
-            ntd_trend_lookback=int(d075_ntd_trend_lb),
-            price_trend_lookback=int(slope_lb_daily),
-        )
+        if is_hourly_pick_view:
+            row = hourly_minus075_pick_info(
+                sym,
+                sr_smooth_span=int(sr_rev_smooth),
+                recent_bars=int(pick_recent_bars),
+                confirm_bars=int(pick_confirm_bars),
+                threshold=-0.75,
+                ntd_window_for_pick=int(pick_ntd_window),
+                ntd_trend_lookback=int(pick_ntd_trend_lb),
+                price_trend_lookback=int(slope_lb_hourly),
+                period="2d",
+            )
+        else:
+            row = daily_minus075_pick_info(
+                sym,
+                sr_smooth_span=int(sr_rev_smooth),
+                recent_bars=int(pick_recent_bars),
+                confirm_bars=int(pick_confirm_bars),
+                threshold=-0.75,
+                ntd_window_for_pick=int(pick_ntd_window),
+                ntd_trend_lookback=int(pick_ntd_trend_lb),
+                price_trend_lookback=int(slope_lb_daily),
+            )
+            if row is not None:
+                row["Timeframe"] = "Daily"
         if row is not None:
             rows.append(row)
         scan_progress.progress((i + 1) / max(1, len(universe)))
@@ -8037,7 +8195,7 @@ with tab23:
 
     picks_df = pd.DataFrame(rows)
     if picks_df.empty:
-        st.info("No Daily -0.75 upward-cross picks found for the current universe/settings.")
+        st.info(f"No {timeframe_label} -0.75 upward-cross picks found for the current universe/settings.")
     else:
         up_df = picks_df[picks_df["NTD Trend Direction"].eq("Upward")].copy()
         down_df = picks_df[picks_df["NTD Trend Direction"].eq("Downward")].copy()
@@ -8046,109 +8204,118 @@ with tab23:
         down_count = len(down_df)
         st.markdown(f"**Matches found:** {len(picks_df)} • **NTD Upward:** {up_count} • **NTD Downward:** {down_count}")
 
-        _render_daily_minus075_pick_table(
-            "1) Recently crossed upward through -0.75 — NTD Trendline Upward",
+        _render_minus075_pick_table(
+            f"1) {timeframe_label} recently crossed upward through -0.75 — NTD Trendline Upward",
             up_df
         )
-        _render_daily_minus075_pick_table(
-            "2) Recently crossed upward through -0.75 — NTD Trendline Downward",
+        _render_minus075_pick_table(
+            f"2) {timeframe_label} recently crossed upward through -0.75 — NTD Trendline Downward",
             down_df
         )
 
-        with st.expander("All Daily -0.75 picks", expanded=False):
+        with st.expander(f"All {timeframe_label} -0.75 picks", expanded=False):
             all_df = picks_df.copy()
             all_df["_ntd_order"] = all_df["NTD Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
             all_df = all_df.sort_values(["_ntd_order", "Abs Move Since Cross", "Bars Since -0.75 Cross", "Symbol"]).drop(columns=["_ntd_order"])
-            all_df = _format_daily_minus075_picks(all_df)
+            all_df = _format_minus075_picks(all_df)
             st.dataframe(all_df, use_container_width=True, hide_index=True)
 
 
-# --- Tab 24: Hourly -0.75 Picks ---
 with tab24:
-    st.header("Hourly -0.75 Picks")
+    st.header("Smoothed NPX Cross")
     st.caption(
-        "Finds symbols where the Hourly/48h S/R Reversal Index was below -0.75, recently crossed "
-        "upward through -0.75, then groups the results by the Hourly/Intraday NTD trendline direction. "
-        "Rows are sorted by the absolute move since the cross, so the earliest/closest moves appear first."
+        "Shows symbols where the Smoothed NPX line recently crossed upward through the 0.00 line. "
+        "Rows are separated by the price-chart trend direction so users can quickly distinguish trend-aligned entries from countertrend bounces."
     )
+
+    npx_view = st.selectbox(
+        "NPX cross view",
+        ["Daily", "Hourly / 48h"],
+        index=0,
+        key="smoothed_npx_cross_view_selector"
+    )
+    npx_is_hourly = npx_view.startswith("Hourly")
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
-        h075_recent_bars = st.slider(
-            "Recent cross window (intraday bars)",
-            5, 480, 120, 5,
-            key="hourly_minus075_picks_recent_bars"
+        npx_recent_bars = st.slider(
+            "Recent NPX cross window (bars)",
+            1, 240 if npx_is_hourly else 120,
+            72 if npx_is_hourly else 30,
+            1,
+            key="smoothed_npx_cross_recent_bars"
         )
     with c2:
-        h075_confirm_bars = st.slider(
+        npx_confirm_bars = st.slider(
             "Rising confirmation bars",
-            1, 10, 2, 1,
-            key="hourly_minus075_picks_confirm_bars"
+            1, 6, 1, 1,
+            key="smoothed_npx_cross_confirm_bars"
         )
     with c3:
-        h075_ntd_window = st.slider(
-            "NTD window",
+        npx_norm_window = st.slider(
+            "NPX normalization window",
             10, 300, int(ntd_window), 5,
-            key="hourly_minus075_picks_ntd_window"
+            key="smoothed_npx_cross_norm_window"
         )
     with c4:
-        h075_ntd_trend_lb = st.slider(
-            "NTD trendline lookback",
-            10, 480, int(slope_lb_hourly), 5,
-            key="hourly_minus075_picks_ntd_trend_lb"
+        npx_trend_lb = st.slider(
+            "Price trend lookback",
+            10, 300 if npx_is_hourly else 240,
+            120 if npx_is_hourly else 90,
+            5,
+            key="smoothed_npx_cross_price_trend_lb"
         )
 
     st.info(
-        "Trade use: Upward NTD trendline rows are stronger short-term buy-reversal candidates. "
-        "Downward NTD trendline rows are early/countertrend bounces and generally need more confirmation. "
-        "Moves are shown in pips for FX pairs and points for stocks/ETFs."
+        "Trade use: Upward price-trend rows are trend-aligned momentum recoveries. "
+        "Downward price-trend rows are early bounce attempts and need stronger confirmation before buying."
     )
 
-    rows = []
-    scan_progress = st.progress(0)
-    scan_status = st.empty()
+    npx_rows = []
+    npx_progress = st.progress(0)
+    npx_status = st.empty()
     for i, sym in enumerate(universe):
-        scan_status.caption(f"Scanning {sym} ({i + 1}/{len(universe)})...")
-        row = hourly_minus075_pick_info(
+        npx_status.caption(f"Scanning {sym} ({i + 1}/{len(universe)})...")
+        row = smoothed_npx_zero_up_cross_info(
             sym,
-            sr_smooth_span=int(sr_rev_smooth),
-            recent_bars=int(h075_recent_bars),
-            confirm_bars=int(h075_confirm_bars),
-            threshold=-0.75,
-            ntd_window_for_pick=int(h075_ntd_window),
-            ntd_trend_lookback=int(h075_ntd_trend_lb),
-            price_trend_lookback=int(slope_lb_hourly),
-            period="2d",
+            timeframe="Hourly" if npx_is_hourly else "Daily",
+            recent_bars=int(npx_recent_bars),
+            confirm_bars=int(npx_confirm_bars),
+            npx_window_for_pick=int(npx_norm_window),
+            npx_smooth_span_for_pick=int(npx_smooth_span),
+            price_trend_lookback=int(npx_trend_lb),
+            hourly_period="2d",
         )
         if row is not None:
-            rows.append(row)
-        scan_progress.progress((i + 1) / max(1, len(universe)))
-    scan_status.empty()
-    scan_progress.empty()
+            npx_rows.append(row)
+        npx_progress.progress((i + 1) / max(1, len(universe)))
+    npx_status.empty()
+    npx_progress.empty()
 
-    hourly_picks_df = pd.DataFrame(rows)
-    if hourly_picks_df.empty:
-        st.info("No Hourly -0.75 upward-cross picks found for the current universe/settings.")
+    npx_df = pd.DataFrame(npx_rows)
+    if npx_df.empty:
+        st.info(f"No {npx_view} Smoothed NPX 0.00 upward crosses found for the current universe/settings.")
     else:
-        up_df = hourly_picks_df[hourly_picks_df["NTD Trend Direction"].eq("Upward")].copy()
-        down_df = hourly_picks_df[hourly_picks_df["NTD Trend Direction"].eq("Downward")].copy()
-
-        up_count = len(up_df)
-        down_count = len(down_df)
-        st.markdown(f"**Matches found:** {len(hourly_picks_df)} • **NTD Upward:** {up_count} • **NTD Downward:** {down_count}")
-
-        _render_hourly_minus075_pick_table(
-            "1) Recently crossed upward through -0.75 — Hourly NTD Trendline Upward",
-            up_df
-        )
-        _render_hourly_minus075_pick_table(
-            "2) Recently crossed upward through -0.75 — Hourly NTD Trendline Downward",
-            down_df
+        npx_up_df = npx_df[npx_df["Price Trend Direction"].eq("Upward")].copy()
+        npx_down_df = npx_df[npx_df["Price Trend Direction"].eq("Downward")].copy()
+        st.markdown(
+            f"**Matches found:** {len(npx_df)} • **Price Trend Upward:** {len(npx_up_df)} • "
+            f"**Price Trend Downward:** {len(npx_down_df)}"
         )
 
-        with st.expander("All Hourly -0.75 picks", expanded=False):
-            all_df = hourly_picks_df.copy()
-            all_df["_ntd_order"] = all_df["NTD Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
-            all_df = all_df.sort_values(["_ntd_order", "Abs Move Since Cross", "Bars Since -0.75 Cross", "Symbol"]).drop(columns=["_ntd_order"])
-            all_df = _format_hourly_minus075_picks(all_df)
-            st.dataframe(all_df, use_container_width=True, hide_index=True)
+        _render_smoothed_npx_cross_table(
+            f"1) {npx_view} Smoothed NPX crossed 0.00 upward — Price Trend Upward",
+            npx_up_df
+        )
+        _render_smoothed_npx_cross_table(
+            f"2) {npx_view} Smoothed NPX crossed 0.00 upward — Price Trend Downward",
+            npx_down_df
+        )
+
+        with st.expander(f"All {npx_view} Smoothed NPX 0.00 upward crosses", expanded=False):
+            all_npx = npx_df.copy()
+            all_npx["_trend_order"] = all_npx["Price Trend Direction"].map({"Upward": 0, "Downward": 1}).fillna(2)
+            all_npx = all_npx.sort_values(["_trend_order", "Bars Since NPX 0.0 Cross", "Abs Move Since Cross", "Symbol"]).drop(columns=["_trend_order"])
+            all_npx = _format_smoothed_npx_crosses(all_npx)
+            st.dataframe(all_npx, use_container_width=True, hide_index=True)
+
