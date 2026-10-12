@@ -6253,8 +6253,192 @@ def _render_smoothed_npx_cross_table(title: str, df: pd.DataFrame):
 
 
 
+
+# ========= S/R Reversal Index below-threshold scanner =========
+@st.cache_data(ttl=120, show_spinner=False)
+def sr_reversal_index_below_threshold_pick(symbol: str,
+                                           timeframe: str = "Daily",
+                                           threshold: float = -0.75,
+                                           smooth_span_for_pick: int = 8,
+                                           price_trend_lookback: int = 90,
+                                           hourly_period: str = "2d",
+                                           hourly_sr_window: int = 60):
+    """
+    Return one scanner row when the S/R Reversal Index is currently below the selected threshold.
+    Supports Daily and Hourly/48h views while keeping the same S/R Reversal Index math used by
+    the charts.
+    """
+    try:
+        tf = str(timeframe or "Daily")
+        if tf.lower().startswith("hour"):
+            df = fetch_intraday(symbol, period=hourly_period)
+            if df is None or df.empty or "Close" not in df.columns:
+                return None
+            close = _coerce_1d_series(df["Close"]).ffill().dropna()
+            chart_label = "Hourly / 48h"
+            sr_win = max(2, int(hourly_sr_window))
+            trend_lb = max(5, int(price_trend_lookback))
+        else:
+            close = fetch_hist(symbol)
+            if close is None or close.empty:
+                return None
+            close = _coerce_1d_series(close).dropna()
+            chart_label = "Daily"
+            sr_win = 30
+            trend_lb = max(5, int(price_trend_lookback))
+
+        if close.shape[0] < max(10, min(sr_win, 30)):
+            return None
+
+        support = close.rolling(sr_win, min_periods=1).min()
+        resistance = close.rolling(sr_win, min_periods=1).max()
+        sri = compute_sr_reversal_index(
+            price=close,
+            support=support,
+            resistance=resistance,
+            smooth_span=int(smooth_span_for_pick),
+        ).replace([np.inf, -np.inf], np.nan).dropna()
+
+        if sri.empty:
+            return None
+
+        th = float(threshold)
+        current_sri = _safe_last_float(sri)
+        if not np.isfinite(current_sri) or current_sri > th:
+            return None
+
+        svals = sri.to_numpy(dtype=float)
+        current_sr_direction = "Upward" if len(svals) >= 2 and np.isfinite(svals[-1]) and np.isfinite(svals[-2]) and svals[-1] >= svals[-2] else "Downward"
+
+        below_mask = (sri <= th).to_numpy(dtype=bool)
+        bars_below = 0
+        for v in below_mask[::-1]:
+            if bool(v):
+                bars_below += 1
+            else:
+                break
+
+        first_below_time = sri.index[-bars_below] if bars_below > 0 else None
+        first_below_price = close.reindex(sri.index).ffill().loc[first_below_time] if first_below_time is not None and first_below_time in close.reindex(sri.index).ffill().index else np.nan
+
+        _, price_trend_slope = slope_line(close, trend_lb)
+        price_trend_direction = "Upward" if np.isfinite(price_trend_slope) and price_trend_slope >= 0 else "Downward"
+
+        ntd = compute_normalized_trend(close, window=int(ntd_window)).dropna()
+        current_ntd = _safe_last_float(ntd)
+        _, ntd_trend_slope = slope_line(ntd, min(max(5, trend_lb), max(5, len(ntd)))) if not ntd.empty else (pd.Series(dtype=float), np.nan)
+        ntd_trend_direction = "Upward" if np.isfinite(ntd_trend_slope) and ntd_trend_slope >= 0 else "Downward"
+
+        last_close = _safe_last_float(close)
+        support_level = _safe_last_float(support)
+        resistance_level = _safe_last_float(resistance)
+        move_from_first_below = float(last_close) - float(first_below_price) if np.isfinite(last_close) and np.isfinite(first_below_price) else np.nan
+        unit = "pips" if pip_size_for_symbol(symbol) else "points"
+        if unit == "pips" and np.isfinite(move_from_first_below):
+            move_display = move_from_first_below / pip_size_for_symbol(symbol)
+        else:
+            move_display = move_from_first_below
+
+        return {
+            "Symbol": symbol,
+            "Chart": chart_label,
+            "Current S/R Reversal": current_sri,
+            "Current S/R Direction": current_sr_direction,
+            "Threshold": th,
+            "Bars Below Threshold": int(bars_below),
+            "First Below Time": first_below_time,
+            "Price at First Below": float(first_below_price) if np.isfinite(first_below_price) else np.nan,
+            "Last Close": last_close,
+            "Move Since First Below": move_display,
+            "Move Unit": unit,
+            "Price Trend Direction": price_trend_direction,
+            "Price Trend Slope": price_trend_slope,
+            "Current NTD": current_ntd,
+            "NTD Trend Direction": ntd_trend_direction,
+            "NTD Trend Slope": ntd_trend_slope,
+            "Support": support_level,
+            "Resistance": resistance_level,
+            "Explanation": (
+                f"{chart_label} S/R Reversal Index is below {th:.2f}. "
+                f"S/R is currently {current_sr_direction}; price trend is {price_trend_direction}; "
+                f"NTD trend is {ntd_trend_direction}."
+            ),
+        }
+    except Exception:
+        return None
+
+
+def _format_sr_reversal_index_below_threshold_table(df: pd.DataFrame) -> pd.DataFrame:
+    out = df.copy() if isinstance(df, pd.DataFrame) else pd.DataFrame()
+    if out.empty:
+        return out
+    for col in [
+        "Current S/R Reversal", "Threshold", "Price at First Below", "Last Close",
+        "Move Since First Below", "Price Trend Slope", "Current NTD", "NTD Trend Slope",
+        "Support", "Resistance"
+    ]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+    if "First Below Time" in out.columns:
+        out["First Below Time"] = out["First Below Time"].astype(str)
+    if "Current S/R Reversal" in out.columns:
+        out["Current S/R Reversal"] = out["Current S/R Reversal"].map(lambda x: f"{x:+.3f}" if pd.notna(x) else "n/a")
+    if "Current NTD" in out.columns:
+        out["Current NTD"] = out["Current NTD"].map(lambda x: f"{x:+.3f}" if pd.notna(x) else "n/a")
+    for col in ["Price Trend Slope", "NTD Trend Slope"]:
+        if col in out.columns:
+            out[col] = out[col].map(fmt_slope)
+    for col in ["Price at First Below", "Last Close", "Support", "Resistance"]:
+        if col in out.columns:
+            out[col] = out[col].map(fmt_price_val)
+    if "Move Since First Below" in out.columns:
+        out["Move Since First Below"] = out["Move Since First Below"].map(lambda x: f"{x:+.1f}" if pd.notna(x) else "n/a")
+    return out
+
+
+def _render_sr_reversal_index_below_threshold_table(title: str, df: pd.DataFrame):
+    st.subheader(title)
+    if df is None or df.empty:
+        st.info("No symbols currently below the selected S/R Reversal Index threshold.")
+        return
+
+    show_df = df.copy()
+    show_df["_sr_order"] = show_df.get("Current S/R Direction", "").map({"Upward": 0, "Downward": 1}).fillna(2)
+    show_df["_trend_order"] = show_df.get("Price Trend Direction", "").map({"Upward": 0, "Downward": 1}).fillna(2)
+    show_df = show_df.sort_values(
+        ["_sr_order", "_trend_order", "Current S/R Reversal", "Bars Below Threshold", "Symbol"],
+        ascending=[True, True, True, True, True]
+    ).drop(columns=["_sr_order", "_trend_order"], errors="ignore")
+
+    display_cols = [
+        "Symbol",
+        "Chart",
+        "Current S/R Reversal",
+        "Current S/R Direction",
+        "Price Trend Direction",
+        "NTD Trend Direction",
+        "Bars Below Threshold",
+        "First Below Time",
+        "Price at First Below",
+        "Last Close",
+        "Move Since First Below",
+        "Move Unit",
+        "Current NTD",
+        "Price Trend Slope",
+        "NTD Trend Slope",
+        "Support",
+        "Resistance",
+        "Explanation",
+    ]
+    display_cols = [c for c in display_cols if c in show_df.columns]
+    st.dataframe(
+        _format_sr_reversal_index_below_threshold_table(show_df[display_cols]),
+        use_container_width=True,
+        hide_index=True,
+    )
+
 # Tabs
-tab1, tab3, tab18, tab19, tab20, tab21, tab22, tab23, tab24 = st.tabs([
+tab1, tab3, tab18, tab19, tab20, tab21, tab22, tab23, tab24, tab25 = st.tabs([
     "Original Forecast",
     "Bull vs Bears",
     "Price Trend Bars",
@@ -6263,7 +6447,8 @@ tab1, tab3, tab18, tab19, tab20, tab21, tab22, tab23, tab24 = st.tabs([
     "Rolling Return Strength",
     "Buy/Sell Timing",
     "-0.75 Picks",
-    "Smoothed NPX Cross"
+    "Smoothed NPX Cross",
+    "S/R Reversal Index"
 ])
 
 # --- Tab 1: Original Forecast ---
@@ -8319,3 +8504,100 @@ with tab24:
             all_npx = _format_smoothed_npx_crosses(all_npx)
             st.dataframe(all_npx, use_container_width=True, hide_index=True)
 
+
+
+with tab25:
+    st.header("S/R Reversal Index")
+    st.caption(
+        "Shows symbols where the S/R Reversal Index is currently below the selected support-side threshold. "
+        "Use this as a dip/watchlist: the best early bounce candidates usually have S/R Direction Upward, "
+        "then improving NTD/price trend confirmation."
+    )
+
+    srri_c1, srri_c2, srri_c3, srri_c4 = st.columns(4)
+    with srri_c1:
+        srri_view = st.selectbox(
+            "View",
+            ["Daily", "Hourly / 48h"],
+            index=0,
+            key="sr_reversal_index_below_view"
+        )
+    srri_is_hourly = str(srri_view).startswith("Hourly")
+    with srri_c2:
+        srri_threshold = st.selectbox(
+            "Threshold",
+            [-0.75, -0.50],
+            index=0,
+            key="sr_reversal_index_below_threshold"
+        )
+    with srri_c3:
+        srri_smooth = st.slider(
+            "S/R smoothing",
+            1, 30, int(sr_rev_smooth), 1,
+            key="sr_reversal_index_below_smooth"
+        )
+    with srri_c4:
+        srri_trend_lb = st.slider(
+            "Price trend lookback",
+            10, 300 if srri_is_hourly else 240,
+            120 if srri_is_hourly else 90,
+            5,
+            key="sr_reversal_index_below_trend_lb"
+        )
+
+    st.info(
+        "Trading read: below -0.75 is a deep support-side condition, not an automatic buy. "
+        "Prioritize rows where Current S/R Direction is Upward and trend/NTD confirmation begins to improve."
+    )
+
+    srri_rows = []
+    srri_progress = st.progress(0)
+    srri_status = st.empty()
+    for i, sym in enumerate(universe):
+        srri_status.caption(f"Scanning {sym} ({i + 1}/{len(universe)})...")
+        row = sr_reversal_index_below_threshold_pick(
+            sym,
+            timeframe="Hourly" if srri_is_hourly else "Daily",
+            threshold=float(srri_threshold),
+            smooth_span_for_pick=int(srri_smooth),
+            price_trend_lookback=int(srri_trend_lb),
+            hourly_period="2d",
+            hourly_sr_window=60,
+        )
+        if row is not None:
+            srri_rows.append(row)
+        srri_progress.progress((i + 1) / max(1, len(universe)))
+    srri_status.empty()
+    srri_progress.empty()
+
+    srri_df = pd.DataFrame(srri_rows)
+    if srri_df.empty:
+        st.info(f"No {srri_view} symbols currently below S/R Reversal Index {float(srri_threshold):.2f}.")
+    else:
+        srri_uptrend = srri_df[srri_df["Price Trend Direction"].eq("Upward")].copy()
+        srri_downtrend = srri_df[srri_df["Price Trend Direction"].eq("Downward")].copy()
+        srri_sr_up = srri_df[srri_df["Current S/R Direction"].eq("Upward")].copy()
+
+        st.markdown(
+            f"**Matches found:** {len(srri_df)} • "
+            f"**S/R Direction Upward:** {len(srri_sr_up)} • "
+            f"**Price Trend Upward:** {len(srri_uptrend)} • "
+            f"**Price Trend Downward:** {len(srri_downtrend)}"
+        )
+
+        _render_sr_reversal_index_below_threshold_table(
+            f"Top watchlist — {srri_view} S/R below {float(srri_threshold):.2f} with S/R Direction Upward first",
+            srri_df
+        )
+
+        with st.expander(f"{srri_view} Price Trend Upward only", expanded=False):
+            _render_sr_reversal_index_below_threshold_table(
+                f"{srri_view} S/R Reversal Index below {float(srri_threshold):.2f} — Price Trend Upward",
+                srri_uptrend
+            )
+
+        with st.expander(f"{srri_view} Price Trend Downward only", expanded=False):
+            _render_sr_reversal_index_below_threshold_table(
+                f"{srri_view} S/R Reversal Index below {float(srri_threshold):.2f} — Price Trend Downward",
+                srri_downtrend
+            )
