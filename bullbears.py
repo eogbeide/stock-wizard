@@ -4,6 +4,7 @@
 # 30 EMA crosses, NTD/S/R reversal confirmation, Stocks/FX scanner,
 # and chart-level probability trade instructions for easier BUY/SELL decision-making.
 # (UPDATED) Structure metric now uses directional red/green trend badges and action/trend alignment text.
+# (UPDATED) Chart trade instruction box is moved outside the plot area so it does not block candles/indicators.
 # (UPDATED) Symbol lists and scanner tables are alphabetized; Buy/Sell List is split into Daily and Hourly tables.
 
 import math
@@ -1259,6 +1260,9 @@ def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
     gs = fig.add_gridspec(2, 1, height_ratios=[2.05, 1.15], hspace=0.22)
     ax = fig.add_subplot(gs[0])
     ax2 = fig.add_subplot(gs[1], sharex=ax)
+    # Reserve a right-side margin for the probability/instruction box so it never
+    # covers candles, EMA/HMA lines, markers, or support/resistance labels.
+    fig.subplots_adjust(right=0.82)
 
     # Price panel
     ax.plot(x, close.to_numpy(), color="tab:blue", label="Price", linewidth=1.4)
@@ -1345,22 +1349,23 @@ def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
     long_prob, short_prob, prob_edge = probability_bar_values(trade)
     prob_read = probability_trade_read(trade)
     prob_color = "tab:green" if "BUY" in prob_read["Read"] else ("tab:red" if "SELL" in prob_read["Read"] else "0.35")
-    ax.text(
+    # Put the trade instruction box outside the plotting area. This keeps the
+    # chart actionable without hiding candles/lines near the right edge.
+    fig.text(
         0.985,
-        0.965,
+        0.875,
         (
             f"{prob_read['Icon']} {prob_read['Read']}\n"
-            f"Long {long_prob:.0f}% vs Short {short_prob:.0f}% | Edge {prob_edge:.0f}%\n"
-            f"Use: {'Enter only after confirmation' if prob_edge < 15 else 'Higher-priority setup; confirm entry'}"
+            f"Long {long_prob:.0f}% vs Short {short_prob:.0f}%\n"
+            f"Edge {prob_edge:.0f}%\n"
+            f"{'Confirm entry' if prob_edge < 15 else 'High-priority; confirm entry'}"
         ),
-        transform=ax.transAxes,
         ha="right",
         va="top",
-        fontsize=9,
+        fontsize=8.5,
         fontweight="bold",
         color=prob_color,
-        bbox=dict(boxstyle="round,pad=0.28", fc="white", ec=prob_color, alpha=0.82),
-        zorder=10,
+        bbox=dict(boxstyle="round,pad=0.28", fc="white", ec=prob_color, alpha=0.88),
     )
     ax.text(
         0.50,
