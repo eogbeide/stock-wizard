@@ -2457,11 +2457,12 @@ st.caption(
      "Toggle between Stocks and Forex. Hourly and daily views use real trading bars only and include trade instructions plus rule-based long/short probabilities."
 )
 
-tab_chart, tab_daily, tab_scanner, tab_buy_sell, tab_daily_sr_cross, tab_daily_dips, tab_rules = st.tabs([
+tab_chart, tab_daily, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_cross, tab_daily_dips, tab_rules = st.tabs([
     "Hourly Trading Chart",
     "Daily Trading Chart",
     "Scanner",
     "Buy/Sell List",
+    "Trade Action",
     "Daily S/R Cross",
     "-0.75 Long-term Dips",
     "Trading Rules",
@@ -2909,6 +2910,159 @@ with tab_buy_sell:
             else:
                 st.dataframe(all_hourly, use_container_width=True, hide_index=True)
 
+
+
+
+# =========================
+# Confirmed trade-action scanner — uses the same engine as chart and existing scanner.
+# =========================
+with tab_trade_action:
+    st.subheader(f"{asset_class} Trade Action — Confirmed Signals")
+    st.caption(
+        "Select Daily or Hourly chart settings, then scan for BUY CONFIRMED and "
+        "SELL CONFIRMED only. Preliminary BUY/SELL SETUP and WAIT rows are excluded. "
+        "Probabilities are rule-based signal scores, not calibrated win probabilities."
+    )
+
+    ta_controls = st.columns([1, 2])
+    ta_timeframe = ta_controls[0].selectbox(
+        "Trade Action timeframe",
+        ["Daily", "Hourly"],
+        key=f"trade_action_timeframe_{asset_class}",
+    )
+    ta_symbols = ta_controls[1].multiselect(
+        "Symbols to scan",
+        options=sorted(current_universe),
+        default=sorted(current_universe),
+        key=f"trade_action_symbols_{asset_class}",
+    )
+    ta_scan_cfg = cfg.copy()
+    if ta_timeframe == "Daily":
+        ta_scan_cfg["period"] = cfg.get("daily_period", "1y")
+        ta_scan_cfg["interval"] = "1d"
+        ta_scan_cfg["right_padding"] = max(4, int(cfg.get("right_padding", 12)))
+
+    ta_key = f"trade_action_confirmed_{asset_class}"
+    ta_signature = repr((
+        asset_class, ta_timeframe, tuple(sorted(ta_symbols)),
+        tuple(sorted((k, repr(v)) for k, v in ta_scan_cfg.items())),
+    ))
+    if st.button(
+        f"Scan {ta_timeframe} for confirmed BUY / SELL",
+        key=f"trade_action_scan_{asset_class}",
+        use_container_width=True,
+    ):
+        ta_rows = []
+        ta_errors = []
+        ta_progress = st.progress(0)
+        ta_status = st.empty()
+        for ta_idx, ta_symbol in enumerate(ta_symbols):
+            ta_status.caption(f"Scanning {ta_symbol} ({ta_timeframe})")
+            try:
+                ta_row = scan_symbol(ta_symbol, ta_scan_cfg)
+                if ta_row is not None:
+                    ta_row["Timeframe"] = ta_timeframe
+                    ta_rows.append(ta_row)
+            except Exception as ta_exc:
+                ta_errors.append(f"{ta_symbol}: {ta_exc}")
+            ta_progress.progress((ta_idx + 1) / max(len(ta_symbols), 1))
+        ta_progress.empty()
+        ta_status.empty()
+        st.session_state[ta_key] = {
+            "signature": ta_signature,
+            "rows": ta_rows,
+            "errors": ta_errors,
+            "built_at": pd.Timestamp.now(tz=PACIFIC).strftime("%Y-%m-%d %H:%M:%S %Z"),
+        }
+
+    ta_saved = st.session_state.get(ta_key)
+    if not ta_saved:
+        st.info("Select a timeframe and click Scan to build the confirmed trade list.")
+    elif ta_saved.get("signature") != ta_signature:
+        st.warning("The timeframe, symbols, or indicator settings changed. Run the scan again to avoid stale signals.")
+    else:
+        ta_df = pd.DataFrame(ta_saved.get("rows", []))
+        ta_errors = ta_saved.get("errors", [])
+        st.caption(
+            f"Last scan: {ta_saved.get('built_at', 'n/a')} | "
+            f"Timeframe: {ta_timeframe} | "
+            f"Symbols with data: {len(ta_df)} | Errors: {len(ta_errors)}"
+        )
+        if ta_df.empty:
+            st.info("No symbols returned usable scan data.")
+        else:
+            # Strict state matching; do not treat SETUP/WATCH or conflicting actions as confirmed.
+            ta_states = ta_df["State"].fillna("").astype(str).str.upper().str.strip()
+            ta_actions = ta_df["Trade Action"].fillna("").astype(str).str.upper().str.strip()
+            ta_buy = ta_df.loc[
+                ta_states.eq("BUY CONFIRMED") & ta_actions.eq("BUY")
+            ].copy()
+            ta_sell = ta_df.loc[
+                ta_states.eq("SELL CONFIRMED") & ta_actions.eq("SELL")
+            ].copy()
+
+            def _rank_confirmed_trade_actions(frame, probability_column):
+                if frame.empty:
+                    return frame
+                frame = frame.copy()
+                frame["_Prob"] = pd.to_numeric(
+                    frame[probability_column].astype(str).str.replace("%", "", regex=False),
+                    errors="coerce",
+                ).fillna(-1)
+                frame["_Edge"] = pd.to_numeric(
+                    frame["Probability Edge"].astype(str).str.replace("%", "", regex=False),
+                    errors="coerce",
+                ).fillna(-1)
+                frame = frame.sort_values(
+                    ["_Prob", "_Edge", "Symbol"],
+                    ascending=[False, False, True],
+                    kind="mergesort",
+                )
+                preferred = [
+                    "Symbol", "State", "Trade Action", "Long Probability", "Short Probability",
+                    "Probability Edge", "Trend", "Current Structure", "Last Close",
+                    "S/R Rev", "NTD", "ADX", "Entry Zone", "Stop / Invalidation",
+                    "Target 1", "Trade Instruction", "Reason",
+                ]
+                ordered = [col for col in preferred if col in frame.columns]
+                return frame[ordered + [
+                    col for col in frame.columns
+                    if col not in ordered and not col.startswith("_")
+                ]]
+
+            ta_buy = _rank_confirmed_trade_actions(ta_buy, "Long Probability")
+            ta_sell = _rank_confirmed_trade_actions(ta_sell, "Short Probability")
+            count_cols = st.columns(3)
+            count_cols[0].metric("BUY Confirmed", len(ta_buy))
+            count_cols[1].metric("SELL Confirmed", len(ta_sell))
+            count_cols[2].metric("Other / Unconfirmed", len(ta_df) - len(ta_buy) - len(ta_sell))
+
+            st.markdown("#### 🟢 BUY Confirmed")
+            if ta_buy.empty:
+                st.info(f"No BUY CONFIRMED symbols for the selected {ta_timeframe.lower()} view.")
+            else:
+                st.dataframe(ta_buy, use_container_width=True, hide_index=True)
+
+            st.markdown("#### 🔴 SELL Confirmed")
+            if ta_sell.empty:
+                st.info(f"No SELL CONFIRMED symbols for the selected {ta_timeframe.lower()} view.")
+            else:
+                st.dataframe(ta_sell, use_container_width=True, hide_index=True)
+
+            with st.expander("Other signals (SETUP / WAIT)", expanded=False):
+                ta_other = ta_df.loc[
+                    ~(ta_states.eq("BUY CONFIRMED") & ta_actions.eq("BUY"))
+                    & ~(ta_states.eq("SELL CONFIRMED") & ta_actions.eq("SELL"))
+                ]
+                if ta_other.empty:
+                    st.info("No other signals.")
+                else:
+                    st.dataframe(ta_other, use_container_width=True, hide_index=True)
+
+        if ta_errors:
+            with st.expander(f"Scan errors ({len(ta_errors)})", expanded=False):
+                for ta_error in ta_errors:
+                    st.caption(ta_error)
 
 
 with tab_daily_sr_cross:
