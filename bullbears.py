@@ -1156,11 +1156,25 @@ def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict)
         ntd_delta=ntd_delta,
     )
 
+    # An individual snapshot cannot establish the exact historical moment the
+    # entire multi-condition classification first became confirmed. Preserve
+    # the most recent underlying reversal/crossover trigger instead; the UI
+    # labels this clearly as a trigger estimate, not a backtested confirmation.
+    if state == "BUY CONFIRMED":
+        event_times = [t for t in (bull_time, cross_up_time) if t is not None]
+    elif state == "SELL CONFIRMED":
+        event_times = [t for t in (bear_time, cross_down_time) if t is not None]
+    else:
+        event_times = []
+    confirmation_trigger_time = max(event_times) if event_times else None
+
     return {
         **probability_info,
         "State": state,
         "Bias": bias,
         "Reason": reason,
+        "Confirmation Trigger Time": confirmation_trigger_time,
+        "Last Bar Timestamp": df.index[-1],
         "Last Close": last,
         "Current Structure": current_structure,
         "Trend Direction": "Upward" if trend_up else "Downward",
@@ -1424,6 +1438,8 @@ def format_trade_row(symbol: str, trade: dict) -> dict:
         "State": trade.get("State"),
         "Bias": trade.get("Bias"),
         "Trade Action": trade.get("Trade Action"),
+        "Confirmation Trigger Time": trade.get("Confirmation Trigger Time"),
+        "Last Bar Timestamp": trade.get("Last Bar Timestamp"),
         "Long Probability": f"{safe_float(trade.get('Long Probability')):.0f}%",
         "Short Probability": f"{safe_float(trade.get('Short Probability')):.0f}%",
         "Probability Edge": f"{safe_float(trade.get('Probability Edge')):.0f}%",
@@ -2984,6 +3000,11 @@ with tab_trade_action:
         ta_df = pd.DataFrame(ta_saved.get("rows", []))
         ta_errors = ta_saved.get("errors", [])
         st.caption(
+            "Confirmation Trigger and Time Since Trigger refer to the most recent "
+            "S/R reversal or EMA crossover bar supporting the confirmed signal. "
+            "They are not the exact time every confirmation condition first aligned."
+        )
+        st.caption(
             f"Last scan: {ta_saved.get('built_at', 'n/a')} | "
             f"Timeframe: {ta_timeframe} | "
             f"Symbols with data: {len(ta_df)} | Errors: {len(ta_errors)}"
@@ -2991,6 +3012,40 @@ with tab_trade_action:
         if ta_df.empty:
             st.info("No symbols returned usable scan data.")
         else:
+            # Display age from the underlying confirmation trigger bar, not
+            # from when the user last pressed Scan. Recalculate on every rerun.
+            ta_now = pd.Timestamp.now(tz=PACIFIC)
+
+            def _trade_action_time_details(value):
+                if value is None or pd.isna(value):
+                    return ("Not available", "Unknown")
+                try:
+                    timestamp = pd.Timestamp(value)
+                    if timestamp.tzinfo is None:
+                        timestamp = timestamp.tz_localize(PACIFIC)
+                    else:
+                        timestamp = timestamp.tz_convert(PACIFIC)
+                    seconds = max(0, int((ta_now - timestamp).total_seconds()))
+                    if seconds < 60:
+                        age = "just now"
+                    elif seconds < 3600:
+                        age = f"{seconds // 60} minutes ago"
+                    elif seconds < 86400:
+                        age = f"{seconds // 3600} hours ago"
+                    else:
+                        age = f"{seconds // 86400} days ago"
+                    return (timestamp.strftime("%Y-%m-%d %H:%M %Z"), age)
+                except (TypeError, ValueError, OverflowError):
+                    return ("Not available", "Unknown")
+
+            ta_time_details = ta_df.get("Confirmation Trigger Time")
+            if ta_time_details is None:
+                ta_time_details = pd.Series([None] * len(ta_df), index=ta_df.index)
+            ta_details = ta_time_details.apply(_trade_action_time_details)
+            ta_df["Confirmation Trigger"] = ta_details.apply(lambda item: item[0])
+            ta_df["Time Since Trigger"] = ta_details.apply(lambda item: item[1])
+            # No historical state-transition replay is performed. Therefore
+            # this is a signal-trigger timestamp, not an exact confirmation time.
             # Strict state matching; do not treat SETUP/WATCH or conflicting actions as confirmed.
             ta_states = ta_df["State"].fillna("").astype(str).str.upper().str.strip()
             ta_actions = ta_df["Trade Action"].fillna("").astype(str).str.upper().str.strip()
@@ -3019,7 +3074,8 @@ with tab_trade_action:
                     kind="mergesort",
                 )
                 preferred = [
-                    "Symbol", "State", "Trade Action", "Long Probability", "Short Probability",
+                    "Symbol", "State", "Trade Action", "Confirmation Trigger",
+                    "Time Since Trigger", "Long Probability", "Short Probability",
                     "Probability Edge", "Trend", "Current Structure", "Last Close",
                     "S/R Rev", "NTD", "ADX", "Entry Zone", "Stop / Invalidation",
                     "Target 1", "Trade Instruction", "Reason",
