@@ -2473,7 +2473,59 @@ st.caption(
      "Toggle between Stocks and Forex. Hourly and daily views use real trading bars only and include trade instructions plus rule-based long/short probabilities."
 )
 
-tab_chart, tab_daily, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_cross, tab_daily_dips, tab_rules = st.tabs([
+
+# =========================
+# NTD zero-line upward cross scanner
+# =========================
+def _scan_ntd_zero_up(symbol: str, timeframe: str, settings: dict, recent_bars: int):
+    """Return the most recent upward NTD zero cross within the requested real bars."""
+    is_daily = timeframe == "Daily"
+    df = fetch_market_ohlc(
+        symbol,
+        period="1y" if is_daily else "1mo",
+        interval="1d" if is_daily else "1h",
+    )
+    if df.empty:
+        return None
+    close = coerce_series(df["Close"]).dropna()
+    if len(close) < max(12, int(settings["ntd_window"]) // 3):
+        return None
+    ntd = normalized_trend(close, int(settings["ntd_window"]))
+    # A zero cross requires a known, nonpositive previous observation.
+    crossed = (ntd.shift(1) <= 0.0) & (ntd > 0.0)
+    crossed = crossed.fillna(False)
+    event_positions = np.flatnonzero(crossed.to_numpy(dtype=bool))
+    if len(event_positions) == 0:
+        return None
+    pos = int(event_positions[-1])
+    bars_since = len(ntd) - 1 - pos
+    if bars_since > int(recent_bars):
+        return None
+
+    _, trend_slope, _ = regression_line(close, int(settings["trend_lookback"]))
+    ntd_recent = ntd.dropna().iloc[-min(12, len(ntd.dropna())):]
+    _, ntd_slope, _ = regression_line(ntd_recent, len(ntd_recent))
+    cross_price = float(close.iloc[pos])
+    last_price = float(close.iloc[-1])
+    unit = "pips" if "=X" in symbol else "points"
+    pip_size = (0.01 if "JPY" in symbol.upper() else 0.0001) if unit == "pips" else 1.0
+    crossed_at = ntd.index[pos]
+    return {
+        "Symbol": symbol,
+        "Bars Since Cross": bars_since,
+        "Cross Time (Pacific)": pd.Timestamp(crossed_at).strftime("%Y-%m-%d %H:%M"),
+        "NTD at Cross": round(float(ntd.iloc[pos]), 4),
+        "Current NTD": round(float(ntd.iloc[-1]), 4),
+        "NTD Direction": "Upward" if np.isfinite(ntd_slope) and ntd_slope >= 0 else "Downward",
+        "Price Trend Direction": "Upward" if np.isfinite(trend_slope) and trend_slope >= 0 else "Downward",
+        "Price at Cross": round(cross_price, 5),
+        "Last Price": round(last_price, 5),
+        "Move Since Cross": round((last_price - cross_price) / pip_size, 1),
+        "Move Unit": unit,
+    }
+
+
+tab_chart, tab_daily, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_cross, tab_daily_dips, tab_ntd_cross, tab_rules = st.tabs([
     "Hourly Trading Chart",
     "Daily Trading Chart",
     "Scanner",
@@ -2481,6 +2533,7 @@ tab_chart, tab_daily, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_
     "Trade Action",
     "Daily S/R Cross",
     "-0.75 Long-term Dips",
+    "NTD Cross",
     "Trading Rules",
 ])
 
@@ -3472,6 +3525,77 @@ with tab_daily_dips:
             with st.expander("Show all hourly NTD dip rows", expanded=False):
                 all_hourly_sorted = _sort_daily_ntd_dips(hourly_dip_df)
                 st.dataframe(_format_daily_ntd_dip_table(all_hourly_sorted), use_container_width=True, hide_index=True)
+
+
+with tab_ntd_cross:
+    st.subheader(f"{asset_class} NTD Cross — Upward Through 0.00")
+    st.caption(
+        "Lists symbols whose NTD line recently moved from zero or below to above zero. "
+        "Daily uses daily trading bars; Hourly uses actual 1-hour trading bars (without weekend filler). "
+        "A crossover is a watchlist signal, not by itself a confirmed BUY."
+    )
+    nc_left, nc_mid, nc_right = st.columns([1, 1, 2])
+    nc_timeframe = nc_left.selectbox(
+        "NTD cross timeframe", ["Daily", "Hourly"],
+        key=f"ntd_cross_timeframe_{asset_class}",
+    )
+    nc_recent = nc_mid.slider(
+        "Recent cross window (bars)", 1, 120, 20,
+        key=f"ntd_cross_recent_{asset_class}",
+    )
+    nc_symbols = nc_right.multiselect(
+        "Symbols to scan", options=sorted(current_universe),
+        default=sorted(current_universe),
+        key=f"ntd_cross_symbols_{asset_class}",
+    )
+    nc_key = f"ntd_cross_results_{asset_class}"
+    nc_signature = (nc_timeframe, nc_recent, tuple(sorted(nc_symbols)),
+                    int(cfg["ntd_window"]), int(cfg["trend_lookback"]))
+    if st.button(
+        f"Scan {nc_timeframe} NTD 0.00 Upward Crosses",
+        key=f"ntd_cross_scan_button_{asset_class}",
+        use_container_width=True,
+    ):
+        nc_rows, nc_errors = [], []
+        nc_progress = st.progress(0)
+        for nc_i, nc_symbol in enumerate(nc_symbols):
+            try:
+                nc_result = _scan_ntd_zero_up(nc_symbol, nc_timeframe, cfg, nc_recent)
+                if nc_result is not None:
+                    nc_rows.append(nc_result)
+            except Exception as nc_exc:
+                nc_errors.append(f"{nc_symbol}: {nc_exc}")
+            nc_progress.progress((nc_i + 1) / max(1, len(nc_symbols)))
+        nc_progress.empty()
+        st.session_state[nc_key] = {
+            "signature": nc_signature,
+            "rows": nc_rows,
+            "errors": nc_errors,
+            "scanned_at": datetime.now(PACIFIC).strftime("%Y-%m-%d %H:%M:%S %Z"),
+        }
+    nc_saved = st.session_state.get(nc_key)
+    if not nc_saved or nc_saved.get("signature") != nc_signature:
+        st.info("Select a timeframe and click Scan to load recent upward NTD zero-line crosses.")
+    else:
+        nc_df = pd.DataFrame(nc_saved.get("rows", []))
+        st.caption(f"Last scan: {nc_saved.get('scanned_at', 'n/a')} • Matches: {len(nc_df)}")
+        if nc_df.empty:
+            st.info(f"No {nc_timeframe.lower()} upward NTD 0.00 crosses found in the last {nc_recent} bars.")
+        else:
+            nc_df = nc_df.sort_values(
+                ["Bars Since Cross", "Symbol"], ascending=[True, True]
+            ).reset_index(drop=True)
+            st.dataframe(nc_df, hide_index=True, use_container_width=True)
+            for nc_direction in ("Upward", "Downward"):
+                st.markdown(f"#### Price Trend {nc_direction}")
+                nc_group = nc_df.loc[nc_df["Price Trend Direction"].eq(nc_direction)]
+                if nc_group.empty:
+                    st.caption("No matching symbols.")
+                else:
+                    st.dataframe(nc_group, hide_index=True, use_container_width=True)
+        if nc_saved.get("errors"):
+            with st.expander(f"Scan errors ({len(nc_saved['errors'])})", expanded=False):
+                st.write(nc_saved["errors"])
 
 
 with tab_rules:
