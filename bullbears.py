@@ -2525,7 +2525,59 @@ def _scan_ntd_zero_up(symbol: str, timeframe: str, settings: dict, recent_bars: 
     }
 
 
-tab_chart, tab_daily, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_cross, tab_daily_dips, tab_ntd_cross, tab_rules = st.tabs([
+
+
+# =========================
+# HMA(55) upward price-cross scanner
+# =========================
+def _scan_hma_price_cross_up(symbol: str, timeframe: str, settings: dict, recent_bars: int, hma_length: int = 55):
+    """Find the most recent close-price upward HMA cross, with price trend at latest bar."""
+    is_daily = timeframe == "Daily"
+    df = fetch_market_ohlc(symbol, period="1y" if is_daily else "1mo",
+                           interval="1d" if is_daily else "1h")
+    if df.empty:
+        return None
+    close = coerce_series(df["Close"]).dropna()
+    if len(close) < max(int(hma_length) + int(np.sqrt(hma_length)) + 3, 70):
+        return None
+    hma_line = hma(close, int(hma_length)).reindex(close.index)
+    prev_price = close.shift(1)
+    prev_hma = hma_line.shift(1)
+    cross_mask = (prev_price <= prev_hma) & (close > hma_line)
+    cross_mask = cross_mask.fillna(False)
+    positions = np.flatnonzero(cross_mask.to_numpy(dtype=bool))
+    if len(positions) == 0:
+        return None
+    pos = int(positions[-1])
+    bars_since = len(close) - pos - 1
+    if bars_since > int(recent_bars):
+        return None
+    _, trend_slope, _ = regression_line(close, int(settings["trend_lookback"]))
+    if not np.isfinite(trend_slope):
+        return None
+    current_price = float(close.iloc[-1])
+    price_at_cross = float(close.iloc[pos])
+    current_hma = float(hma_line.iloc[-1])
+    if not np.isfinite(current_hma):
+        return None
+    unit = "pips" if "=X" in symbol.upper() else "points"
+    unit_size = (0.01 if "JPY" in symbol.upper() else 0.0001) if unit == "pips" else 1.0
+    crossed_at = pd.Timestamp(close.index[pos])
+    return {
+        "Symbol": symbol,
+        "Price Trend Direction": "Upward" if trend_slope >= 0 else "Downward",
+        "Bars Since Cross": int(bars_since),
+        "Cross Time (Pacific)": crossed_at.strftime("%Y-%m-%d %H:%M"),
+        "Price at Cross": round(price_at_cross, 5),
+        "Last Price": round(current_price, 5),
+        "Current HMA": round(current_hma, 5),
+        "Price Above HMA": bool(current_price > current_hma),
+        "Move Since Cross": round((current_price - price_at_cross) / unit_size, 1),
+        "Move Unit": unit,
+        "Trend Slope": round(float(trend_slope), 7),
+    }
+
+tab_chart, tab_daily, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_cross, tab_daily_dips, tab_ntd_cross, tab_hma_cross, tab_rules = st.tabs([
     "Hourly Trading Chart",
     "Daily Trading Chart",
     "Scanner",
@@ -2534,6 +2586,7 @@ tab_chart, tab_daily, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_
     "Daily S/R Cross",
     "-0.75 Long-term Dips",
     "NTD Cross",
+    "HMA Cross",
     "Trading Rules",
 ])
 
@@ -3596,6 +3649,90 @@ with tab_ntd_cross:
         if nc_saved.get("errors"):
             with st.expander(f"Scan errors ({len(nc_saved['errors'])})", expanded=False):
                 st.write(nc_saved["errors"])
+
+
+
+
+with tab_hma_cross:
+    st.subheader(f"{asset_class} HMA Cross — Price Crossing Above HMA")
+    st.caption(
+        "Scans daily and hourly trading bars separately for a recent close-price cross upward "
+        "through the Hull Moving Average (HMA). Trend groups are based on the current price "
+        "regression trendline. A cross is a watchlist event, not a guaranteed BUY signal."
+    )
+    hc_col1, hc_col2, hc_col3 = st.columns([1, 1, 2])
+    hc_period = hc_col1.number_input(
+        "HMA period", min_value=5, max_value=120, value=55, step=1,
+        key=f"hma_cross_period_{asset_class}",
+    )
+    hc_recent = hc_col2.slider(
+        "Recent upward cross (bars)", 1, 120, 20,
+        key=f"hma_cross_recent_{asset_class}",
+    )
+    hc_symbols = hc_col3.multiselect(
+        "Symbols to scan", sorted(current_universe),
+        default=sorted(current_universe),
+        key=f"hma_cross_symbols_{asset_class}",
+    )
+    hc_signature = (
+        int(hc_period), int(hc_recent), tuple(sorted(hc_symbols)),
+        int(cfg["trend_lookback"]),
+    )
+    hc_store_key = f"hma_cross_result_{asset_class}"
+    if st.button(
+        "Scan Daily and Hourly HMA Crosses",
+        key=f"hma_cross_scan_{asset_class}", use_container_width=True,
+    ):
+        hc_rows = {"Daily": [], "Hourly": []}
+        hc_errors = []
+        hc_bar = st.progress(0)
+        total = max(1, len(hc_symbols) * 2)
+        completed = 0
+        for hc_timeframe in ("Daily", "Hourly"):
+            for hc_symbol in hc_symbols:
+                try:
+                    hc_found = _scan_hma_price_cross_up(
+                        hc_symbol, hc_timeframe, cfg, hc_recent, hc_period
+                    )
+                    if hc_found is not None:
+                        hc_rows[hc_timeframe].append(hc_found)
+                except Exception as hc_exc:
+                    hc_errors.append(f"{hc_timeframe} {hc_symbol}: {hc_exc}")
+                completed += 1
+                hc_bar.progress(completed / total)
+        hc_bar.empty()
+        st.session_state[hc_store_key] = {
+            "signature": hc_signature,
+            "rows": hc_rows,
+            "errors": hc_errors,
+            "scanned_at": datetime.now(PACIFIC).strftime("%Y-%m-%d %H:%M:%S %Z"),
+        }
+    hc_saved = st.session_state.get(hc_store_key)
+    if not hc_saved or hc_saved.get("signature") != hc_signature:
+        st.info("Click Scan to populate all four Daily/Hourly × Upward/Downward trend tables.")
+    else:
+        st.caption(f"Last scan: {hc_saved.get('scanned_at', 'n/a')}")
+        for hc_timeframe in ("Daily", "Hourly"):
+            st.markdown(f"### {hc_timeframe} Chart")
+            hc_df = pd.DataFrame(hc_saved.get("rows", {}).get(hc_timeframe, []))
+            for hc_direction in ("Upward", "Downward"):
+                st.markdown(f"#### Price Trend {hc_direction}")
+                if hc_df.empty:
+                    st.info("No matching upward HMA crosses found.")
+                    continue
+                hc_group = hc_df.loc[
+                    hc_df["Price Trend Direction"].eq(hc_direction)
+                ].copy()
+                if hc_group.empty:
+                    st.info("No matching upward HMA crosses found.")
+                else:
+                    hc_group = hc_group.sort_values(
+                        ["Bars Since Cross", "Symbol"], ascending=[True, True]
+                    ).reset_index(drop=True)
+                    st.dataframe(hc_group, use_container_width=True, hide_index=True)
+        if hc_saved.get("errors"):
+            with st.expander(f"Scan errors ({len(hc_saved['errors'])})", expanded=False):
+                st.write(hc_saved["errors"])
 
 
 with tab_rules:
