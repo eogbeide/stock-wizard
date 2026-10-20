@@ -2707,9 +2707,66 @@ def _scan_hma_price_cross_up(symbol: str, timeframe: str, settings: dict, recent
         "Trend Slope": round(float(trend_slope), 7),
     }
 
-tab_chart, tab_daily, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_cross, tab_daily_dips, tab_ntd_cross, tab_hma_cross, tab_rules = st.tabs([
+
+
+# =========================
+# Green / Red Zone onset scanner
+# =========================
+def scan_fresh_color_zone(symbol: str, timeframe: str, settings: dict, recent_bars: int):
+    """Scan transitions of the same NTD sign that colors the chart's lower panel.
+
+    A green zone starts when NTD crosses from <= 0 to > 0; a red zone starts
+    when it crosses from >= 0 to < 0. Only report the current, fresh zone if
+    NTD is still moving in that direction on the last bar.
+    """
+    is_daily = timeframe == "Daily"
+    period = settings.get("daily_period", "1y") if is_daily else "1mo"
+    interval = "1d" if is_daily else "1h"
+    raw = fetch_market_ohlc(symbol, period=period, interval=interval)
+    if raw.empty or len(raw) < max(20, int(settings["ntd_window"]) // 3):
+        return None
+
+    close = coerce_series(raw["Close"])
+    ntd = normalized_trend(close, int(settings["ntd_window"]))
+    npx = normalized_price(close, int(settings["ntd_window"]), int(settings["npx_smooth"]))
+    valid = ntd.dropna()
+    if len(valid) < 3:
+        return None
+
+    last = float(ntd.iloc[-1])
+    previous = float(ntd.iloc[-2])
+    if not (np.isfinite(last) and np.isfinite(previous)):
+        return None
+    if last > 0 and last > previous:
+        zone, event = "🟢 Green Zone — Going Up", (ntd.shift(1) <= 0) & (ntd > 0)
+    elif last < 0 and last < previous:
+        zone, event = "🔴 Red Zone — Going Down", (ntd.shift(1) >= 0) & (ntd < 0)
+    else:
+        return None
+
+    positions = np.flatnonzero(event.fillna(False).to_numpy(dtype=bool))
+    if len(positions) == 0:
+        return None
+    pos = int(positions[-1])
+    bars_since = len(ntd) - 1 - pos
+    if bars_since > int(recent_bars):
+        return None
+
+    return {
+        "Symbol": symbol,
+        "Zone": zone,
+        "Bars Since Start": bars_since,
+        "Zone Started (Pacific)": pd.Timestamp(ntd.index[pos]).strftime("%Y-%m-%d %H:%M"),
+        "Current NTD": round(last, 3),
+        "NTD Change (1 bar)": round(last - previous, 3),
+        "Smoothed NPX": round(safe_float(npx.iloc[-1]), 3),
+        "Last Price": fmt_price(symbol, close.iloc[-1]),
+    }
+
+tab_chart, tab_daily, tab_green_zone, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_cross, tab_daily_dips, tab_ntd_cross, tab_hma_cross, tab_rules = st.tabs([
     "Hourly Trading Chart",
     "Daily Trading Chart",
+    "🟢 Green Zone",
     "Scanner",
     "Buy/Sell List",
     "Trade Action",
@@ -2806,6 +2863,89 @@ Edge: {safe_float(daily_trade.get('Probability Edge')):.0f}%<br>
         with st.expander("Daily setup details", expanded=False):
             st.dataframe(pd.DataFrame([format_trade_row(symbol, daily_trade)]), use_container_width=True, hide_index=True)
 
+
+
+
+with tab_green_zone:
+    st.subheader(f"{asset_class} — Fresh Green / Red Zones")
+    st.caption(
+        "Zones use the NTD zero-line shading shown in the indicator chart. "
+        "Green starts when NTD crosses above zero and continues rising; "
+        "red starts when NTD crosses below zero and continues falling. "
+        "These are early watchlist alerts, not confirmed trade entries."
+    )
+    gz_left, gz_mid, gz_right = st.columns([1, 1, 3])
+    gz_timeframe = gz_left.radio(
+        "Timeframe", ["Daily", "Hourly"], horizontal=True,
+        key=f"green_zone_timeframe_{asset_class}",
+    )
+    gz_recent = gz_mid.slider(
+        "Just started (bars ago)", min_value=0, max_value=15, value=3,
+        key=f"green_zone_recent_{asset_class}",
+    )
+    gz_symbols = gz_right.multiselect(
+        "Symbols to scan", sorted(current_universe),
+        default=sorted(current_universe),
+        key=f"green_zone_symbols_{asset_class}",
+    )
+    gz_signature = (
+        gz_timeframe, gz_recent, tuple(sorted(gz_symbols)),
+        int(cfg["ntd_window"]), int(cfg["npx_smooth"]),
+        str(cfg.get("daily_period", "1y")),
+    )
+    if st.button("Scan Fresh Zones", key=f"green_zone_run_{asset_class}",
+                 use_container_width=True):
+        gz_results, gz_errors = [], []
+        gz_progress = st.progress(0)
+        for gz_i, gz_symbol in enumerate(gz_symbols):
+            try:
+                candidate = scan_fresh_color_zone(
+                    gz_symbol, gz_timeframe, cfg, gz_recent,
+                )
+                if candidate is not None:
+                    gz_results.append(candidate)
+            except Exception as exc:
+                gz_errors.append(f"{gz_symbol}: {exc}")
+            gz_progress.progress((gz_i + 1) / max(1, len(gz_symbols)))
+        gz_progress.empty()
+        st.session_state[f"green_zone_results_{asset_class}"] = {
+            "signature": gz_signature,
+            "rows": gz_results,
+            "errors": gz_errors,
+        }
+
+    gz_saved = st.session_state.get(f"green_zone_results_{asset_class}")
+    if gz_saved and gz_saved["signature"] == gz_signature:
+        gz_df = pd.DataFrame(gz_saved["rows"])
+        if gz_df.empty:
+            st.info("No newly rising green or newly falling red NTD zones were found in the selected window.")
+        else:
+            greens = gz_df[gz_df["Zone"].str.contains("Green")].sort_values(
+                ["Bars Since Start", "Symbol"]
+            )
+            reds = gz_df[gz_df["Zone"].str.contains("Red")].sort_values(
+                ["Bars Since Start", "Symbol"]
+            )
+            a, b = st.columns(2)
+            a.metric("Fresh Green Zones", len(greens))
+            b.metric("Fresh Red Zones", len(reds))
+            st.markdown("#### 🟢 Green Zone Just Started — Going Up")
+            if greens.empty:
+                st.info("No fresh green zones.")
+            else:
+                st.dataframe(greens, use_container_width=True, hide_index=True)
+            st.markdown("#### 🔴 Red Zone Just Started — Going Down")
+            if reds.empty:
+                st.info("No fresh red zones.")
+            else:
+                st.dataframe(reds, use_container_width=True, hide_index=True)
+        if gz_saved["errors"]:
+            with st.expander(f"Scan errors ({len(gz_saved['errors'])})"):
+                st.write("\\n".join(gz_saved["errors"]))
+    elif gz_saved:
+        st.info("The scan settings changed. Click Scan Fresh Zones to update the results.")
+    else:
+        st.info("Select Daily or Hourly and click Scan Fresh Zones.")
 
 with tab_scanner:
     st.subheader(f"{asset_class} Scanner")
