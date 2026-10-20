@@ -1246,77 +1246,110 @@ def draw_hline_label(ax, x_last: float, y: float, text: str, color: str):
     )
 
 
-def draw_trade_levels(ax, symbol: str, trade: dict) -> None:
-    """Draw the proposed entry zone, target, and invalidation on the price panel.
-
-    Values are parsed from the same trade dictionary used by the instruction box,
-    so the plotted levels always match the displayed trade plan.
-    """
+def _trade_level_numbers(value) -> list[float]:
+    """Parse formatted prices, including FX entry ranges separated by an en dash."""
     import re
+    matches = re.findall(r"\\$?\\d[\\d,]*(?:\\.\\d+)?", str(value))
+    result = []
+    for match in matches:
+        try:
+            price = float(match.replace("$", "").replace(",", ""))
+            if np.isfinite(price):
+                result.append(price)
+        except ValueError:
+            pass
+    return result
 
-    action = str(trade.get("Trade Action", "WAIT")).upper()
-    bias = str(trade.get("Bias", "Neutral")).upper()
-    if not ("BUY" in action or "SELL" in action or bias in ("LONG", "SHORT")):
+
+def trade_pip_distances(symbol: str, trade: dict) -> dict | None:
+    """Estimate reward/risk from the entry midpoint; include entry-zone variability."""
+    entries = _trade_level_numbers(trade.get("Entry Zone", ""))
+    targets = _trade_level_numbers(trade.get("Target 1", ""))
+    stops = _trade_level_numbers(trade.get("Stop / Invalidation", ""))
+    if not entries:
+        return None
+
+    low, high = min(entries), max(entries)
+    mid = (low + high) / 2.0
+    action = str(trade.get("Trade Action", "")).upper()
+    bias = str(trade.get("Bias", "")).upper()
+    if bias == "SHORT" or ("SELL" in action and "BUY" not in action):
+        direction = -1
+    elif bias == "LONG" or ("BUY" in action and "SELL" not in action):
+        direction = 1
+    else:
+        return None
+
+    pip = pip_size(symbol)
+    target = targets[0] if targets else np.nan
+    stop = stops[0] if stops else np.nan
+    # Signed returns indicate whether the level is correctly placed for this trade.
+    reward = direction * (target - mid) / pip if np.isfinite(target) else np.nan
+    risk = -direction * (stop - mid) / pip if np.isfinite(stop) else np.nan
+    reward_range = sorted([direction * (target - e) / pip for e in (low, high)]) if np.isfinite(target) else []
+    risk_range = sorted([-direction * (stop - e) / pip for e in (low, high)]) if np.isfinite(stop) else []
+    rr = reward / risk if np.isfinite(reward) and np.isfinite(risk) and reward > 0 and risk > 0 else np.nan
+    return dict(low=low, high=high, midpoint=mid, target=target, stop=stop,
+                reward=reward, risk=risk, reward_range=reward_range,
+                risk_range=risk_range, rr=rr)
+
+
+def draw_trade_levels(ax, symbol: str, trade: dict) -> dict | None:
+    """Keep price data unobstructed: draw only levels in axes; text goes in sidebar."""
+    levels = trade_pip_distances(symbol, trade)
+    if levels is None:
+        return None
+
+    low, high = levels["low"], levels["high"]
+    if high > low:
+        ax.axhspan(low, high, color="royalblue", alpha=0.075, zorder=0)
+    for level in sorted(set((low, high))):
+        ax.axhline(level, color="royalblue", linestyle="--",
+                   linewidth=1.4, alpha=0.85, zorder=2)
+    if np.isfinite(levels["target"]):
+        ax.axhline(levels["target"], color="forestgreen",
+                   linestyle="-.", linewidth=1.8, alpha=0.9, zorder=2)
+    if np.isfinite(levels["stop"]):
+        ax.axhline(levels["stop"], color="firebrick",
+                   linestyle=":", linewidth=1.8, alpha=0.9, zorder=2)
+    return levels
+
+
+def draw_trade_sidebar(fig, symbol: str, levels: dict | None) -> None:
+    """Dedicated right rail uses fixed positions to prevent overlapping chart labels."""
+    if levels is None:
         return
+    def place(y, content, color):
+        fig.text(0.795, y, content, ha="left", va="top", fontsize=9,
+                 fontweight="semibold", color=color,
+                 bbox=dict(boxstyle="round,pad=0.35", fc="white",
+                           ec=color, alpha=0.95))
 
-    def numbers(value):
-        # Handles '158.277–158.462', '$1,234.50', and 'n/a'.
-        matches = re.findall(r"\$?-?\d[\d,]*(?:\.\d+)?", str(value))
-        result = []
-        for match in matches:
-            try:
-                v = float(match.replace("$", "").replace(",", ""))
-                if np.isfinite(v):
-                    result.append(v)
-            except ValueError:
-                pass
+    low, high = levels["low"], levels["high"]
+    entry = fmt_price(symbol, low)
+    if high > low:
+        entry += " – " + fmt_price(symbol, high)
+    place(0.735, "ENTRY ZONE\\n" + entry, "royalblue")
+
+    def pip_label(value, values):
+        if not np.isfinite(value):
+            return "n/a"
+        result = f"{value:+.1f} pips"
+        if len(values) == 2 and abs(values[1] - values[0]) > 0.05:
+            result += f"\\nRange {values[0]:+.1f} to {values[1]:+.1f}"
         return result
 
-    entries = numbers(trade.get("Entry Zone", ""))
-    targets = numbers(trade.get("Target 1", ""))
-    stops = numbers(trade.get("Stop / Invalidation", ""))
-    if not entries:
-        return
-
-    entry_low, entry_high = min(entries), max(entries)
-    is_short = bias == "SHORT" or ("SELL" in action and "BUY" not in action)
-
-    # Subtle blue band with visible boundaries for the entry range.
-    ax.axhspan(entry_low, entry_high, color="royalblue", alpha=0.09, zorder=0)
-    for level in sorted(set((entry_low, entry_high))):
-        ax.axhline(level, color="royalblue", linestyle="--",
-                   linewidth=1.5, alpha=0.88, zorder=3)
-
-    # Labels sit just outside the right edge to avoid hiding price/EMA data.
-    label_style = dict(transform=ax.get_yaxis_transform(), ha="left",
-                       va="center", fontsize=8.5, fontweight="bold",
-                       clip_on=False, zorder=10)
-    entry_label = (f"ENTRY {fmt_price(symbol, entry_low)}"
-                   if entry_low == entry_high else
-                   f"ENTRY {fmt_price(symbol, entry_low)}–{fmt_price(symbol, entry_high)}")
-    ax.text(1.008, (entry_low + entry_high) / 2, entry_label,
-            color="royalblue",
-            bbox=dict(fc="white", ec="royalblue", alpha=0.92,
-                      boxstyle="round,pad=0.2"), **label_style)
-
-    if targets:
-        target = targets[0]
-        ax.axhline(target, color="forestgreen", linestyle="-.",
-                   linewidth=1.9, alpha=0.9, zorder=3)
-        ax.text(1.008, target, f"TARGET {fmt_price(symbol, target)}",
-                color="forestgreen",
-                bbox=dict(fc="white", ec="forestgreen", alpha=0.92,
-                          boxstyle="round,pad=0.2"), **label_style)
-
-    if stops:
-        stop = stops[0]
-        ax.axhline(stop, color="firebrick", linestyle=":",
-                   linewidth=1.8, alpha=0.9, zorder=3)
-        ax.text(1.008, stop, f"STOP {fmt_price(symbol, stop)}",
-                color="firebrick",
-                bbox=dict(fc="white", ec="firebrick", alpha=0.92,
-                          boxstyle="round,pad=0.2"), **label_style)
-
+    place(0.645, "TARGET  " + fmt_price(symbol, levels["target"]) +
+          "\\n" + pip_label(levels["reward"], levels["reward_range"]), "forestgreen")
+    place(0.545, "STOP  " + fmt_price(symbol, levels["stop"]) +
+          "\\n" + pip_label(levels["risk"], levels["risk_range"]), "firebrick")
+    rr = levels["rr"]
+    fig.text(0.795, 0.442,
+             f"Estimated R:R  1 : {rr:.2f}" if np.isfinite(rr) else
+             "R:R  n/a (check level placement)",
+             fontsize=9, ha="left", va="top", fontweight="bold", color="0.25")
+    fig.text(0.795, 0.403, "Pips from entry midpoint\\n(range uses entry zone)",
+             fontsize=8, ha="left", va="top", color="0.4")
 
 def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
     if df.empty:
@@ -1348,7 +1381,7 @@ def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
     ax2 = fig.add_subplot(gs[1], sharex=ax)
     # Reserve a right-side margin for the probability/instruction box so it never
     # covers candles, EMA/HMA lines, markers, or support/resistance labels.
-    fig.subplots_adjust(right=0.77)
+    fig.subplots_adjust(left=0.075, right=0.765, top=0.91, bottom=0.09)
 
     # Price panel
     ax.plot(x, close.to_numpy(), color="tab:blue", label="Price", linewidth=1.4)
@@ -1374,7 +1407,7 @@ def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
     draw_hline_label(ax, x[-1], support, f"S {fmt_price(symbol, support)}", "tab:green")
 
     # Trade-plan overlays (entry band, target and stop) on the price chart.
-    draw_trade_levels(ax, symbol, trade)
+    trade_levels = draw_trade_levels(ax, symbol, trade)
 
     # 30 EMA crosses
     cross_up = (close.shift(1) <= df["EMA30"].shift(1)) & (close > df["EMA30"])
@@ -1420,28 +1453,16 @@ def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
         f"Price {fmt_price(symbol, last)}  |  30EMA {fmt_price(symbol, ema30_last)}  |  "
         f"S/R {sr_last:+.2f}  NTD {ntd_last:+.2f}  ADX {adx_last:.1f}"
     )
-    ax.set_title(title)
+    ax.set_title(title, fontsize=10, loc="left", pad=10)
     ax.grid(True)
-    ax.legend(loc="upper left", ncol=2)
-    ax.text(
-        0.985,
-        0.04,
-        f"{trade.get('Trade Action', 'WAIT')} | Entry: {trade.get('Entry Zone', 'Wait')} | Stop: {trade.get('Stop / Invalidation', 'n/a')} | Target: {trade.get('Target 1', 'n/a')}",
-        transform=ax.transAxes,
-        ha="right",
-        va="bottom",
-        fontsize=10,
-        fontweight="bold",
-        color=state_color,
-        bbox=dict(boxstyle="round,pad=0.25", fc="white", ec=state_color, alpha=0.8),
-    )
+    ax.legend(loc="upper left", ncol=2, fontsize=7)
     long_prob, short_prob, prob_edge = probability_bar_values(trade)
     prob_read = probability_trade_read(trade)
     prob_color = "tab:green" if "BUY" in prob_read["Read"] else ("tab:red" if "SELL" in prob_read["Read"] else "0.35")
     # Put the trade instruction box outside the plotting area. This keeps the
     # chart actionable without hiding candles/lines near the right edge.
     fig.text(
-        0.985,
+        0.795,
         0.875,
         (
             f"{prob_read['Icon']} {prob_read['Read']}\n"
@@ -1449,7 +1470,7 @@ def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
             f"Edge {prob_edge:.0f}%\n"
             f"{'Confirm entry' if prob_edge < 15 else 'High-priority; confirm entry'}"
         ),
-        ha="right",
+        ha="left",
         va="top",
         fontsize=8.5,
         fontweight="bold",
@@ -1466,6 +1487,8 @@ def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
         fontsize=9,
         bbox=dict(boxstyle="round,pad=0.2", fc="white", ec="0.6", alpha=0.75),
     )
+
+    draw_trade_sidebar(fig, symbol, trade_levels)
 
     # Indicator panel
     ax2.axhline(0, color="0.25", linestyle="--", linewidth=1.0)
