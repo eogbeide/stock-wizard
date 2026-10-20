@@ -893,6 +893,8 @@ def probability_trade_read(trade: dict) -> dict:
 def render_probability_action_panel(trade: dict, view_label: str = "Chart") -> None:
     """Compact user-facing probability interpretation panel shown above each chart."""
     read = probability_trade_read(trade)
+    plan_note = ("WATCH-ONLY hypothetical levels; not a trade signal. "
+                 if trade.get("Plan Indicative", False) else "")
     st.markdown(
         f"""
 <div class="{read['CSS']}">
@@ -901,7 +903,7 @@ def render_probability_action_panel(trade: dict, view_label: str = "Chart") -> N
   Short: <b>{read['Short Probability']:.0f}%</b> &nbsp; | &nbsp;
   Edge: <b>{read['Probability Edge']:.0f}%</b><br>
   <span class="prob-mini">{read['Usage']} {read['Confirmation']} {read['Risk Note']}</span><br>
-  <span class="prob-mini">Entry: <b>{trade.get('Entry Zone', 'Wait')}</b> &nbsp; | &nbsp;
+  <span class="prob-mini">{plan_note}Entry: <b>{trade.get('Entry Zone', 'Wait')}</b> &nbsp; | &nbsp;
   Stop/Invalidation: <b>{trade.get('Stop / Invalidation', 'n/a')}</b> &nbsp; | &nbsp;
   Target: <b>{trade.get('Target 1', 'n/a')}</b></span>
 </div>
@@ -1124,9 +1126,32 @@ def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict)
         stop_zone = fmt_price(symbol, max(resistance, last + 1.2 * atr_last) if np.isfinite(atr_last) and np.isfinite(resistance) else resistance)
         target1 = fmt_price(symbol, max(support, last - 1.5 * atr_last) if np.isfinite(atr_last) and np.isfinite(support) else support)
     else:
-        entry_zone = "Wait"
-        stop_zone = "n/a"
-        target1 = "n/a"
+        # Neutral / WAIT charts still get an *indicative* planning scenario.
+        # This is not an entry recommendation or a confirmed trade.
+        plan_direction = (
+            "Long" if above_count > below_count else
+            "Short" if below_count > above_count else
+            "Long" if trend_up else "Short"
+        )
+        reference_ema = ema30_last if np.isfinite(ema30_last) else last
+        entry_zone = f"{fmt_price(symbol, min(last, reference_ema))}–{fmt_price(symbol, max(last, reference_ema))}"
+        volatility = atr_last if np.isfinite(atr_last) and atr_last > 0 else max(abs(last) * 0.002, pip_size(symbol) * 10)
+        entry_mid = (last + reference_ema) / 2
+        if plan_direction == "Long":
+            candidate_stop = min(support, last - 1.2 * volatility) if np.isfinite(support) else last - 1.2 * volatility
+            candidate_target = min(resistance, last + 1.5 * volatility) if np.isfinite(resistance) else last + 1.5 * volatility
+            stop_zone = fmt_price(symbol, min(candidate_stop, entry_mid - 0.5 * volatility))
+            target1 = fmt_price(symbol, max(candidate_target, entry_mid + 0.5 * volatility))
+        else:
+            candidate_stop = max(resistance, last + 1.2 * volatility) if np.isfinite(resistance) else last + 1.2 * volatility
+            candidate_target = max(support, last - 1.5 * volatility) if np.isfinite(support) else last - 1.5 * volatility
+            stop_zone = fmt_price(symbol, max(candidate_stop, entry_mid + 0.5 * volatility))
+            target1 = fmt_price(symbol, min(candidate_target, entry_mid - 0.5 * volatility))
+
+    # Keep direction metadata separate from the original trade signal.
+    # A WAIT chart stays WAIT; any levels shown are for planning only.
+    plan_direction = bias if bias in ("Long", "Short") else plan_direction
+    plan_indicative = (bias == "Neutral")
 
     probability_info = compute_trade_probabilities_and_instruction(
         symbol=symbol,
@@ -1202,6 +1227,8 @@ def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict)
         "Entry Zone": entry_zone,
         "Stop / Invalidation": stop_zone,
         "Target 1": target1,
+        "Plan Direction": plan_direction,
+        "Plan Indicative": plan_indicative,
     }
 
 
@@ -1272,7 +1299,7 @@ def trade_pip_distances(symbol: str, trade: dict) -> dict | None:
     low, high = min(entries), max(entries)
     mid = (low + high) / 2.0
     action = str(trade.get("Trade Action", "")).upper()
-    bias = str(trade.get("Bias", "")).upper()
+    bias = str(trade.get("Plan Direction", trade.get("Bias", ""))).upper()
     if bias == "SHORT" or ("SELL" in action and "BUY" not in action):
         direction = -1
     elif bias == "LONG" or ("BUY" in action and "SELL" not in action):
@@ -1326,6 +1353,11 @@ def draw_trade_sidebar(fig, symbol: str, levels: dict | None) -> None:
                            ec=color, alpha=0.95))
 
     low, high = levels["low"], levels["high"]
+    if levels.get("indicative"):
+        fig.text(0.795, 0.805,
+                 f"WATCH ONLY · {levels['direction'].upper()} scenario\\nNot a confirmed entry",
+                 fontsize=8.5, ha="left", va="top", color="0.35",
+                 fontweight="bold")
     entry = fmt_price(symbol, low)
     if high > low:
         entry += " – " + fmt_price(symbol, high)
