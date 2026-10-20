@@ -1249,7 +1249,7 @@ def draw_hline_label(ax, x_last: float, y: float, text: str, color: str):
 def _trade_level_numbers(value) -> list[float]:
     """Parse formatted prices, including FX entry ranges separated by an en dash."""
     import re
-    matches = re.findall(r"\\$?\\d[\\d,]*(?:\\.\\d+)?", str(value))
+    matches = re.findall(r"\$?\d[\d,]*(?:\.\d+)?", str(value))
     result = []
     for match in matches:
         try:
@@ -1329,26 +1329,26 @@ def draw_trade_sidebar(fig, symbol: str, levels: dict | None) -> None:
     entry = fmt_price(symbol, low)
     if high > low:
         entry += " – " + fmt_price(symbol, high)
-    place(0.735, "ENTRY ZONE\\n" + entry, "royalblue")
+    place(0.735, "ENTRY ZONE\n" + entry, "royalblue")
 
     def pip_label(value, values):
         if not np.isfinite(value):
             return "n/a"
         result = f"{value:+.1f} pips"
         if len(values) == 2 and abs(values[1] - values[0]) > 0.05:
-            result += f"\\nRange {values[0]:+.1f} to {values[1]:+.1f}"
+            result += f"\nRange {values[0]:+.1f} to {values[1]:+.1f}"
         return result
 
     place(0.645, "TARGET  " + fmt_price(symbol, levels["target"]) +
-          "\\n" + pip_label(levels["reward"], levels["reward_range"]), "forestgreen")
+          "\n" + pip_label(levels["reward"], levels["reward_range"]), "forestgreen")
     place(0.545, "STOP  " + fmt_price(symbol, levels["stop"]) +
-          "\\n" + pip_label(levels["risk"], levels["risk_range"]), "firebrick")
+          "\n" + pip_label(levels["risk"], levels["risk_range"]), "firebrick")
     rr = levels["rr"]
     fig.text(0.795, 0.442,
              f"Estimated R:R  1 : {rr:.2f}" if np.isfinite(rr) else
              "R:R  n/a (check level placement)",
              fontsize=9, ha="left", va="top", fontweight="bold", color="0.25")
-    fig.text(0.795, 0.403, "Pips from entry midpoint\\n(range uses entry zone)",
+    fig.text(0.795, 0.403, "Pips from entry midpoint\n(range uses entry zone)",
              fontsize=8, ha="left", va="top", color="0.4")
 
 def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
