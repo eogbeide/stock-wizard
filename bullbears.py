@@ -2729,6 +2729,14 @@ def scan_fresh_color_zone(symbol: str, timeframe: str, settings: dict, recent_ba
     close = coerce_series(raw["Close"])
     ntd = normalized_trend(close, int(settings["ntd_window"]))
     npx = normalized_price(close, int(settings["ntd_window"]), int(settings["npx_smooth"]))
+
+    # Match the regression trendline shown on the selected price chart.
+    _, price_slope, price_r2 = regression_line(close, int(settings["trend_lookback"]))
+    if np.isfinite(price_slope):
+        price_trend = "Upward ↑" if price_slope > 0 else ("Downward ↓" if price_slope < 0 else "Flat →")
+    else:
+        price_trend = "Unknown"
+
     valid = ntd.dropna()
     if len(valid) < 3:
         return None
@@ -2755,6 +2763,19 @@ def scan_fresh_color_zone(symbol: str, timeframe: str, settings: dict, recent_ba
     return {
         "Symbol": symbol,
         "Zone": zone,
+        "Price Trend": price_trend,
+        "Trend Alignment": (
+            "Aligned ✓"
+            if (("Green Zone" in zone and price_trend == "Upward ↑")
+                or ("Red Zone" in zone and price_trend == "Downward ↓"))
+            else "Opposing ⚠"
+            if price_trend in ("Upward ↑", "Downward ↓")
+            else "Neutral / Unknown"
+        ),
+        "Price Trend Slope (pips/bar)" if "=X" in str(symbol).upper() else "Price Trend Slope (points/bar)": (
+            round(price_slope / pip_size(symbol), 3) if np.isfinite(price_slope) else np.nan
+        ),
+        "Price Trend R²": round(price_r2, 3) if np.isfinite(price_r2) else np.nan,
         "Bars Since Start": bars_since,
         "Zone Started (Pacific)": pd.Timestamp(ntd.index[pos]).strftime("%Y-%m-%d %H:%M"),
         "Current NTD": round(last, 3),
@@ -2872,6 +2893,8 @@ with tab_green_zone:
         "Zones use the NTD zero-line shading shown in the indicator chart. "
         "Green starts when NTD crosses above zero and continues rising; "
         "red starts when NTD crosses below zero and continues falling. "
+        "Price Trend uses the same price regression slope as the chart (upward or downward); "
+        "Trend Alignment shows whether price trend agrees with the fresh NTD zone. "
         "These are early watchlist alerts, not confirmed trade entries."
     )
     gz_left, gz_mid, gz_right = st.columns([1, 1, 3])
@@ -2891,6 +2914,7 @@ with tab_green_zone:
     gz_signature = (
         gz_timeframe, gz_recent, tuple(sorted(gz_symbols)),
         int(cfg["ntd_window"]), int(cfg["npx_smooth"]),
+        int(cfg["trend_lookback"]),
         str(cfg.get("daily_period", "1y")),
     )
     if st.button("Scan Fresh Zones", key=f"green_zone_run_{asset_class}",
@@ -2929,12 +2953,17 @@ with tab_green_zone:
             a, b = st.columns(2)
             a.metric("Fresh Green Zones", len(greens))
             b.metric("Fresh Red Zones", len(reds))
-            st.markdown("#### 🟢 Green Zone Just Started — Going Up")
+            st.caption(
+                "Price Trend is calculated from the selected Daily/Hourly close-price regression line. "
+                "Aligned means Green + upward price trend or Red + downward price trend; "
+                "Opposing means the NTD zone and price trend disagree."
+            )
+            st.markdown("#### 🟢 Green Zone Just Started — NTD Rising")
             if greens.empty:
                 st.info("No fresh green zones.")
             else:
                 st.dataframe(greens, use_container_width=True, hide_index=True)
-            st.markdown("#### 🔴 Red Zone Just Started — Going Down")
+            st.markdown("#### 🔴 Red Zone Just Started — NTD Falling")
             if reds.empty:
                 st.info("No fresh red zones.")
             else:
