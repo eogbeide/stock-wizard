@@ -1246,6 +1246,78 @@ def draw_hline_label(ax, x_last: float, y: float, text: str, color: str):
     )
 
 
+def draw_trade_levels(ax, symbol: str, trade: dict) -> None:
+    """Draw the proposed entry zone, target, and invalidation on the price panel.
+
+    Values are parsed from the same trade dictionary used by the instruction box,
+    so the plotted levels always match the displayed trade plan.
+    """
+    import re
+
+    action = str(trade.get("Trade Action", "WAIT")).upper()
+    bias = str(trade.get("Bias", "Neutral")).upper()
+    if not ("BUY" in action or "SELL" in action or bias in ("LONG", "SHORT")):
+        return
+
+    def numbers(value):
+        # Handles '158.277–158.462', '$1,234.50', and 'n/a'.
+        matches = re.findall(r"\$?-?\d[\d,]*(?:\.\d+)?", str(value))
+        result = []
+        for match in matches:
+            try:
+                v = float(match.replace("$", "").replace(",", ""))
+                if np.isfinite(v):
+                    result.append(v)
+            except ValueError:
+                pass
+        return result
+
+    entries = numbers(trade.get("Entry Zone", ""))
+    targets = numbers(trade.get("Target 1", ""))
+    stops = numbers(trade.get("Stop / Invalidation", ""))
+    if not entries:
+        return
+
+    entry_low, entry_high = min(entries), max(entries)
+    is_short = bias == "SHORT" or ("SELL" in action and "BUY" not in action)
+
+    # Subtle blue band with visible boundaries for the entry range.
+    ax.axhspan(entry_low, entry_high, color="royalblue", alpha=0.09, zorder=0)
+    for level in sorted(set((entry_low, entry_high))):
+        ax.axhline(level, color="royalblue", linestyle="--",
+                   linewidth=1.5, alpha=0.88, zorder=3)
+
+    # Labels sit just outside the right edge to avoid hiding price/EMA data.
+    label_style = dict(transform=ax.get_yaxis_transform(), ha="left",
+                       va="center", fontsize=8.5, fontweight="bold",
+                       clip_on=False, zorder=10)
+    entry_label = (f"ENTRY {fmt_price(symbol, entry_low)}"
+                   if entry_low == entry_high else
+                   f"ENTRY {fmt_price(symbol, entry_low)}–{fmt_price(symbol, entry_high)}")
+    ax.text(1.008, (entry_low + entry_high) / 2, entry_label,
+            color="royalblue",
+            bbox=dict(fc="white", ec="royalblue", alpha=0.92,
+                      boxstyle="round,pad=0.2"), **label_style)
+
+    if targets:
+        target = targets[0]
+        ax.axhline(target, color="forestgreen", linestyle="-.",
+                   linewidth=1.9, alpha=0.9, zorder=3)
+        ax.text(1.008, target, f"TARGET {fmt_price(symbol, target)}",
+                color="forestgreen",
+                bbox=dict(fc="white", ec="forestgreen", alpha=0.92,
+                          boxstyle="round,pad=0.2"), **label_style)
+
+    if stops:
+        stop = stops[0]
+        ax.axhline(stop, color="firebrick", linestyle=":",
+                   linewidth=1.8, alpha=0.9, zorder=3)
+        ax.text(1.008, stop, f"STOP {fmt_price(symbol, stop)}",
+                color="firebrick",
+                bbox=dict(fc="white", ec="firebrick", alpha=0.92,
+                          boxstyle="round,pad=0.2"), **label_style)
+
+
 def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
     if df.empty:
         st.warning("No chart data available.")
@@ -1276,7 +1348,7 @@ def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
     ax2 = fig.add_subplot(gs[1], sharex=ax)
     # Reserve a right-side margin for the probability/instruction box so it never
     # covers candles, EMA/HMA lines, markers, or support/resistance labels.
-    fig.subplots_adjust(right=0.82)
+    fig.subplots_adjust(right=0.77)
 
     # Price panel
     ax.plot(x, close.to_numpy(), color="tab:blue", label="Price", linewidth=1.4)
@@ -1300,6 +1372,9 @@ def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
 
     draw_hline_label(ax, x[-1], resistance, f"R {fmt_price(symbol, resistance)}", "tab:red")
     draw_hline_label(ax, x[-1], support, f"S {fmt_price(symbol, support)}", "tab:green")
+
+    # Trade-plan overlays (entry band, target and stop) on the price chart.
+    draw_trade_levels(ax, symbol, trade)
 
     # 30 EMA crosses
     cross_up = (close.shift(1) <= df["EMA30"].shift(1)) & (close > df["EMA30"])
