@@ -2784,10 +2784,78 @@ def scan_fresh_color_zone(symbol: str, timeframe: str, settings: dict, recent_ba
         "Last Price": fmt_price(symbol, close.iloc[-1]),
     }
 
-tab_chart, tab_daily, tab_green_zone, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_cross, tab_daily_dips, tab_ntd_cross, tab_hma_cross, tab_rules = st.tabs([
+
+# =========================
+# Fresh upward Smoothed NPX zero-line crossings
+# =========================
+def scan_smoothed_npx_up_cross(symbol: str, timeframe: str, settings: dict, recent_bars: int):
+    """Find an upward NPX zero cross that remains positive on the latest bar.
+
+    The price-trend category is based on the same closing-price linear
+    regression used by the chart, not on the NPX slope.
+    """
+    is_daily = timeframe == "Daily"
+    period = settings.get("daily_period", "1y") if is_daily else "1mo"
+    interval = "1d" if is_daily else "1h"
+    raw = fetch_market_ohlc(symbol, period=period, interval=interval)
+    if raw.empty or len(raw) < max(20, int(settings["ntd_window"]) // 3):
+        return None
+
+    close = coerce_series(raw["Close"])
+    npx = normalized_price(close, int(settings["ntd_window"]), int(settings["npx_smooth"]))
+    if len(npx.dropna()) < 3:
+        return None
+
+    # A cross occurs on the first bar strictly above zero, after a bar at/below it.
+    crossed = (npx.shift(1) <= 0.0) & (npx > 0.0)
+    indices = np.flatnonzero(crossed.fillna(False).to_numpy(dtype=bool))
+    if len(indices) == 0:
+        return None
+
+    cross_pos = int(indices[-1])
+    bars_since = len(npx) - 1 - cross_pos
+    now = safe_float(npx.iloc[-1])
+    prev = safe_float(npx.iloc[-2])
+    if (bars_since > int(recent_bars)
+            or not (np.isfinite(now) and np.isfinite(prev))
+            or now <= 0.0 or now <= prev):
+        return None
+
+    _, slope, r2 = regression_line(close, int(settings["trend_lookback"]))
+    if not np.isfinite(slope):
+        return None
+    if slope > 0:
+        price_trend = "Upward ↑"
+        alignment = "Aligned ✓"
+    elif slope < 0:
+        price_trend = "Downward ↓"
+        alignment = "Opposing ⚠"
+    else:
+        price_trend = "Flat →"
+        alignment = "Neutral"
+
+    unit = "pips/bar" if "=X" in str(symbol).upper() else "points/bar"
+    slope_in_units = slope / pip_size(symbol) if "=X" in str(symbol).upper() else slope
+    return {
+        "Symbol": symbol,
+        "Price Trend": price_trend,
+        "Trend Alignment": alignment,
+        "Bars Since Cross": int(bars_since),
+        "Cross Time (Pacific)": pd.Timestamp(npx.index[cross_pos]).strftime("%Y-%m-%d %H:%M"),
+        "NPX at Cross": round(safe_float(npx.iloc[cross_pos]), 3),
+        "Current Smoothed NPX": round(now, 3),
+        "NPX Change (1 bar)": round(now - prev, 3),
+        f"Price Trend Slope ({unit})": round(slope_in_units, 3),
+        "Price Trend R²": round(r2, 3) if np.isfinite(r2) else np.nan,
+        "Last Price": fmt_price(symbol, close.iloc[-1]),
+    }
+
+
+tab_chart, tab_daily, tab_green_zone, tab_npx_up_cross, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_cross, tab_daily_dips, tab_ntd_cross, tab_hma_cross, tab_rules = st.tabs([
     "Hourly Trading Chart",
     "Daily Trading Chart",
     "🟢 Green Zone",
+    "Smoothed NPX Cross",
     "Scanner",
     "Buy/Sell List",
     "Trade Action",
@@ -2975,6 +3043,94 @@ with tab_green_zone:
         st.info("The scan settings changed. Click Scan Fresh Zones to update the results.")
     else:
         st.info("Select Daily or Hourly and click Scan Fresh Zones.")
+
+
+with tab_npx_up_cross:
+    st.subheader(f"{asset_class} — Smoothed NPX Upward Zero Cross")
+    st.caption(
+        "Find symbols where Smoothed NPX recently crossed upward through 0.0, "
+        "is still above zero, and is rising on the latest bar. "
+        "Results are grouped by the same regression-based price trend displayed "
+        "on the selected timeframe's price chart. Opposing price trends are "
+        "shown separately, not excluded. Watchlist signals only."
+    )
+    npx_left, npx_mid, npx_right = st.columns([1, 1, 3])
+    npx_timeframe = npx_left.radio(
+        "Timeframe", ["Daily", "Hourly"], horizontal=True,
+        key=f"npx_up_timeframe_{asset_class}",
+    )
+    npx_recent = npx_mid.slider(
+        "Cross within (bars)", min_value=0, max_value=15, value=3,
+        key=f"npx_up_recent_{asset_class}",
+    )
+    npx_symbols = npx_right.multiselect(
+        "Symbols to scan", sorted(current_universe),
+        default=sorted(current_universe),
+        key=f"npx_up_symbols_{asset_class}",
+    )
+    npx_signature = (
+        npx_timeframe, npx_recent, tuple(sorted(npx_symbols)),
+        int(cfg["ntd_window"]), int(cfg["npx_smooth"]),
+        int(cfg["trend_lookback"]), str(cfg.get("daily_period", "1y")),
+    )
+    if st.button("Scan NPX Upward Crosses", key=f"npx_up_run_{asset_class}",
+                 use_container_width=True):
+        npx_rows, npx_errors = [], []
+        npx_progress = st.progress(0)
+        for npx_i, npx_symbol in enumerate(npx_symbols):
+            try:
+                candidate = scan_smoothed_npx_up_cross(
+                    npx_symbol, npx_timeframe, cfg, npx_recent,
+                )
+                if candidate is not None:
+                    npx_rows.append(candidate)
+            except Exception as exc:
+                npx_errors.append(f"{npx_symbol}: {exc}")
+            npx_progress.progress((npx_i + 1) / max(1, len(npx_symbols)))
+        npx_progress.empty()
+        st.session_state[f"npx_up_results_{asset_class}"] = {
+            "signature": npx_signature, "rows": npx_rows, "errors": npx_errors,
+        }
+
+    npx_saved = st.session_state.get(f"npx_up_results_{asset_class}")
+    if npx_saved and npx_saved["signature"] == npx_signature:
+        npx_df = pd.DataFrame(npx_saved["rows"])
+        if npx_df.empty:
+            st.info("No recent upward Smoothed NPX zero crosses found for the selected settings.")
+        else:
+            rising = npx_df[npx_df["Price Trend"] == "Upward ↑"].sort_values(
+                ["Bars Since Cross", "Symbol"]
+            )
+            falling = npx_df[npx_df["Price Trend"] == "Downward ↓"].sort_values(
+                ["Bars Since Cross", "Symbol"]
+            )
+            flat = npx_df[npx_df["Price Trend"] == "Flat →"].sort_values(
+                ["Bars Since Cross", "Symbol"]
+            )
+            c1, c2 = st.columns(2)
+            c1.metric("NPX Cross + Upward Price Trend", len(rising))
+            c2.metric("NPX Cross + Downward Price Trend", len(falling))
+            st.markdown("#### 🟢 NPX Crossed Up — Price Trend Upward")
+            if rising.empty:
+                st.info("No matching symbols with upward price trend.")
+            else:
+                st.dataframe(rising, use_container_width=True, hide_index=True)
+            st.markdown("#### 🔴 NPX Crossed Up — Price Trend Downward")
+            if falling.empty:
+                st.info("No matching symbols with downward price trend.")
+            else:
+                st.dataframe(falling, use_container_width=True, hide_index=True)
+            if not flat.empty:
+                st.markdown("#### ⚪ Flat Price Trend")
+                st.dataframe(flat, use_container_width=True, hide_index=True)
+        if npx_saved["errors"]:
+            with st.expander(f"Scan errors ({len(npx_saved['errors'])})"):
+                st.write("\\n".join(npx_saved["errors"]))
+    elif npx_saved:
+        st.info("The scan settings changed. Click Scan NPX Upward Crosses to refresh.")
+    else:
+        st.info("Choose Daily or Hourly, then click Scan NPX Upward Crosses.")
+
 
 with tab_scanner:
     st.subheader(f"{asset_class} Scanner")
