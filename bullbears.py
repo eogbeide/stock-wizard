@@ -2871,10 +2871,10 @@ def scan_smoothed_npx_up_cross(symbol: str, timeframe: str, settings: dict, rece
 
 
 # =========================
-# 3-period EMA upward price-cross scanner
+# 30-period EMA upward price-cross scanner
 # =========================
-def scan_ema3_price_cross_up(symbol: str, timeframe: str, settings: dict, recent_bars: int):
-    """Latest close-price upward crossing of 3 EMA, grouped by chart trend slope."""
+def scan_ema30_price_cross_up(symbol: str, timeframe: str, settings: dict, recent_bars: int):
+    """Latest close-price upward crossing of 30 EMA, grouped by chart trend slope."""
     is_daily = timeframe == "Daily"
     period = settings.get("daily_period", "1y") if is_daily else "1mo"
     raw = fetch_market_ohlc(symbol, period=period, interval="1d" if is_daily else "1h")
@@ -2883,8 +2883,8 @@ def scan_ema3_price_cross_up(symbol: str, timeframe: str, settings: dict, recent
     close = coerce_series(raw["Close"]).dropna()
     if len(close) < max(12, int(settings["trend_lookback"]) // 3):
         return None
-    ema3 = ema(close, 3)
-    events = ((close.shift(1) <= ema3.shift(1)) & (close > ema3)).fillna(False)
+    ema30_cross = ema(close, 30)
+    events = ((close.shift(1) <= ema30_cross.shift(1)) & (close > ema30_cross)).fillna(False)
     positions = np.flatnonzero(events.to_numpy(dtype=bool))
     if len(positions) == 0:
         return None
@@ -2893,9 +2893,9 @@ def scan_ema3_price_cross_up(symbol: str, timeframe: str, settings: dict, recent
     if bars_since > int(recent_bars):
         return None
     # Keep active upward crosses only, rather than showing stale crosses
-    # where the price has subsequently moved back below the 3 EMA.
-    if not (np.isfinite(close.iloc[-1]) and np.isfinite(ema3.iloc[-1])
-            and close.iloc[-1] > ema3.iloc[-1]):
+    # where the price has subsequently moved back below the 30 EMA.
+    if not (np.isfinite(close.iloc[-1]) and np.isfinite(ema30_cross.iloc[-1])
+            and close.iloc[-1] > ema30_cross.iloc[-1]):
         return None
     _, slope, r2 = regression_line(close, int(settings["trend_lookback"]))
     if not np.isfinite(slope):
@@ -2912,20 +2912,20 @@ def scan_ema3_price_cross_up(symbol: str, timeframe: str, settings: dict, recent
         "Cross Time (Pacific)": pd.Timestamp(close.index[pos]).strftime("%Y-%m-%d %H:%M"),
         "Price at Cross": fmt_price(symbol, close.iloc[pos]),
         "Last Price": fmt_price(symbol, close.iloc[-1]),
-        "Current 3 EMA": fmt_price(symbol, ema3.iloc[-1]),
-        f"Price Above EMA ({unit})": round((close.iloc[-1] - ema3.iloc[-1]) / unit_size, 2),
+        "Current 30 EMA": fmt_price(symbol, ema30_cross.iloc[-1]),
+        f"Price Above EMA ({unit})": round((close.iloc[-1] - ema30_cross.iloc[-1]) / unit_size, 2),
         f"Move Since Cross ({unit})": round((close.iloc[-1] - close.iloc[pos]) / unit_size, 2),
         f"Price Trend Slope ({unit}/bar)": round(slope / unit_size, 3),
         "Price Trend R²": round(r2, 3) if np.isfinite(r2) else np.nan,
     }
 
 
-tab_chart, tab_daily, tab_green_zone, tab_npx_up_cross, tab_ema3_cross, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_cross, tab_daily_dips, tab_ntd_cross, tab_hma_cross, tab_rules = st.tabs([
+tab_chart, tab_daily, tab_green_zone, tab_npx_up_cross, tab_ema30_cross, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_cross, tab_daily_dips, tab_ntd_cross, tab_hma_cross, tab_rules = st.tabs([
     "Hourly Chart",
     "Daily Chart",
     "Green Zone",
     "NPX Cross",
-    "3EMA Cross",
+    "30EMA Cross",
     "Scanner",
     "Buy/Sell",
     "Trade Action",
@@ -3203,88 +3203,88 @@ with tab_npx_up_cross:
 
 
 
-with tab_ema3_cross:
-    st.subheader(f"{asset_class} — 3EMA Upward Price Cross")
+with tab_ema30_cross:
+    st.subheader(f"{asset_class} — 30EMA Upward Price Cross")
     st.caption(
         "Find symbols whose close price recently crossed upward through the "
-        "3-period EMA and remains above it. Results are separated by the "
+        "30-period EMA and remains above it. Results are separated by the "
         "same price regression trend shown on your price chart. "
         "Crosses are potential watchlist signals, not confirmed trades."
     )
-    ema3_left, ema3_mid, ema3_right = st.columns([1, 1, 3])
-    ema3_timeframe = ema3_left.radio(
+    ema30_cross_left, ema30_cross_mid, ema30_cross_right = st.columns([1, 1, 3])
+    ema30_cross_timeframe = ema30_cross_left.radio(
         "Timeframe", ["Daily", "Hourly"], horizontal=True,
-        key=f"ema3_timeframe_{asset_class}",
+        key=f"ema30_cross_timeframe_{asset_class}",
     )
-    ema3_recent = ema3_mid.slider(
+    ema30_cross_recent = ema30_cross_mid.slider(
         "Cross within (bars)", min_value=0, max_value=15, value=3,
-        key=f"ema3_recent_{asset_class}",
+        key=f"ema30_cross_recent_{asset_class}",
     )
-    ema3_symbols = ema3_right.multiselect(
+    ema30_cross_symbols = ema30_cross_right.multiselect(
         "Symbols to scan", sorted(current_universe),
         default=sorted(current_universe),
-        key=f"ema3_symbols_{asset_class}",
+        key=f"ema30_cross_symbols_{asset_class}",
     )
-    ema3_signature = (
-        ema3_timeframe, int(ema3_recent), tuple(sorted(ema3_symbols)),
+    ema30_cross_signature = (
+        ema30_cross_timeframe, int(ema30_cross_recent), tuple(sorted(ema30_cross_symbols)),
         int(cfg["trend_lookback"]), str(cfg.get("daily_period", "1y")),
     )
-    if st.button("Scan Recent 3EMA Crosses", key=f"ema3_run_{asset_class}",
+    if st.button("Scan Recent 30EMA Crosses", key=f"ema30_cross_run_{asset_class}",
                  use_container_width=True):
-        ema3_rows, ema3_errors = [], []
-        ema3_progress = st.progress(0)
-        for ema3_i, ema3_symbol in enumerate(ema3_symbols):
+        ema30_cross_rows, ema30_cross_errors = [], []
+        ema30_cross_progress = st.progress(0)
+        for ema30_cross_i, ema30_cross_symbol in enumerate(ema30_cross_symbols):
             try:
-                match = scan_ema3_price_cross_up(
-                    ema3_symbol, ema3_timeframe, cfg, ema3_recent,
+                match = scan_ema30_price_cross_up(
+                    ema30_cross_symbol, ema30_cross_timeframe, cfg, ema30_cross_recent,
                 )
                 if match is not None:
-                    ema3_rows.append(match)
+                    ema30_cross_rows.append(match)
             except Exception as exc:
-                ema3_errors.append(f"{ema3_symbol}: {exc}")
-            ema3_progress.progress((ema3_i + 1) / max(1, len(ema3_symbols)))
-        ema3_progress.empty()
-        st.session_state[f"ema3_results_{asset_class}"] = {
-            "signature": ema3_signature, "rows": ema3_rows, "errors": ema3_errors,
+                ema30_cross_errors.append(f"{ema30_cross_symbol}: {exc}")
+            ema30_cross_progress.progress((ema30_cross_i + 1) / max(1, len(ema30_cross_symbols)))
+        ema30_cross_progress.empty()
+        st.session_state[f"ema30_cross_results_{asset_class}"] = {
+            "signature": ema30_cross_signature, "rows": ema30_cross_rows, "errors": ema30_cross_errors,
         }
-    ema3_saved = st.session_state.get(f"ema3_results_{asset_class}")
-    if ema3_saved and ema3_saved["signature"] == ema3_signature:
-        ema3_df = pd.DataFrame(ema3_saved["rows"])
-        if ema3_df.empty:
-            st.info("No active recent upward 3EMA price crosses found for these settings.")
+    ema30_cross_saved = st.session_state.get(f"ema30_cross_results_{asset_class}")
+    if ema30_cross_saved and ema30_cross_saved["signature"] == ema30_cross_signature:
+        ema30_cross_df = pd.DataFrame(ema30_cross_saved["rows"])
+        if ema30_cross_df.empty:
+            st.info("No active recent upward 30EMA price crosses found for these settings.")
         else:
-            ema3_up = ema3_df[ema3_df["Price Trend"] == "Upward ↑"].sort_values(
+            ema30_cross_up = ema30_cross_df[ema30_cross_df["Price Trend"] == "Upward ↑"].sort_values(
                 ["Bars Since Cross", "Symbol"]
             )
-            ema3_down = ema3_df[ema3_df["Price Trend"] == "Downward ↓"].sort_values(
+            ema30_cross_down = ema30_cross_df[ema30_cross_df["Price Trend"] == "Downward ↓"].sort_values(
                 ["Bars Since Cross", "Symbol"]
             )
-            ema3_flat = ema3_df[ema3_df["Price Trend"] == "Flat →"].sort_values(
+            ema30_cross_flat = ema30_cross_df[ema30_cross_df["Price Trend"] == "Flat →"].sort_values(
                 ["Bars Since Cross", "Symbol"]
             )
             k1, k2 = st.columns(2)
-            k1.metric("Cross Up + Upward Price Trend", len(ema3_up))
-            k2.metric("Cross Up + Downward Price Trend", len(ema3_down))
-            st.markdown("#### 🟢 3EMA Cross Up — Price Trend Upward")
-            if ema3_up.empty:
+            k1.metric("Cross Up + Upward Price Trend", len(ema30_cross_up))
+            k2.metric("Cross Up + Downward Price Trend", len(ema30_cross_down))
+            st.markdown("#### 🟢 30EMA Cross Up — Price Trend Upward")
+            if ema30_cross_up.empty:
                 st.info("No matching symbols with upward price trend.")
             else:
-                st.dataframe(ema3_up, use_container_width=True, hide_index=True)
-            st.markdown("#### 🔴 3EMA Cross Up — Price Trend Downward")
-            if ema3_down.empty:
+                st.dataframe(ema30_cross_up, use_container_width=True, hide_index=True)
+            st.markdown("#### 🔴 30EMA Cross Up — Price Trend Downward")
+            if ema30_cross_down.empty:
                 st.info("No matching symbols with downward price trend.")
             else:
-                st.dataframe(ema3_down, use_container_width=True, hide_index=True)
-            if not ema3_flat.empty:
+                st.dataframe(ema30_cross_down, use_container_width=True, hide_index=True)
+            if not ema30_cross_flat.empty:
                 st.markdown("#### ⚪ Flat Price Trend")
-                st.dataframe(ema3_flat, use_container_width=True, hide_index=True)
-        if ema3_saved["errors"]:
-            with st.expander(f"Scan errors ({len(ema3_saved['errors'])})"):
-                st.write("\\n".join(ema3_saved["errors"]))
-    elif ema3_saved:
-        st.info("The scan settings changed. Click Scan Recent 3EMA Crosses to update.")
+                st.dataframe(ema30_cross_flat, use_container_width=True, hide_index=True)
+        if ema30_cross_saved["errors"]:
+            with st.expander(f"Scan errors ({len(ema30_cross_saved['errors'])})"):
+                st.write("\\n".join(ema30_cross_saved["errors"]))
+    elif ema30_cross_saved:
+        st.info("The scan settings changed. Click Scan Recent 30EMA Crosses to update.")
     else:
-        st.info("Select Daily or Hourly, then click Scan Recent 3EMA Crosses.")
+        st.info("Select Daily or Hourly, then click Scan Recent 30EMA Crosses.")
 
 
 with tab_scanner:
