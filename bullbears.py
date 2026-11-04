@@ -2956,7 +2956,7 @@ def _supertrend_10_3(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
 
 
 def render_tradingview_style_chart(symbol: str, df: pd.DataFrame, timeframe: str) -> None:
-    """Candlesticks, trend overlays and an independent MACD panel; clean price area."""
+    """Candlesticks, RSI plus RSI signal, and a separately scaled MACD panel."""
     from matplotlib.patches import Rectangle
     if df.empty or len(df) < 35:
         st.info("At least 35 price bars are needed to display this chart.")
@@ -2979,12 +2979,28 @@ def render_tradingview_style_chart(symbol: str, df: pd.DataFrame, timeframe: str
     signal = full_signal.loc[display_df.index]
     histogram = macd - signal
 
-    fig = plt.figure(figsize=(15.2, 8.0), facecolor="white")
-    gs = fig.add_gridspec(2, 1, height_ratios=[3.1, 1.1], hspace=0.09)
+    # RSI uses a 0-100 scale. Its smoothed signal shares that same scale,
+    # unlike MACD, which must remain in an independent zero-centered pane.
+    change = full_close.diff()
+    up_moves = change.clip(lower=0)
+    down_moves = -change.clip(upper=0)
+    avg_up = up_moves.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+    avg_down = down_moves.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
+    rs = avg_up / avg_down.replace(0, np.nan)
+    full_rsi = 100 - 100 / (1 + rs)
+    full_rsi = full_rsi.mask((avg_down == 0) & (avg_up > 0), 100.0)
+    full_rsi = full_rsi.mask((avg_up == 0) & (avg_down > 0), 0.0)
+    full_rsi = full_rsi.mask((avg_up == 0) & (avg_down == 0), 50.0)
+    rsi = full_rsi.loc[display_df.index]
+    rsi_signal = full_rsi.ewm(span=9, adjust=False, min_periods=1).mean().loc[display_df.index]
+
+    fig = plt.figure(figsize=(15.2, 10.0), facecolor="white")
+    gs = fig.add_gridspec(3, 1, height_ratios=[3.3, 1.15, 1.0], hspace=0.13)
     ax = fig.add_subplot(gs[0])
-    oscillator = fig.add_subplot(gs[1], sharex=ax)
+    rsi_ax = fig.add_subplot(gs[1], sharex=ax)
+    oscillator = fig.add_subplot(gs[2], sharex=ax)
     # Right margin is reserved for labels; no labels overlay the candle data.
-    fig.subplots_adjust(left=0.065, right=0.865, top=0.92, bottom=0.10)
+    fig.subplots_adjust(left=0.065, right=0.865, top=0.935, bottom=0.09)
     fig.suptitle(f"{symbol.replace('=X', '').replace('USD', '/USD') if symbol == 'GBPUSD=X' else symbol} · {('1h' if timeframe == 'Hourly' else '1D')}  |  Candlesticks & Trend Indicators",
                  fontsize=14, fontweight="bold", y=0.975)
 
@@ -3021,6 +3037,25 @@ def render_tradingview_style_chart(symbol: str, df: pd.DataFrame, timeframe: str
     ax.grid(True, alpha=.13)
     ax.legend(loc="upper left", fontsize=8, ncol=3, framealpha=.85)
     ax.tick_params(axis="x", labelbottom=False)
+
+    # Screenshot-inspired RSI + smoothed RSI signal panel.
+    # Reference levels sit behind the curves, with no overlaid text boxes.
+    rsi_ax.axhspan(30, 70, color="#8e72bc", alpha=0.10, zorder=0)
+    rsi_ax.axhline(70, color="#404040", linewidth=1.8, linestyle=(0, (7, 7)), zorder=1)
+    rsi_ax.axhline(50, color="#5178ef", linewidth=1.2, linestyle="--", zorder=1)
+    rsi_ax.axhline(30, color="#777777", linewidth=1.5, zorder=1)
+    rsi_ax.plot(x, rsi.to_numpy(dtype=float), color="#248ceb", linewidth=2.6,
+                label="RSI 14", zorder=3)
+    rsi_ax.plot(x, rsi_signal.to_numpy(dtype=float), color="#ee7c29",
+                linewidth=2.6, label="RSI signal EMA 9", zorder=3)
+    rsi_ax.set_ylim(15, 85)
+    rsi_ax.set_yticks([30, 40, 50, 60, 70])
+    rsi_ax.yaxis.tick_right()
+    rsi_ax.yaxis.set_label_position("right")
+    rsi_ax.grid(True, alpha=.12)
+    rsi_ax.legend(loc="upper left", fontsize=8, ncol=2, framealpha=.83)
+    rsi_ax.set_title("RSI (14) + Smoothed RSI Signal (9)", loc="left", fontsize=10)
+    rsi_ax.tick_params(axis="x", labelbottom=False)
 
     oscillator.bar(x, histogram.to_numpy(dtype=float), width=.62,
                    color=np.where(histogram.to_numpy(dtype=float) >= 0, up_color, down_color),
@@ -3134,9 +3169,10 @@ with tab_tv_chart:
         render_tradingview_style_chart(symbol, tv_data, tv_tf)
         st.caption(
             "TradingView-inspired chart (not a TradingView embed): SuperTrend (10, 3), "
-            "EMA (9), SMA (35), Bollinger Bands (20, 2) and MACD (12, 26, 9). "
-            "Indicators use local calculations on yfinance OHLC bars; they may differ "
-            "slightly from your TradingView feed. The lower pane is MACD."
+            "EMA (9), SMA (35), Bollinger Bands (20, 2), RSI (14) with an EMA (9) "
+            "signal overlay, and independent MACD (12, 26, 9). "
+            "The RSI signal is a clearly labeled approximation of the reference screenshot, "
+            "not a verified SMIIO (5, 20) implementation. Values may differ from TradingView."
         )
 
 
