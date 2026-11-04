@@ -2920,9 +2920,135 @@ def scan_ema30_price_cross_up(symbol: str, timeframe: str, settings: dict, recen
     }
 
 
-tab_chart, tab_daily, tab_green_zone, tab_npx_up_cross, tab_ema30_cross, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_cross, tab_daily_dips, tab_ntd_cross, tab_hma_cross, tab_rules = st.tabs([
-    "Hourly Chart",
-    "Daily Chart",
+# =========================
+# TradingView-inspired chart (independent of trade-plan chart)
+# =========================
+def _supertrend_10_3(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """Standard SuperTrend: Wilder ATR(10), multiplier 3, trailing final bands."""
+    high = coerce_series(df["High"])
+    low = coerce_series(df["Low"])
+    close = coerce_series(df["Close"])
+    mid = (high + low) / 2.0
+    vol = atr(df, 10)
+    upper = (mid + 3.0 * vol).to_numpy(dtype=float)
+    lower = (mid - 3.0 * vol).to_numpy(dtype=float)
+    prices = close.to_numpy(dtype=float)
+    n = len(df)
+    final_up, final_low = upper.copy(), lower.copy()
+    bullish = np.ones(n, dtype=bool)
+    for i in range(1, n):
+        if upper[i] < final_up[i-1] or prices[i-1] > final_up[i-1]:
+            final_up[i] = upper[i]
+        else:
+            final_up[i] = final_up[i-1]
+        if lower[i] > final_low[i-1] or prices[i-1] < final_low[i-1]:
+            final_low[i] = lower[i]
+        else:
+            final_low[i] = final_low[i-1]
+        if prices[i] > final_up[i-1]:
+            bullish[i] = True
+        elif prices[i] < final_low[i-1]:
+            bullish[i] = False
+        else:
+            bullish[i] = bullish[i-1]
+    line = np.where(bullish, final_low, final_up)
+    return pd.Series(line, index=df.index), pd.Series(bullish, index=df.index)
+
+
+def render_tradingview_style_chart(symbol: str, df: pd.DataFrame, timeframe: str) -> None:
+    """Candlesticks, trend overlays and an independent MACD panel; clean price area."""
+    from matplotlib.patches import Rectangle
+    if df.empty or len(df) < 35:
+        st.info("At least 35 price bars are needed to display this chart.")
+        return
+
+    display_df = df.tail(180 if timeframe == "Hourly" else 160).copy()
+    x = np.arange(len(display_df), dtype=float)
+    full_close = coerce_series(df["Close"])
+    fast = ema(full_close, 9).loc[display_df.index]
+    slow = full_close.rolling(35, min_periods=35).mean().loc[display_df.index]
+    _, full_bb_up, full_bb_low = bollinger(full_close, 20, 2)
+    bb_up = full_bb_up.loc[display_df.index]
+    bb_low = full_bb_low.loc[display_df.index]
+    superline, superup = _supertrend_10_3(df)
+    superline = superline.loc[display_df.index]
+    superup = superup.loc[display_df.index]
+    full_macd = ema(full_close, 12) - ema(full_close, 26)
+    full_signal = ema(full_macd, 9)
+    macd = full_macd.loc[display_df.index]
+    signal = full_signal.loc[display_df.index]
+    histogram = macd - signal
+
+    fig = plt.figure(figsize=(15.2, 8.0), facecolor="white")
+    gs = fig.add_gridspec(2, 1, height_ratios=[3.1, 1.1], hspace=0.09)
+    ax = fig.add_subplot(gs[0])
+    oscillator = fig.add_subplot(gs[1], sharex=ax)
+    # Right margin is reserved for labels; no labels overlay the candle data.
+    fig.subplots_adjust(left=0.065, right=0.865, top=0.92, bottom=0.10)
+    fig.suptitle(f"{symbol.replace('=X', '').replace('USD', '/USD') if symbol == 'GBPUSD=X' else symbol} · {('1h' if timeframe == 'Hourly' else '1D')}  |  Candlesticks & Trend Indicators",
+                 fontsize=14, fontweight="bold", y=0.975)
+
+    up_color, down_color = "#0f9d82", "#e04451"
+    candle_width = 0.65
+    o = display_df["Open"].to_numpy(dtype=float)
+    h = display_df["High"].to_numpy(dtype=float)
+    l = display_df["Low"].to_numpy(dtype=float)
+    c = display_df["Close"].to_numpy(dtype=float)
+    for i in range(len(display_df)):
+        rising = c[i] >= o[i]
+        color = up_color if rising else down_color
+        ax.vlines(x[i], l[i], h[i], color=color, linewidth=0.85, zorder=4)
+        body_bottom = min(o[i], c[i])
+        body_height = max(abs(c[i]-o[i]), 1e-8)
+        ax.add_patch(Rectangle((x[i]-candle_width/2, body_bottom),
+                               candle_width, body_height, facecolor=color,
+                               edgecolor=color, lw=0.5, zorder=5))
+    ax.fill_between(x, bb_low.to_numpy(dtype=float), bb_up.to_numpy(dtype=float),
+                    color="#84bdea", alpha=0.12, label="BB (20, 2)", zorder=0)
+    ax.plot(x, bb_up.to_numpy(dtype=float), color="#acc6dc", alpha=.55, linewidth=.75)
+    ax.plot(x, bb_low.to_numpy(dtype=float), color="#acc6dc", alpha=.55, linewidth=.75)
+    ax.plot(x, fast.to_numpy(dtype=float), color="#6034ae", linewidth=2.0, label="EMA 9", zorder=7)
+    ax.plot(x, slow.to_numpy(dtype=float), color="#1686c4", linewidth=2.2, label="SMA 35", zorder=6)
+    su = superup.to_numpy(dtype=bool)
+    stline = superline.to_numpy(dtype=float)
+    # Use separate series to avoid drawing vertical connections across trend flips.
+    ax.plot(x, np.where(su, stline, np.nan), color="#237e52", linewidth=2.4,
+            label="SuperTrend Bull", drawstyle="steps-post", zorder=6)
+    ax.plot(x, np.where(~su, stline, np.nan), color="#f5a53b", linewidth=2.4,
+            label="SuperTrend Bear", drawstyle="steps-post", zorder=6)
+    ax.yaxis.tick_right()
+    ax.yaxis.set_label_position("right")
+    ax.grid(True, alpha=.13)
+    ax.legend(loc="upper left", fontsize=8, ncol=3, framealpha=.85)
+    ax.tick_params(axis="x", labelbottom=False)
+
+    oscillator.bar(x, histogram.to_numpy(dtype=float), width=.62,
+                   color=np.where(histogram.to_numpy(dtype=float) >= 0, up_color, down_color),
+                   alpha=.28, label="MACD histogram")
+    oscillator.plot(x, macd.to_numpy(dtype=float), color="#248ceb", linewidth=2,
+                    label="MACD 12,26")
+    oscillator.plot(x, signal.to_numpy(dtype=float), color="#ee7c29", linewidth=2,
+                    label="Signal 9")
+    oscillator.axhline(0, color="0.35", linewidth=1, linestyle="--")
+    oscillator.yaxis.tick_right()
+    oscillator.yaxis.set_label_position("right")
+    oscillator.grid(True, alpha=.13)
+    oscillator.legend(loc="upper left", fontsize=8, ncol=3, framealpha=.8)
+    oscillator.set_title("MACD (12, 26, 9)", loc="left", fontsize=10)
+
+    tick_count = min(8, len(display_df))
+    indices = np.linspace(0, len(display_df)-1, tick_count, dtype=int)
+    oscillator.set_xticks(indices)
+    oscillator.set_xticklabels([display_df.index[i].strftime("%m-%d %H:%M" if timeframe == "Hourly" else "%Y-%m-%d")
+                                for i in indices], fontsize=8)
+    oscillator.set_xlim(-1, len(display_df) + 3)
+    st.pyplot(fig, use_container_width=True)
+    plt.close(fig)
+
+
+tab_chart, tab_tv_chart, tab_green_zone, tab_npx_up_cross, tab_ema30_cross, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_cross, tab_daily_dips, tab_ntd_cross, tab_hma_cross, tab_rules = st.tabs([
+    "Trading Chart",
+    "TradingView Chart",
     "Green Zone",
     "NPX Cross",
     "30EMA Cross",
@@ -2936,93 +3062,82 @@ tab_chart, tab_daily, tab_green_zone, tab_npx_up_cross, tab_ema30_cross, tab_sca
     "Rules",
 ])
 
+
+def _chart_timeframe_config(base_cfg: dict, timeframe: str) -> dict:
+    """Use current dashboard settings for hourly; full daily bars for Daily."""
+    selected = base_cfg.copy()
+    if timeframe == "Daily":
+        selected["period"] = base_cfg.get("daily_period", "1y")
+        selected["interval"] = "1d"
+    selected["right_padding"] = max(4, int(base_cfg.get("right_padding", 12)))
+    return selected
+
+
 with tab_chart:
-    data = fetch_market_ohlc(symbol, period, interval)
-    if data.empty:
-        st.error("No data returned by yfinance for this symbol/period/interval.")
+    st.subheader("Trading Chart")
+    selected_chart_tf = st.radio(
+        "Chart timeframe", ["Hourly", "Daily"], horizontal=True,
+        key="merged_trading_chart_timeframe",
+    )
+    chart_cfg = _chart_timeframe_config(cfg, selected_chart_tf)
+    chart_data = fetch_market_ohlc(symbol, chart_cfg["period"], chart_cfg["interval"])
+    if chart_data.empty:
+        st.warning(f"No {selected_chart_tf.lower()} price data is available for {symbol}.")
     else:
-        data = prepare_indicators(data, cfg, symbol)
-        trend_line, trend_slope, trend_r2 = regression_line(data["Close"], trend_lookback)
-        trade = classify_trade(symbol, data, trend_slope, cfg)
-
-        state = trade.get("State", "WAIT")
-        css = "signal-buy" if "BUY" in state else ("signal-sell" if "SELL" in state else "signal-wait")
+        chart_data = prepare_indicators(chart_data, chart_cfg, symbol)
+        _, chart_slope, _ = regression_line(chart_data["Close"], chart_cfg["trend_lookback"])
+        chart_trade = classify_trade(symbol, chart_data, chart_slope, chart_cfg)
+        chart_state = chart_trade.get("State", "WAIT")
+        chart_css = "signal-buy" if "BUY" in chart_state else ("signal-sell" if "SELL" in chart_state else "signal-wait")
         st.markdown(
-            f"""
-<div class="{css}">
-{state} / {trade.get('Trade Action', 'WAIT')} — {trade.get('Reason', '')}<br>
-Long Probability: {safe_float(trade.get('Long Probability')):.0f}% &nbsp; | &nbsp;
-Short Probability: {safe_float(trade.get('Short Probability')):.0f}% &nbsp; | &nbsp;
-Edge: {safe_float(trade.get('Probability Edge')):.0f}%<br>
-{trade.get('Trade Instruction', '')}
-</div>
-""",
+            f"""<div class="{chart_css}">
+            {chart_state} / {chart_trade.get('Trade Action', 'WAIT')} —
+            {chart_trade.get('Reason', '')}<br>
+            Long: {safe_float(chart_trade.get('Long Probability')):.0f}% |
+            Short: {safe_float(chart_trade.get('Short Probability')):.0f}% |
+            Edge: {safe_float(chart_trade.get('Probability Edge')):.0f}%<br>
+            {chart_trade.get('Trade Instruction', '')}
+            </div>""",
             unsafe_allow_html=True,
         )
-
-        metric_cols = st.columns(7)
-        metric_cols[0].metric("Last Close", fmt_price(symbol, trade.get("Last Close")))
-        metric_cols[1].metric("Trade Action", trade.get("Trade Action", "WAIT"))
-        metric_cols[2].metric("Long Prob.", f"{safe_float(trade.get('Long Probability')):.0f}%")
-        metric_cols[3].metric("Short Prob.", f"{safe_float(trade.get('Short Probability')):.0f}%")
-        metric_cols[4].metric("Structure", trade.get("Current Structure", trade.get("Trend Direction")))
-        render_structure_trend_badge(metric_cols[4], trade)
-        metric_cols[5].metric("S/R Reversal", f"{safe_float(trade.get('S/R Reversal')):+.2f}")
-        metric_cols[6].metric("ADX", f"{safe_float(trade.get('ADX')):.1f}")
-
-        render_probability_action_panel(trade, view_label="Hourly")
-        plot_forex_chart(symbol, data, cfg, trade)
-
+        metrics = st.columns(7)
+        metrics[0].metric("Last Close", fmt_price(symbol, chart_trade.get("Last Close")))
+        metrics[1].metric("Trade Action", chart_trade.get("Trade Action", "WAIT"))
+        metrics[2].metric("Long Prob.", f"{safe_float(chart_trade.get('Long Probability')):.0f}%")
+        metrics[3].metric("Short Prob.", f"{safe_float(chart_trade.get('Short Probability')):.0f}%")
+        metrics[4].metric("Structure", chart_trade.get("Current Structure", "Mixed"))
+        render_structure_trend_badge(metrics[4], chart_trade)
+        metrics[5].metric("S/R Reversal", f"{safe_float(chart_trade.get('S/R Reversal')):+.2f}")
+        metrics[6].metric("ADX", f"{safe_float(chart_trade.get('ADX')):.1f}")
+        render_probability_action_panel(chart_trade, view_label=selected_chart_tf)
+        plot_forex_chart(symbol, chart_data, chart_cfg, chart_trade)
         with st.expander("Current setup details", expanded=False):
-            st.dataframe(pd.DataFrame([format_trade_row(symbol, trade)]), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame([format_trade_row(symbol, chart_trade)]),
+                         use_container_width=True, hide_index=True)
 
 
-with tab_daily:
-    daily_cfg = cfg.copy()
-    daily_cfg["period"] = cfg.get("daily_period", "1y")
-    daily_cfg["interval"] = "1d"
-    daily_cfg["right_padding"] = max(4, int(cfg.get("right_padding", 12)))
-
-    daily_data = fetch_market_ohlc(symbol, daily_cfg["period"], "1d")
-    if daily_data.empty:
-        st.error("No daily data returned by yfinance for this symbol/period.")
+with tab_tv_chart:
+    st.subheader("TradingView-style Candlestick Chart")
+    tv_tf = st.radio(
+        "Chart timeframe", ["Hourly", "Daily"], horizontal=True,
+        key="tradingview_chart_timeframe",
+    )
+    tv_cfg = _chart_timeframe_config(cfg, tv_tf)
+    # This chart explicitly uses 1-hour candles, not the existing chart's possibly 15m interval.
+    if tv_tf == "Hourly":
+        tv_cfg["interval"] = "1h"
+        tv_cfg["period"] = "1mo"
+    tv_data = fetch_market_ohlc(symbol, tv_cfg["period"], tv_cfg["interval"])
+    if tv_data.empty:
+        st.warning(f"No {tv_tf.lower()} candlestick data is available for {symbol}.")
     else:
-        daily_data = prepare_indicators(daily_data, daily_cfg, symbol)
-        daily_trend_line, daily_trend_slope, daily_trend_r2 = regression_line(daily_data["Close"], daily_cfg["trend_lookback"])
-        daily_trade = classify_trade(symbol, daily_data, daily_trend_slope, daily_cfg)
-
-        daily_state = daily_trade.get("State", "WAIT")
-        daily_css = "signal-buy" if "BUY" in daily_state else ("signal-sell" if "SELL" in daily_state else "signal-wait")
-        st.markdown(
-            f"""
-<div class="{daily_css}">
-{daily_state} / {daily_trade.get('Trade Action', 'WAIT')} — {daily_trade.get('Reason', '')}<br>
-Long Probability: {safe_float(daily_trade.get('Long Probability')):.0f}% &nbsp; | &nbsp;
-Short Probability: {safe_float(daily_trade.get('Short Probability')):.0f}% &nbsp; | &nbsp;
-Edge: {safe_float(daily_trade.get('Probability Edge')):.0f}%<br>
-{daily_trade.get('Trade Instruction', '')}
-</div>
-""",
-            unsafe_allow_html=True,
+        render_tradingview_style_chart(symbol, tv_data, tv_tf)
+        st.caption(
+            "TradingView-inspired chart (not a TradingView embed): SuperTrend (10, 3), "
+            "EMA (9), SMA (35), Bollinger Bands (20, 2) and MACD (12, 26, 9). "
+            "Indicators use local calculations on yfinance OHLC bars; they may differ "
+            "slightly from your TradingView feed. The lower pane is MACD."
         )
-
-        dcols = st.columns(7)
-        dcols[0].metric("Last Close", fmt_price(symbol, daily_trade.get("Last Close")))
-        dcols[1].metric("Trade Action", daily_trade.get("Trade Action", "WAIT"))
-        dcols[2].metric("Long Prob.", f"{safe_float(daily_trade.get('Long Probability')):.0f}%")
-        dcols[3].metric("Short Prob.", f"{safe_float(daily_trade.get('Short Probability')):.0f}%")
-        dcols[4].metric("Structure", daily_trade.get("Current Structure", daily_trade.get("Trend Direction")))
-        render_structure_trend_badge(dcols[4], daily_trade)
-        dcols[5].metric("S/R Reversal", f"{safe_float(daily_trade.get('S/R Reversal')):+.2f}")
-        dcols[6].metric("ADX", f"{safe_float(daily_trade.get('ADX')):.1f}")
-
-        render_probability_action_panel(daily_trade, view_label="Daily")
-        plot_forex_chart(symbol, daily_data, daily_cfg, daily_trade)
-
-        with st.expander("Daily setup details", expanded=False):
-            st.dataframe(pd.DataFrame([format_trade_row(symbol, daily_trade)]), use_container_width=True, hide_index=True)
-
-
 
 
 with tab_green_zone:
