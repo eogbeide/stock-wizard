@@ -2920,6 +2920,54 @@ def scan_ema30_price_cross_up(symbol: str, timeframe: str, settings: dict, recen
     }
 
 
+def calculate_chart_rsi(close: pd.Series, period: int = 14) -> pd.Series:
+    """Wilder-smoothed RSI shared by the TradingView chart and RSI scanner."""
+    close = coerce_series(close)
+    delta = close.diff()
+    gains = delta.clip(lower=0)
+    losses = -delta.clip(upper=0)
+    avg_gain = gains.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    avg_loss = losses.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+    ratio = avg_gain / avg_loss.replace(0, np.nan)
+    result = 100.0 - 100.0 / (1.0 + ratio)
+    result = result.mask((avg_loss == 0) & (avg_gain > 0), 100.0)
+    result = result.mask((avg_gain == 0) & (avg_loss > 0), 0.0)
+    return result.mask((avg_gain == 0) & (avg_loss == 0), 50.0)
+
+
+def scan_rsi_oversold(symbol: str, timeframe: str, settings: dict) -> dict | None:
+    """Return current RSI <= 30 symbols with closing-price regression trend."""
+    daily = timeframe == "Daily"
+    period = settings.get("daily_period", "1y") if daily else "1mo"
+    interval = "1d" if daily else "1h"
+    raw = fetch_market_ohlc(symbol, period=period, interval=interval)
+    if raw.empty or len(raw) < max(35, int(settings["trend_lookback"]) // 2):
+        return None
+    close = coerce_series(raw["Close"]).dropna()
+    rsi = calculate_chart_rsi(close, 14)
+    current_rsi = safe_float(rsi.iloc[-1])
+    if not np.isfinite(current_rsi) or current_rsi > 30.0:
+        return None
+
+    _, slope, r2 = regression_line(close, int(settings["trend_lookback"]))
+    if not np.isfinite(slope):
+        return None
+    direction = "Upward ↑" if slope > 0 else ("Downward ↓" if slope < 0 else "Flat →")
+    size = pip_size(symbol) if "=X" in symbol.upper() else 1.0
+    unit = "pips/bar" if "=X" in symbol.upper() else "points/bar"
+    return {
+        "Symbol": symbol,
+        "RSI (14)": round(current_rsi, 2),
+        "Price Trend": direction,
+        "Last Price": fmt_price(symbol, close.iloc[-1]),
+        "Trend Slope": round(slope / size, 3),
+        "Slope Unit": unit,
+        "Trend R²": round(r2, 3) if np.isfinite(r2) else np.nan,
+        "RSI Change (1 bar)": round(current_rsi - safe_float(rsi.iloc[-2]), 2),
+        "Last Bar (Pacific)": close.index[-1].strftime("%Y-%m-%d %H:%M"),
+    }
+
+
 # =========================
 # TradingView-inspired chart (independent of trade-plan chart)
 # =========================
@@ -2979,18 +3027,8 @@ def render_tradingview_style_chart(symbol: str, df: pd.DataFrame, timeframe: str
     signal = full_signal.loc[display_df.index]
     histogram = macd - signal
 
-    # RSI uses a 0-100 scale. Its smoothed signal shares that same scale,
-    # unlike MACD, which must remain in an independent zero-centered pane.
-    change = full_close.diff()
-    up_moves = change.clip(lower=0)
-    down_moves = -change.clip(upper=0)
-    avg_up = up_moves.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
-    avg_down = down_moves.ewm(alpha=1 / 14, adjust=False, min_periods=14).mean()
-    rs = avg_up / avg_down.replace(0, np.nan)
-    full_rsi = 100 - 100 / (1 + rs)
-    full_rsi = full_rsi.mask((avg_down == 0) & (avg_up > 0), 100.0)
-    full_rsi = full_rsi.mask((avg_up == 0) & (avg_down > 0), 0.0)
-    full_rsi = full_rsi.mask((avg_up == 0) & (avg_down == 0), 50.0)
+    # Share RSI computation with the RSI <= 30 scanner to prevent divergences.
+    full_rsi = calculate_chart_rsi(full_close, 14)
     rsi = full_rsi.loc[display_df.index]
     rsi_signal = full_rsi.ewm(span=9, adjust=False, min_periods=1).mean().loc[display_df.index]
 
@@ -3104,9 +3142,10 @@ def render_tradingview_style_chart(symbol: str, df: pd.DataFrame, timeframe: str
     plt.close(fig)
 
 
-tab_chart, tab_tv_chart, tab_green_zone, tab_npx_up_cross, tab_ema30_cross, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_cross, tab_daily_dips, tab_ntd_cross, tab_hma_cross, tab_rules = st.tabs([
+tab_chart, tab_tv_chart, tab_rsi_oversold, tab_green_zone, tab_npx_up_cross, tab_ema30_cross, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_cross, tab_daily_dips, tab_ntd_cross, tab_hma_cross, tab_rules = st.tabs([
     "Trading Chart",
     "TradingView Chart",
+    "RSI ≤ 30",
     "Green Zone",
     "NPX Cross",
     "30EMA Cross",
@@ -3197,6 +3236,85 @@ with tab_tv_chart:
             "The RSI signal is a clearly labeled approximation of the reference screenshot, "
             "not a verified SMIIO (5, 20) implementation. Values may differ from TradingView."
         )
+
+
+with tab_rsi_oversold:
+    st.subheader(f"{asset_class} — RSI at or below 30")
+    st.caption(
+        "Scans the latest RSI (14) on completed/available Daily or 1-hour bars. "
+        "Results are separated using the same closing-price regression trend as the "
+        "price charts. RSI <= 30 indicates an oversold reading, not a guaranteed reversal."
+    )
+    rsi_tf_col, rsi_symbols_col = st.columns([1, 3])
+    rsi_timeframe = rsi_tf_col.radio(
+        "Timeframe", ["Daily", "Hourly"], horizontal=True,
+        key=f"rsi_oversold_timeframe_{asset_class}",
+    )
+    rsi_symbols = rsi_symbols_col.multiselect(
+        "Symbols to scan", sorted(current_universe),
+        default=sorted(current_universe),
+        key=f"rsi_oversold_symbols_{asset_class}",
+    )
+    rsi_signature = (
+        rsi_timeframe, tuple(sorted(rsi_symbols)),
+        int(cfg["trend_lookback"]),
+        str(cfg.get("daily_period", "1y")),
+    )
+    if st.button(
+        "Scan RSI ≤ 30", key=f"rsi_oversold_run_{asset_class}",
+        use_container_width=True, disabled=not bool(rsi_symbols),
+    ):
+        found, failures = [], []
+        progress = st.progress(0)
+        for i, sym in enumerate(rsi_symbols):
+            try:
+                result = scan_rsi_oversold(sym, rsi_timeframe, cfg)
+                if result is not None:
+                    found.append(result)
+            except Exception as exc:
+                failures.append(f"{sym}: {exc}")
+            progress.progress((i + 1) / max(1, len(rsi_symbols)))
+        progress.empty()
+        st.session_state[f"rsi_oversold_results_{asset_class}"] = {
+            "signature": rsi_signature, "rows": found, "errors": failures,
+        }
+
+    saved_rsi = st.session_state.get(f"rsi_oversold_results_{asset_class}")
+    if saved_rsi and saved_rsi["signature"] == rsi_signature:
+        rsi_results = pd.DataFrame(saved_rsi["rows"])
+        if rsi_results.empty:
+            st.info("No symbols currently have RSI (14) at or below 30 for this timeframe.")
+        else:
+            rising = rsi_results[rsi_results["Price Trend"] == "Upward ↑"].sort_values(
+                ["RSI (14)", "Symbol"]
+            )
+            falling = rsi_results[rsi_results["Price Trend"] == "Downward ↓"].sort_values(
+                ["RSI (14)", "Symbol"]
+            )
+            flat = rsi_results[rsi_results["Price Trend"] == "Flat →"].sort_values(
+                ["RSI (14)", "Symbol"]
+            )
+            summary_up, summary_down = st.columns(2)
+            summary_up.metric("RSI ≤ 30 · Upward Trend", len(rising))
+            summary_down.metric("RSI ≤ 30 · Downward Trend", len(falling))
+            st.markdown("#### 🟢 RSI ≤ 30 — Price Trend Upward")
+            if rising.empty:
+                st.info("No oversold symbols with an upward price trend.")
+            else:
+                st.dataframe(rising, use_container_width=True, hide_index=True)
+            st.markdown("#### 🔴 RSI ≤ 30 — Price Trend Downward")
+            if falling.empty:
+                st.info("No oversold symbols with a downward price trend.")
+            else:
+                st.dataframe(falling, use_container_width=True, hide_index=True)
+            if not flat.empty:
+                with st.expander(f"Flat price trends ({len(flat)})"):
+                    st.dataframe(flat, use_container_width=True, hide_index=True)
+        if saved_rsi["errors"]:
+            with st.expander(f"Symbols that could not be scanned ({len(saved_rsi['errors'])})"):
+                st.write(saved_rsi["errors"])
+    else:
+        st.info("Choose Daily or Hourly, then click **Scan RSI ≤ 30** to view results.")
 
 
 with tab_green_zone:
