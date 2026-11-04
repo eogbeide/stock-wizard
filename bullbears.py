@@ -2956,7 +2956,7 @@ def _supertrend_10_3(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
 
 
 def render_tradingview_style_chart(symbol: str, df: pd.DataFrame, timeframe: str) -> None:
-    """Candlesticks, RSI plus RSI signal, and a separately scaled MACD panel."""
+    """Candlesticks with a single, dual-axis RSI/MACD overlay panel."""
     from matplotlib.patches import Rectangle
     if df.empty or len(df) < 35:
         st.info("At least 35 price bars are needed to display this chart.")
@@ -2994,13 +2994,13 @@ def render_tradingview_style_chart(symbol: str, df: pd.DataFrame, timeframe: str
     rsi = full_rsi.loc[display_df.index]
     rsi_signal = full_rsi.ewm(span=9, adjust=False, min_periods=1).mean().loc[display_df.index]
 
-    fig = plt.figure(figsize=(15.2, 10.0), facecolor="white")
-    gs = fig.add_gridspec(3, 1, height_ratios=[3.3, 1.15, 1.0], hspace=0.13)
+    # One shared lower panel: RSI is on the right axis (0-100), while MACD
+    # keeps its true units on a left-side secondary axis.
+    fig = plt.figure(figsize=(15.2, 8.7), facecolor="white")
+    gs = fig.add_gridspec(2, 1, height_ratios=[3.3, 1.45], hspace=0.13)
     ax = fig.add_subplot(gs[0])
     rsi_ax = fig.add_subplot(gs[1], sharex=ax)
-    oscillator = fig.add_subplot(gs[2], sharex=ax)
-    # Right margin is reserved for labels; no labels overlay the candle data.
-    fig.subplots_adjust(left=0.065, right=0.865, top=0.935, bottom=0.09)
+    fig.subplots_adjust(left=0.09, right=0.865, top=0.93, bottom=0.105)
     fig.suptitle(f"{symbol.replace('=X', '').replace('USD', '/USD') if symbol == 'GBPUSD=X' else symbol} · {('1h' if timeframe == 'Hourly' else '1D')}  |  Candlesticks & Trend Indicators",
                  fontsize=14, fontweight="bold", y=0.975)
 
@@ -3038,45 +3038,68 @@ def render_tradingview_style_chart(symbol: str, df: pd.DataFrame, timeframe: str
     ax.legend(loc="upper left", fontsize=8, ncol=3, framealpha=.85)
     ax.tick_params(axis="x", labelbottom=False)
 
-    # Screenshot-inspired RSI + smoothed RSI signal panel.
-    # Reference levels sit behind the curves, with no overlaid text boxes.
+    # Screenshot-style COMBINED RSI + MACD panel.
+    # RSI reference levels and the true RSI curve use the right-hand scale.
+    # MACD and its signal use a separate, zero-centered left scale; they are
+    # overlaid in the same panel, NOT misrepresented as RSI numbers.
     rsi_ax.axhspan(30, 70, color="#8e72bc", alpha=0.10, zorder=0)
-    rsi_ax.axhline(70, color="#404040", linewidth=1.8, linestyle=(0, (7, 7)), zorder=1)
-    rsi_ax.axhline(50, color="#5178ef", linewidth=1.2, linestyle="--", zorder=1)
-    rsi_ax.axhline(30, color="#777777", linewidth=1.5, zorder=1)
-    rsi_ax.plot(x, rsi.to_numpy(dtype=float), color="#248ceb", linewidth=2.6,
-                label="RSI 14", zorder=3)
-    rsi_ax.plot(x, rsi_signal.to_numpy(dtype=float), color="#ee7c29",
-                linewidth=2.6, label="RSI signal EMA 9", zorder=3)
+    rsi_ax.axhline(70, color="#404040", linewidth=2.0,
+                   linestyle=(0, (7, 7)), zorder=1)
+    rsi_ax.axhline(50, color="#5178ef", linewidth=1.25,
+                   linestyle="--", zorder=1)
+    rsi_ax.axhline(30, color="#777777", linewidth=1.8, zorder=1)
+    rsi_ax.plot(x, rsi.to_numpy(dtype=float), color="#9774b5",
+                linewidth=1.5, alpha=.72, label="RSI 14", zorder=3)
+    rsi_ax.plot(x, rsi_signal.to_numpy(dtype=float), color="#b9a2cf",
+                linewidth=1.35, linestyle=":", alpha=.85,
+                label="RSI EMA 9", zorder=3)
     rsi_ax.set_ylim(15, 85)
     rsi_ax.set_yticks([30, 40, 50, 60, 70])
     rsi_ax.yaxis.tick_right()
     rsi_ax.yaxis.set_label_position("right")
     rsi_ax.grid(True, alpha=.12)
-    rsi_ax.legend(loc="upper left", fontsize=8, ncol=2, framealpha=.83)
-    rsi_ax.set_title("RSI (14) + Smoothed RSI Signal (9)", loc="left", fontsize=10)
-    rsi_ax.tick_params(axis="x", labelbottom=False)
 
-    oscillator.bar(x, histogram.to_numpy(dtype=float), width=.62,
-                   color=np.where(histogram.to_numpy(dtype=float) >= 0, up_color, down_color),
-                   alpha=.28, label="MACD histogram")
-    oscillator.plot(x, macd.to_numpy(dtype=float), color="#248ceb", linewidth=2,
-                    label="MACD 12,26")
-    oscillator.plot(x, signal.to_numpy(dtype=float), color="#ee7c29", linewidth=2,
-                    label="Signal 9")
-    oscillator.axhline(0, color="0.35", linewidth=1, linestyle="--")
-    oscillator.yaxis.tick_right()
-    oscillator.yaxis.set_label_position("right")
-    oscillator.grid(True, alpha=.13)
-    oscillator.legend(loc="upper left", fontsize=8, ncol=3, framealpha=.8)
-    oscillator.set_title("MACD (12, 26, 9)", loc="left", fontsize=10)
+    # Make the left axis transparent so it does not obscure the RSI shading.
+    macd_ax = rsi_ax.twinx()
+    macd_ax.yaxis.tick_left()
+    macd_ax.yaxis.set_label_position("left")
+    macd_ax.patch.set_visible(False)
+    macd_ax.spines["right"].set_visible(False)
+    all_values = np.r_[macd.to_numpy(dtype=float),
+                       signal.to_numpy(dtype=float),
+                       histogram.to_numpy(dtype=float)]
+    finite_values = all_values[np.isfinite(all_values)]
+    limit = max(float(np.max(np.abs(finite_values))) * 1.16, 1e-8) if finite_values.size else 1.0
+    # Zero MACD aligns precisely with the RSI 50 reference line.
+    macd_ax.set_ylim(-limit * 1.75, limit * 1.75)
+    macd_ax.axhline(0, color="#777777", linewidth=.7, alpha=.5, zorder=1)
+    macd_ax.bar(x, histogram.to_numpy(dtype=float), width=.65,
+                color=np.where(histogram.to_numpy(dtype=float) >= 0,
+                               "#0f9d82", "#e04451"),
+                alpha=.16, label="MACD histogram", zorder=2)
+    macd_ax.plot(x, macd.to_numpy(dtype=float), color="#248ceb",
+                 linewidth=2.9, label="MACD 12,26", zorder=5)
+    macd_ax.plot(x, signal.to_numpy(dtype=float), color="#ee7c29",
+                 linewidth=2.9, label="MACD signal 9", zorder=5)
+    macd_ax.tick_params(axis="y", labelsize=8, colors="#555555")
+    rsi_ax.set_title("RSI (right scale) + MACD (left scale) — combined",
+                     loc="left", fontsize=10)
+    # One compact legend outside the data-heavy portion of the plot.
+    lines1, labels1 = rsi_ax.get_legend_handles_labels()
+    lines2, labels2 = macd_ax.get_legend_handles_labels()
+    rsi_ax.legend(lines2 + lines1, labels2 + labels1,
+                  loc="upper left", fontsize=7, ncol=3,
+                  framealpha=.82, borderpad=.35)
 
     tick_count = min(8, len(display_df))
     indices = np.linspace(0, len(display_df)-1, tick_count, dtype=int)
-    oscillator.set_xticks(indices)
-    oscillator.set_xticklabels([display_df.index[i].strftime("%m-%d %H:%M" if timeframe == "Hourly" else "%Y-%m-%d")
-                                for i in indices], fontsize=8)
-    oscillator.set_xlim(-1, len(display_df) + 3)
+    rsi_ax.set_xticks(indices)
+    rsi_ax.set_xticklabels([
+        display_df.index[i].strftime(
+            "%m-%d %H:%M" if timeframe == "Hourly" else "%Y-%m-%d"
+        ) for i in indices
+    ], fontsize=8)
+    rsi_ax.set_xlim(-1, len(display_df) + 3)
     st.pyplot(fig, use_container_width=True)
     plt.close(fig)
 
