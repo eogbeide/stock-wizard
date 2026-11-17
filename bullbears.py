@@ -2,7 +2,10 @@
 # Clean Stocks/FX Streamlit dashboard with hourly and daily trading indicators.
 # Focus: compressed intraday chart (no weekend/closure gaps), trend-aligned support/resistance reversals,
 # 30 EMA crosses, NTD/S/R reversal confirmation, Stocks/FX scanner,
-# and chart-level probability trade instructions for easier BUY/SELL decision-making.
+# and chart-level trade plans for easier BUY/SELL decision-making.
+# (UPDATED) Scores are no longer shown as probabilities: each signal shows its measured past record
+# (bullbears_history.csv, built by bullbears_history_build.py), targets and stops sit 1.5 ATR either
+# side of price, and a Forex Stochastic Dip tab shows the tested daily Stochastic <= 10 buy rule.
 # (UPDATED) Structure metric now uses directional red/green trend badges and action/trend alignment text.
 # (UPDATED) Chart trade instruction box is moved outside the plot area so it does not block candles/indicators.
 # (UPDATED) Symbol lists and scanner tables are alphabetized; Buy/Sell List is split into Daily and Hourly tables.
@@ -10,6 +13,7 @@
 import math
 import time
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -25,6 +29,14 @@ from matplotlib.lines import Line2D
 # =========================
 PACIFIC = pytz.timezone("US/Pacific")
 REFRESH_INTERVAL = 120
+# Target and stop both sit this many ATRs from price, so a hit rate above 50% means a real edge.
+PLAN_ATR = 1.5
+# Forex dip rule tested in Stock Wizard: buy when daily Stochastic %K(14) <= 10,
+# sell when RSI(14) reaches 50 or after 60 days.
+FX_STOCH_LOW = 10
+FX_STOCH_EXIT_RSI = 50
+FX_STOCH_MAX_DAYS = 60
+HISTORY_FILE = Path(__file__).with_name("bullbears_history.csv")
 
 st.set_page_config(
     page_title="Forex Hourly Trading Indicator",
@@ -833,25 +845,25 @@ def compute_trade_probabilities_and_instruction(symbol: str,
     else:
         action = "WAIT"
         instruction = (
-            "WAIT: long/short probabilities are not sufficiently separated or current structure is mixed. "
+            "WAIT: long/short scores are not sufficiently separated or current structure is mixed. "
             "Avoid forcing a trade until price confirms direction."
         )
 
     return {
         "Trade Action": action,
         "Trade Instruction": instruction,
-        "Long Probability": long_prob,
-        "Short Probability": short_prob,
-        "Probability Edge": confidence,
+        "Long Score": long_prob,
+        "Short Score": short_prob,
+        "Score Edge": confidence,
     }
 
 
 
 def probability_trade_read(trade: dict) -> dict:
     """Translate long/short probabilities into a simple trade plan users can read quickly."""
-    long_prob = safe_float(trade.get("Long Probability"))
-    short_prob = safe_float(trade.get("Short Probability"))
-    edge = safe_float(trade.get("Probability Edge"))
+    long_prob = safe_float(trade.get("Long Score"))
+    short_prob = safe_float(trade.get("Short Score"))
+    edge = safe_float(trade.get("Score Edge"))
     action = str(trade.get("Trade Action", "WAIT") or "WAIT").upper()
     state = str(trade.get("State", "WAIT") or "WAIT").upper()
 
@@ -859,12 +871,12 @@ def probability_trade_read(trade: dict) -> dict:
         symbol_icon = "🟢▲"
         css = "prob-guide prob-buy"
         read = "BUY / Long favored"
-        usage = "Long probability has a clear edge. Look for a pullback hold or close above 30 EMA/HMA before entry."
+        usage = "Long score is clearly ahead. Check the past record below before relying on it."
     elif short_prob >= 75 and edge >= 12 and short_prob > long_prob:
         symbol_icon = "🔴▼"
         css = "prob-guide prob-sell"
         read = "SELL / Short favored"
-        usage = "Short probability has a clear edge. Look for resistance rejection or a close below 30 EMA/HMA before entry."
+        usage = "Short score is clearly ahead. Check the past record below before relying on it."
     elif long_prob >= 60 and long_prob >= short_prob and edge >= 5:
         symbol_icon = "🟡▲"
         css = "prob-guide prob-watch"
@@ -882,14 +894,14 @@ def probability_trade_read(trade: dict) -> dict:
         usage = "Probabilities are mixed or too close. Do not force a trade until one side reaches a clearer edge."
 
     if edge < 8:
-        risk_note = "Low edge: use as watchlist only."
+        risk_note = "Small score gap: watchlist only."
     elif edge < 15:
-        risk_note = "Moderate edge: wait for price confirmation."
+        risk_note = "Moderate score gap: wait for price confirmation."
     else:
-        risk_note = "Clear edge: still use the listed stop/invalidation."
+        risk_note = "Use the listed stop."
 
     if "CONFIRMED" in state:
-        confirmation = "Confirmed setup: the probability edge agrees with a completed chart signal."
+        confirmation = "Confirmed setup: the score agrees with a completed chart signal."
     elif "SETUP" in state or "WATCH" in action:
         confirmation = "Setup/watch: wait for the next candle confirmation before entry."
     else:
@@ -902,24 +914,24 @@ def probability_trade_read(trade: dict) -> dict:
         "Usage": usage,
         "Risk Note": risk_note,
         "Confirmation": confirmation,
-        "Long Probability": long_prob,
-        "Short Probability": short_prob,
-        "Probability Edge": edge,
+        "Long Score": long_prob,
+        "Short Score": short_prob,
+        "Score Edge": edge,
     }
 
 
 def render_probability_action_panel(trade: dict, view_label: str = "Chart") -> None:
-    """Compact user-facing probability interpretation panel shown above each chart."""
+    """Compact trade plan shown above each chart: past record first, rule score second."""
     read = probability_trade_read(trade)
     plan_note = ("WATCH-ONLY hypothetical levels; not a trade signal. "
                  if trade.get("Plan Indicative", False) else "")
     st.markdown(
         f"""
 <div class="{read['CSS']}">
-  <b>{read['Icon']} {view_label} Probability Trade Plan: {read['Read']}</b><br>
-  Long: <b>{read['Long Probability']:.0f}%</b> &nbsp; | &nbsp;
-  Short: <b>{read['Short Probability']:.0f}%</b> &nbsp; | &nbsp;
-  Edge: <b>{read['Probability Edge']:.0f}%</b><br>
+  <b>{read['Icon']} {view_label} Trade Plan: {read['Read']}</b><br>
+  <b>{trade.get('History Text', 'No measured history for this signal yet.')}</b><br>
+  <span class="prob-mini">Rule score (points out of 95, not a probability): Long {read['Long Score']:.0f}
+  &nbsp;|&nbsp; Short {read['Short Score']:.0f} &nbsp;|&nbsp; Gap {read['Score Edge']:.0f}</span><br>
   <span class="prob-mini">{read['Usage']} {read['Confirmation']} {read['Risk Note']}</span><br>
   <span class="prob-mini">{plan_note}Entry: <b>{trade.get('Entry Zone', 'Wait')}</b> &nbsp; | &nbsp;
   Stop/Invalidation: <b>{trade.get('Stop / Invalidation', 'n/a')}</b> &nbsp; | &nbsp;
@@ -932,8 +944,8 @@ def render_probability_action_panel(trade: dict, view_label: str = "Chart") -> N
 
 def probability_bar_values(trade: dict) -> tuple[float, float, float]:
     """Return sanitized long/short/edge values for chart annotation."""
-    long_prob = float(np.clip(safe_float(trade.get("Long Probability")), 0, 100))
-    short_prob = float(np.clip(safe_float(trade.get("Short Probability")), 0, 100))
+    long_prob = float(np.clip(safe_float(trade.get("Long Score")), 0, 100))
+    short_prob = float(np.clip(safe_float(trade.get("Short Score")), 0, 100))
     edge = float(abs(long_prob - short_prob))
     return long_prob, short_prob, edge
 
@@ -1021,6 +1033,61 @@ def render_structure_trend_badge(container, trade: dict) -> None:
         unsafe_allow_html=True,
     )
 
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_signal_history() -> pd.DataFrame:
+    """Measured past results for each signal (see bullbears_history_build.py)."""
+    try:
+        return pd.read_csv(HISTORY_FILE)
+    except Exception:
+        return pd.DataFrame()
+
+
+def history_timeframe(cfg: dict) -> str:
+    return "Daily" if str(cfg.get("interval", "")).lower() in ("1d", "1wk", "1mo") else "Intraday"
+
+
+def signal_history(symbol: str, cfg: dict, state: str) -> dict | None:
+    """Past record of this state for the symbol's market and timeframe, with the any-bar baseline."""
+    hist = load_signal_history()
+    if hist.empty:
+        return None
+    market = "Forex" if "=X" in str(symbol).upper() else "Stocks"
+    tf = history_timeframe(cfg)
+    pick = hist[(hist["Market"] == market) & (hist["Timeframe"] == tf)]
+    row = pick[pick["State"] == state]
+    if row.empty:
+        return None
+    out = row.iloc[0].to_dict()
+    side = "Long" if "BUY" in state else "Short"
+    base = pick[pick["State"] == f"ANY {side.upper()}"]
+    if not base.empty:
+        out["Baseline Target First %"] = float(base.iloc[0]["Target First %"])
+        out["Baseline Avg Result %"] = float(base.iloc[0]["Avg Result %"])
+    return out
+
+
+def history_text(hist: dict | None, cfg: dict | None = None) -> str:
+    """One-line plain description of a signal's past record."""
+    if not hist:
+        return "No measured history for this signal yet."
+    text = (
+        f"Past {hist['State']} signals ({hist['Market']}, {hist['Timeframe'].lower()}, "
+        f"{int(hist['Signals']):,} since {hist['Since']}): target reached first "
+        f"{hist['Target First %']:.0f}%, stop first {hist['Stop First %']:.0f}%, "
+        f"average {hist['Avg Result %']:+.2f}% after costs."
+    )
+    base = hist.get("Baseline Target First %")
+    if base is not None and np.isfinite(base):
+        diff = hist["Target First %"] - base
+        if diff >= 3 and hist["Avg Result %"] > 0:
+            text += f" Better than trading any {hist['Timeframe'].lower()} bar ({base:.0f}%)."
+        else:
+            text += f" No better than trading any bar ({base:.0f}%), so treat it as no edge."
+    if cfg is not None and history_timeframe(cfg) == "Intraday" and str(cfg.get("interval")) not in ("60m", "1h"):
+        text += " Intraday history is measured on 1-hour bars."
+    return text
 
 
 def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict) -> dict:
@@ -1135,14 +1202,11 @@ def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict)
             reason = "No clean trend-aligned pullback/reversal confirmation."
 
     atr_last = safe_float(df["ATR14"].iloc[-1])
-    if bias == "Long":
-        entry_zone = f"{fmt_price(symbol, min(last, ema30_last))}–{fmt_price(symbol, max(last, ema30_last))}"
-        stop_zone = fmt_price(symbol, min(support, last - 1.2 * atr_last) if np.isfinite(atr_last) and np.isfinite(support) else support)
-        target1 = fmt_price(symbol, min(resistance, last + 1.5 * atr_last) if np.isfinite(atr_last) and np.isfinite(resistance) else resistance)
-    elif bias == "Short":
-        entry_zone = f"{fmt_price(symbol, min(last, ema30_last))}–{fmt_price(symbol, max(last, ema30_last))}"
-        stop_zone = fmt_price(symbol, max(resistance, last + 1.2 * atr_last) if np.isfinite(atr_last) and np.isfinite(resistance) else resistance)
-        target1 = fmt_price(symbol, max(support, last - 1.5 * atr_last) if np.isfinite(atr_last) and np.isfinite(support) else support)
+    # Target and stop sit the same distance (PLAN_ATR x ATR) either side of price,
+    # so the measured hit rate shows whether the signal has an edge.
+    plan_atr = atr_last if np.isfinite(atr_last) and atr_last > 0 else max(abs(last) * 0.002, pip_size(symbol) * 10)
+    if bias in ("Long", "Short"):
+        plan_direction = bias
     else:
         # Neutral / WAIT charts still get an *indicative* planning scenario.
         # This is not an entry recommendation or a confirmed trade.
@@ -1151,20 +1215,11 @@ def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict)
             "Short" if below_count > above_count else
             "Long" if trend_up else "Short"
         )
-        reference_ema = ema30_last if np.isfinite(ema30_last) else last
-        entry_zone = f"{fmt_price(symbol, min(last, reference_ema))}–{fmt_price(symbol, max(last, reference_ema))}"
-        volatility = atr_last if np.isfinite(atr_last) and atr_last > 0 else max(abs(last) * 0.002, pip_size(symbol) * 10)
-        entry_mid = (last + reference_ema) / 2
-        if plan_direction == "Long":
-            candidate_stop = min(support, last - 1.2 * volatility) if np.isfinite(support) else last - 1.2 * volatility
-            candidate_target = min(resistance, last + 1.5 * volatility) if np.isfinite(resistance) else last + 1.5 * volatility
-            stop_zone = fmt_price(symbol, min(candidate_stop, entry_mid - 0.5 * volatility))
-            target1 = fmt_price(symbol, max(candidate_target, entry_mid + 0.5 * volatility))
-        else:
-            candidate_stop = max(resistance, last + 1.2 * volatility) if np.isfinite(resistance) else last + 1.2 * volatility
-            candidate_target = max(support, last - 1.5 * volatility) if np.isfinite(support) else last - 1.5 * volatility
-            stop_zone = fmt_price(symbol, max(candidate_stop, entry_mid + 0.5 * volatility))
-            target1 = fmt_price(symbol, min(candidate_target, entry_mid - 0.5 * volatility))
+    # Entry is the current price: that is how the past record was measured.
+    entry_zone = fmt_price(symbol, last)
+    sign = 1 if plan_direction == "Long" else -1
+    stop_zone = fmt_price(symbol, last - sign * PLAN_ATR * plan_atr)
+    target1 = fmt_price(symbol, last + sign * PLAN_ATR * plan_atr)
 
     # Keep direction metadata separate from the original trade signal.
     # A WAIT chart stays WAIT; any levels shown are for planning only.
@@ -1247,6 +1302,8 @@ def classify_trade(symbol: str, df: pd.DataFrame, trend_slope: float, cfg: dict)
         "Target 1": target1,
         "Plan Direction": plan_direction,
         "Plan Indicative": plan_indicative,
+        "History": signal_history(symbol, cfg, state),
+        "History Text": history_text(signal_history(symbol, cfg, state), cfg),
     }
 
 
@@ -1398,7 +1455,7 @@ def draw_trade_sidebar(fig, symbol: str, levels: dict | None) -> None:
              f"Estimated R:R  1 : {rr:.2f}" if np.isfinite(rr) else
              "R:R  n/a (check level placement)",
              fontsize=9, ha="left", va="top", fontweight="bold", color="0.25")
-    fig.text(0.795, 0.403, "Pips from entry midpoint\n(range uses entry zone)",
+    fig.text(0.795, 0.403, "Pips from the current price",
              fontsize=8, ha="left", va="top", color="0.4")
 
 def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
@@ -1499,7 +1556,7 @@ def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
     title = (
         f"{symbol} {view_name} {cfg.get('asset_class', 'Market')} Trading Chart ({cfg['period']}, {cfg['interval']})  |  "
         f"{state} / {trade.get('Trade Action', 'WAIT')}  |  "
-        f"Long {safe_float(trade.get('Long Probability')):.0f}% Short {safe_float(trade.get('Short Probability')):.0f}%  |  "
+        f"Score L{safe_float(trade.get('Long Score')):.0f}/S{safe_float(trade.get('Short Score')):.0f}  |  "
         f"Price {fmt_price(symbol, last)}  |  30EMA {fmt_price(symbol, ema30_last)}  |  "
         f"S/R {sr_last:+.2f}  NTD {ntd_last:+.2f}  ADX {adx_last:.1f}"
     )
@@ -1516,9 +1573,10 @@ def plot_forex_chart(symbol: str, df: pd.DataFrame, cfg: dict, trade: dict):
         0.875,
         (
             f"{prob_read['Icon']} {prob_read['Read']}\n"
-            f"Long {long_prob:.0f}% vs Short {short_prob:.0f}%\n"
-            f"Edge {prob_edge:.0f}%\n"
-            f"{'Confirm entry' if prob_edge < 15 else 'High-priority; confirm entry'}"
+            f"Score L{long_prob:.0f} vs S{short_prob:.0f}\n"
+            + (f"Past: target first {trade['History']['Target First %']:.0f}%\n"
+               f"avg {trade['History']['Avg Result %']:+.2f}%"
+               if trade.get("History") else "No past record")
         ),
         ha="left",
         va="top",
@@ -1588,9 +1646,12 @@ def format_trade_row(symbol: str, trade: dict) -> dict:
         "Trade Action": trade.get("Trade Action"),
         "Confirmation Trigger Time": trade.get("Confirmation Trigger Time"),
         "Last Bar Timestamp": trade.get("Last Bar Timestamp"),
-        "Long Probability": f"{safe_float(trade.get('Long Probability')):.0f}%",
-        "Short Probability": f"{safe_float(trade.get('Short Probability')):.0f}%",
-        "Probability Edge": f"{safe_float(trade.get('Probability Edge')):.0f}%",
+        "Long Score": f"{safe_float(trade.get('Long Score')):.0f}",
+        "Short Score": f"{safe_float(trade.get('Short Score')):.0f}",
+        "Score Edge": f"{safe_float(trade.get('Score Edge')):.0f}",
+        "Past Target First": (f"{trade['History']['Target First %']:.0f}%" if trade.get("History") else "n/a"),
+        "Past Avg Result": (f"{trade['History']['Avg Result %']:+.2f}%" if trade.get("History") else "n/a"),
+        "Past Signals": (int(trade["History"]["Signals"]) if trade.get("History") else None),
         "Trend": trade_trend_alignment(trade).get("Trend Direction"),
         "Action / Trend Alignment": trade_trend_alignment(trade).get("Alignment Text"),
         "Current Structure": trade.get("Current Structure"),
@@ -2618,7 +2679,7 @@ def _top_downtrend_sr_ntd_upward_reversal_candidates(sr_ntd_df: pd.DataFrame, li
 # =========================
 st.title("📈 Stocks / FX Trading Indicator")
 st.caption(
-     "Toggle between Stocks and Forex. Hourly and daily views use real trading bars only and include trade instructions plus rule-based long/short probabilities."
+     "Toggle between Stocks and Forex. Hourly and daily views use real trading bars only and include trade instructions, rule scores and each signal's measured past record."
 )
 
 
@@ -3142,7 +3203,7 @@ def render_tradingview_style_chart(symbol: str, df: pd.DataFrame, timeframe: str
     plt.close(fig)
 
 
-tab_chart, tab_tv_chart, tab_rsi_oversold, tab_green_zone, tab_npx_up_cross, tab_ema30_cross, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_cross, tab_daily_dips, tab_ntd_cross, tab_hma_cross, tab_rules = st.tabs([
+tab_chart, tab_tv_chart, tab_rsi_oversold, tab_green_zone, tab_npx_up_cross, tab_ema30_cross, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_cross, tab_daily_dips, tab_fx_stoch, tab_ntd_cross, tab_hma_cross, tab_rules = st.tabs([
     "Trading Chart",
     "TradingView Chart",
     "RSI ≤ 30",
@@ -3154,10 +3215,64 @@ tab_chart, tab_tv_chart, tab_rsi_oversold, tab_green_zone, tab_npx_up_cross, tab
     "Trade Action",
     "S/R Cross",
     "Dips",
+    "FX Stochastic Dip",
     "NTD Cross",
     "HMA Cross",
     "Rules",
 ])
+
+
+def stochastic_k(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """Stochastic %K: where the close sits in the last `period` bars' range (0-100)."""
+    close = coerce_series(df["Close"])
+    lo = coerce_series(df["Low"]).rolling(period, min_periods=period).min()
+    hi = coerce_series(df["High"]).rolling(period, min_periods=period).max()
+    return 100.0 * (close - lo) / (hi - lo).replace(0, np.nan)
+
+
+def fx_stochastic_reading(symbol: str) -> dict | None:
+    daily = fetch_market_ohlc(symbol, "1y", "1d")
+    if daily.empty or len(daily) < 30:
+        return None
+    k = stochastic_k(daily, 14)
+    r = calculate_chart_rsi(daily["Close"], 14)
+    return {
+        "Symbol": symbol,
+        "Stochastic %K": round(safe_float(k.iloc[-1]), 1),
+        "RSI (14)": round(safe_float(r.iloc[-1]), 1),
+        "Last Close": fmt_price(symbol, daily["Close"].iloc[-1]),
+        "Dip Signal": bool(safe_float(k.iloc[-1]) <= FX_STOCH_LOW),
+    }
+
+
+def fx_stochastic_history_text() -> str:
+    hist = load_signal_history()
+    row = hist[hist["State"] == "FX STOCH DIP"] if not hist.empty else hist
+    if row is None or row.empty:
+        return "No measured history yet."
+    h = row.iloc[0]
+    return (
+        f"Past signals ({int(h['Signals']):,} since {h['Since']}): rose by the exit "
+        f"{h['Target First %']:.0f}% of the time, average {h['Avg Result %']:+.2f}% after costs, "
+        f"typically held {h['Median Bars']:.0f} days."
+    )
+
+
+def render_fx_stochastic_note(symbol: str) -> None:
+    reading = fx_stochastic_reading(symbol)
+    if reading is None:
+        return
+    if reading["Dip Signal"]:
+        st.success(
+            f"Forex Stochastic Dip: daily %K is {reading['Stochastic %K']:.1f} (≤ {FX_STOCH_LOW}). "
+            f"Tested rule: buy, sell when RSI reaches {FX_STOCH_EXIT_RSI} or after {FX_STOCH_MAX_DAYS} days. "
+            + fx_stochastic_history_text()
+        )
+    else:
+        st.caption(
+            f"Forex Stochastic Dip: daily %K is {reading['Stochastic %K']:.1f}; "
+            f"the tested buy rule needs {FX_STOCH_LOW} or lower."
+        )
 
 
 def _chart_timeframe_config(base_cfg: dict, timeframe: str) -> dict:
@@ -3190,9 +3305,7 @@ with tab_chart:
             f"""<div class="{chart_css}">
             {chart_state} / {chart_trade.get('Trade Action', 'WAIT')} —
             {chart_trade.get('Reason', '')}<br>
-            Long: {safe_float(chart_trade.get('Long Probability')):.0f}% |
-            Short: {safe_float(chart_trade.get('Short Probability')):.0f}% |
-            Edge: {safe_float(chart_trade.get('Probability Edge')):.0f}%<br>
+            {chart_trade.get('History Text', '')}<br>
             {chart_trade.get('Trade Instruction', '')}
             </div>""",
             unsafe_allow_html=True,
@@ -3200,13 +3313,18 @@ with tab_chart:
         metrics = st.columns(7)
         metrics[0].metric("Last Close", fmt_price(symbol, chart_trade.get("Last Close")))
         metrics[1].metric("Trade Action", chart_trade.get("Trade Action", "WAIT"))
-        metrics[2].metric("Long Prob.", f"{safe_float(chart_trade.get('Long Probability')):.0f}%")
-        metrics[3].metric("Short Prob.", f"{safe_float(chart_trade.get('Short Probability')):.0f}%")
+        _hist = chart_trade.get("History")
+        metrics[2].metric("Past Target First", f"{_hist['Target First %']:.0f}%" if _hist else "n/a",
+                          help="How often this signal reached its target before its stop (both 1.5 ATR away).")
+        metrics[3].metric("Past Avg Result", f"{_hist['Avg Result %']:+.2f}%" if _hist else "n/a",
+                          help="Average result per past signal after costs.")
         metrics[4].metric("Structure", chart_trade.get("Current Structure", "Mixed"))
         render_structure_trend_badge(metrics[4], chart_trade)
         metrics[5].metric("S/R Reversal", f"{safe_float(chart_trade.get('S/R Reversal')):+.2f}")
         metrics[6].metric("ADX", f"{safe_float(chart_trade.get('ADX')):.1f}")
         render_probability_action_panel(chart_trade, view_label=selected_chart_tf)
+        if "=X" in str(symbol).upper():
+            render_fx_stochastic_note(symbol)
         plot_forex_chart(symbol, chart_data, chart_cfg, chart_trade)
         with st.expander("Current setup details", expanded=False):
             st.dataframe(pd.DataFrame([format_trade_row(symbol, chart_trade)]),
@@ -3706,11 +3824,12 @@ with tab_buy_sell:
         """
 **How to use this tab**
 
-- **BUY list**: Long probability is stronger than short probability and the setup is BUY CONFIRMED or BUY SETUP.
-- **SELL list**: Short probability is stronger than long probability and the setup is SELL CONFIRMED or SELL SETUP.
+- **BUY list**: Long score is higher than short score and the setup is BUY CONFIRMED or BUY SETUP.
+- **SELL list**: Short score is higher than long score and the setup is SELL CONFIRMED or SELL SETUP.
+- **Past Target First / Past Avg Result** show how this kind of signal actually did. Around 50% or a negative average means no edge.
 - **Daily timeframe**: use for market bias and swing direction.
 - **Hourly timeframe**: use for entry timing, pullbacks, and near-term confirmation.
-- Stronger rows generally have higher probability edge, aligned trend, and clearer support/resistance instructions.
+- Scores are rule points, not probabilities; rank by the past record first.
 """
     )
 
@@ -3760,7 +3879,7 @@ with tab_buy_sell:
             return pd.DataFrame()
         preferred_cols = [
             "Timeframe", "Symbol", "State", "Bias", "Trade Action",
-            "Long Probability", "Short Probability", "Probability Edge",
+            "Long Score", "Short Score", "Score Edge",
             "Trend", "Current Structure", "S/R Rev", "NTD", "ADX", "Last Close",
             "Support", "Resistance", "Entry Zone", "Stop / Invalidation",
             "Target 1", "Trade Instruction", "Reason",
@@ -3784,9 +3903,9 @@ with tab_buy_sell:
         timeframe_order = {"Daily": 0, "Hourly": 1}
         out["_StateOrder"] = _column_as_series(out, "State", "").map(state_order).fillna(8)
         out["_TimeframeOrder"] = _column_as_series(out, "Timeframe", "").map(timeframe_order).fillna(9)
-        out["_LongProbSort"] = _column_as_series(out, "Long Probability", "").map(_pct_sort_value).fillna(-1)
-        out["_ShortProbSort"] = _column_as_series(out, "Short Probability", "").map(_pct_sort_value).fillna(-1)
-        out["_EdgeSort"] = _column_as_series(out, "Probability Edge", "").map(_pct_sort_value).abs().fillna(-1)
+        out["_LongProbSort"] = _column_as_series(out, "Long Score", "").map(_pct_sort_value).fillna(-1)
+        out["_ShortProbSort"] = _column_as_series(out, "Short Score", "").map(_pct_sort_value).fillna(-1)
+        out["_EdgeSort"] = _column_as_series(out, "Score Edge", "").map(_pct_sort_value).abs().fillna(-1)
         prob_col = "_LongProbSort" if side == "BUY" else "_ShortProbSort"
         # User-facing Buy/Sell lists are alphabetized by symbol for easier browsing.
         # Daily rows still appear before Hourly rows for the same symbol, and
@@ -4073,7 +4192,7 @@ with tab_trade_action:
                     errors="coerce",
                 ).fillna(-1)
                 frame["_Edge"] = pd.to_numeric(
-                    frame["Probability Edge"].astype(str).str.replace("%", "", regex=False),
+                    frame["Score Edge"].astype(str).str.replace("%", "", regex=False),
                     errors="coerce",
                 ).fillna(-1)
                 frame = frame.sort_values(
@@ -4083,8 +4202,8 @@ with tab_trade_action:
                 )
                 preferred = [
                     "Symbol", "State", "Trade Action", "Confirmation Trigger",
-                    "Time Since Trigger", "Long Probability", "Short Probability",
-                    "Probability Edge", "Trend", "Current Structure", "Last Close",
+                    "Time Since Trigger", "Long Score", "Short Score",
+                    "Score Edge", "Trend", "Current Structure", "Last Close",
                     "S/R Rev", "NTD", "ADX", "Entry Zone", "Stop / Invalidation",
                     "Target 1", "Trade Instruction", "Reason",
                 ]
@@ -4094,8 +4213,8 @@ with tab_trade_action:
                     if col not in ordered and not col.startswith("_")
                 ]]
 
-            ta_buy = _rank_confirmed_trade_actions(ta_buy, "Long Probability")
-            ta_sell = _rank_confirmed_trade_actions(ta_sell, "Short Probability")
+            ta_buy = _rank_confirmed_trade_actions(ta_buy, "Long Score")
+            ta_sell = _rank_confirmed_trade_actions(ta_sell, "Short Score")
             count_cols = st.columns(3)
             count_cols[0].metric("BUY Confirmed", len(ta_buy))
             count_cols[1].metric("SELL Confirmed", len(ta_sell))
@@ -4482,6 +4601,41 @@ with tab_daily_dips:
                 st.dataframe(_format_daily_ntd_dip_table(all_hourly_sorted), use_container_width=True, hide_index=True)
 
 
+with tab_fx_stoch:
+    st.subheader("Forex Stochastic Dip (daily)")
+    st.markdown(
+        f"""
+A tested Forex buy rule (not a forecast): **buy** a pair when its daily Stochastic %K(14) is
+**{FX_STOCH_LOW} or lower**, **sell** when daily RSI(14) reaches **{FX_STOCH_EXIT_RSI}**, or after
+**{FX_STOCH_MAX_DAYS} days**. Currency pairs tend to bounce back after sharp falls, which is why buying
+dips has worked better than selling weakness.
+
+**Past record:** {fx_stochastic_history_text()}
+"""
+    )
+    if st.button("Scan Forex pairs", use_container_width=True, key="fx_stoch_scan"):
+        stoch_rows = []
+        stoch_progress = st.progress(0)
+        for n, sym in enumerate(ASSET_UNIVERSES["Forex"]):
+            try:
+                reading = fx_stochastic_reading(sym)
+                if reading is not None:
+                    stoch_rows.append(reading)
+            except Exception:
+                pass
+            stoch_progress.progress((n + 1) / len(ASSET_UNIVERSES["Forex"]))
+        stoch_progress.empty()
+        if stoch_rows:
+            stoch_df = pd.DataFrame(stoch_rows).sort_values("Stochastic %K")
+            hits = stoch_df[stoch_df["Dip Signal"]]
+            if hits.empty:
+                st.info(f"No pair is at daily Stochastic {FX_STOCH_LOW} or lower right now.")
+            else:
+                st.success("Pairs at the buy level: " + ", ".join(hits["Symbol"]))
+            st.dataframe(stoch_df, use_container_width=True, hide_index=True)
+    st.caption("Not financial advice. Past results do not guarantee future results.")
+
+
 with tab_ntd_cross:
     st.subheader(f"{asset_class} NTD Cross — Upward Through 0.00")
     st.caption(
@@ -4655,17 +4809,21 @@ Wait for rejection or a 30 EMA loss before entry.
 
 **WAIT** means the chart is not aligned enough. Do not force a trade.
 
-**Probabilities** are rule-based estimates that rank whether current conditions favor a long or short. They are not guaranteed forecasts. Use them as a ranking and confirmation layer, not as a blind entry trigger.
+**Scores** (Long / Short, up to 95) are rule points: the app adds fixed points for each condition
+(below the 30 EMA, falling NTD, and so on). They are **not probabilities**. Tested on every past bar since 2017,
+a "95" did no better than an "80", so the app now shows each signal's **measured past record** instead.
 
-**How to trade the probabilities:**
-- **70%+ probability with 12%+ edge** = high-priority setup, but still wait for price confirmation.
-- **60%–69% probability or small edge** = watchlist only; wait for a support/EMA hold or resistance/EMA rejection.
-- **Probabilities close together** = WAIT; avoid forcing a trade.
-- Prefer trades where the probability direction agrees with the chart state, trend direction, S/R Reversal, and 30 EMA/HMA behavior.
+**Past record** = how often that signal (for example Forex daily SELL CONFIRMED) reached its target before its stop,
+and the average result after costs (0.03% Forex, 0.05% Stocks). Target and stop are both 1.5 ATR from price, so
+about 50% is what any random bar gets. Compare with the "any bar" figure shown alongside: only a clearly higher
+rate and a positive average mean the signal has an edge.
+
+**Forex Stochastic Dip** (its own tab) is a different, tested rule: buy a pair when daily Stochastic %K(14) is 10
+or lower, sell when RSI(14) reaches 50 or after 60 days. Its past record is shown in that tab.
 
 **Daily view** should be used for the bigger directional bias. **Hourly view** should be used for timing entries, pullbacks, and confirmations. Use the **Market** selector in the sidebar to switch between Forex and Stocks; the same logic applies to both, while price formatting and tolerance units adjust by symbol type.
 """
     )
     st.info(
-        "Risk rule: use the support/resistance stop zone as invalidation. Do not take a signal if the reward to the next target is smaller than the stop distance."
+        "Risk rule: the stop is 1.5 ATR from price. Size each trade so that hitting the stop costs a small, fixed part of the account. Past results do not guarantee future results."
     )
