@@ -37,6 +37,10 @@
 # (NEW) Buy/Sell Picks tab scans daily bullish confirmations and bearish continuation/rejection setups with Upward/Downward trend groups for Daily and 48h Hourly charts.
 # (NEW) S/R +0.5 Cross tab scans daily upward crosses through +0.5 on the S/R Reversal Index.
 # (NEW) Daily -0.75 Picks tab scans S/R Reversal Index upward crosses through -0.75 grouped by NTD trend direction and sorted by pips since cross.
+# (UPDATED) Forecast P(up)/P(down) and "95%" labels removed: replayed 2020-2026 on this app's symbols, the
+#           SARIMAX forecast direction was right about half the time, so it no longer gates or labels signals.
+#           HMA / BB divergence / near-S/R alerts are plain chart events. Forex shows the tested Stochastic Dip rule.
+from pathlib import Path
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -278,7 +282,6 @@ psar_max = 0.20
 
 # Signal logic
 st.sidebar.subheader("Signal Logic (Hourly)")
-signal_threshold = st.sidebar.slider("Signal confidence threshold", 0.50, 0.99, 0.90, 0.01, key="sb_sig_thr")
 sr_prox_pct = st.sidebar.slider("S/R proximity (%)", 0.05, 1.00, 0.25, 0.05, key="sb_sr_prox") / 100.0
 
 # Daily indicator panel controls
@@ -374,10 +377,9 @@ bb_mult       = st.sidebar.slider("BB multiplier (σ)", 1.0, 4.0, 2.0, 0.1, key=
 bb_use_ema    = st.sidebar.checkbox("Use EMA midline (vs SMA)", value=False, key="sb_bb_ema")
 
 # HMA
-st.sidebar.subheader("Probabilistic HMA Crossover (Price Charts)")
+st.sidebar.subheader("HMA Crossover (Price Charts)")
 show_hma    = st.sidebar.checkbox("Show HMA crossover signal", value=True, key="sb_hma_show")
 hma_period  = st.sidebar.slider("HMA period", 5, 120, 55, 1, key="sb_hma_period")
-hma_conf    = st.sidebar.slider("Crossover confidence", 0.50, 0.99, 0.95, 0.01, key="sb_hma_conf")
 
 # HMA reversal markers on NTD
 st.sidebar.subheader("HMA(55) Reversal on NTD")
@@ -387,7 +389,6 @@ hma_rev_lb       = st.sidebar.slider("HMA reversal slope lookback (bars)", 2, 10
 # BB Divergence
 st.sidebar.subheader("BB Divergence Signals")
 show_bb_div = st.sidebar.checkbox("Show BB divergence signals", value=True, key="sb_bbdiv_show")
-bb_conf     = st.sidebar.slider("BB divergence confidence", 0.50, 0.99, 0.95, 0.01, key="sb_bbdiv_conf")
 
 # 🔶 NEW: ADX filter controls
 st.sidebar.subheader("Trend Strength Filter (ADX)")
@@ -915,14 +916,14 @@ def detect_last_crossover(price: pd.Series, line: pd.Series):
     else:
         return {"time": t_dn, "side": "SELL"}
 
-def annotate_crossover(ax, ts, px, side: str, conf: float):
+def annotate_crossover(ax, ts, px, side: str):
     try:
         if side == "BUY":
             ax.scatter([ts], [px], marker="^", s=90, color="tab:green", zorder=7)
-            ax.text(ts, px, f"  BUY {int(conf*100)}%", va="bottom", fontsize=9, color="tab:green", fontweight="bold")
+            ax.text(ts, px, "  HMA cross ↑", va="bottom", fontsize=9, color="tab:green", fontweight="bold")
         else:
             ax.scatter([ts], [px], marker="v", s=90, color="tab:red", zorder=7)
-            ax.text(ts, px, f"  SELL {int(conf*100)}%", va="top", fontsize=9, color="tab:red", fontweight="bold")
+            ax.text(ts, px, "  HMA cross ↓", va="top", fontsize=9, color="tab:red", fontweight="bold")
     except Exception:
         pass
 
@@ -2817,22 +2818,8 @@ def draw_session_lines(ax, lines: dict):
             bbox=dict(boxstyle="round,pad=0.22", fc="white", ec="grey", alpha=0.7))
 
 # ========= Signals & News helpers =========
-EW_CONFIDENCE = 0.95
-
-def elliott_conf_signal(price_now: float, fc_vals: pd.Series, conf: float = EW_CONFIDENCE):
-    fc = _coerce_1d_series(fc_vals).dropna().to_numpy(dtype=float)
-    if fc.size == 0 or not np.isfinite(price_now):
-        return None
-    p_up = float(np.mean(fc > price_now))
-    p_dn = float(np.mean(fc < price_now))
-    if p_up >= conf:
-        return {"side": "BUY", "prob": p_up}
-    if p_dn >= conf:
-        return {"side": "SELL", "prob": p_dn}
-    return None
-
-def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
-                        fc_vals: pd.Series, threshold: float, prox: float):
+def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series, prox: float):
+    """Price near support (BUY side) or resistance (SELL side). A chart event, not a tested signal."""
     try:
         last_close = _safe_last_float(hc)
         res = _safe_last_float(res_h)
@@ -2841,18 +2828,43 @@ def sr_proximity_signal(hc: pd.Series, res_h: pd.Series, sup_h: pd.Series,
         return None
     if not np.all(np.isfinite([last_close, res, sup])) or res <= sup:
         return None
-    near_support = last_close <= sup * (1.0 + prox)
-    near_resist  = last_close >= res * (1.0 - prox)
-    fc = np.asarray(_coerce_1d_series(fc_vals).dropna(), dtype=float)
-    if fc.size == 0:
-        return None
-    p_up_from_here = float(np.mean(fc > last_close))
-    p_dn_from_here = float(np.mean(fc < last_close))
-    if near_support and p_up_from_here >= threshold:
-        return {"side": "BUY", "prob": p_up_from_here, "level": sup}
-    if near_resist and p_dn_from_here >= threshold:
-        return {"side": "SELL", "prob": p_dn_from_here, "level": res}
+    if last_close <= sup * (1.0 + prox):
+        return {"side": "BUY", "level": sup}
+    if last_close >= res * (1.0 - prox):
+        return {"side": "SELL", "level": res}
     return None
+
+# Forex dip rule tested in Stock Wizard and bullbears.py: buy when daily Stochastic %K(14) <= 10,
+# sell when RSI(14) reaches 50 or after 60 days.
+FX_STOCH_LOW = 10
+HISTORY_FILE = Path(__file__).with_name("bullbears_history.csv")
+
+def stochastic_k(ohlc: pd.DataFrame, period: int = 14) -> pd.Series:
+    lo = _coerce_1d_series(ohlc["Low"]).rolling(period, min_periods=period).min()
+    hi = _coerce_1d_series(ohlc["High"]).rolling(period, min_periods=period).max()
+    return 100.0 * (_coerce_1d_series(ohlc["Close"]) - lo) / (hi - lo).replace(0, np.nan)
+
+def fx_stochastic_record() -> str:
+    try:
+        h = pd.read_csv(HISTORY_FILE)
+        r = h[h["State"] == "FX STOCH DIP"].iloc[0]
+        return (f"Past record ({int(r['Signals']):,} signals since {r['Since']}): rose by the exit "
+                f"{r['Target First %']:.0f}% of the time, average {r['Avg Result %']:+.2f}% after costs.")
+    except Exception:
+        return ""
+
+def render_fx_stochastic_note(ohlc: pd.DataFrame) -> None:
+    if ohlc is None or ohlc.empty or len(ohlc) < 30:
+        return
+    k = _safe_last_float(stochastic_k(ohlc))
+    if not np.isfinite(k):
+        return
+    if k <= FX_STOCH_LOW:
+        st.success(f"**Forex Stochastic Dip:** daily %K is {k:.1f} (≤ {FX_STOCH_LOW}). Tested rule: buy, "
+                   f"sell when RSI(14) reaches 50 or after 60 days. {fx_stochastic_record()}")
+    else:
+        st.caption(f"Forex Stochastic Dip: daily %K is {k:.1f}; the tested buy rule needs {FX_STOCH_LOW} or lower. "
+                   f"{fx_stochastic_record()}")
 
 @st.cache_data(ttl=120, show_spinner=False)
 def fetch_yf_news(symbol: str, window_days: int = 7) -> pd.DataFrame:
@@ -2960,7 +2972,7 @@ def _last_delta_sign(series_like: pd.Series) -> float:
     return np.sign(d) if np.isfinite(d) else np.nan
 
 def bb_divergence_signals(ax, price: pd.Series, bb_upper: pd.Series, bb_lower: pd.Series,
-                          lookback: int, conf_up: float, conf_dn: float, conf_level: float = 0.95):
+                          lookback: int):
     p = _coerce_1d_series(price).astype(float)
     up = _coerce_1d_series(bb_upper).reindex(p.index).astype(float)
     lo = _coerce_1d_series(bb_lower).reindex(p.index).astype(float)
@@ -2977,24 +2989,24 @@ def bb_divergence_signals(ax, price: pd.Series, bb_upper: pd.Series, bb_lower: p
     last_sign = _last_delta_sign(p)
     ts = p.index[-1]
     px = float(p.iloc[-1]) if len(p) else np.nan
-    buy_cond  = (m_price > 0) and (m_lower < 0) and (m_dist_buy > 0) and (last_sign > 0) and (conf_up >= conf_level)
-    sell_cond = (m_price < 0) and (m_upper > 0) and (m_dist_sell > 0) and (last_sign < 0) and (conf_dn >= conf_level)
+    buy_cond  = (m_price > 0) and (m_lower < 0) and (m_dist_buy > 0) and (last_sign > 0)
+    sell_cond = (m_price < 0) and (m_upper > 0) and (m_dist_sell > 0) and (last_sign < 0)
     try:
         if buy_cond and np.isfinite(px):
             ax.scatter([ts], [px], marker="^", s=120, color="tab:green", zorder=9)
-            ax.text(ts, px, f"  BB BUY {int(conf_level*100)}%", va="bottom", fontsize=9,
+            ax.text(ts, px, "  BB divergence ↑", va="bottom", fontsize=9,
                     color="tab:green", fontweight="bold")
             st.success(
-                f"**BB Divergence BUY** @ {fmt_price_val(px)} — trend↑ ({fmt_slope(m_price)}), "
-                f"lowerBB↓ ({fmt_slope(m_lower)}), Δ(price−lower)↑ ({fmt_slope(m_dist_buy)}), P(up)≥{int(conf_level*100)}%"
+                f"**BB divergence up** @ {fmt_price_val(px)} — trend↑ ({fmt_slope(m_price)}), "
+                f"lowerBB↓ ({fmt_slope(m_lower)}), Δ(price−lower)↑ ({fmt_slope(m_dist_buy)}). Chart event, not a tested signal."
             )
         if sell_cond and np.isfinite(px):
             ax.scatter([ts], [px], marker="v", s=120, color="tab:red", zorder=9)
-            ax.text(ts, px, f"  BB SELL {int(conf_level*100)}%", va="top", fontsize=9,
+            ax.text(ts, px, "  BB divergence ↓", va="top", fontsize=9,
                     color="tab:red", fontweight="bold")
             st.error(
-                f"**BB Divergence SELL** @ {fmt_price_val(px)} — trend↓ ({fmt_slope(m_price)}), "
-                f"upperBB↑ ({fmt_slope(m_upper)}), Δ(upper−price)↑ ({fmt_slope(m_dist_sell)}), P(down)≥{int(conf_level*100)}%"
+                f"**BB divergence down** @ {fmt_price_val(px)} — trend↓ ({fmt_slope(m_price)}), "
+                f"upperBB↑ ({fmt_slope(m_upper)}), Δ(upper−price)↑ ({fmt_slope(m_dist_sell)}). Chart event, not a tested signal."
             )
     except Exception:
         pass
@@ -6492,8 +6504,6 @@ with tab1:
         df_ohlc = st.session_state.df_ohlc
 
         last_price = _safe_last_float(df)
-        p_up = np.mean(st.session_state.fc_vals.to_numpy() > last_price) if np.isfinite(last_price) else np.nan
-        p_dn = 1 - p_up if np.isfinite(p_up) else np.nan
 
         fx_news = pd.DataFrame()
         if mode == "Forex" and show_fx_news:
@@ -6625,19 +6635,19 @@ with tab1:
                 cross_d = detect_last_crossover(df_show, hma_d_show)
                 if cross_d is not None and cross_d["time"] is not None and (not use_adx_filter or adx_ok_d):
                     ts = cross_d["time"]; px_here = _safe_last_float(pd.Series([df_show.loc[ts]]))
-                    if cross_d["side"] == "BUY" and np.isfinite(p_up) and p_up >= hma_conf:
-                        annotate_crossover(ax, ts, px_here, "BUY", hma_conf)
-                        st.success(f"**HMA BUY** @ {fmt_price_val(px_here)} — P(up)={fmt_pct(p_up)} ≥ {fmt_pct(hma_conf)} | ADX {adx_last_d:.1f}")
-                    elif cross_d["side"] == "SELL" and np.isfinite(p_dn) and p_dn >= hma_conf:
-                        annotate_crossover(ax, ts, px_here, "SELL", hma_conf)
-                        st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)} | ADX {adx_last_d:.1f}")
+                    if cross_d["side"] == "BUY":
+                        annotate_crossover(ax, ts, px_here, "BUY")
+                        st.success(f"**HMA cross up** @ {fmt_price_val(px_here)} | ADX {adx_last_d:.1f} (chart event, not a tested signal)")
+                    else:
+                        annotate_crossover(ax, ts, px_here, "SELL")
+                        st.error(f"**HMA cross down** @ {fmt_price_val(px_here)} | ADX {adx_last_d:.1f} (chart event, not a tested signal)")
                 elif cross_d is not None and cross_d["time"] is not None and use_adx_filter and not adx_ok_d:
                     st.info(f"HMA signal gated off: ADX {adx_last_d:.1f} < {adx_min}")
 
             # BB Divergence (Daily) — ADX gate
             if show_bb_div and (not use_adx_filter or adx_ok_d):
                 bb_divergence_signals(ax, df_show, bb_up_d_show, bb_lo_d_show,
-                                      lookback=slope_lb_daily, conf_up=p_up, conf_dn=p_dn, conf_level=bb_conf)
+                                      lookback=slope_lb_daily)
             elif show_bb_div and use_adx_filter and not adx_ok_d:
                 st.info(f"BB Divergence gated off: ADX {adx_last_d:.1f} < {adx_min}")
 
@@ -6814,7 +6824,7 @@ with tab1:
                     trade_state = {"state": "WAIT", "detail": "Trade-state calculation unavailable.", "level": "info"}
 
                 instr_txt = format_trade_instruction(slope_h, sup_val, res_val, px_val, sel)
-                ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range})  ↑{fmt_pct(p_up)}  ↓{fmt_pct(p_dn)} — {instr_txt}  |  ADX {adx_last_h:.1f}")
+                ax2.set_title(f"{sel} Intraday ({st.session_state.hour_range}) — {instr_txt}  |  ADX {adx_last_h:.1f}")
 
                 if np.isfinite(px_val):
                     nbb_txt = ""
@@ -6860,8 +6870,7 @@ with tab1:
                         if times: draw_news_markers(ax2, times, float(hc.min()), float(hc.max()), label="News")
 
                 # ===== Near S/R signal — ADX gate =====
-                signal = sr_proximity_signal(hc, res_h, sup_h, st.session_state.fc_vals,
-                                             threshold=signal_threshold, prox=sr_prox_pct)
+                signal = sr_proximity_signal(hc, res_h, sup_h, prox=sr_prox_pct)
                 if signal is not None and np.isfinite(px_val):
                     if not use_adx_filter or adx_ok_h:
                         pips_txt = _diff_text(sup_val, res_val, sel) if np.isfinite(sup_val) and np.isfinite(res_val) else ""
@@ -6873,11 +6882,9 @@ with tab1:
                         if green_trend_up:
                             close_price = res_val
                             close_label = "Sell Price"
-                            conf_tag = f"↑{fmt_pct(p_up)}" if np.isfinite(p_up) else "↑n/a"
                         else:
                             close_price = sup_val
                             close_label = "Buy Price"
-                            conf_tag = f"↓{fmt_pct(p_dn)}" if np.isfinite(p_dn) else "↓n/a"
 
                         if signal["side"] == "BUY":
                             near_txt = f"Near support {fmt_price_val(sup_val)}"
@@ -6885,7 +6892,7 @@ with tab1:
                             if buy_alert_confirmed:
                                 st.success(
                                     f"**Profit Alert:** **CLOSE** @ {fmt_price_val(close_price)} — "
-                                    f"{close_label} {fmt_price_val(close_price)}; {near_txt} with {conf_tag} "
+                                    f"{close_label} {fmt_price_val(close_price)}; {near_txt} "
                                     f"• {pips_txt} | ADX {adx_last_h:.1f} "
                                     f"| NTD S/R turn: {trade_buy_context.get('zone_label', 'confirmed')}"
                                 )
@@ -6899,7 +6906,7 @@ with tab1:
                             near_txt = f"Near resistance {fmt_price_val(res_val)}"
                             st.error(
                                 f"**CLOSE** @ {fmt_price_val(close_price)} — "
-                                f"{close_label} {fmt_price_val(close_price)}; {near_txt} with {conf_tag} "
+                                f"{close_label} {fmt_price_val(close_price)}; {near_txt} "
                                 f"• {pips_txt} | ADX {adx_last_h:.1f}"
                             )
                     else:
@@ -6910,19 +6917,19 @@ with tab1:
                     cross_h = detect_last_crossover(hc, hma_h)
                     if cross_h is not None and cross_h["time"] is not None and (not use_adx_filter or adx_ok_h):
                         ts = cross_h["time"]; px_here = _safe_last_float(pd.Series([hc.loc[ts]]))
-                        if cross_h["side"] == "BUY" and np.isfinite(p_up) and p_up >= hma_conf:
-                            annotate_crossover(ax2, ts, px_here, "BUY", hma_conf)
-                            st.success(f"**HMA BUY** @ {fmt_price_val(px_here)} — P(up)={fmt_pct(p_up)} ≥ {fmt_pct(hma_conf)} | ADX {adx_last_h:.1f}")
-                        elif cross_h["side"] == "SELL" and np.isfinite(p_dn) and p_dn >= hma_conf:
-                            annotate_crossover(ax2, ts, px_here, "SELL", hma_conf)
-                            st.error(f"**HMA SELL** @ {fmt_price_val(px_here)} — P(down)={fmt_pct(p_dn)} ≥ {fmt_pct(hma_conf)} | ADX {adx_last_h:.1f}")
+                        if cross_h["side"] == "BUY":
+                            annotate_crossover(ax2, ts, px_here, "BUY")
+                            st.success(f"**HMA cross up** @ {fmt_price_val(px_here)} | ADX {adx_last_h:.1f} (chart event, not a tested signal)")
+                        else:
+                            annotate_crossover(ax2, ts, px_here, "SELL")
+                            st.error(f"**HMA cross down** @ {fmt_price_val(px_here)} | ADX {adx_last_h:.1f} (chart event, not a tested signal)")
                     elif cross_h is not None and cross_h["time"] is not None and use_adx_filter and not adx_ok_h:
                         st.info(f"HMA signal gated off: ADX {adx_last_h:.1f} < {adx_min}")
 
                 # BB Divergence — ADX gate
                 if show_bb_div and (not use_adx_filter or adx_ok_h):
                     bb_divergence_signals(ax2, hc, bb_up_h, bb_lo_h,
-                                          lookback=slope_lb_hourly, conf_up=p_up, conf_dn=p_dn, conf_level=bb_conf)
+                                          lookback=slope_lb_hourly)
                 elif show_bb_div and use_adx_filter and not adx_ok_h:
                     st.info(f"BB Divergence gated off: ADX {adx_last_h:.1f} < {adx_min}")
 
@@ -7013,6 +7020,14 @@ with tab1:
                 show_cols["time"] = show_cols["time"].dt.strftime("%Y-%m-%d %H:%M")
                 st.dataframe(show_cols[["time","publisher","title","link"]].reset_index(drop=True), use_container_width=True)
 
+        if mode == "Forex":
+            render_fx_stochastic_note(df_ohlc)
+        st.subheader("30-day model projection (SARIMAX)")
+        st.caption(
+            "Shown for reference only. Replayed every 30 days from 2020 to 2026 on this app's symbols, the "
+            "projection's direction was right about half the time (Forex 47%; stocks no better than simply "
+            "holding), so it is not used for any signal. Not financial advice."
+        )
         st.write(pd.DataFrame({
             "Forecast": st.session_state.fc_vals,
             "Lower":    st.session_state.fc_ci.iloc[:,0],
