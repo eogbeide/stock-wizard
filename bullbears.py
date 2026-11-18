@@ -632,7 +632,6 @@ def prepare_indicators(df: pd.DataFrame, cfg: dict, symbol: str) -> pd.DataFrame
     return out
 
 
-
 def compute_trade_probabilities_and_instruction(symbol: str,
                                                 state: str,
                                                 bias: str,
@@ -858,7 +857,6 @@ def compute_trade_probabilities_and_instruction(symbol: str,
     }
 
 
-
 def probability_trade_read(trade: dict) -> dict:
     """Translate long/short probabilities into a simple trade plan users can read quickly."""
     long_prob = safe_float(trade.get("Long Score"))
@@ -950,7 +948,6 @@ def probability_bar_values(trade: dict) -> tuple[float, float, float]:
     return long_prob, short_prob, edge
 
 
-
 def trade_trend_alignment(trade: dict) -> dict:
     """Describe whether the trade action and current trend direction agree.
 
@@ -1032,7 +1029,6 @@ def render_structure_trend_badge(container, trade: dict) -> None:
 ''',
         unsafe_allow_html=True,
     )
-
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -1779,14 +1775,14 @@ symbol = st.sidebar.selectbox(
     on_change=_persist_sidebar_choices,
 )
 period = st.sidebar.selectbox(
-    "Hourly chart period",
+    "Intraday chart period",
     PERIOD_OPTIONS,
     index=PERIOD_OPTIONS.index(st.session_state["persist_period"]),
     key="persist_period",
     on_change=_persist_sidebar_choices,
 )
 interval = st.sidebar.selectbox(
-    "Hourly bar interval",
+    "Intraday bar interval",
     INTERVAL_OPTIONS,
     index=INTERVAL_OPTIONS.index(st.session_state["persist_interval"]),
     key="persist_interval",
@@ -1802,28 +1798,11 @@ daily_period = st.sidebar.selectbox(
 
 _persist_sidebar_choices()
 
-st.sidebar.subheader("Trend / Reversal Logic")
-trend_lookback = st.sidebar.slider("Trendline lookback (bars)", 30, 360, 120, 5)
-sr_lookback = st.sidebar.slider("Support/resistance lookback (bars)", 30, 360, 120, 5)
-ntd_window = st.sidebar.slider("NTD window", 20, 180, 60, 5)
-touch_lookback = st.sidebar.slider("Touch lookback (bars)", 1, 30, 8, 1)
-confirm_bars = st.sidebar.slider("Confirmation bars", 1, 8, 3, 1)
-signal_lookback = st.sidebar.slider("Recent signal window (bars)", 5, 120, 40, 5)
-cross_lookback = st.sidebar.slider("Recent 30 EMA cross window (bars)", 3, 120, 30, 1)
-touch_tol_pips = st.sidebar.slider(
-    "S/R touch tolerance (pips for FX, cents for Stocks)",
-    0.0, 100.0, 3.0, 0.5
-)
-pullback_tol_pips = st.sidebar.slider(
-    "Pullback proximity tolerance (pips for FX, cents for Stocks)",
-    1.0, 100.0, 8.0, 0.5
-)
-cooldown = st.sidebar.slider("Marker cooldown (bars)", 0, 60, 10, 1)
-
-st.sidebar.subheader("Display")
-npx_smooth = st.sidebar.slider("NPX smoothing", 1, 30, 9, 1)
-sr_smooth = st.sidebar.slider("S/R index smoothing", 1, 30, 8, 1)
-right_padding = st.sidebar.slider("Right-edge chart padding", 2, 40, 12, 1)
+# Engine settings kept at the values the signal history was measured with
+# (bullbears_history_build.py). The tabs that used other values were removed.
+trend_lookback, sr_lookback, ntd_window, touch_lookback, confirm_bars = 120, 120, 60, 8, 3
+signal_lookback, cross_lookback, touch_tol_pips, pullback_tol_pips, cooldown = 40, 30, 3.0, 8.0, 10
+npx_smooth, sr_smooth, right_padding = 9, 8, 12
 
 cfg = {
     "period": period,
@@ -1844,7 +1823,6 @@ cfg = {
     "right_padding": right_padding,
     "asset_class": asset_class,
 }
-
 
 
 # =========================
@@ -1977,7 +1955,6 @@ def daily_ntd_dip_scan_row(symbol: str, threshold: float, cfg: dict, lookback: i
             "NTD Direction": "Error",
             "Explanation": f"Scan error: {exc}",
         }
-
 
 
 def hourly_ntd_dip_scan_row(symbol: str, threshold: float, cfg: dict, lookback: int = 120):
@@ -2313,7 +2290,6 @@ def _daily_sr_cross_row(symbol: str, cfg: dict, lookback: int):
         }
 
     return out
-
 
 
 def _hourly_sr_cross_row(symbol: str, cfg: dict, lookback: int):
@@ -2672,14 +2648,13 @@ def _top_downtrend_sr_ntd_upward_reversal_candidates(sr_ntd_df: pd.DataFrame, li
     return candidates[cols].reset_index(drop=True)
 
 
-
-
 # =========================
 # Main app
 # =========================
-st.title("📈 Stocks / FX Trading Indicator")
+st.title("📈 Stocks / FX: tested signals only")
 st.caption(
-     "Toggle between Stocks and Forex. Hourly and daily views use real trading bars only and include trade instructions, rule scores and each signal's measured past record."
+     "Only what held up in testing: a likely price range (not a direction), the tested dip buy signals with each "
+     "symbol's own past record, and an intraday view for timing. Tabs whose signals did no better than chance were removed."
 )
 
 
@@ -2734,8 +2709,6 @@ def _scan_ntd_zero_up(symbol: str, timeframe: str, settings: dict, recent_bars: 
     }
 
 
-
-
 # =========================
 # HMA(55) upward price-cross scanner
 # =========================
@@ -2785,7 +2758,6 @@ def _scan_hma_price_cross_up(symbol: str, timeframe: str, settings: dict, recent
         "Move Unit": unit,
         "Trend Slope": round(float(trend_slope), 7),
     }
-
 
 
 # =========================
@@ -2928,7 +2900,6 @@ def scan_smoothed_npx_up_cross(symbol: str, timeframe: str, settings: dict, rece
         "Price Trend R²": round(r2, 3) if np.isfinite(r2) else np.nan,
         "Last Price": fmt_price(symbol, close.iloc[-1]),
     }
-
 
 
 # =========================
@@ -3203,21 +3174,421 @@ def render_tradingview_style_chart(symbol: str, df: pd.DataFrame, timeframe: str
     plt.close(fig)
 
 
-tab_chart, tab_tv_chart, tab_rsi_oversold, tab_green_zone, tab_npx_up_cross, tab_ema30_cross, tab_scanner, tab_buy_sell, tab_trade_action, tab_daily_sr_cross, tab_daily_dips, tab_fx_stoch, tab_ntd_cross, tab_hma_cross, tab_rules = st.tabs([
-    "Trading Chart",
-    "TradingView Chart",
+# =========================
+# Range Chart: only what held up in testing
+# =========================
+# Likely range over the next 1-5 trading days: quantiles of each market's past
+# moves, measured in units of the symbol's last 60 days of volatility (log
+# returns / (vol * sqrt(days))). Fitted on this app's 31 pairs and 41 stocks,
+# 2013-2026. Checked year by year (2018-2026), each year using only earlier
+# years: the real close landed inside the 80% band 77-84% of the time (Forex)
+# and 76-84% (Stocks), every pair between 77% and 83%. Direction is not forecast.
+RANGE_VOL_DAYS = 60
+RANGE_DAYS = 5
+RANGE_Q = {  # 10%, 25%, 50%, 75%, 90%
+    "Forex": {1: (-1.224, -0.5988, 0.0163, 0.6085, 1.2255), 2: (-1.2273, -0.5953, 0.0176, 0.6223, 1.2176),
+              3: (-1.237, -0.5992, 0.0175, 0.6283, 1.229), 4: (-1.2376, -0.6037, 0.0171, 0.6306, 1.2332),
+              5: (-1.2305, -0.6047, 0.0165, 0.6321, 1.226)},
+    "Stocks": {1: (-1.1523, -0.5099, 0.035, 0.6086, 1.2044), 2: (-1.1672, -0.5182, 0.0621, 0.6437, 1.2248),
+               3: (-1.1775, -0.5174, 0.0751, 0.6605, 1.2519), 4: (-1.1848, -0.5161, 0.0882, 0.6786, 1.2674),
+               5: (-1.1749, -0.511, 0.0986, 0.6918, 1.278)},
+}
+RANGE_RECORD = {
+    "Forex": "Checked 2018–2026 on all 31 pairs, each year using only earlier years: the real close landed inside the 80% band 77–84% of the time and inside the 50% band 47–54%.",
+    "Stocks": "Checked 2018–2026 on all 41 stocks and funds, each year using only earlier years: the real close landed inside the 80% band 76–84% of the time and inside the 50% band 44–56%.",
+}
+# Stocks: daily RSI(14) at 30 or below while the 120-day trend line slopes down,
+# held 20 trading days. Measured with dip_events on this app's 41 stocks since
+# mid-2017: 323 signals, 64% rose against 57% for any stock on any day.
+STOCK_DIP_RSI = 30
+STOCK_DIP_HOLD = 20
+STOCK_DIP_RECORD = ("Since mid-2017 on this app's 41 stocks: 323 signals, 64% rose over 20 trading days (average +5.8% "
+                    "after costs), against 57% for any stock on any day (+3.4%). Weaker in 2020, 2024 and 2026 (54–58%). "
+                    "A few big rebounds lift the average, so buy small, equal amounts.")
+FX_RSI_DOWN_RECORD = "Over Nov 2021–Nov 2026 on this app's pairs: rose within 20 trading days 74% of the time, against 54% for any pair on any day. The Stochastic rule (its own tab) did better."
+COST_RATE = {"Forex": 0.0003, "Stocks": 0.0005}
+SESSIONS = (("Tokyo", "Asia/Tokyo", 9, 18, "#f2c14e"), ("London", "Europe/London", 8, 17, "#5b8def"),
+            ("New York", "America/New_York", 8, 17, "#e86f5c"))
+
+
+def bar_days(index) -> pd.DatetimeIndex:
+    """Trading date of each daily bar. Yahoo stamps them at midnight in the market's own
+    time zone, so after converting to Pacific a bar can show the previous day."""
+    idx = pd.DatetimeIndex(index)
+    if idx.tz is not None:
+        idx = idx.tz_convert("UTC") + pd.Timedelta(hours=12)
+        idx = idx.tz_localize(None)
+    return idx.normalize()
+
+
+def weekday_bars(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop Yahoo's weekend FX bars (they hold Friday's late trading)."""
+    return df[bar_days(df.index).day_of_week < 5]
+
+
+def trend_slope_series(close: pd.Series, window: int = 120) -> pd.Series:
+    """Slope of a least-squares line through each bar's last `window` closes."""
+    y = coerce_series(close).astype(float)
+    x = pd.Series(np.arange(len(y), dtype=float), index=y.index)
+    n = window
+    sx, sy = x.rolling(n).sum(), y.rolling(n).sum()
+    sxy, sxx = (x * y).rolling(n).sum(), (x * x).rolling(n).sum()
+    return (n * sxy - sx * sy) / (n * sxx - sx * sx)
+
+
+def range_forecast(daily: pd.DataFrame, market: str) -> dict | None:
+    close = coerce_series(weekday_bars(daily)["Close"]).dropna().astype(float)
+    if len(close) < RANGE_VOL_DAYS + 1:
+        return None
+    vol = float(np.log(close).diff().tail(RANGE_VOL_DAYS).std())
+    if not np.isfinite(vol) or vol <= 0:
+        return None
+    last = float(close.iloc[-1])
+    days = pd.bdate_range(bar_days(close.index)[-1] + pd.Timedelta(days=1), periods=RANGE_DAYS)
+    rows = []
+    for h, day in zip(range(1, RANGE_DAYS + 1), days):
+        lo, lo50, _, hi50, hi = (last * math.exp(q * vol * math.sqrt(h)) for q in RANGE_Q[market][h])
+        rows.append({"day": day, "low": lo, "low50": lo50, "high50": hi50, "high": hi})
+    return {"last": last, "vol": vol, "days": rows}
+
+
+def dip_events(daily: pd.DataFrame, market: str, since: str = "2017-06-01") -> pd.DataFrame:
+    """Each past tested dip buy for one symbol: start, exit and result after costs.
+
+    Forex: daily Stochastic %K(14) <= FX_STOCH_LOW, sold when RSI(14) reaches
+    FX_STOCH_EXIT_RSI or after FX_STOCH_MAX_DAYS (one position at a time).
+    Stocks: the first day RSI(14) is at STOCK_DIP_RSI or below with the 120-day
+    trend line sloping down, held STOCK_DIP_HOLD trading days (one at a time).
+    """
+    df = weekday_bars(daily)
+    close = coerce_series(df["Close"]).astype(float).to_numpy()
+    rsi = calculate_chart_rsi(df["Close"], 14).to_numpy(float)
+    days = bar_days(df.index)
+    first = int(np.searchsorted(days, pd.Timestamp(since)))
+    cost = COST_RATE[market]
+    out = []
+    if market == "Forex":
+        k = stochastic_k(df, 14).to_numpy(float)
+        i = max(first, 14)
+        while i < len(df):
+            if not (np.isfinite(k[i]) and k[i] <= FX_STOCH_LOW):
+                i += 1
+                continue
+            j = i + 1
+            while j < len(df) and j - i < FX_STOCH_MAX_DAYS and not rsi[j] >= FX_STOCH_EXIT_RSI:
+                j += 1
+            done = j < len(df)
+            j = min(j, len(df) - 1)
+            out.append({"start": i, "end": j, "open": not done,
+                        "result": close[j] / close[i] - 1 - cost})
+            i = j + 1
+    else:
+        slope = trend_slope_series(df["Close"], 120).to_numpy(float)
+        on = (rsi <= STOCK_DIP_RSI) & (slope < 0)
+        i = max(first, 1)
+        while i < len(df):
+            if not (on[i] and not on[i - 1]):
+                i += 1
+                continue
+            j = min(i + STOCK_DIP_HOLD, len(df) - 1)
+            out.append({"start": i, "end": j, "open": i + STOCK_DIP_HOLD >= len(df),
+                        "result": close[j] / close[i] - 1 - cost})
+            i = j + 1
+    ev = pd.DataFrame(out, columns=["start", "end", "open", "result"])
+    ev["date"] = [days[i] for i in ev["start"]]
+    return ev
+
+
+def dip_record_text(symbol: str, ev: pd.DataFrame, market: str) -> str:
+    done = ev[~ev["open"]]
+    name = symbol.replace("=X", "")
+    if done.empty:
+        return f"{name} has had no finished dip signal since 2017."
+    rose = int((done["result"] > 0).sum())
+    txt = (f"{name}: {len(done)} past dip signals since 2017, {rose} rose ({100 * rose / len(done):.0f}%), "
+           f"average {100 * done['result'].mean():+.2f}% after costs.")
+    if len(done) < 15:
+        txt += " Too few to judge on their own; the all-symbols record is the better guide."
+    return txt
+
+
+def dip_now(daily: pd.DataFrame, market: str) -> dict:
+    df = weekday_bars(daily)
+    rsi = calculate_chart_rsi(df["Close"], 14)
+    if market == "Forex":
+        k = safe_float(stochastic_k(df, 14).iloc[-1])
+        return {"on": k <= FX_STOCH_LOW, "text": f"Daily Stochastic %K is {k:.1f} (buy level {FX_STOCH_LOW} or lower); RSI {safe_float(rsi.iloc[-1]):.1f} (sell level {FX_STOCH_EXIT_RSI})."}
+    r = safe_float(rsi.iloc[-1])
+    down = safe_float(trend_slope_series(df["Close"], 120).iloc[-1]) < 0
+    return {"on": r <= STOCK_DIP_RSI and down,
+            "text": f"Daily RSI is {r:.1f} (buy level {STOCK_DIP_RSI} or lower); 120-day trend is {'down' if down else 'up'} (needs down)."}
+
+
+def quote_to_usd(symbol: str) -> float:
+    """USD value of one unit of the pair's quote currency (1.0 for stocks)."""
+    if "=X" not in symbol:
+        return 1.0
+    quote = symbol.replace("=X", "")[3:6]
+    if quote == "USD":
+        return 1.0
+    for sym, invert in ((f"USD{quote}=X", True), (f"{quote}USD=X", False)):
+        d = fetch_market_ohlc(sym, "5d", "1d")
+        if not d.empty:
+            px = float(d["Close"].iloc[-1])
+            return 1.0 / px if invert else px
+    return float("nan")
+
+
+def _candles(ax, x, o, h, l, c, width=0.65):
+    up = c >= o
+    color = np.where(up, "#0f9d82", "#e04451")
+    ax.vlines(x, l, h, colors=color, linewidth=0.8, zorder=3)
+    ax.bar(x, np.maximum(np.abs(c - o), 1e-12), bottom=np.minimum(o, c), width=width,
+           color=color, edgecolor=color, linewidth=0.3, zorder=4)
+
+
+def plot_range_chart(symbol: str, market: str, daily: pd.DataFrame, hist: pd.DataFrame,
+                     fc: dict | None, ev: pd.DataFrame, show_untested: bool, position: dict | None):
+    d = weekday_bars(daily)
+    n = len(d)
+    x = np.arange(n, dtype=float)
+    fig = plt.figure(figsize=(15.2, 8.6), facecolor="white")
+    gs = fig.add_gridspec(2, 1, height_ratios=[3.2, 1.3], hspace=0.08)
+    ax = fig.add_subplot(gs[0])
+    osc = fig.add_subplot(gs[1], sharex=ax)
+    fig.subplots_adjust(left=0.04, right=0.86, top=0.94, bottom=0.07)
+    name = symbol.replace("=X", "")
+    fig.suptitle(f"{name} · Daily  |  likely range for the next {RANGE_DAYS} trading days", fontsize=14,
+                 fontweight="bold", y=0.985)
+    _candles(ax, x, *(d[k].to_numpy(float) for k in ("Open", "High", "Low", "Close")))
+    if show_untested:
+        full = coerce_series(hist["Close"])
+        hm = hma(full, 55).reindex(d.index)
+        _, bu, bl = bollinger(full, 20, 2)
+        ax.plot(x, hm.to_numpy(float), color="#8a63d2", lw=1.2, alpha=.8, label="HMA 55 (untested)")
+        ax.fill_between(x, bl.reindex(d.index).to_numpy(float), bu.reindex(d.index).to_numpy(float),
+                        color="#84bdea", alpha=.10, label="Bollinger 20, 2 (untested)")
+    if fc:
+        fx_ = np.r_[n - 1, n - 1 + np.arange(1, RANGE_DAYS + 1)]
+        col = lambda k: np.r_[fc["last"], [r[k] for r in fc["days"]]]  # noqa: E731
+        ax.fill_between(fx_, col("low"), col("high"), color="#3b7dd8", alpha=.13, lw=0, label="80% likely range")
+        ax.fill_between(fx_, col("low50"), col("high50"), color="#3b7dd8", alpha=.28, lw=0, label="50% likely range")
+        last_day = fc["days"][-1]
+        for key, va in (("high", "bottom"), ("high50", "bottom"), ("low50", "top"), ("low", "top")):
+            ax.annotate(fmt_price(symbol, last_day[key]), (fx_[-1], last_day[key]), xytext=(6, 0),
+                        textcoords="offset points", va="center", fontsize=8,
+                        color="#1f4f99", fontweight="bold" if key in ("high", "low") else "normal")
+    if position and position.get("entry"):
+        colour = "#0f9d82" if position["side"] == "Long" else "#e04451"
+        ax.axhline(position["entry"], color=colour, ls="--", lw=1.2, zorder=2)
+        ax.annotate(f"Your {position['side'].lower()} {fmt_price(symbol, position['entry'])}", (0, position["entry"]),
+                    xytext=(4, 3), textcoords="offset points", fontsize=8, color=colour)
+    ax.yaxis.tick_right()
+    ax.grid(True, alpha=.13)
+    ax.legend(loc="upper left", fontsize=8, ncol=4, framealpha=.85)
+    ax.set_xlim(-1, n + RANGE_DAYS + max(8, n // 18))
+    ax.tick_params(axis="x", labelbottom=False)
+
+    # Lower panel: the tested buy signal, with every past signal in view marked by how it ended.
+    hd = weekday_bars(hist)
+    rsi = calculate_chart_rsi(hd["Close"], 14).reindex(d.index)
+    if market == "Forex":
+        k = stochastic_k(hd, 14).reindex(d.index)
+        osc.plot(x, k.to_numpy(float), color="#1686c4", lw=1.3, label="Stochastic %K 14")
+        osc.plot(x, rsi.to_numpy(float), color="#9774b5", lw=1.1, alpha=.8, label="RSI 14")
+        osc.axhline(FX_STOCH_LOW, color="#0f9d82", lw=1.4)
+        osc.axhline(FX_STOCH_EXIT_RSI, color="#9774b5", lw=1.0, ls="--")
+        osc.text(n + 0.5, FX_STOCH_LOW, f" buy ≤ {FX_STOCH_LOW}", va="center", fontsize=8, color="#0f9d82")
+        osc.text(n + 0.5, FX_STOCH_EXIT_RSI, f" sell at RSI {FX_STOCH_EXIT_RSI}", va="center", fontsize=8, color="#9774b5")
+        title = "Tested buy signal: Stochastic ≤ 10, sold when RSI reaches 50"
+    else:
+        osc.plot(x, rsi.to_numpy(float), color="#9774b5", lw=1.3, label="RSI 14")
+        osc.axhline(STOCK_DIP_RSI, color="#0f9d82", lw=1.4)
+        osc.text(n + 0.5, STOCK_DIP_RSI, f" buy ≤ {STOCK_DIP_RSI} in a downtrend", va="center", fontsize=8, color="#0f9d82")
+        title = f"Tested buy signal: RSI ≤ {STOCK_DIP_RSI} with the 120-day trend down, held {STOCK_DIP_HOLD} trading days"
+    pos = {day: i for i, day in enumerate(bar_days(d.index))}
+    hdays = bar_days(hd.index)
+    for _, e in ev.iterrows():
+        i = pos.get(hdays[int(e["start"])])
+        if i is None:
+            continue
+        colour = "#999999" if e["open"] else ("#0f9d82" if e["result"] > 0 else "#e04451")
+        osc.scatter([i], [4], marker="^", s=55, color=colour, zorder=5)
+        ax.scatter([i], [d["Low"].iloc[i]], marker="^", s=55, color=colour, zorder=6)
+    osc.scatter([], [], marker="^", color="#0f9d82", label="past signal: rose")
+    osc.scatter([], [], marker="^", color="#e04451", label="fell")
+    osc.scatter([], [], marker="^", color="#999999", label="still open")
+    osc.set_ylim(0, 100)
+    osc.yaxis.tick_right()
+    osc.grid(True, alpha=.12)
+    osc.set_title(title, loc="left", fontsize=10)
+    osc.legend(loc="upper left", fontsize=7, ncol=5, framealpha=.85)
+    ticks = np.linspace(0, n - 1, min(8, n), dtype=int)
+    osc.set_xticks(ticks)
+    osc.set_xticklabels([bar_days(d.index)[i].strftime("%Y-%m-%d") for i in ticks], fontsize=8)
+    st.pyplot(fig, use_container_width=True)
+    plt.close(fig)
+
+
+def plot_intraday_timing(symbol: str, market: str, intra: pd.DataFrame, daily: pd.DataFrame, interval: str) -> str:
+    """Intraday bars with today's range against a typical day's range and the trading sessions.
+    No buy or sell labels: nothing on intraday bars tested better than chance."""
+    d = weekday_bars(daily)
+    rng = (d["High"] - d["Low"]).astype(float)
+    typical = float(rng.iloc[-21:-1].median())
+    utc = intra.index.tz_convert("UTC")
+    if market == "Forex":  # Yahoo's daily FX bars run midnight to midnight London time
+        day_key = intra.index.tz_convert("Europe/London").normalize()
+    else:
+        day_key = intra.index.tz_convert("America/New_York").normalize()
+    today = intra[day_key == day_key[-1]]
+    lo, hi = float(today["Low"].min()), float(today["High"].max())
+    unit = pip_size(symbol) if market == "Forex" else 1.0
+    unit_name = "pips" if market == "Forex" else "$"
+    fmt_u = (lambda v: f"{v / unit:,.0f} pips") if market == "Forex" else (lambda v: f"${v:,.2f}")  # noqa: E731
+    used = 100 * (hi - lo) / typical if typical > 0 else float("nan")
+
+    n = len(intra)
+    x = np.arange(n, dtype=float)
+    fig, ax = plt.subplots(figsize=(15.2, 4.6), facecolor="white")
+    fig.subplots_adjust(left=0.07, right=0.86, top=0.88, bottom=0.14)
+    _candles(ax, x, *(intra[k].to_numpy(float) for k in ("Open", "High", "Low", "Close")), width=0.6)
+    t0 = int(np.argmax(day_key == day_key[-1]))
+    for y, label, colour in ((lo + typical, "low + typical range", "#0f9d82"),
+                             (hi - typical, "high − typical range", "#e04451")):
+        ax.hlines(y, t0, n + 2, colors=colour, linestyles="--", lw=1.1)
+        ax.annotate(f"{fmt_price(symbol, y)}  {label}", (n + 2, y), xytext=(4, 0), textcoords="offset points",
+                    va="center", fontsize=8, color=colour)
+    ax.axvline(t0 - 0.5, color="#888888", lw=0.8, ls=":")
+    ymin, ymax = ax.get_ylim()
+    strip = (ymax - ymin) * 0.035
+    for k, (label, tz, start, end, colour) in enumerate(SESSIONS):
+        local = intra.index.tz_convert(tz)
+        inside = (local.hour >= start) & (local.hour < end) & (local.day_of_week < 5)
+        base = ymin - strip * (k + 1)
+        ax.fill_between(x, base, base + strip * 0.8, where=inside, color=colour, alpha=.55, lw=0, step="mid")
+        ax.text(-2, base + strip * 0.4, label, fontsize=7, va="center", ha="right", color=colour)
+    ax.set_ylim(ymin - strip * (len(SESSIONS) + 0.3), ymax)
+    ax.yaxis.tick_right()
+    ax.grid(True, alpha=.12)
+    ax.set_xlim(-1, n + 3)
+    ticks = np.linspace(0, n - 1, min(9, n), dtype=int)
+    ax.set_xticks(ticks)
+    ax.set_xticklabels([intra.index[i].strftime("%m-%d %H:%M") for i in ticks], fontsize=8)
+    ax.set_title(f"{symbol.replace('=X', '')} · {interval} (Pacific time) — for timing only, not a signal",
+                 loc="left", fontsize=11, fontweight="bold")
+    st.pyplot(fig, use_container_width=True)
+    plt.close(fig)
+    return (f"Today's range so far: {fmt_u(hi - lo)}, {used:.0f}% of a typical day's {fmt_u(typical)} "
+            f"(median of the last 20 days). On about half of days the full range ends up bigger than the typical one. "
+            f"Near today's low with plenty of the typical range left is a calmer moment to buy than after a stretched run; "
+            f"this is description, not a tested signal.")
+
+
+def _position_from_query(symbol: str) -> dict:
+    raw = st.query_params.get("pos", "")
+    parts = str(raw).split(",")
+    if len(parts) == 6 and parts[0] == symbol:
+        try:
+            return {"side": parts[1], "entry": float(parts[2]), "size": float(parts[3]),
+                    "swap": float(parts[4]), "opened": pd.Timestamp(parts[5]).date()}
+        except Exception:
+            pass
+    return {"side": "None", "entry": 0.0, "size": 0.0, "swap": 0.0, "opened": datetime.now(PACIFIC).date()}
+
+
+def render_range_chart(symbol: str, market: str, cfg: dict) -> None:
+    hist = fetch_market_ohlc(symbol, "10y", "1d")
+    if hist.empty or len(hist) < 200:
+        st.warning(f"Not enough daily history for {symbol}.")
+        return
+    show_days = {"1mo": 22, "3mo": 64, "6mo": 128, "1y": 254, "2y": 506, "5y": 1262, "10y": 2520}
+    daily = hist.tail(show_days.get(cfg.get("daily_period", "1y"), 254))
+    fc = range_forecast(hist, market)
+    ev = dip_events(hist, market)
+    now = dip_now(hist, market)
+
+    with st.expander("Your position (optional)", expanded=False):
+        saved = _position_from_query(symbol)
+        c1, c2, c3, c4, c5 = st.columns(5)
+        side = c1.selectbox("Side", ["None", "Long", "Short"], index=["None", "Long", "Short"].index(saved["side"]),
+                            key=f"pos_side_{symbol}")
+        entry = c2.number_input("Entry price", value=float(saved["entry"]), min_value=0.0, format="%.5f",
+                                key=f"pos_entry_{symbol}")
+        size = c3.number_input("Size (units or shares)", value=float(saved["size"]), min_value=0.0, step=1000.0,
+                               key=f"pos_size_{symbol}")
+        swap = c4.number_input("Swap per night, USD (from your broker; minus if you pay)", value=float(saved["swap"]),
+                               step=1.0, key=f"pos_swap_{symbol}")
+        opened = c5.date_input("Opened on", value=saved["opened"], key=f"pos_open_{symbol}")
+        position = None
+        if side != "None" and entry > 0 and size > 0:
+            position = {"side": side, "entry": entry, "size": size, "swap": swap, "opened": opened}
+            try:
+                st.query_params["pos"] = f"{symbol},{side},{entry},{size},{swap},{opened.isoformat()}"
+            except Exception:
+                pass
+        elif side == "None":
+            try:
+                if "pos" in st.query_params:
+                    del st.query_params["pos"]
+            except Exception:
+                pass
+        st.caption("Saved in this page's link only, so bookmark it to keep it. Nothing is sent anywhere.")
+
+    if position and fc:
+        sign = 1 if position["side"] == "Long" else -1
+        to_usd = quote_to_usd(symbol)
+        pl = sign * (fc["last"] - position["entry"]) * position["size"] * to_usd
+        nights = max(0, (datetime.now(PACIFIC).date() - position["opened"]).days)
+        carry = position["swap"] * nights
+        d5 = fc["days"][-1]
+        pl_a = sign * (d5["low"] - position["entry"]) * position["size"] * to_usd
+        pl_b = sign * (d5["high"] - position["entry"]) * position["size"] * to_usd
+        m = st.columns(4)
+        m[0].metric("Profit / loss now", f"${pl:,.0f}")
+        m[1].metric(f"Carry so far ({nights} nights)", f"${carry:,.0f}" if position["swap"] else "enter swap",
+                    help="Swap per night × nights since opened. Brokers charge three nights on Wednesdays, so this is close, not exact.")
+        m[2].metric("Carry per 30 days", f"${30 * position['swap']:,.0f}" if position["swap"] else "—")
+        m[3].metric(f"P/L range by {d5['day']:%a %d %b} (80%)", f"${min(pl_a, pl_b):,.0f} to ${max(pl_a, pl_b):,.0f}")
+        if now["on"] and position["side"] == "Short":
+            st.warning("The tested dip buy signal is on for this symbol, which works against your short: "
+                       "past signals like this rose most of the time. " + now["text"])
+        elif now["on"] and position["side"] == "Long":
+            st.success("The tested dip buy signal is on, which is in favour of your long. " + now["text"])
+
+    if now["on"]:
+        st.success(f"Tested dip buy signal is ON. {now['text']}")
+    else:
+        st.caption(f"Tested dip buy signal is off. {now['text']}")
+
+    show_untested = st.checkbox("Show untested indicators (HMA 55, Bollinger Bands)", value=False,
+                                key="range_untested",
+                                help="In a 5-year backtest of this app's tabs, HMA and other indicator crosses did no better than chance.")
+    plot_range_chart(symbol, market, daily, hist, fc, ev, show_untested, position)
+
+    rec_all = STOCK_DIP_RECORD if market == "Stocks" else fx_stochastic_history_text()
+    st.markdown(f"**Dip record — {dip_record_text(symbol, ev, market)}** All {market.lower()}: {rec_all}")
+    if fc:
+        tbl = pd.DataFrame([{"Day": f"{r['day']:%a %d %b}", "80% range": f"{fmt_price(symbol, r['low'])} – {fmt_price(symbol, r['high'])}",
+                             "50% range": f"{fmt_price(symbol, r['low50'])} – {fmt_price(symbol, r['high50'])}"} for r in fc["days"]])
+        with st.expander("Likely range by day", expanded=False):
+            st.dataframe(tbl, use_container_width=True, hide_index=True)
+        st.caption(f"{RANGE_RECORD[market]} The range says how far the price is likely to move, not which way: "
+                   "no direction forecast tested better than chance.")
+
+    st.markdown("#### Intraday, for timing")
+    intra = fetch_market_ohlc(symbol, cfg["period"], cfg["interval"])
+    if intra.empty or len(intra) < 10:
+        st.info("No intraday data right now.")
+    else:
+        st.caption(plot_intraday_timing(symbol, market, intra, hist, cfg["interval"]))
+    st.caption("Not financial advice. Past results do not guarantee future results.")
+
+
+tab_range, tab_rsi_oversold, tab_fx_stoch, tab_rules = st.tabs([
+    "Range Chart",
     "RSI ≤ 30",
-    "Green Zone",
-    "NPX Cross",
-    "30EMA Cross",
-    "Scanner",
-    "Buy/Sell",
-    "Trade Action",
-    "S/R Cross",
-    "Dips",
     "FX Stochastic Dip",
-    "NTD Cross",
-    "HMA Cross",
     "Rules",
 ])
 
@@ -3285,90 +3656,19 @@ def _chart_timeframe_config(base_cfg: dict, timeframe: str) -> dict:
     return selected
 
 
-with tab_chart:
-    st.subheader("Trading Chart")
-    selected_chart_tf = st.radio(
-        "Chart timeframe", ["Hourly", "Daily"], horizontal=True,
-        key="merged_trading_chart_timeframe",
-    )
-    chart_cfg = _chart_timeframe_config(cfg, selected_chart_tf)
-    chart_data = fetch_market_ohlc(symbol, chart_cfg["period"], chart_cfg["interval"])
-    if chart_data.empty:
-        st.warning(f"No {selected_chart_tf.lower()} price data is available for {symbol}.")
-    else:
-        chart_data = prepare_indicators(chart_data, chart_cfg, symbol)
-        _, chart_slope, _ = regression_line(chart_data["Close"], chart_cfg["trend_lookback"])
-        chart_trade = classify_trade(symbol, chart_data, chart_slope, chart_cfg)
-        chart_state = chart_trade.get("State", "WAIT")
-        chart_css = "signal-buy" if "BUY" in chart_state else ("signal-sell" if "SELL" in chart_state else "signal-wait")
-        st.markdown(
-            f"""<div class="{chart_css}">
-            {chart_state} / {chart_trade.get('Trade Action', 'WAIT')} —
-            {chart_trade.get('Reason', '')}<br>
-            {chart_trade.get('History Text', '')}<br>
-            {chart_trade.get('Trade Instruction', '')}
-            </div>""",
-            unsafe_allow_html=True,
-        )
-        metrics = st.columns(7)
-        metrics[0].metric("Last Close", fmt_price(symbol, chart_trade.get("Last Close")))
-        metrics[1].metric("Trade Action", chart_trade.get("Trade Action", "WAIT"))
-        _hist = chart_trade.get("History")
-        metrics[2].metric("Past Target First", f"{_hist['Target First %']:.0f}%" if _hist else "n/a",
-                          help="How often this signal reached its target before its stop (both 1.5 ATR away).")
-        metrics[3].metric("Past Avg Result", f"{_hist['Avg Result %']:+.2f}%" if _hist else "n/a",
-                          help="Average result per past signal after costs.")
-        metrics[4].metric("Structure", chart_trade.get("Current Structure", "Mixed"))
-        render_structure_trend_badge(metrics[4], chart_trade)
-        metrics[5].metric("S/R Reversal", f"{safe_float(chart_trade.get('S/R Reversal')):+.2f}")
-        metrics[6].metric("ADX", f"{safe_float(chart_trade.get('ADX')):.1f}")
-        render_probability_action_panel(chart_trade, view_label=selected_chart_tf)
-        if "=X" in str(symbol).upper():
-            render_fx_stochastic_note(symbol)
-        plot_forex_chart(symbol, chart_data, chart_cfg, chart_trade)
-        with st.expander("Current setup details", expanded=False):
-            st.dataframe(pd.DataFrame([format_trade_row(symbol, chart_trade)]),
-                         use_container_width=True, hide_index=True)
-
-
-with tab_tv_chart:
-    st.subheader("TradingView-style Candlestick Chart")
-    tv_tf = st.radio(
-        "Chart timeframe", ["Hourly", "Daily"], horizontal=True,
-        key="tradingview_chart_timeframe",
-    )
-    tv_cfg = _chart_timeframe_config(cfg, tv_tf)
-    # This chart explicitly uses 1-hour candles, not the existing chart's possibly 15m interval.
-    if tv_tf == "Hourly":
-        tv_cfg["interval"] = "1h"
-        tv_cfg["period"] = "1mo"
-    tv_data = fetch_market_ohlc(symbol, tv_cfg["period"], tv_cfg["interval"])
-    if tv_data.empty:
-        st.warning(f"No {tv_tf.lower()} candlestick data is available for {symbol}.")
-    else:
-        render_tradingview_style_chart(symbol, tv_data, tv_tf)
-        st.caption(
-            "TradingView-inspired chart (not a TradingView embed): SuperTrend (10, 3), "
-            "EMA (9), SMA (35), Bollinger Bands (20, 2), RSI (14) with an EMA (9) "
-            "signal overlay, and independent MACD (12, 26, 9). "
-            "The RSI signal is a clearly labeled approximation of the reference screenshot, "
-            "not a verified SMIIO (5, 20) implementation. Values may differ from TradingView."
-        )
+with tab_range:
+    render_range_chart(symbol, asset_class, cfg)
 
 
 with tab_rsi_oversold:
     st.subheader(f"{asset_class} — RSI at or below 30")
     st.caption(
-        "Scans the latest RSI (14) on completed/available Daily or 1-hour bars. "
-        "Results are separated using the same closing-price regression trend as the "
-        "price charts. RSI <= 30 indicates an oversold reading, not a guaranteed reversal."
+        "Daily RSI (14) at or below 30, split by the 120-day trend line. Only the downtrend list was tested "
+        "with an edge: " + (STOCK_DIP_RECORD if asset_class == "Stocks" else FX_RSI_DOWN_RECORD)
+        + " Hourly RSI was removed: nothing on hourly bars tested better than chance."
     )
-    rsi_tf_col, rsi_symbols_col = st.columns([1, 3])
-    rsi_timeframe = rsi_tf_col.radio(
-        "Timeframe", ["Daily", "Hourly"], horizontal=True,
-        key=f"rsi_oversold_timeframe_{asset_class}",
-    )
-    rsi_symbols = rsi_symbols_col.multiselect(
+    rsi_timeframe = "Daily"
+    rsi_symbols = st.multiselect(
         "Symbols to scan", sorted(current_universe),
         default=sorted(current_universe),
         key=f"rsi_oversold_symbols_{asset_class}",
@@ -3386,7 +3686,7 @@ with tab_rsi_oversold:
         progress = st.progress(0)
         for i, sym in enumerate(rsi_symbols):
             try:
-                result = scan_rsi_oversold(sym, rsi_timeframe, cfg)
+                result = scan_rsi_oversold(sym, rsi_timeframe, dict(cfg, daily_period="1y"))
                 if result is not None:
                     found.append(result)
             except Exception as exc:
@@ -3412,19 +3712,21 @@ with tab_rsi_oversold:
             flat = rsi_results[rsi_results["Price Trend"] == "Flat →"].sort_values(
                 ["RSI (14)", "Symbol"]
             )
-            summary_up, summary_down = st.columns(2)
-            summary_up.metric("RSI ≤ 30 · Upward Trend", len(rising))
-            summary_down.metric("RSI ≤ 30 · Downward Trend", len(falling))
-            st.markdown("#### 🟢 RSI ≤ 30 — Price Trend Upward")
-            if rising.empty:
-                st.info("No oversold symbols with an upward price trend.")
-            else:
-                st.dataframe(rising, use_container_width=True, hide_index=True)
-            st.markdown("#### 🔴 RSI ≤ 30 — Price Trend Downward")
+            summary_down, summary_up = st.columns(2)
+            summary_down.metric("RSI ≤ 30 · Downtrend (tested)", len(falling))
+            summary_up.metric("RSI ≤ 30 · Uptrend", len(rising))
+            st.markdown("#### RSI ≤ 30 in a downtrend — the tested buy signal")
             if falling.empty:
-                st.info("No oversold symbols with a downward price trend.")
+                st.info("No oversold symbols in a downtrend right now.")
             else:
                 st.dataframe(falling, use_container_width=True, hide_index=True)
+            st.markdown("#### RSI ≤ 30 in an uptrend — no reliable edge")
+            st.caption("Stocks did about the same as any stock (54% rose within 20 days); Forex looked better "
+                       "(61%) but on too few signals (115) to rely on.")
+            if rising.empty:
+                st.info("No oversold symbols in an uptrend.")
+            else:
+                st.dataframe(rising, use_container_width=True, hide_index=True)
             if not flat.empty:
                 with st.expander(f"Flat price trends ({len(flat)})"):
                     st.dataframe(flat, use_container_width=True, hide_index=True)
@@ -3432,1173 +3734,12 @@ with tab_rsi_oversold:
             with st.expander(f"Symbols that could not be scanned ({len(saved_rsi['errors'])})"):
                 st.write(saved_rsi["errors"])
     else:
-        st.info("Choose Daily or Hourly, then click **Scan RSI ≤ 30** to view results.")
-
-
-with tab_green_zone:
-    st.subheader(f"{asset_class} — Fresh Green / Red Zones")
-    st.caption(
-        "Zones use the NTD zero-line shading shown in the indicator chart. "
-        "Green starts when NTD crosses above zero and continues rising; "
-        "red starts when NTD crosses below zero and continues falling. "
-        "Price Trend uses the same price regression slope as the chart (upward or downward); "
-        "Trend Alignment shows whether price trend agrees with the fresh NTD zone. "
-        "These are early watchlist alerts, not confirmed trade entries."
-    )
-    gz_left, gz_mid, gz_right = st.columns([1, 1, 3])
-    gz_timeframe = gz_left.radio(
-        "Timeframe", ["Daily", "Hourly"], horizontal=True,
-        key=f"green_zone_timeframe_{asset_class}",
-    )
-    gz_recent = gz_mid.slider(
-        "Just started (bars ago)", min_value=0, max_value=15, value=3,
-        key=f"green_zone_recent_{asset_class}",
-    )
-    gz_symbols = gz_right.multiselect(
-        "Symbols to scan", sorted(current_universe),
-        default=sorted(current_universe),
-        key=f"green_zone_symbols_{asset_class}",
-    )
-    gz_signature = (
-        gz_timeframe, gz_recent, tuple(sorted(gz_symbols)),
-        int(cfg["ntd_window"]), int(cfg["npx_smooth"]),
-        int(cfg["trend_lookback"]),
-        str(cfg.get("daily_period", "1y")),
-    )
-    if st.button("Scan Fresh Zones", key=f"green_zone_run_{asset_class}",
-                 use_container_width=True):
-        gz_results, gz_errors = [], []
-        gz_progress = st.progress(0)
-        for gz_i, gz_symbol in enumerate(gz_symbols):
-            try:
-                candidate = scan_fresh_color_zone(
-                    gz_symbol, gz_timeframe, cfg, gz_recent,
-                )
-                if candidate is not None:
-                    gz_results.append(candidate)
-            except Exception as exc:
-                gz_errors.append(f"{gz_symbol}: {exc}")
-            gz_progress.progress((gz_i + 1) / max(1, len(gz_symbols)))
-        gz_progress.empty()
-        st.session_state[f"green_zone_results_{asset_class}"] = {
-            "signature": gz_signature,
-            "rows": gz_results,
-            "errors": gz_errors,
-        }
-
-    gz_saved = st.session_state.get(f"green_zone_results_{asset_class}")
-    if gz_saved and gz_saved["signature"] == gz_signature:
-        gz_df = pd.DataFrame(gz_saved["rows"])
-        if gz_df.empty:
-            st.info("No newly rising green or newly falling red NTD zones were found in the selected window.")
-        else:
-            greens = gz_df[gz_df["Zone"].str.contains("Green")].sort_values(
-                ["Bars Since Start", "Symbol"]
-            )
-            reds = gz_df[gz_df["Zone"].str.contains("Red")].sort_values(
-                ["Bars Since Start", "Symbol"]
-            )
-            a, b = st.columns(2)
-            a.metric("Fresh Green Zones", len(greens))
-            b.metric("Fresh Red Zones", len(reds))
-            st.caption(
-                "Price Trend is calculated from the selected Daily/Hourly close-price regression line. "
-                "Aligned means Green + upward price trend or Red + downward price trend; "
-                "Opposing means the NTD zone and price trend disagree."
-            )
-            st.markdown("#### 🟢 Green Zone Just Started — NTD Rising")
-            if greens.empty:
-                st.info("No fresh green zones.")
-            else:
-                st.dataframe(greens, use_container_width=True, hide_index=True)
-            st.markdown("#### 🔴 Red Zone Just Started — NTD Falling")
-            if reds.empty:
-                st.info("No fresh red zones.")
-            else:
-                st.dataframe(reds, use_container_width=True, hide_index=True)
-        if gz_saved["errors"]:
-            with st.expander(f"Scan errors ({len(gz_saved['errors'])})"):
-                st.write("\\n".join(gz_saved["errors"]))
-    elif gz_saved:
-        st.info("The scan settings changed. Click Scan Fresh Zones to update the results.")
-    else:
-        st.info("Select Daily or Hourly and click Scan Fresh Zones.")
-
-
-with tab_npx_up_cross:
-    st.subheader(f"{asset_class} — Smoothed NPX Upward Zero Cross")
-    st.caption(
-        "Find symbols where Smoothed NPX recently crossed upward through 0.0, "
-        "is still above zero, and is rising on the latest bar. "
-        "Results are grouped by the same regression-based price trend displayed "
-        "on the selected timeframe's price chart. Opposing price trends are "
-        "shown separately, not excluded. Watchlist signals only."
-    )
-    npx_left, npx_mid, npx_right = st.columns([1, 1, 3])
-    npx_timeframe = npx_left.radio(
-        "Timeframe", ["Daily", "Hourly"], horizontal=True,
-        key=f"npx_up_timeframe_{asset_class}",
-    )
-    npx_recent = npx_mid.slider(
-        "Cross within (bars)", min_value=0, max_value=15, value=3,
-        key=f"npx_up_recent_{asset_class}",
-    )
-    npx_symbols = npx_right.multiselect(
-        "Symbols to scan", sorted(current_universe),
-        default=sorted(current_universe),
-        key=f"npx_up_symbols_{asset_class}",
-    )
-    npx_signature = (
-        npx_timeframe, npx_recent, tuple(sorted(npx_symbols)),
-        int(cfg["ntd_window"]), int(cfg["npx_smooth"]),
-        int(cfg["trend_lookback"]), str(cfg.get("daily_period", "1y")),
-    )
-    if st.button("Scan NPX Upward Crosses", key=f"npx_up_run_{asset_class}",
-                 use_container_width=True):
-        npx_rows, npx_errors = [], []
-        npx_progress = st.progress(0)
-        for npx_i, npx_symbol in enumerate(npx_symbols):
-            try:
-                candidate = scan_smoothed_npx_up_cross(
-                    npx_symbol, npx_timeframe, cfg, npx_recent,
-                )
-                if candidate is not None:
-                    npx_rows.append(candidate)
-            except Exception as exc:
-                npx_errors.append(f"{npx_symbol}: {exc}")
-            npx_progress.progress((npx_i + 1) / max(1, len(npx_symbols)))
-        npx_progress.empty()
-        st.session_state[f"npx_up_results_{asset_class}"] = {
-            "signature": npx_signature, "rows": npx_rows, "errors": npx_errors,
-        }
-
-    npx_saved = st.session_state.get(f"npx_up_results_{asset_class}")
-    if npx_saved and npx_saved["signature"] == npx_signature:
-        npx_df = pd.DataFrame(npx_saved["rows"])
-        if npx_df.empty:
-            st.info("No recent upward Smoothed NPX zero crosses found for the selected settings.")
-        else:
-            rising = npx_df[npx_df["Price Trend"] == "Upward ↑"].sort_values(
-                ["Bars Since Cross", "Symbol"]
-            )
-            falling = npx_df[npx_df["Price Trend"] == "Downward ↓"].sort_values(
-                ["Bars Since Cross", "Symbol"]
-            )
-            flat = npx_df[npx_df["Price Trend"] == "Flat →"].sort_values(
-                ["Bars Since Cross", "Symbol"]
-            )
-            c1, c2 = st.columns(2)
-            c1.metric("NPX Cross + Upward Price Trend", len(rising))
-            c2.metric("NPX Cross + Downward Price Trend", len(falling))
-            st.markdown("#### 🟢 NPX Crossed Up — Price Trend Upward")
-            if rising.empty:
-                st.info("No matching symbols with upward price trend.")
-            else:
-                st.dataframe(rising, use_container_width=True, hide_index=True)
-            st.markdown("#### 🔴 NPX Crossed Up — Price Trend Downward")
-            if falling.empty:
-                st.info("No matching symbols with downward price trend.")
-            else:
-                st.dataframe(falling, use_container_width=True, hide_index=True)
-            if not flat.empty:
-                st.markdown("#### ⚪ Flat Price Trend")
-                st.dataframe(flat, use_container_width=True, hide_index=True)
-        if npx_saved["errors"]:
-            with st.expander(f"Scan errors ({len(npx_saved['errors'])})"):
-                st.write("\\n".join(npx_saved["errors"]))
-    elif npx_saved:
-        st.info("The scan settings changed. Click Scan NPX Upward Crosses to refresh.")
-    else:
-        st.info("Choose Daily or Hourly, then click Scan NPX Upward Crosses.")
-
-
-
-with tab_ema30_cross:
-    st.subheader(f"{asset_class} — 30EMA Upward Price Cross")
-    st.caption(
-        "Find symbols whose close price recently crossed upward through the "
-        "30-period EMA and remains above it. Results are separated by the "
-        "same price regression trend shown on your price chart. "
-        "Crosses are potential watchlist signals, not confirmed trades."
-    )
-    ema30_cross_left, ema30_cross_mid, ema30_cross_right = st.columns([1, 1, 3])
-    ema30_cross_timeframe = ema30_cross_left.radio(
-        "Timeframe", ["Daily", "Hourly"], horizontal=True,
-        key=f"ema30_cross_timeframe_{asset_class}",
-    )
-    ema30_cross_recent = ema30_cross_mid.slider(
-        "Cross within (bars)", min_value=0, max_value=15, value=3,
-        key=f"ema30_cross_recent_{asset_class}",
-    )
-    ema30_cross_symbols = ema30_cross_right.multiselect(
-        "Symbols to scan", sorted(current_universe),
-        default=sorted(current_universe),
-        key=f"ema30_cross_symbols_{asset_class}",
-    )
-    ema30_cross_signature = (
-        ema30_cross_timeframe, int(ema30_cross_recent), tuple(sorted(ema30_cross_symbols)),
-        int(cfg["trend_lookback"]), str(cfg.get("daily_period", "1y")),
-    )
-    if st.button("Scan Recent 30EMA Crosses", key=f"ema30_cross_run_{asset_class}",
-                 use_container_width=True):
-        ema30_cross_rows, ema30_cross_errors = [], []
-        ema30_cross_progress = st.progress(0)
-        for ema30_cross_i, ema30_cross_symbol in enumerate(ema30_cross_symbols):
-            try:
-                match = scan_ema30_price_cross_up(
-                    ema30_cross_symbol, ema30_cross_timeframe, cfg, ema30_cross_recent,
-                )
-                if match is not None:
-                    ema30_cross_rows.append(match)
-            except Exception as exc:
-                ema30_cross_errors.append(f"{ema30_cross_symbol}: {exc}")
-            ema30_cross_progress.progress((ema30_cross_i + 1) / max(1, len(ema30_cross_symbols)))
-        ema30_cross_progress.empty()
-        st.session_state[f"ema30_cross_results_{asset_class}"] = {
-            "signature": ema30_cross_signature, "rows": ema30_cross_rows, "errors": ema30_cross_errors,
-        }
-    ema30_cross_saved = st.session_state.get(f"ema30_cross_results_{asset_class}")
-    if ema30_cross_saved and ema30_cross_saved["signature"] == ema30_cross_signature:
-        ema30_cross_df = pd.DataFrame(ema30_cross_saved["rows"])
-        if ema30_cross_df.empty:
-            st.info("No active recent upward 30EMA price crosses found for these settings.")
-        else:
-            ema30_cross_up = ema30_cross_df[ema30_cross_df["Price Trend"] == "Upward ↑"].sort_values(
-                ["Bars Since Cross", "Symbol"]
-            )
-            ema30_cross_down = ema30_cross_df[ema30_cross_df["Price Trend"] == "Downward ↓"].sort_values(
-                ["Bars Since Cross", "Symbol"]
-            )
-            ema30_cross_flat = ema30_cross_df[ema30_cross_df["Price Trend"] == "Flat →"].sort_values(
-                ["Bars Since Cross", "Symbol"]
-            )
-            k1, k2 = st.columns(2)
-            k1.metric("Cross Up + Upward Price Trend", len(ema30_cross_up))
-            k2.metric("Cross Up + Downward Price Trend", len(ema30_cross_down))
-            st.markdown("#### 🟢 30EMA Cross Up — Price Trend Upward")
-            if ema30_cross_up.empty:
-                st.info("No matching symbols with upward price trend.")
-            else:
-                st.dataframe(ema30_cross_up, use_container_width=True, hide_index=True)
-            st.markdown("#### 🔴 30EMA Cross Up — Price Trend Downward")
-            if ema30_cross_down.empty:
-                st.info("No matching symbols with downward price trend.")
-            else:
-                st.dataframe(ema30_cross_down, use_container_width=True, hide_index=True)
-            if not ema30_cross_flat.empty:
-                st.markdown("#### ⚪ Flat Price Trend")
-                st.dataframe(ema30_cross_flat, use_container_width=True, hide_index=True)
-        if ema30_cross_saved["errors"]:
-            with st.expander(f"Scan errors ({len(ema30_cross_saved['errors'])})"):
-                st.write("\\n".join(ema30_cross_saved["errors"]))
-    elif ema30_cross_saved:
-        st.info("The scan settings changed. Click Scan Recent 30EMA Crosses to update.")
-    else:
-        st.info("Select Daily or Hourly, then click Scan Recent 30EMA Crosses.")
-
-
-with tab_scanner:
-    st.subheader(f"{asset_class} Scanner")
-    st.caption(
-        "Scans the selected market universe for trend-aligned support/resistance reversals, 30 EMA crosses, and pullbacks. "
-        "BUY/SELL CONFIRMED rows are strongest; SETUP rows require confirmation."
-    )
-
-    c1, c2, c3 = st.columns([1, 1, 1])
-    scan_max = int(c1.number_input("Max rows per table", min_value=5, max_value=200, value=100, step=5))
-    scan_universe = c2.multiselect(f"{asset_class} symbols to scan", current_universe, default=current_universe, key=f"scan_universe_{asset_class}")
-    show_all = c3.checkbox("Also show WAIT rows", value=False)
-
-    if st.button(f"Run {asset_class} Scan", use_container_width=True):
-        rows = []
-        progress = st.progress(0)
-        status = st.empty()
-        for i, sym in enumerate(scan_universe):
-            status.write(f"Scanning {sym}...")
-            try:
-                row = scan_symbol(sym, cfg)
-                if row is not None:
-                    rows.append(row)
-            except Exception as exc:
-                rows.append({"Symbol": sym, "State": "ERROR", "Reason": str(exc)})
-            progress.progress((i + 1) / max(1, len(scan_universe)))
-        status.empty()
-
-        out = pd.DataFrame(rows)
-        if out.empty:
-            st.info("No scanner results.")
-        else:
-            state_order = {
-                "BUY CONFIRMED": 0,
-                "SELL CONFIRMED": 1,
-                "BUY SETUP": 2,
-                "SELL SETUP": 3,
-                "WAIT": 4,
-                "ERROR": 5,
-            }
-            out["_StateOrder"] = out["State"].map(state_order).fillna(9)
-            out["_BullSort"] = pd.to_numeric(out.get("Bull S/R Bars"), errors="coerce").fillna(9999)
-            out["_BearSort"] = pd.to_numeric(out.get("Bear S/R Bars"), errors="coerce").fillna(9999)
-            out["_EmaUpSort"] = pd.to_numeric(out.get("Bars Since 30 EMA Up"), errors="coerce").fillna(9999)
-            out["_EmaDownSort"] = pd.to_numeric(out.get("Bars Since 30 EMA Down"), errors="coerce").fillna(9999)
-
-            buy_df = out[out["State"].isin(["BUY CONFIRMED", "BUY SETUP"])].sort_values(
-                ["_StateOrder", "_BullSort", "_EmaUpSort", "ADX", "Symbol"],
-                ascending=[True, True, True, False, True],
-            ).drop(columns=[c for c in out.columns if c.startswith("_")], errors="ignore").head(scan_max)
-
-            sell_df = out[out["State"].isin(["SELL CONFIRMED", "SELL SETUP"])].sort_values(
-                ["_StateOrder", "_BearSort", "_EmaDownSort", "ADX", "Symbol"],
-                ascending=[True, True, True, False, True],
-            ).drop(columns=[c for c in out.columns if c.startswith("_")], errors="ignore").head(scan_max)
-
-            ema_up_df = out[out["Bars Since 30 EMA Up"].notna()].sort_values(
-                ["_EmaUpSort", "ADX", "Symbol"], ascending=[True, False, True]
-            ).drop(columns=[c for c in out.columns if c.startswith("_")], errors="ignore").head(scan_max)
-
-            ema_down_df = out[out["Bars Since 30 EMA Down"].notna()].sort_values(
-                ["_EmaDownSort", "ADX", "Symbol"], ascending=[True, False, True]
-            ).drop(columns=[c for c in out.columns if c.startswith("_")], errors="ignore").head(scan_max)
-
-            st.subheader("Long Watchlist — trend-aligned support/EMA pullbacks")
-            if buy_df.empty:
-                st.info("No long setups found.")
-            else:
-                st.dataframe(buy_df, use_container_width=True, hide_index=True)
-
-            st.subheader("Short Watchlist — trend-aligned resistance/EMA pullbacks")
-            if sell_df.empty:
-                st.info("No short setups found.")
-            else:
-                st.dataframe(sell_df, use_container_width=True, hide_index=True)
-
-            st.subheader("Recent 30 EMA Cross Up")
-            if ema_up_df.empty:
-                st.info("No recent 30 EMA upward crosses found.")
-            else:
-                st.dataframe(ema_up_df, use_container_width=True, hide_index=True)
-
-            st.subheader("Recent 30 EMA Cross Down")
-            if ema_down_df.empty:
-                st.info("No recent 30 EMA downward crosses found.")
-            else:
-                st.dataframe(ema_down_df, use_container_width=True, hide_index=True)
-
-            if show_all:
-                st.subheader("All scan rows")
-                all_df = out.sort_values(["_StateOrder", "Symbol"]).drop(
-                    columns=[c for c in out.columns if c.startswith("_")], errors="ignore"
-                )
-                st.dataframe(all_df, use_container_width=True, hide_index=True)
-
-
-with tab_buy_sell:
-    st.subheader(f"{asset_class} Buy/Sell List")
-    st.caption(
-        "Builds a clean trade-action list from both the Hourly and Daily trading engines. "
-        "Use the Daily rows for broader bias and the Hourly rows for entry timing."
-    )
-
-    bs_col1, bs_col2, bs_col3 = st.columns([1, 1, 1])
-    bs_max_rows = int(bs_col1.number_input(
-        "Max rows per Buy/Sell table",
-        min_value=5,
-        max_value=200,
-        value=100,
-        step=5,
-        key=f"buy_sell_max_rows_{asset_class}",
-    ))
-    bs_universe = bs_col2.multiselect(
-        f"{asset_class} symbols for Buy/Sell list",
-        current_universe,
-        default=current_universe,
-        key=f"buy_sell_universe_{asset_class}",
-    )
-    bs_include_wait = bs_col3.checkbox(
-        "Include WAIT rows in all-results table",
-        value=False,
-        key=f"buy_sell_include_wait_{asset_class}",
-    )
-
-    st.markdown(
-        """
-**How to use this tab**
-
-- **BUY list**: Long score is higher than short score and the setup is BUY CONFIRMED or BUY SETUP.
-- **SELL list**: Short score is higher than long score and the setup is SELL CONFIRMED or SELL SETUP.
-- **Past Target First / Past Avg Result** show how this kind of signal actually did. Around 50% or a negative average means no edge.
-- **Daily timeframe**: use for market bias and swing direction.
-- **Hourly timeframe**: use for entry timing, pullbacks, and near-term confirmation.
-- Scores are rule points, not probabilities; rank by the past record first.
-"""
-    )
-
-    def _pct_sort_value(value):
-        try:
-            return float(str(value).replace("%", "").strip())
-        except Exception:
-            return float("nan")
-
-    def _column_as_series(df: pd.DataFrame, column: str, default_value="") -> pd.Series:
-        """
-        Return exactly one Series for a possibly missing or duplicate-named column.
-        Streamlit reruns/session-state can occasionally preserve older DataFrames
-        with duplicate columns; pandas then returns a DataFrame instead of a Series,
-        which breaks .str/.map calls. This helper normalizes that safely.
-        """
-        if df is None or df.empty:
-            return pd.Series(dtype=object)
-        if column not in df.columns:
-            return pd.Series(default_value, index=df.index, dtype=object)
-        values = df.loc[:, column]
-        if isinstance(values, pd.DataFrame):
-            if values.shape[1] == 0:
-                return pd.Series(default_value, index=df.index, dtype=object)
-            values = values.iloc[:, 0]
-        return pd.Series(values, index=df.index)
-
-    def _upper_text_series(df: pd.DataFrame, column: str) -> pd.Series:
-        return _column_as_series(df, column, "").fillna("").astype(str).str.upper()
-
-    def _text_series(df: pd.DataFrame, column: str) -> pd.Series:
-        return _column_as_series(df, column, "").fillna("").astype(str)
-
-    def _text_eq_mask(df: pd.DataFrame, column: str, value: str) -> pd.Series:
-        """
-        Safe equality mask for text columns that may be missing or duplicated.
-        Always returns a boolean Series aligned to df.index, avoiding DataFrame.str errors.
-        """
-        if df is None or df.empty:
-            return pd.Series(dtype=bool)
-        s = _column_as_series(df, column, "").fillna("").astype(str)
-        target = str(value)
-        return pd.Series(s.to_numpy(dtype=object) == target, index=df.index, dtype=bool)
-
-    def _prepare_buy_sell_table(df: pd.DataFrame) -> pd.DataFrame:
-        if df is None or df.empty:
-            return pd.DataFrame()
-        preferred_cols = [
-            "Timeframe", "Symbol", "State", "Bias", "Trade Action",
-            "Long Score", "Short Score", "Score Edge",
-            "Trend", "Current Structure", "S/R Rev", "NTD", "ADX", "Last Close",
-            "Support", "Resistance", "Entry Zone", "Stop / Invalidation",
-            "Target 1", "Trade Instruction", "Reason",
-        ]
-        cols = [c for c in preferred_cols if c in df.columns]
-        other_cols = [c for c in df.columns if c not in cols and not str(c).startswith("_")]
-        return df[cols + other_cols]
-
-    def _sort_buy_sell_list(df: pd.DataFrame, side: str) -> pd.DataFrame:
-        if df is None or df.empty:
-            return pd.DataFrame()
-        out = df.copy()
-        state_order = {
-            "BUY CONFIRMED": 0,
-            "SELL CONFIRMED": 0,
-            "BUY SETUP": 1,
-            "SELL SETUP": 1,
-            "WAIT": 4,
-            "ERROR": 9,
-        }
-        timeframe_order = {"Daily": 0, "Hourly": 1}
-        out["_StateOrder"] = _column_as_series(out, "State", "").map(state_order).fillna(8)
-        out["_TimeframeOrder"] = _column_as_series(out, "Timeframe", "").map(timeframe_order).fillna(9)
-        out["_LongProbSort"] = _column_as_series(out, "Long Score", "").map(_pct_sort_value).fillna(-1)
-        out["_ShortProbSort"] = _column_as_series(out, "Short Score", "").map(_pct_sort_value).fillna(-1)
-        out["_EdgeSort"] = _column_as_series(out, "Score Edge", "").map(_pct_sort_value).abs().fillna(-1)
-        prob_col = "_LongProbSort" if side == "BUY" else "_ShortProbSort"
-        # User-facing Buy/Sell lists are alphabetized by symbol for easier browsing.
-        # Daily rows still appear before Hourly rows for the same symbol, and
-        # state/probability are retained as secondary ordering only.
-        out = out.sort_values(
-            ["Symbol", "_TimeframeOrder", "_StateOrder", prob_col, "_EdgeSort"],
-            ascending=[True, True, True, False, False],
-            kind="mergesort",
-        )
-        return out.drop(columns=[c for c in out.columns if str(c).startswith("_")], errors="ignore")
-
-    if st.button(f"Build {asset_class} Buy/Sell List", use_container_width=True, key=f"build_buy_sell_list_{asset_class}"):
-        rows = []
-        progress = st.progress(0)
-        status = st.empty()
-        total_steps = max(1, len(bs_universe) * 2)
-        step = 0
-
-        hourly_cfg = cfg.copy()
-        daily_cfg_for_scan = cfg.copy()
-        daily_cfg_for_scan["period"] = cfg.get("daily_period", "1y")
-        daily_cfg_for_scan["interval"] = "1d"
-        daily_cfg_for_scan["right_padding"] = max(4, int(cfg.get("right_padding", 12)))
-
-        for sym in bs_universe:
-            for timeframe_name, scan_cfg in [("Daily", daily_cfg_for_scan), ("Hourly", hourly_cfg)]:
-                status.write(f"Scanning {timeframe_name} {sym}...")
-                try:
-                    row = scan_symbol(sym, scan_cfg)
-                    if row is not None:
-                        row["Timeframe"] = timeframe_name
-                        rows.append(row)
-                except Exception as exc:
-                    rows.append({
-                        "Timeframe": timeframe_name,
-                        "Symbol": sym,
-                        "State": "ERROR",
-                        "Bias": "ERROR",
-                        "Trade Action": "WAIT",
-                        "Reason": str(exc),
-                    })
-                step += 1
-                progress.progress(step / total_steps)
-
-        status.empty()
-        progress.empty()
-
-        results = pd.DataFrame(rows)
-        st.session_state[f"buy_sell_results_{asset_class}"] = results
-
-    results = st.session_state.get(f"buy_sell_results_{asset_class}", pd.DataFrame())
-
-    if results is None or results.empty:
-        st.info("Click the button above to build the Buy/Sell list.")
-    else:
-        action_series = _upper_text_series(results, "Trade Action")
-        state_series = _upper_text_series(results, "State")
-
-        buy_mask = action_series.str.contains("BUY", na=False) | state_series.str.contains("BUY", na=False)
-        sell_mask = action_series.str.contains("SELL", na=False) | state_series.str.contains("SELL", na=False)
-
-        timeframe_series = _text_series(results, "Timeframe")
-
-        buy_daily = _prepare_buy_sell_table(
-            _sort_buy_sell_list(results[buy_mask & _text_eq_mask(results, "Timeframe", "Daily")], "BUY")
-        ).head(bs_max_rows)
-        buy_hourly = _prepare_buy_sell_table(
-            _sort_buy_sell_list(results[buy_mask & _text_eq_mask(results, "Timeframe", "Hourly")], "BUY")
-        ).head(bs_max_rows)
-        sell_daily = _prepare_buy_sell_table(
-            _sort_buy_sell_list(results[sell_mask & _text_eq_mask(results, "Timeframe", "Daily")], "SELL")
-        ).head(bs_max_rows)
-        sell_hourly = _prepare_buy_sell_table(
-            _sort_buy_sell_list(results[sell_mask & _text_eq_mask(results, "Timeframe", "Hourly")], "SELL")
-        ).head(bs_max_rows)
-
-        metric_cols = st.columns(6)
-        metric_cols[0].metric("Daily BUY", int(len(buy_daily)))
-        metric_cols[1].metric("Hourly BUY", int(len(buy_hourly)))
-        metric_cols[2].metric("Daily SELL", int(len(sell_daily)))
-        metric_cols[3].metric("Hourly SELL", int(len(sell_hourly)))
-        metric_cols[4].metric("Symbols scanned", int(_column_as_series(results, "Symbol", "").replace("", np.nan).dropna().nunique()) if "Symbol" in results.columns else 0)
-        metric_cols[5].metric("Rows scanned", int(len(results)))
-
-        buy_tab_daily, buy_tab_hourly, sell_tab_daily, sell_tab_hourly = st.tabs([
-            "🟢 Daily BUY",
-            "🟢 Hourly BUY",
-            "🔴 Daily SELL",
-            "🔴 Hourly SELL",
-        ])
-
-        with buy_tab_daily:
-            st.markdown("#### Daily BUY List")
-            st.caption("Daily BUY candidates show broader bullish bias and swing-trade setup context.")
-            if buy_daily.empty:
-                st.info("No Daily BUY candidates found.")
-            else:
-                st.dataframe(buy_daily, use_container_width=True, hide_index=True)
-
-        with buy_tab_hourly:
-            st.markdown("#### Hourly BUY List")
-            st.caption("Hourly BUY candidates show shorter-term entry timing and intraday confirmation.")
-            if buy_hourly.empty:
-                st.info("No Hourly BUY candidates found.")
-            else:
-                st.dataframe(buy_hourly, use_container_width=True, hide_index=True)
-
-        with sell_tab_daily:
-            st.markdown("#### Daily SELL List")
-            st.caption("Daily SELL candidates show broader bearish bias and swing-trade setup context.")
-            if sell_daily.empty:
-                st.info("No Daily SELL candidates found.")
-            else:
-                st.dataframe(sell_daily, use_container_width=True, hide_index=True)
-
-        with sell_tab_hourly:
-            st.markdown("#### Hourly SELL List")
-            st.caption("Hourly SELL candidates show shorter-term entry timing and intraday confirmation.")
-            if sell_hourly.empty:
-                st.info("No Hourly SELL candidates found.")
-            else:
-                st.dataframe(sell_hourly, use_container_width=True, hide_index=True)
-
-        all_results = results.copy()
-        if not bs_include_wait:
-            all_results = all_results[buy_mask | sell_mask]
-
-        all_timeframe_series = _text_series(all_results, "Timeframe")
-        all_daily = _prepare_buy_sell_table(
-            _sort_buy_sell_list(all_results[_text_eq_mask(all_results, "Timeframe", "Daily")], "BUY")
-        ).head(max(bs_max_rows * 2, bs_max_rows))
-        all_hourly = _prepare_buy_sell_table(
-            _sort_buy_sell_list(all_results[_text_eq_mask(all_results, "Timeframe", "Hourly")], "BUY")
-        ).head(max(bs_max_rows * 2, bs_max_rows))
-
-        with st.expander("All Daily scan results", expanded=False):
-            if all_daily.empty:
-                st.info("No Daily rows to show.")
-            else:
-                st.dataframe(all_daily, use_container_width=True, hide_index=True)
-
-        with st.expander("All Hourly scan results", expanded=False):
-            if all_hourly.empty:
-                st.info("No Hourly rows to show.")
-            else:
-                st.dataframe(all_hourly, use_container_width=True, hide_index=True)
-
-
+        st.info("Click **Scan RSI ≤ 30** to view results.")
 
 
 # =========================
 # Confirmed trade-action scanner — uses the same engine as chart and existing scanner.
 # =========================
-with tab_trade_action:
-    st.subheader(f"{asset_class} Trade Action — Confirmed Signals")
-    st.caption(
-        "Select Daily or Hourly chart settings, then scan for BUY CONFIRMED and "
-        "SELL CONFIRMED only. Preliminary BUY/SELL SETUP and WAIT rows are excluded. "
-        "Probabilities are rule-based signal scores, not calibrated win probabilities."
-    )
-
-    ta_controls = st.columns([1, 2])
-    ta_timeframe = ta_controls[0].selectbox(
-        "Trade Action timeframe",
-        ["Daily", "Hourly"],
-        key=f"trade_action_timeframe_{asset_class}",
-    )
-    ta_symbols = ta_controls[1].multiselect(
-        "Symbols to scan",
-        options=sorted(current_universe),
-        default=sorted(current_universe),
-        key=f"trade_action_symbols_{asset_class}",
-    )
-    ta_scan_cfg = cfg.copy()
-    if ta_timeframe == "Daily":
-        ta_scan_cfg["period"] = cfg.get("daily_period", "1y")
-        ta_scan_cfg["interval"] = "1d"
-        ta_scan_cfg["right_padding"] = max(4, int(cfg.get("right_padding", 12)))
-
-    ta_key = f"trade_action_confirmed_{asset_class}"
-    ta_signature = repr((
-        asset_class, ta_timeframe, tuple(sorted(ta_symbols)),
-        tuple(sorted((k, repr(v)) for k, v in ta_scan_cfg.items())),
-    ))
-    if st.button(
-        f"Scan {ta_timeframe} for confirmed BUY / SELL",
-        key=f"trade_action_scan_{asset_class}",
-        use_container_width=True,
-    ):
-        ta_rows = []
-        ta_errors = []
-        ta_progress = st.progress(0)
-        ta_status = st.empty()
-        for ta_idx, ta_symbol in enumerate(ta_symbols):
-            ta_status.caption(f"Scanning {ta_symbol} ({ta_timeframe})")
-            try:
-                ta_row = scan_symbol(ta_symbol, ta_scan_cfg)
-                if ta_row is not None:
-                    ta_row["Timeframe"] = ta_timeframe
-                    ta_rows.append(ta_row)
-            except Exception as ta_exc:
-                ta_errors.append(f"{ta_symbol}: {ta_exc}")
-            ta_progress.progress((ta_idx + 1) / max(len(ta_symbols), 1))
-        ta_progress.empty()
-        ta_status.empty()
-        st.session_state[ta_key] = {
-            "signature": ta_signature,
-            "rows": ta_rows,
-            "errors": ta_errors,
-            "built_at": pd.Timestamp.now(tz=PACIFIC).strftime("%Y-%m-%d %H:%M:%S %Z"),
-        }
-
-    ta_saved = st.session_state.get(ta_key)
-    if not ta_saved:
-        st.info("Select a timeframe and click Scan to build the confirmed trade list.")
-    elif ta_saved.get("signature") != ta_signature:
-        st.warning("The timeframe, symbols, or indicator settings changed. Run the scan again to avoid stale signals.")
-    else:
-        ta_df = pd.DataFrame(ta_saved.get("rows", []))
-        ta_errors = ta_saved.get("errors", [])
-        st.caption(
-            "Confirmation Trigger and Time Since Trigger refer to the most recent "
-            "S/R reversal or EMA crossover bar supporting the confirmed signal. "
-            "They are not the exact time every confirmation condition first aligned."
-        )
-        st.caption(
-            f"Last scan: {ta_saved.get('built_at', 'n/a')} | "
-            f"Timeframe: {ta_timeframe} | "
-            f"Symbols with data: {len(ta_df)} | Errors: {len(ta_errors)}"
-        )
-        if ta_df.empty:
-            st.info("No symbols returned usable scan data.")
-        else:
-            # Display age from the underlying confirmation trigger bar, not
-            # from when the user last pressed Scan. Recalculate on every rerun.
-            ta_now = pd.Timestamp.now(tz=PACIFIC)
-
-            def _trade_action_time_details(value):
-                if value is None or pd.isna(value):
-                    return ("Not available", "Unknown")
-                try:
-                    timestamp = pd.Timestamp(value)
-                    if timestamp.tzinfo is None:
-                        timestamp = timestamp.tz_localize(PACIFIC)
-                    else:
-                        timestamp = timestamp.tz_convert(PACIFIC)
-                    seconds = max(0, int((ta_now - timestamp).total_seconds()))
-                    if seconds < 60:
-                        age = "just now"
-                    elif seconds < 3600:
-                        age = f"{seconds // 60} minutes ago"
-                    elif seconds < 86400:
-                        age = f"{seconds // 3600} hours ago"
-                    else:
-                        age = f"{seconds // 86400} days ago"
-                    return (timestamp.strftime("%Y-%m-%d %H:%M %Z"), age)
-                except (TypeError, ValueError, OverflowError):
-                    return ("Not available", "Unknown")
-
-            ta_time_details = ta_df.get("Confirmation Trigger Time")
-            if ta_time_details is None:
-                ta_time_details = pd.Series([None] * len(ta_df), index=ta_df.index)
-            ta_details = ta_time_details.apply(_trade_action_time_details)
-            ta_df["Confirmation Trigger"] = ta_details.apply(lambda item: item[0])
-            ta_df["Time Since Trigger"] = ta_details.apply(lambda item: item[1])
-            # No historical state-transition replay is performed. Therefore
-            # this is a signal-trigger timestamp, not an exact confirmation time.
-            # Strict state matching; do not treat SETUP/WATCH or conflicting actions as confirmed.
-            ta_states = ta_df["State"].fillna("").astype(str).str.upper().str.strip()
-            ta_actions = ta_df["Trade Action"].fillna("").astype(str).str.upper().str.strip()
-            ta_buy = ta_df.loc[
-                ta_states.eq("BUY CONFIRMED") & ta_actions.eq("BUY")
-            ].copy()
-            ta_sell = ta_df.loc[
-                ta_states.eq("SELL CONFIRMED") & ta_actions.eq("SELL")
-            ].copy()
-
-            def _rank_confirmed_trade_actions(frame, probability_column):
-                if frame.empty:
-                    return frame
-                frame = frame.copy()
-                frame["_Prob"] = pd.to_numeric(
-                    frame[probability_column].astype(str).str.replace("%", "", regex=False),
-                    errors="coerce",
-                ).fillna(-1)
-                frame["_Edge"] = pd.to_numeric(
-                    frame["Score Edge"].astype(str).str.replace("%", "", regex=False),
-                    errors="coerce",
-                ).fillna(-1)
-                frame = frame.sort_values(
-                    ["_Prob", "_Edge", "Symbol"],
-                    ascending=[False, False, True],
-                    kind="mergesort",
-                )
-                preferred = [
-                    "Symbol", "State", "Trade Action", "Confirmation Trigger",
-                    "Time Since Trigger", "Long Score", "Short Score",
-                    "Score Edge", "Trend", "Current Structure", "Last Close",
-                    "S/R Rev", "NTD", "ADX", "Entry Zone", "Stop / Invalidation",
-                    "Target 1", "Trade Instruction", "Reason",
-                ]
-                ordered = [col for col in preferred if col in frame.columns]
-                return frame[ordered + [
-                    col for col in frame.columns
-                    if col not in ordered and not col.startswith("_")
-                ]]
-
-            ta_buy = _rank_confirmed_trade_actions(ta_buy, "Long Score")
-            ta_sell = _rank_confirmed_trade_actions(ta_sell, "Short Score")
-            count_cols = st.columns(3)
-            count_cols[0].metric("BUY Confirmed", len(ta_buy))
-            count_cols[1].metric("SELL Confirmed", len(ta_sell))
-            count_cols[2].metric("Other / Unconfirmed", len(ta_df) - len(ta_buy) - len(ta_sell))
-
-            st.markdown("#### 🟢 BUY Confirmed")
-            if ta_buy.empty:
-                st.info(f"No BUY CONFIRMED symbols for the selected {ta_timeframe.lower()} view.")
-            else:
-                st.dataframe(ta_buy, use_container_width=True, hide_index=True)
-
-            st.markdown("#### 🔴 SELL Confirmed")
-            if ta_sell.empty:
-                st.info(f"No SELL CONFIRMED symbols for the selected {ta_timeframe.lower()} view.")
-            else:
-                st.dataframe(ta_sell, use_container_width=True, hide_index=True)
-
-            with st.expander("Other signals (SETUP / WAIT)", expanded=False):
-                ta_other = ta_df.loc[
-                    ~(ta_states.eq("BUY CONFIRMED") & ta_actions.eq("BUY"))
-                    & ~(ta_states.eq("SELL CONFIRMED") & ta_actions.eq("SELL"))
-                ]
-                if ta_other.empty:
-                    st.info("No other signals.")
-                else:
-                    st.dataframe(ta_other, use_container_width=True, hide_index=True)
-
-        if ta_errors:
-            with st.expander(f"Scan errors ({len(ta_errors)})", expanded=False):
-                for ta_error in ta_errors:
-                    st.caption(ta_error)
-
-
-with tab_daily_sr_cross:
-    st.subheader(f"{asset_class} Daily S/R Cross")
-    st.caption(
-        "Daily scan for S/R Reversal line crosses. "
-        "Section (a) finds recent S/R-vs-NTD line crosses and groups them by price trend direction. "
-        "Section (b) finds recent S/R Reversal crosses upward through -0.5 and 0.0. "
-        "Pips are used for FX pairs; points/cents-equivalent units are used for stocks/ETFs."
-    )
-
-    sr_col1, sr_col2, sr_col3 = st.columns([1, 1, 1])
-    daily_sr_lookback = int(sr_col1.slider(
-        "Recent cross window (daily bars)",
-        min_value=5,
-        max_value=180,
-        value=min(60, max(5, int(cfg.get("signal_lookback", 40)))),
-        step=5,
-        key="daily_sr_cross_recent_window",
-    ))
-    daily_sr_max_symbols = int(sr_col2.number_input(
-        "Max symbols to scan",
-        min_value=5,
-        max_value=len(current_universe),
-        value=min(len(current_universe), 80),
-        step=5,
-        key="daily_sr_cross_max_symbols",
-    ))
-    daily_sr_sort_note = sr_col3.empty()
-    daily_sr_sort_note.markdown("**Sort:** trend/S/R direction, then pips since cross.")
-
-    daily_sr_symbols = st.multiselect(
-        "Symbols to scan for Daily S/R Cross",
-        current_universe,
-        default=current_universe[:daily_sr_max_symbols],
-        key="daily_sr_cross_symbols",
-    )
-
-    daily_sr_top3_view = st.radio(
-        "Top 3 timeframe view",
-        ["Both", "Daily only", "Hourly only"],
-        index=0,
-        horizontal=True,
-        key="daily_sr_cross_top3_timeframe_filter",
-        help="Choose whether the Top 3 quick-pick sections show Daily tables, Hourly tables, or both."
-    )
-
-    if not daily_sr_symbols:
-        st.info("Select at least one symbol to scan.")
-    elif st.button("Build Daily S/R Cross tables", key="build_daily_sr_cross_tables"):
-        sr_ntd_rows = []
-        minus05_rows = []
-        zero_rows = []
-        hourly_sr_ntd_rows = []
-        hourly_minus05_rows = []
-        hourly_zero_rows = []
-
-        hourly_sr_lookback = max(10, int(daily_sr_lookback))
-        progress = st.progress(0.0)
-        status = st.empty()
-        with st.spinner("Scanning daily and hourly S/R cross conditions..."):
-            total_steps = max(1, len(daily_sr_symbols) * 2)
-            step = 0
-            for i, sym in enumerate(daily_sr_symbols):
-                status.write(f"Scanning Daily {sym} ({i + 1}/{len(daily_sr_symbols)})")
-                try:
-                    result = _daily_sr_cross_row(sym, cfg, daily_sr_lookback)
-                    if result:
-                        if result.get("sr_ntd_cross") is not None:
-                            sr_ntd_rows.append(result["sr_ntd_cross"])
-                        if result.get("minus05_up") is not None:
-                            minus05_rows.append(result["minus05_up"])
-                        if result.get("zero_up") is not None:
-                            zero_rows.append(result["zero_up"])
-                except Exception as exc:
-                    st.warning(f"{sym}: daily scan skipped ({exc})")
-                step += 1
-                progress.progress(step / total_steps)
-
-                status.write(f"Scanning Hourly {sym} ({i + 1}/{len(daily_sr_symbols)})")
-                try:
-                    hourly_result = _hourly_sr_cross_row(sym, cfg, hourly_sr_lookback)
-                    if hourly_result:
-                        if hourly_result.get("sr_ntd_cross") is not None:
-                            hourly_sr_ntd_rows.append(hourly_result["sr_ntd_cross"])
-                        if hourly_result.get("minus05_up") is not None:
-                            hourly_minus05_rows.append(hourly_result["minus05_up"])
-                        if hourly_result.get("zero_up") is not None:
-                            hourly_zero_rows.append(hourly_result["zero_up"])
-                except Exception as exc:
-                    st.warning(f"{sym}: hourly scan skipped ({exc})")
-                step += 1
-                progress.progress(step / total_steps)
-            status.empty()
-            progress.empty()
-
-        sr_ntd_df = _sort_daily_sr_cross_table(pd.DataFrame(sr_ntd_rows))
-        minus05_df = _sort_daily_sr_cross_table(pd.DataFrame(minus05_rows))
-        zero_df = _sort_daily_sr_cross_table(pd.DataFrame(zero_rows))
-
-        hourly_sr_ntd_df = _sort_daily_sr_cross_table(pd.DataFrame(hourly_sr_ntd_rows))
-        hourly_minus05_df = _sort_daily_sr_cross_table(pd.DataFrame(hourly_minus05_rows))
-        hourly_zero_df = _sort_daily_sr_cross_table(pd.DataFrame(hourly_zero_rows))
-
-        top_buy_df = _top_daily_sr_buy_opportunities(sr_ntd_df, minus05_df, zero_df, limit=3)
-        top_level_cross_buy_df = _top_daily_sr_buy_opportunities(minus05_df, zero_df, limit=3)
-        top_downtrend_reversal_watch_df = _top_downtrend_sr_ntd_upward_reversal_candidates(sr_ntd_df, limit=3)
-
-        top_hourly_buy_df = _top_daily_sr_buy_opportunities(hourly_sr_ntd_df, hourly_minus05_df, hourly_zero_df, limit=3)
-        top_hourly_level_cross_buy_df = _top_daily_sr_buy_opportunities(hourly_minus05_df, hourly_zero_df, limit=3)
-        top_hourly_downtrend_reversal_watch_df = _top_downtrend_sr_ntd_upward_reversal_candidates(hourly_sr_ntd_df, limit=3)
-
-        show_daily_top3 = daily_sr_top3_view in ("Both", "Daily only")
-        show_hourly_top3 = daily_sr_top3_view in ("Both", "Hourly only")
-
-        st.markdown("### Top 3 Quick Picks")
-        st.caption(
-            f"Showing **{daily_sr_top3_view}** Top 3 tables. "
-            "Use this filter to focus on Daily swing candidates, Hourly entry candidates, or both."
-        )
-
-        if show_daily_top3:
-            st.markdown("#### Daily Top 3 Buy Opportunities")
-            st.caption(
-                "Quick view of the strongest Daily S/R Cross buy candidates. "
-                "Ranking favors upward S/R crosses, upward S/R direction, upward price trend, "
-                "upward NTD trend, and fewer pips/points since the cross."
-            )
-            if top_buy_df.empty:
-                st.info("No Daily top buy opportunities found from the current Daily S/R Cross scan.")
-            else:
-                st.dataframe(top_buy_df, use_container_width=True, hide_index=True)
-
-            st.markdown("#### Daily Top 3 Buy Opportunities from -0.5 / 0.0 Crosses")
-            st.caption(
-                "This quick table only uses the Daily S/R Reversal level-cross signals: "
-                "crossing -0.5 upward and crossing 0.0 upward."
-            )
-            if top_level_cross_buy_df.empty:
-                st.info("No Daily top buy opportunities found from the -0.5 and 0.0 upward-cross tables.")
-            else:
-                st.dataframe(top_level_cross_buy_df, use_container_width=True, hide_index=True)
-
-            st.markdown("#### Daily Top 3 Downtrend Reversal Watch — S/R Upward + NTD Trend Upward")
-            st.caption(
-                "This quick table is pulled only from the **Daily Price Trend Downward — S/R crossed NTD** table. "
-                "It shows symbols where the broader price trend is still downward, but both **S/R Direction** "
-                "and **NTD Trend Direction** are upward."
-            )
-            if top_downtrend_reversal_watch_df.empty:
-                st.info("No Daily Price Trend Downward S/R-vs-NTD rows currently have both S/R Direction and NTD Trend Direction upward.")
-            else:
-                st.dataframe(top_downtrend_reversal_watch_df, use_container_width=True, hide_index=True)
-
-        if show_hourly_top3:
-            st.markdown("#### Hourly Top 3 S/R Cross Buy Opportunities")
-            st.caption(
-                "Short-term quick view using the active hourly period/interval. "
-                "Use this to find hourly entries that may pair with the daily setup."
-            )
-            if top_hourly_buy_df.empty:
-                st.info("No hourly S/R Cross buy opportunities found.")
-            else:
-                st.dataframe(top_hourly_buy_df, use_container_width=True, hide_index=True)
-
-            st.markdown("#### Hourly Top 3 Buy Opportunities from -0.5 / 0.0 Crosses")
-            if top_hourly_level_cross_buy_df.empty:
-                st.info("No hourly -0.5 / 0.0 upward level-cross opportunities found.")
-            else:
-                st.dataframe(top_hourly_level_cross_buy_df, use_container_width=True, hide_index=True)
-
-            st.markdown("#### Hourly Top 3 Downtrend Reversal Watch — S/R Upward + NTD Trend Upward")
-            if top_hourly_downtrend_reversal_watch_df.empty:
-                st.info("No hourly downtrend reversal-watch rows currently have both S/R Direction and NTD Trend Direction upward.")
-            else:
-                st.dataframe(top_hourly_downtrend_reversal_watch_df, use_container_width=True, hide_index=True)
-
-        st.markdown("### (a) S/R Reversal Line crossing the NTD Line")
-        st.caption("These tables show the most recent daily S/R-vs-NTD line cross, split by daily price trend direction and ordered by pips/points since the cross.")
-
-        sr_ntd_up = sr_ntd_df[sr_ntd_df["Price Trend Direction"].eq("Upward")] if not sr_ntd_df.empty else pd.DataFrame()
-        sr_ntd_down = sr_ntd_df[sr_ntd_df["Price Trend Direction"].eq("Downward")] if not sr_ntd_df.empty else pd.DataFrame()
-
-        _display_daily_sr_cross_table(
-            "Price Trend Upward — S/R crossed NTD",
-            sr_ntd_up,
-            "No symbols found where S/R Reversal recently crossed the NTD line while the daily price trend is upward.",
-        )
-        _display_daily_sr_cross_table(
-            "Price Trend Downward — S/R crossed NTD",
-            sr_ntd_down,
-            "No symbols found where S/R Reversal recently crossed the NTD line while the daily price trend is downward.",
-        )
-
-        st.markdown("### (b) S/R Reversal Line upward level crosses")
-        level_tab1, level_tab2 = st.tabs(["S/R crossed -0.5 upward", "S/R crossed 0.0 upward"])
-
-        with level_tab1:
-            _display_daily_sr_cross_table(
-                "Daily — S/R Reversal crossed -0.5 upward",
-                minus05_df,
-                "No symbols found where S/R Reversal recently crossed -0.5 upward.",
-            )
-
-        with level_tab2:
-            _display_daily_sr_cross_table(
-                "Daily — S/R Reversal crossed 0.0 upward",
-                zero_df,
-                "No symbols found where S/R Reversal recently crossed 0.0 upward.",
-            )
-
-        with st.expander("Show combined Daily S/R Cross results", expanded=False):
-            combined = pd.concat(
-                [
-                    sr_ntd_df.assign(Section="S/R crossed NTD") if not sr_ntd_df.empty else pd.DataFrame(),
-                    minus05_df.assign(Section="S/R crossed -0.5 upward") if not minus05_df.empty else pd.DataFrame(),
-                    zero_df.assign(Section="S/R crossed 0.0 upward") if not zero_df.empty else pd.DataFrame(),
-                ],
-                ignore_index=True,
-            )
-            if combined.empty:
-                st.info("No combined results to show.")
-            else:
-                _display_daily_sr_cross_table("Combined results", _sort_daily_sr_cross_table(combined), "No combined results to show.")
-
-        with st.expander("Show combined Hourly S/R Cross results", expanded=False):
-            hourly_combined = pd.concat(
-                [
-                    hourly_sr_ntd_df.assign(Section="Hourly S/R crossed NTD") if not hourly_sr_ntd_df.empty else pd.DataFrame(),
-                    hourly_minus05_df.assign(Section="Hourly S/R crossed -0.5 upward") if not hourly_minus05_df.empty else pd.DataFrame(),
-                    hourly_zero_df.assign(Section="Hourly S/R crossed 0.0 upward") if not hourly_zero_df.empty else pd.DataFrame(),
-                ],
-                ignore_index=True,
-            )
-            if hourly_combined.empty:
-                st.info("No hourly combined results to show.")
-            else:
-                _display_daily_sr_cross_table("Combined hourly results", _sort_daily_sr_cross_table(hourly_combined), "No hourly combined results to show.")
-    else:
-        st.info("Click **Build Daily S/R Cross tables** to scan the selected symbols.")
-
-
-
-
-with tab_daily_dips:
-    st.subheader(f"{asset_class} Daily Long-term NTD Dips")
-    st.caption(
-        "Daily-chart scanner for symbols where the NTD line is currently below the selected dip line. "
-        "Each threshold is split into upward and downward price-trend groups, with Top 3 tables shown first."
-    )
-
-    dips_col1, dips_col2, dips_col3 = st.columns([1, 2, 1])
-    dips_lookback = int(dips_col1.slider(
-        "Recent dip/cross lookback (daily bars)",
-        10, 360, 180, 10,
-        key=f"daily_ntd_dip_lookback_{asset_class}",
-    ))
-    dips_universe = dips_col2.multiselect(
-        f"{asset_class} symbols for Daily NTD dips",
-        current_universe,
-        default=current_universe,
-        key=f"daily_ntd_dip_universe_{asset_class}",
-    )
-    dips_top3_view = dips_col3.radio(
-        "Top 3 timeframe view",
-        ["Both", "Daily only", "Hourly only"],
-        index=0,
-        key=f"daily_ntd_dip_top3_timeframe_filter_{asset_class}",
-        help="Choose whether Top 3 dip sections show Daily tables, Hourly tables, or both."
-    )
-
-    st.markdown(
-        """
-**How to use this tab**
-
-- **Upward trend + NTD below -0.75 / -0.5**: potential long-term dip watchlist. Wait for NTD/S/R to turn up before entering.
-- **Downward trend + NTD below -0.75 / -0.5**: higher-risk dip or early reversal watchlist. Use confirmation before buying.
-- **Recent Dip = Yes** means the NTD line crossed downward through the threshold within the selected lookback window.
-- **Move Since Dip** shows pips for FX and points for stocks/ETFs from the threshold-cross bar to the latest daily close.
-"""
-    )
-
-    if not dips_universe:
-        st.info("Select at least one symbol to scan.")
-    else:
-        with st.spinner("Scanning daily and hourly NTD long-term dips..."):
-            rows = []
-            hourly_rows = []
-            progress = st.progress(0)
-            total = max(1, len(dips_universe) * 4)
-            done = 0
-            for threshold in [-0.75, -0.50]:
-                for sym in dips_universe:
-                    row = daily_ntd_dip_scan_row(sym, threshold, cfg, lookback=dips_lookback)
-                    if row is not None:
-                        rows.append(row)
-                    done += 1
-                    progress.progress(min(1.0, done / total))
-
-                    hrow = hourly_ntd_dip_scan_row(sym, threshold, cfg, lookback=max(10, int(dips_lookback)))
-                    if hrow is not None:
-                        hourly_rows.append(hrow)
-                    done += 1
-                    progress.progress(min(1.0, done / total))
-            progress.empty()
-
-        dip_df = pd.DataFrame(rows)
-        hourly_dip_df = pd.DataFrame(hourly_rows)
-        if dip_df.empty and hourly_dip_df.empty:
-            st.info("No symbols currently below -0.75 or -0.5 on the NTD line.")
-        else:
-            threshold_order = ["-0.75", "-0.50"]
-
-            show_daily_dip_top3 = dips_top3_view in ("Both", "Daily only")
-            show_hourly_dip_top3 = dips_top3_view in ("Both", "Hourly only")
-
-            for threshold_label, threshold_value in [("-0.75", -0.75), ("-0.5", -0.50)]:
-                st.markdown("---")
-                st.header(f"NTD {threshold_label} Dips — Top 3 Quick Picks")
-                st.caption(
-                    f"Showing **{dips_top3_view}** Top 3 dip tables for the {threshold_label} threshold."
-                )
-
-                if show_daily_dip_top3:
-                    st.subheader(f"Daily NTD {threshold_label} Dips — Top 3")
-                    threshold_df = dip_df[dip_df["Threshold"].astype(str).eq(f"{threshold_value:+.2f}")].copy() if not dip_df.empty else pd.DataFrame()
-                    up_df = threshold_df[threshold_df["Price Trend Direction"].astype(str).eq("Upward")].copy() if not threshold_df.empty else pd.DataFrame()
-                    down_df = threshold_df[threshold_df["Price Trend Direction"].astype(str).eq("Downward")].copy() if not threshold_df.empty else pd.DataFrame()
-
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        _render_dip_section(f"Daily {threshold_label} Dips — Price Trend Upward", up_df, top_n=3)
-                    with c2:
-                        _render_dip_section(f"Daily {threshold_label} Dips — Price Trend Downward", down_df, top_n=3)
-
-                if show_hourly_dip_top3:
-                    st.subheader(f"Hourly NTD {threshold_label} Dips — Top 3")
-                    hourly_threshold_df = hourly_dip_df[hourly_dip_df["Threshold"].astype(str).eq(f"{threshold_value:+.2f}")].copy() if not hourly_dip_df.empty else pd.DataFrame()
-                    hourly_up_df = hourly_threshold_df[hourly_threshold_df["Price Trend Direction"].astype(str).eq("Upward")].copy() if not hourly_threshold_df.empty else pd.DataFrame()
-                    hourly_down_df = hourly_threshold_df[hourly_threshold_df["Price Trend Direction"].astype(str).eq("Downward")].copy() if not hourly_threshold_df.empty else pd.DataFrame()
-                    hc1, hc2 = st.columns(2)
-                    with hc1:
-                        _render_dip_section(f"Hourly {threshold_label} Dips — Price Trend Upward", hourly_up_df, top_n=3)
-                    with hc2:
-                        _render_dip_section(f"Hourly {threshold_label} Dips — Price Trend Downward", hourly_down_df, top_n=3)
-
-            with st.expander("Show all daily NTD dip rows", expanded=False):
-                all_sorted = _sort_daily_ntd_dips(dip_df)
-                st.dataframe(_format_daily_ntd_dip_table(all_sorted), use_container_width=True, hide_index=True)
-
-            with st.expander("Show all hourly NTD dip rows", expanded=False):
-                all_hourly_sorted = _sort_daily_ntd_dips(hourly_dip_df)
-                st.dataframe(_format_daily_ntd_dip_table(all_hourly_sorted), use_container_width=True, hide_index=True)
 
 
 with tab_fx_stoch:
@@ -4636,194 +3777,38 @@ dips has worked better than selling weakness.
     st.caption("Not financial advice. Past results do not guarantee future results.")
 
 
-with tab_ntd_cross:
-    st.subheader(f"{asset_class} NTD Cross — Upward Through 0.00")
-    st.caption(
-        "Lists symbols whose NTD line recently moved from zero or below to above zero. "
-        "Daily uses daily trading bars; Hourly uses actual 1-hour trading bars (without weekend filler). "
-        "A crossover is a watchlist signal, not by itself a confirmed BUY."
-    )
-    nc_left, nc_mid, nc_right = st.columns([1, 1, 2])
-    nc_timeframe = nc_left.selectbox(
-        "NTD cross timeframe", ["Daily", "Hourly"],
-        key=f"ntd_cross_timeframe_{asset_class}",
-    )
-    nc_recent = nc_mid.slider(
-        "Recent cross window (bars)", 1, 120, 20,
-        key=f"ntd_cross_recent_{asset_class}",
-    )
-    nc_symbols = nc_right.multiselect(
-        "Symbols to scan", options=sorted(current_universe),
-        default=sorted(current_universe),
-        key=f"ntd_cross_symbols_{asset_class}",
-    )
-    nc_key = f"ntd_cross_results_{asset_class}"
-    nc_signature = (nc_timeframe, nc_recent, tuple(sorted(nc_symbols)),
-                    int(cfg["ntd_window"]), int(cfg["trend_lookback"]))
-    if st.button(
-        f"Scan {nc_timeframe} NTD 0.00 Upward Crosses",
-        key=f"ntd_cross_scan_button_{asset_class}",
-        use_container_width=True,
-    ):
-        nc_rows, nc_errors = [], []
-        nc_progress = st.progress(0)
-        for nc_i, nc_symbol in enumerate(nc_symbols):
-            try:
-                nc_result = _scan_ntd_zero_up(nc_symbol, nc_timeframe, cfg, nc_recent)
-                if nc_result is not None:
-                    nc_rows.append(nc_result)
-            except Exception as nc_exc:
-                nc_errors.append(f"{nc_symbol}: {nc_exc}")
-            nc_progress.progress((nc_i + 1) / max(1, len(nc_symbols)))
-        nc_progress.empty()
-        st.session_state[nc_key] = {
-            "signature": nc_signature,
-            "rows": nc_rows,
-            "errors": nc_errors,
-            "scanned_at": datetime.now(PACIFIC).strftime("%Y-%m-%d %H:%M:%S %Z"),
-        }
-    nc_saved = st.session_state.get(nc_key)
-    if not nc_saved or nc_saved.get("signature") != nc_signature:
-        st.info("Select a timeframe and click Scan to load recent upward NTD zero-line crosses.")
-    else:
-        nc_df = pd.DataFrame(nc_saved.get("rows", []))
-        st.caption(f"Last scan: {nc_saved.get('scanned_at', 'n/a')} • Matches: {len(nc_df)}")
-        if nc_df.empty:
-            st.info(f"No {nc_timeframe.lower()} upward NTD 0.00 crosses found in the last {nc_recent} bars.")
-        else:
-            nc_df = nc_df.sort_values(
-                ["Bars Since Cross", "Symbol"], ascending=[True, True]
-            ).reset_index(drop=True)
-            st.dataframe(nc_df, hide_index=True, use_container_width=True)
-            for nc_direction in ("Upward", "Downward"):
-                st.markdown(f"#### Price Trend {nc_direction}")
-                nc_group = nc_df.loc[nc_df["Price Trend Direction"].eq(nc_direction)]
-                if nc_group.empty:
-                    st.caption("No matching symbols.")
-                else:
-                    st.dataframe(nc_group, hide_index=True, use_container_width=True)
-        if nc_saved.get("errors"):
-            with st.expander(f"Scan errors ({len(nc_saved['errors'])})", expanded=False):
-                st.write(nc_saved["errors"])
-
-
-
-
-with tab_hma_cross:
-    st.subheader(f"{asset_class} HMA Cross — Price Crossing Above HMA")
-    st.caption(
-        "Scans daily and hourly trading bars separately for a recent close-price cross upward "
-        "through the Hull Moving Average (HMA). Trend groups are based on the current price "
-        "regression trendline. A cross is a watchlist event, not a guaranteed BUY signal."
-    )
-    hc_col1, hc_col2, hc_col3 = st.columns([1, 1, 2])
-    hc_period = hc_col1.number_input(
-        "HMA period", min_value=5, max_value=120, value=55, step=1,
-        key=f"hma_cross_period_{asset_class}",
-    )
-    hc_recent = hc_col2.slider(
-        "Recent upward cross (bars)", 1, 120, 20,
-        key=f"hma_cross_recent_{asset_class}",
-    )
-    hc_symbols = hc_col3.multiselect(
-        "Symbols to scan", sorted(current_universe),
-        default=sorted(current_universe),
-        key=f"hma_cross_symbols_{asset_class}",
-    )
-    hc_signature = (
-        int(hc_period), int(hc_recent), tuple(sorted(hc_symbols)),
-        int(cfg["trend_lookback"]),
-    )
-    hc_store_key = f"hma_cross_result_{asset_class}"
-    if st.button(
-        "Scan Daily and Hourly HMA Crosses",
-        key=f"hma_cross_scan_{asset_class}", use_container_width=True,
-    ):
-        hc_rows = {"Daily": [], "Hourly": []}
-        hc_errors = []
-        hc_bar = st.progress(0)
-        total = max(1, len(hc_symbols) * 2)
-        completed = 0
-        for hc_timeframe in ("Daily", "Hourly"):
-            for hc_symbol in hc_symbols:
-                try:
-                    hc_found = _scan_hma_price_cross_up(
-                        hc_symbol, hc_timeframe, cfg, hc_recent, hc_period
-                    )
-                    if hc_found is not None:
-                        hc_rows[hc_timeframe].append(hc_found)
-                except Exception as hc_exc:
-                    hc_errors.append(f"{hc_timeframe} {hc_symbol}: {hc_exc}")
-                completed += 1
-                hc_bar.progress(completed / total)
-        hc_bar.empty()
-        st.session_state[hc_store_key] = {
-            "signature": hc_signature,
-            "rows": hc_rows,
-            "errors": hc_errors,
-            "scanned_at": datetime.now(PACIFIC).strftime("%Y-%m-%d %H:%M:%S %Z"),
-        }
-    hc_saved = st.session_state.get(hc_store_key)
-    if not hc_saved or hc_saved.get("signature") != hc_signature:
-        st.info("Click Scan to populate all four Daily/Hourly × Upward/Downward trend tables.")
-    else:
-        st.caption(f"Last scan: {hc_saved.get('scanned_at', 'n/a')}")
-        for hc_timeframe in ("Daily", "Hourly"):
-            st.markdown(f"### {hc_timeframe} Chart")
-            hc_df = pd.DataFrame(hc_saved.get("rows", {}).get(hc_timeframe, []))
-            for hc_direction in ("Upward", "Downward"):
-                st.markdown(f"#### Price Trend {hc_direction}")
-                if hc_df.empty:
-                    st.info("No matching upward HMA crosses found.")
-                    continue
-                hc_group = hc_df.loc[
-                    hc_df["Price Trend Direction"].eq(hc_direction)
-                ].copy()
-                if hc_group.empty:
-                    st.info("No matching upward HMA crosses found.")
-                else:
-                    hc_group = hc_group.sort_values(
-                        ["Bars Since Cross", "Symbol"], ascending=[True, True]
-                    ).reset_index(drop=True)
-                    st.dataframe(hc_group, use_container_width=True, hide_index=True)
-        if hc_saved.get("errors"):
-            with st.expander(f"Scan errors ({len(hc_saved['errors'])})", expanded=False):
-                st.write(hc_saved["errors"])
-
-
 with tab_rules:
-    st.subheader("How to use this chart")
+    st.subheader("What this app shows, and why")
     st.markdown(
-        """
-**BUY CONFIRMED** means the chart has an upward trendline, price recently reversed from support,
-and price recently crossed above the 30 EMA. This is the cleanest long condition.
+        f"""
+Everything here held up when tested on past data. Signals that did no better than chance were removed.
 
-**BUY SETUP** means price is pulling back near support, 30 EMA, or HMA while the trendline is upward.
-Wait for a bounce, a green marker, or a 30 EMA reclaim before entry.
+**Range Chart**
+- **Likely range (blue cone)**: where the price is likely to be over the next {RANGE_DAYS} trading days,
+  with 80% and 50% bands. It is built from how far this market's symbols have moved in the past, scaled by the
+  symbol's last {RANGE_VOL_DAYS} days of volatility. Checked year by year (2018–2026), each year using only
+  earlier years: the real close landed inside the 80% band 77–84% of the time. It does **not** say which way
+  the price will go: no direction forecast tested better than chance.
+- **Dip buy signal (lower panel)**: Forex pairs when daily Stochastic %K(14) is {FX_STOCH_LOW} or lower, sold when RSI
+  reaches {FX_STOCH_EXIT_RSI} (at most {FX_STOCH_MAX_DAYS} days); stocks when daily RSI falls to {STOCK_DIP_RSI} or
+  below with the 120-day trend down, held {STOCK_DIP_HOLD} trading days. Every past signal on the chart is marked
+  green (rose) or red (fell), with the symbol's own record below the chart.
+- **Your position**: optional. Shows profit or loss, carry (enter the swap your broker shows) and the profit or
+  loss range implied by the likely range. Warns when the dip signal works against you.
+- **Intraday**: for timing only. Today's range against a typical day's range, and the Tokyo, London and
+  New York sessions. No buy or sell labels.
 
-**SELL CONFIRMED** means the chart has a downward trendline, price recently rejected resistance,
-and price recently crossed below the 30 EMA. This is the cleanest short condition.
+**RSI ≤ 30**: daily oversold scan. Only the downtrend list had an edge.
 
-**SELL SETUP** means price is pulling back near resistance, 30 EMA, or HMA while the trendline is downward.
-Wait for rejection or a 30 EMA loss before entry.
+**FX Stochastic Dip**: scans all pairs for the Forex dip buy signal. Past record: {fx_stochastic_history_text()}
 
-**WAIT** means the chart is not aligned enough. Do not force a trade.
-
-**Scores** (Long / Short, up to 95) are rule points: the app adds fixed points for each condition
-(below the 30 EMA, falling NTD, and so on). They are **not probabilities**. Tested on every past bar since 2017,
-a "95" did no better than an "80", so the app now shows each signal's **measured past record** instead.
-
-**Past record** = how often that signal (for example Forex daily SELL CONFIRMED) reached its target before its stop,
-and the average result after costs (0.03% Forex, 0.05% Stocks). Target and stop are both 1.5 ATR from price, so
-about 50% is what any random bar gets. Compare with the "any bar" figure shown alongside: only a clearly higher
-rate and a positive average mean the signal has an edge.
-
-**Forex Stochastic Dip** (its own tab) is a different, tested rule: buy a pair when daily Stochastic %K(14) is 10
-or lower, sell when RSI(14) reaches 50 or after 60 days. Its past record is shown in that tab.
-
-**Daily view** should be used for the bigger directional bias. **Hourly view** should be used for timing entries, pullbacks, and confirmations. Use the **Market** selector in the sidebar to switch between Forex and Stocks; the same logic applies to both, while price formatting and tolerance units adjust by symbol type.
+**What was removed, and why.** A 5-year daily backtest of every tab (Nov 2021–Nov 2026) and a replay of every
+BUY/SELL call since 2017 found that these did no better than buying or selling at random, either as given or
+reversed: the Trading Chart's BUY/SELL states and scores, Buy/Sell, Trade Action, Scanner, Green Zone, NPX Cross,
+30EMA Cross, S/R Cross, NTD Cross, HMA Cross and the NTD Dips lists. The TradingView-style chart's SuperTrend and
+EMA/SMA crosses lost money (hourly −23% to −37% over 2 years; daily about −5%). The functions are still in the
+code, so the history can be rebuilt with `bullbears_history_build.py`.
 """
     )
-    st.info(
-        "Risk rule: the stop is 1.5 ATR from price. Size each trade so that hitting the stop costs a small, fixed part of the account. Past results do not guarantee future results."
-    )
+    st.info("Size each trade so that a bad outcome costs a small, fixed part of the account. "
+            "Not financial advice. Past results do not guarantee future results.")
