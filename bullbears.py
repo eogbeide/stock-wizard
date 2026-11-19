@@ -3585,8 +3585,185 @@ def render_range_chart(symbol: str, market: str, cfg: dict) -> None:
     st.caption("Not financial advice. Past results do not guarantee future results.")
 
 
-tab_range, tab_rsi_oversold, tab_fx_stoch, tab_rules = st.tabs([
+# =========================
+# Indicator Chart (TradingView-style layout)
+# =========================
+IND_TIMEFRAMES = {"15m": ("60d", "15m", None), "1h": ("60d", "1h", None), "4h": ("730d", "1h", "4h"),
+                  "1d": ("2y", "1d", None)}
+IND_RECORD = (
+    "Tested on 16 Forex pairs, hourly bars, Nov 2024–Nov 2026: when all six readings below were bearish, the price "
+    "was lower 24 hours later 47% of the time and lower 5 days later 47.5% (AUD/JPY: 46% and 42.5%). When all six "
+    "were bullish, it was higher 51% and 53% of the time. Neither beat the pair's own drift by more than 0.05%. "
+    "Earlier tests found trading SuperTrend and EMA/SMA crosses on hourly bars lost money. "
+    "These lines describe the move so far; they did not forecast the next one."
+)
+
+
+def ind_supertrend(df: pd.DataFrame, period: int = 10, mult: float = 3.0):
+    """SuperTrend as TradingView draws it (Wilder ATR). Returns (line, is_up)."""
+    h, l, c = (df[k].to_numpy(float) for k in ("High", "Low", "Close"))
+    pc = np.r_[c[0], c[:-1]]
+    tr = np.maximum(h - l, np.maximum(np.abs(h - pc), np.abs(l - pc)))
+    atr = pd.Series(tr).ewm(alpha=1 / period, adjust=False).mean().to_numpy()
+    mid = (h + l) / 2
+    ub, lb = mid + mult * atr, mid - mult * atr
+    fu, fl = ub.copy(), lb.copy()
+    line, up = np.full(len(c), np.nan), np.ones(len(c), bool)
+    for i in range(1, len(c)):
+        fu[i] = ub[i] if (ub[i] < fu[i - 1] or c[i - 1] > fu[i - 1]) else fu[i - 1]
+        fl[i] = lb[i] if (lb[i] > fl[i - 1] or c[i - 1] < fl[i - 1]) else fl[i - 1]
+        up[i] = c[i] >= fl[i] if up[i - 1] else c[i] > fu[i]
+        line[i] = fl[i] if up[i] else fu[i]
+    line[:period] = np.nan
+    return pd.Series(line, df.index), pd.Series(up, df.index)
+
+
+def ind_frame(df: pd.DataFrame) -> pd.DataFrame:
+    c = coerce_series(df["Close"])
+    out = pd.DataFrame(index=df.index)
+    out["st"], out["st_up"] = ind_supertrend(df)
+    out["bb_mid"] = c.rolling(20).mean()
+    sd = c.rolling(20).std(ddof=0)
+    out["bb_up"], out["bb_lo"] = out["bb_mid"] + 2 * sd, out["bb_mid"] - 2 * sd
+    out["ema9"] = c.ewm(span=9, adjust=False).mean()
+    out["sma35"] = c.rolling(35).mean()
+    d = c.diff()
+    g = d.clip(lower=0).ewm(alpha=1 / 14, adjust=False).mean()
+    ls = (-d.clip(upper=0)).ewm(alpha=1 / 14, adjust=False).mean()
+    out["rsi"] = 100 - 100 / (1 + g / ls.replace(0, np.nan))
+    out["roc"] = 100 * (c / c.shift(9) - 1)
+    m = c.ewm(span=12, adjust=False).mean() - c.ewm(span=26, adjust=False).mean()
+    out["macd"], out["signal"] = m, m.ewm(span=9, adjust=False).mean()
+    return out
+
+
+def ind_readings(c: float, row: pd.Series) -> list[tuple[str, bool]]:
+    """(label, is_bearish) for the six readings in the record."""
+    return [
+        ("SuperTrend down" if not row["st_up"] else "SuperTrend up", not bool(row["st_up"])),
+        ("below BB middle" if c < row["bb_mid"] else "above BB middle", c < row["bb_mid"]),
+        ("EMA 9 under SMA 35" if row["ema9"] < row["sma35"] else "EMA 9 over SMA 35", row["ema9"] < row["sma35"]),
+        ("MACD under signal" if row["macd"] < row["signal"] else "MACD over signal", row["macd"] < row["signal"]),
+        (f"RSI {row['rsi']:.1f}", row["rsi"] < 50),
+        (f"ROC 9 {row['roc']:+.2f}%", row["roc"] < 0),
+    ]
+
+
+def plot_indicator_chart(symbol: str, tf: str, bars: pd.DataFrame, ind: pd.DataFrame, position: dict | None):
+    n = len(bars)
+    x = np.arange(n, dtype=float)
+    fig = plt.figure(figsize=(15.2, 9.6), facecolor="white")
+    gs = fig.add_gridspec(3, 1, height_ratios=[3.4, 1.2, 1.2], hspace=0.06)
+    ax = fig.add_subplot(gs[0])
+    ax_rsi = fig.add_subplot(gs[1], sharex=ax)
+    ax_m = fig.add_subplot(gs[2], sharex=ax)
+    fig.subplots_adjust(left=0.05, right=0.88, top=0.92, bottom=0.06)
+    name = symbol.replace("=X", "")
+    o, h, l, c = (bars[k].to_numpy(float) for k in ("Open", "High", "Low", "Close"))
+    fig.suptitle(f"{name} · {tf}   O {o[-1]:.5g}  H {h[-1]:.5g}  L {l[-1]:.5g}  C {c[-1]:.5g}",
+                 fontsize=14, fontweight="bold", y=0.99)
+
+    ax.fill_between(x, ind["bb_lo"].to_numpy(float), ind["bb_up"].to_numpy(float), color="#84bdea", alpha=.12,
+                    label="BB 20, 2")
+    ax.plot(x, ind["bb_mid"].to_numpy(float), color="#84bdea", lw=1.0, alpha=.8)
+    st_line = ind["st"].to_numpy(float)
+    st_up = ind["st_up"].to_numpy(bool)
+    ax.plot(x, np.where(st_up, st_line, np.nan), color="#0f9d82", lw=2.6, alpha=.75, label="SuperTrend 10, 3 (up)")
+    ax.plot(x, np.where(~st_up, st_line, np.nan), color="#f0a030", lw=2.6, alpha=.85, label="SuperTrend 10, 3 (down)")
+    ax.plot(x, ind["sma35"].to_numpy(float), color="#3b82d6", lw=2.0, label="SMA 35")
+    ax.plot(x, ind["ema9"].to_numpy(float), color="#4b2fa8", lw=2.0, label="EMA 9")
+    _candles(ax, x, o, h, l, c, width=0.6)
+    ax.axhline(c[-1], color="#e04451", lw=0.8, ls=":")
+    tags = [(c[-1], f"{c[-1]:.5g}", "#e04451"), (ind["st"].iloc[-1], f"{ind['st'].iloc[-1]:.5g}",
+            "#0f9d82" if st_up[-1] else "#f0a030"), (ind["sma35"].iloc[-1], f"{ind['sma35'].iloc[-1]:.5g}", "#3b82d6"),
+            (ind["ema9"].iloc[-1], f"{ind['ema9'].iloc[-1]:.5g}", "#4b2fa8")]
+    if position:
+        e = float(position["entry"])
+        ax.axhline(e, color="#111", lw=1.1, ls="--")
+        tags.append((e, f"{position['side']} {e:.5g}", "#111"))
+        lo, hi = np.nanmin(l), np.nanmax(h)
+        ax.set_ylim(min(lo, e) - 0.03 * (hi - lo), max(hi, e) + 0.03 * (hi - lo))
+    for yv, txt, col in tags:
+        if np.isfinite(yv):
+            ax.annotate(txt, xy=(1.0, yv), xycoords=("axes fraction", "data"), xytext=(4, 0),
+                        textcoords="offset points", va="center", fontsize=10, color="white",
+                        bbox=dict(boxstyle="square,pad=0.25", fc=col, ec=col))
+    ax.yaxis.tick_right()
+    ax.grid(alpha=.15)
+    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.0), fontsize=9, frameon=False, ncol=5, borderaxespad=0.2)
+    plt.setp(ax.get_xticklabels(), visible=False)
+
+    r = ind["rsi"].to_numpy(float)
+    ax_rsi.set_facecolor("#f4f1fb")
+    ax_rsi.plot(x, r, color="#2f80ed", lw=1.8, label="RSI 14")
+    for lv, ls_, lw_ in ((70, "--", 1.6), (60, "-", .9), (50, "-", .9), (40, "-", .9), (30, "--", 1.6)):
+        ax_rsi.axhline(lv, color="#111" if lv in (30, 70) else "#3355ee", ls=ls_, lw=lw_, alpha=.6)
+    ax_rsi.set_ylim(20, 85)
+    ax_rsi.yaxis.tick_right()
+    ax_rsi.annotate(f"{r[-1]:.2f}", xy=(1.0, r[-1]), xycoords=("axes fraction", "data"), xytext=(4, 0),
+                    textcoords="offset points", va="center", fontsize=10, color="white",
+                    bbox=dict(boxstyle="square,pad=0.25", fc="#2f80ed", ec="#2f80ed"))
+    ax_rsi.legend(loc="upper left", fontsize=9, frameon=False)
+    plt.setp(ax_rsi.get_xticklabels(), visible=False)
+
+    mac, sig = ind["macd"].to_numpy(float), ind["signal"].to_numpy(float)
+    hist_ = mac - sig
+    ax_m.bar(x, hist_, color=np.where(hist_ >= 0, "#0f9d82", "#e04451"), alpha=.35, width=0.7)
+    ax_m.plot(x, mac, color="#2f80ed", lw=1.6, label=f"MACD 12 26 9  {mac[-1]:.4g}")
+    ax_m.plot(x, sig, color="#f07a2a", lw=1.6, label=f"signal {sig[-1]:.4g}")
+    ax_m.axhline(0, color="#888", lw=.8)
+    roc_ax = ax_m.twinx()
+    roc_ax.yaxis.tick_left()
+    ax_m.yaxis.tick_right()
+    roc_ax.plot(x, ind["roc"].to_numpy(float), color="#999", lw=1.0, alpha=.8, label="ROC 9 (left, %)")
+    roc_ax.yaxis.set_label_position("left")
+    h1, l1 = ax_m.get_legend_handles_labels()
+    h2, l2 = roc_ax.get_legend_handles_labels()
+    ax_m.legend(h1 + h2, l1 + l2, loc="upper left", fontsize=9, frameon=False, ncol=3)
+    ax_m.grid(alpha=.15)
+
+    idx = bars.index
+    step = max(1, n // 8)
+    ticks = list(range(0, n, step))
+    fmt = "%b %d" if tf == "1d" else "%b %d %H:%M"
+    ax_m.set_xticks(ticks)
+    ax_m.set_xticklabels([idx[i].strftime(fmt) for i in ticks], fontsize=9)
+    ax_m.set_xlim(-1, n + 1)
+    st.pyplot(fig, use_container_width=True)
+    plt.close(fig)
+
+
+def render_indicator_chart(symbol: str) -> None:
+    c1, c2 = st.columns(2)
+    tf = c1.selectbox("Timeframe", list(IND_TIMEFRAMES), index=1, key="ind_tf")
+    show = c2.slider("Bars shown", 60, 400, 150, 10, key="ind_bars")
+    period, interval, resample = IND_TIMEFRAMES[tf]
+    raw = fetch_market_ohlc(symbol, period, interval)
+    if resample and not raw.empty:
+        u = raw.tz_convert("UTC")
+        u = u.resample(resample, origin="epoch").agg(
+            {"Open": "first", "High": "max", "Low": "min", "Close": "last", "Volume": "sum"}).dropna(
+            subset=["Open", "High", "Low", "Close"])
+        raw = u.tz_convert(PACIFIC)
+    if raw.empty or len(raw) < 60:
+        st.warning(f"Not enough {tf} data for {symbol}.")
+        return
+    ind = ind_frame(raw)
+    bars, ind_v = raw.tail(show), ind.tail(show)
+    saved = _position_from_query(symbol)
+    position = saved if saved["side"] != "None" and saved["entry"] > 0 else None
+    plot_indicator_chart(symbol, tf, bars, ind_v, position)
+    reads = ind_readings(float(raw["Close"].iloc[-1]), ind.iloc[-1])
+    bear = sum(b for _, b in reads)
+    st.markdown(f"**Now: {bear} of 6 readings bearish** — " + " · ".join(t for t, _ in reads))
+    st.caption(IND_RECORD)
+    st.caption(f"Times are Pacific. {'4h bars are built from hourly bars, so they can differ slightly from your broker. ' if resample else ''}"
+               "Not financial advice. Past results do not guarantee future results.")
+
+
+tab_range, tab_ind, tab_rsi_oversold, tab_fx_stoch, tab_rules = st.tabs([
     "Range Chart",
+    "Indicator Chart",
     "RSI ≤ 30",
     "FX Stochastic Dip",
     "Rules",
@@ -3658,6 +3835,10 @@ def _chart_timeframe_config(base_cfg: dict, timeframe: str) -> dict:
 
 with tab_range:
     render_range_chart(symbol, asset_class, cfg)
+
+
+with tab_ind:
+    render_indicator_chart(symbol)
 
 
 with tab_rsi_oversold:
@@ -3781,7 +3962,7 @@ with tab_rules:
     st.subheader("What this app shows, and why")
     st.markdown(
         f"""
-Everything here held up when tested on past data. Signals that did no better than chance were removed.
+Everything here except the Indicator Chart held up when tested on past data. Signals that did no better than chance were removed.
 
 **Range Chart**
 - **Likely range (blue cone)**: where the price is likely to be over the next {RANGE_DAYS} trading days,
@@ -3797,6 +3978,9 @@ Everything here held up when tested on past data. Signals that did no better tha
   loss range implied by the likely range. Warns when the dip signal works against you.
 - **Intraday**: for timing only. Today's range against a typical day's range, and the Tokyo, London and
   New York sessions. No buy or sell labels.
+
+**Indicator Chart**: the TradingView layout (SuperTrend 10 3, Bollinger 20 2, EMA 9, SMA 35, RSI 14,
+ROC 9, MACD 12 26 9), shown because you use it, not because it tested well. {IND_RECORD}
 
 **RSI ≤ 30**: daily oversold scan. Only the downtrend list had an edge.
 
