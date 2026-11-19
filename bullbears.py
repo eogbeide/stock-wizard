@@ -3430,7 +3430,55 @@ def plot_range_chart(symbol: str, market: str, daily: pd.DataFrame, hist: pd.Dat
     plt.close(fig)
 
 
-def plot_intraday_timing(symbol: str, market: str, intra: pd.DataFrame, daily: pd.DataFrame, interval: str) -> str:
+# Hourly likely range: z = log return over h hourly bars / (std of the last 120
+# hourly log returns × √h). Quantiles from all pairs / stocks, Nov 2024–Nov 2026
+# (Yahoo keeps 2 years of hourly bars). Calibrated on one year and checked on the
+# other, both ways round: the 80% band held 79–81% and the 50% band 48–52%.
+HOURLY_VOL_BARS = 120
+HOURLY_Q = {  # bars ahead: (10%, 25%, 50%, 75%, 90%)
+    "Forex": {6: (-1.135, -0.517, 0.021, 0.553, 1.148), 24: (-1.211, -0.564, 0.045, 0.622, 1.204),
+              48: (-1.214, -0.571, 0.052, 0.64, 1.216)},
+    "Stocks": {7: (-1.186, -0.548, 0.039, 0.629, 1.26), 14: (-1.217, -0.555, 0.06, 0.672, 1.287),
+               35: (-1.219, -0.554, 0.086, 0.714, 1.358)},
+}
+HOURLY_LABEL = {"Forex": {6: "6 hours", 24: "24 hours", 48: "48 hours"},
+                "Stocks": {7: "1 trading day", 14: "2 trading days", 35: "5 trading days"}}
+HOURLY_RECORD = {
+    "Forex": "Checked on all 31 pairs over 2 years of hourly bars, calibrated on one year and tested on the other: the 80% band held 79–81% of the time, the 50% band 49–51%.",
+    "Stocks": "Checked on all 41 stocks and funds over 2 years of hourly bars, calibrated on one year and tested on the other: the 80% band held 79–81% of the time, the 50% band 48–52%.",
+}
+
+
+def hourly_range(symbol: str, market: str, anchor: float | None = None) -> dict | None:
+    """Likely closing range over the next hours, scaled by the last 120 hourly bars' volatility."""
+    h1 = fetch_market_ohlc(symbol, "60d", "1h")
+    if h1.empty or len(h1) < HOURLY_VOL_BARS + 2:
+        return None
+    lr = np.log(coerce_series(h1["Close"])).diff().dropna()
+    vol = float(lr.tail(HOURLY_VOL_BARS).std())
+    if not np.isfinite(vol) or vol <= 0:
+        return None
+    last = float(anchor) if anchor else float(h1["Close"].iloc[-1])
+    bands = []
+    for h, q in HOURLY_Q[market].items():
+        lv = [last * math.exp(z * vol * math.sqrt(h)) for z in q]
+        minutes = h * 60 if market == "Forex" else h / 7 * 390
+        bands.append({"bars": h, "label": HOURLY_LABEL[market][h], "minutes": minutes, "low": lv[0], "low50": lv[1],
+                      "mid": lv[2], "high50": lv[3], "high": lv[4]})
+    return {"last": last, "vol": vol, "bands": bands}
+
+
+def _interval_minutes(interval: str) -> float:
+    s = str(interval).lower()
+    if s.endswith("h"):
+        return 60.0 * float(s[:-1] or 1)
+    if s.endswith("m"):
+        return float(s[:-1])
+    return 60.0
+
+
+def plot_intraday_timing(symbol: str, market: str, intra: pd.DataFrame, daily: pd.DataFrame, interval: str,
+                         hr: dict | None = None, position: dict | None = None) -> str:
     """Intraday bars with today's range against a typical day's range and the trading sessions.
     No buy or sell labels: nothing on intraday bars tested better than chance."""
     d = weekday_bars(daily)
@@ -3453,11 +3501,32 @@ def plot_intraday_timing(symbol: str, market: str, intra: pd.DataFrame, daily: p
     fig, ax = plt.subplots(figsize=(15.2, 4.6), facecolor="white")
     fig.subplots_adjust(left=0.07, right=0.86, top=0.88, bottom=0.14)
     _candles(ax, x, *(intra[k].to_numpy(float) for k in ("Open", "High", "Low", "Close")), width=0.6)
+    x_end = n + 2
+    if hr:
+        per_bar = _interval_minutes(interval)
+        xs = np.r_[n - 1, [n - 1 + b["minutes"] / per_bar for b in hr["bands"]]]
+        last = hr["last"]
+        for lo_k, hi_k, alpha, label in (("low", "high", .10, "80% likely"), ("low50", "high50", .20, "50% likely")):
+            ax.fill_between(xs, np.r_[last, [b[lo_k] for b in hr["bands"]]], np.r_[last, [b[hi_k] for b in hr["bands"]]],
+                            color="#3b82d6", alpha=alpha, lw=0, label=label)
+        for xv, b in zip(xs[1:], hr["bands"]):
+            ax.vlines(xv, b["low"], b["high"], colors="#3b82d6", lw=0.8, ls=":")
+            ax.annotate(b["label"], (xv, b["high"]), xytext=(0, 13), textcoords="offset points", ha="center",
+                        fontsize=7.5, color="#2563c9")
+            for yv in (b["low"], b["high"]):
+                ax.annotate(fmt_price(symbol, yv), (xv, yv), xytext=(0, -10 if yv == b["low"] else 3),
+                            textcoords="offset points", ha="center", fontsize=7, color="#2563c9")
+        x_end = max(x_end, float(xs[-1]) + 2)
+        ax.legend(loc="lower right", bbox_to_anchor=(1.0, 1.0), fontsize=8, frameon=False, ncol=2)
+    if position:
+        ax.axhline(position["entry"], color="#111111", lw=1.0, ls="--")
+        ax.annotate(f"{position['side']} {fmt_price(symbol, position['entry'])}", (0, position["entry"]),
+                    xytext=(2, 3), textcoords="offset points", fontsize=8, color="#111111")
     t0 = int(np.argmax(day_key == day_key[-1]))
     for y, label, colour in ((lo + typical, "low + typical range", "#0f9d82"),
                              (hi - typical, "high − typical range", "#e04451")):
         ax.hlines(y, t0, n + 2, colors=colour, linestyles="--", lw=1.1)
-        ax.annotate(f"{fmt_price(symbol, y)}  {label}", (n + 2, y), xytext=(4, 0), textcoords="offset points",
+        ax.annotate(f"{fmt_price(symbol, y)}  {label}", (x_end, y), xytext=(4, 0), textcoords="offset points",
                     va="center", fontsize=8, color=colour)
     ax.axvline(t0 - 0.5, color="#888888", lw=0.8, ls=":")
     ymin, ymax = ax.get_ylim()
@@ -3471,7 +3540,7 @@ def plot_intraday_timing(symbol: str, market: str, intra: pd.DataFrame, daily: p
     ax.set_ylim(ymin - strip * (len(SESSIONS) + 0.3), ymax)
     ax.yaxis.tick_right()
     ax.grid(True, alpha=.12)
-    ax.set_xlim(-1, n + 3)
+    ax.set_xlim(-1, x_end + 1)
     ticks = np.linspace(0, n - 1, min(9, n), dtype=int)
     ax.set_xticks(ticks)
     ax.set_xticklabels([intra.index[i].strftime("%m-%d %H:%M") for i in ticks], fontsize=8)
@@ -3581,7 +3650,25 @@ def render_range_chart(symbol: str, market: str, cfg: dict) -> None:
     if intra.empty or len(intra) < 10:
         st.info("No intraday data right now.")
     else:
-        st.caption(plot_intraday_timing(symbol, market, intra, hist, cfg["interval"]))
+        hr = hourly_range(symbol, market, anchor=float(intra["Close"].iloc[-1]))
+        st.caption(plot_intraday_timing(symbol, market, intra, hist, cfg["interval"], hr, position))
+        if hr:
+            rows = []
+            for b in hr["bands"]:
+                row = {"By": b["label"], "80% likely": f"{fmt_price(symbol, b['low'])} – {fmt_price(symbol, b['high'])}",
+                       "50% likely": f"{fmt_price(symbol, b['low50'])} – {fmt_price(symbol, b['high50'])}"}
+                if position:
+                    sign = 1 if position["side"] == "Long" else -1
+                    to_usd = quote_to_usd(symbol)
+                    pa = sign * (b["low"] - position["entry"]) * position["size"] * to_usd
+                    pb = sign * (b["high"] - position["entry"]) * position["size"] * to_usd
+                    row["Your P/L across the 80% range"] = f"${min(pa, pb):,.0f} to ${max(pa, pb):,.0f}"
+                rows.append(row)
+            st.markdown("**Likely range over the next hours** (blue cone above)")
+            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.caption(f"{HOURLY_RECORD[market]} These are closing prices at each time; highs and lows in between "
+                       "usually reach further. It says how far, not which way: no direction signal on hourly bars "
+                       "tested better than chance.")
     st.caption("Not financial advice. Past results do not guarantee future results.")
 
 
