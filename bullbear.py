@@ -10,7 +10,14 @@ from datetime import datetime
 import time
 import pytz
 
+import importlib
+
 import tested_charts as tc
+
+# Streamlit Cloud keeps imported modules in memory across code updates, so pick
+# up a newer tested_charts.py when this one is out of date.
+if not hasattr(tc, "hourly_range"):
+    tc = importlib.reload(tc)
 
 # --- Page config ---
 st.set_page_config(
